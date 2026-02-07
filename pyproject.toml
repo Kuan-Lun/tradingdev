@@ -1,0 +1,36 @@
+[project]
+name = "btc-usdt-strategy"
+version = "0.1.0"
+description = "BTC/USDT perpetual futures contract backtesting strategies"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "vectorbt>=0.28.0",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pandas-ta>=0.3.14b1",
+    "pydantic>=2.0",
+    "ccxt>=4.0",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "pyarrow>=15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pandas-stubs",
+    "types-PyYAML",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/btc_strategy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

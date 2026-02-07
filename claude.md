@@ -143,6 +143,39 @@ btc-usdt-strategy/
 - **樣本外測試**: ML 策略必須劃分 train/validation/test 集
 - **過擬合警覺**: 參數優化後須進行 walk-forward 或 cross-validation 驗證
 
+## Git Flow
+
+本專案以 vibe coding 模式開發，每次 session 的成果需清楚可辨識。
+
+### 分支策略
+
+- **main**: 只包含可運行的完整成果，禁止直接 push
+- **feature/\<name\>**: 每次 vibe coding session 在 feature 分支上開發
+  - 命名範例：`feature/kd-strategy`、`feature/add-macd-indicator`
+  - 可拆分多個 commit（例如按 phase 拆分），保留開發歷程
+
+### 合併規範
+
+- 使用 **merge commit**（`git merge --no-ff`）合併回 main
+- merge commit 訊息需清楚描述該次 session 的完整成果
+- 格式：`feat: <一句話描述整體成果>`
+- 這樣 `git log --first-parent main` 可看到每次 vibe coding session 的完整成果
+
+### Tag 規範
+
+- 重要里程碑打 tag，格式為 `v<major>.<minor>.<patch>`
+- 例如：`v0.0.0`（專案初始化）、`v0.1.0`（第一個可運行策略）
+
+### Commit 訊息格式
+
+分支上的 commit 使用以下前綴：
+- `feat:` 新功能
+- `fix:` 修復
+- `refactor:` 重構
+- `test:` 測試
+- `docs:` 文件
+- `chore:` 雜務（設定檔、依賴等）
+
 ## 工具鏈指令
 
 ```bash
