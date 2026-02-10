@@ -176,6 +176,12 @@ btc-usdt-strategy/
 - `docs:` 文件
 - `chore:` 雜務（設定檔、依賴等）
 
+## 架構文件維護
+
+- 當新增、刪除或修改類別、模組、介面（ABC）、Pydantic 模型時，須同步更新 `ARCHITECTURE.md` 中對應的 Mermaid 圖表
+- 需檢查的圖表：Class Diagram、Pipeline Sequence Diagram、Module Dependency Graph
+- 若僅修改函式內部邏輯而未改變類別/模組結構，則無需更新
+
 ## 工具鏈指令
 
 ```bash
