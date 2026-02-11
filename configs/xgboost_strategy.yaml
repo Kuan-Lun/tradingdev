@@ -1,0 +1,39 @@
+# XGBoost Direction Prediction Strategy
+
+strategy:
+  name: "xgboost_direction"
+  description: "XGBoost-based direction prediction with rolling retraining"
+  parameters:
+    model:
+      n_estimators: 100
+      max_depth: 6
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      early_stopping_rounds: 10
+      random_state: 42
+    lookback_candidates: [12, 24, 48, 96, 168]
+    retrain_interval: 24
+    validation_ratio: 0.2
+    signal_threshold: 0.5
+
+validation:
+  train_start: "2024-01-01"
+  train_end: "2024-12-31"
+  test_start: "2025-01-01"
+  test_end: "2025-12-31"
+  target_metric: "sharpe_ratio"
+
+backtest:
+  symbol: "BTC/USDT"
+  timeframe: "1h"
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
+  init_cash: 10000.0
+  fees: 0.0006
+  slippage: 0.0005
+
+data:
+  source: "binance_api"
+  raw_path: "data/raw/btcusdt_1h_2024_2025.csv"
+  processed_path: "data/processed/btcusdt_1h_2024_2025.parquet"
