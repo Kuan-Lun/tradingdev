@@ -1,12 +1,20 @@
 """KD Stochastic Oscillator crossover trading strategy."""
 
-from typing import Any
+from __future__ import annotations
 
-import pandas as pd
+import itertools
+from typing import TYPE_CHECKING, Any
 
-from btc_strategy.data.schemas import KDStrategyConfig
+from btc_strategy.backtest.engine import BacktestEngine
+from btc_strategy.data.schemas import KDFitConfig, KDStrategyConfig
 from btc_strategy.indicators.kd import KDIndicator
 from btc_strategy.strategies.base import BaseStrategy
+from btc_strategy.utils.logger import setup_logger
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+logger = setup_logger(__name__)
 
 
 class KDStrategy(BaseStrategy):
@@ -22,12 +30,81 @@ class KDStrategy(BaseStrategy):
     The backtest engine applies a 1-bar shift before execution.
     """
 
-    def __init__(self, config: KDStrategyConfig) -> None:
+    def __init__(
+        self,
+        config: KDStrategyConfig,
+        fit_config: KDFitConfig | None = None,
+        backtest_engine: BacktestEngine | None = None,
+    ) -> None:
         self._config = config
+        self._fit_config = fit_config
+        self._backtest_engine = backtest_engine
         self._indicator = KDIndicator(
             k_period=config.k_period,
             d_period=config.d_period,
             smooth_k=config.smooth_k,
+        )
+
+    def fit(self, df: pd.DataFrame) -> None:
+        """Grid search over KD parameter combinations.
+
+        For each combination, runs a full backtest on *df* and selects
+        the parameters that maximise the configured target metric.
+
+        Args:
+            df: Training OHLCV DataFrame.
+        """
+        if self._fit_config is None:
+            return
+
+        engine = self._backtest_engine or BacktestEngine()
+        target = self._fit_config.target_metric
+
+        grid = list(
+            itertools.product(
+                self._fit_config.k_period_range,
+                self._fit_config.d_period_range,
+                self._fit_config.smooth_k_range,
+                self._fit_config.overbought_range,
+                self._fit_config.oversold_range,
+            )
+        )
+
+        logger.info("KD grid search: %d combinations", len(grid))
+
+        best_metric = -float("inf")
+        best_config = self._config
+
+        for k_period, d_period, smooth_k, overbought, oversold in grid:
+            trial_config = KDStrategyConfig(
+                k_period=k_period,
+                d_period=d_period,
+                smooth_k=smooth_k,
+                overbought=overbought,
+                oversold=oversold,
+            )
+            trial = KDStrategy(config=trial_config)
+            signals = trial.generate_signals(df)
+            metrics = engine.run(signals)
+            value = metrics.get(target, float("-inf"))
+
+            if isinstance(value, float) and value > best_metric:
+                best_metric = value
+                best_config = trial_config
+
+        # Update self with best parameters
+        self._config = best_config
+        self._indicator = KDIndicator(
+            k_period=best_config.k_period,
+            d_period=best_config.d_period,
+            smooth_k=best_config.smooth_k,
+        )
+
+        logger.info(
+            "Best KD params: %s (%s=%.4f)",
+            best_config.model_dump(),
+            target,
+            best_metric,
         )
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
