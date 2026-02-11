@@ -182,6 +182,13 @@ btc-usdt-strategy/
 - 需檢查的圖表：Class Diagram、Pipeline Sequence Diagram、Module Dependency Graph
 - 若僅修改函式內部邏輯而未改變類別/模組結構，則無需更新
 
+## 策略文件維護
+
+- 當新增策略時，須在 `docs/strategies/` 下新增對應的 `.md` 說明文件，並更新 `docs/strategies/README.md` 索引
+- 當修改既有策略的介面、參數、信號邏輯或配置格式時，須同步更新對應的策略文件
+- 策略文件應包含：策略原理、參數說明、信號邏輯、對應的 YAML 配置範例、使用方式
+- 若僅修改內部實作細節而未改變外部行為（參數、信號、配置），則無需更新
+
 ## 工具鏈指令
 
 ```bash
