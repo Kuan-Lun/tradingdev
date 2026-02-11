@@ -77,3 +77,49 @@ class KDStrategyConfig(BaseModel):
             msg = "oversold must be between 0 and 100"
             raise ValueError(msg)
         return v
+
+
+class KDFitConfig(BaseModel):
+    """Grid search configuration for KDStrategy.fit()."""
+
+    k_period_range: list[int] = [9, 14, 21]
+    d_period_range: list[int] = [3, 5]
+    smooth_k_range: list[int] = [3, 5]
+    overbought_range: list[float] = [70.0, 80.0, 90.0]
+    oversold_range: list[float] = [10.0, 20.0, 30.0]
+    target_metric: str = "sharpe_ratio"
+
+
+class WalkForwardConfig(BaseModel):
+    """Walk-forward validation configuration."""
+
+    train_start: datetime | None = None
+    train_end: datetime | None = None
+    test_start: datetime | None = None
+    test_end: datetime | None = None
+    n_splits: int = 1
+    train_ratio: float = 0.8
+    expanding: bool = False
+    target_metric: str = "sharpe_ratio"
+
+
+class XGBoostModelConfig(BaseModel):
+    """XGBoost model hyperparameters."""
+
+    n_estimators: int = 100
+    max_depth: int = 6
+    learning_rate: float = 0.1
+    subsample: float = 0.8
+    colsample_bytree: float = 0.8
+    early_stopping_rounds: int = 10
+    random_state: int = 42
+
+
+class XGBoostStrategyConfig(BaseModel):
+    """XGBoost direction prediction strategy configuration."""
+
+    model: XGBoostModelConfig = XGBoostModelConfig()
+    lookback_candidates: list[int] = [12, 24, 48, 96, 168]
+    retrain_interval: int = 24
+    validation_ratio: float = 0.2
+    signal_threshold: float = 0.5

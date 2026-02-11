@@ -1,9 +1,12 @@
 """Abstract base class for all trading strategies."""
 
-from abc import ABC, abstractmethod
-from typing import Any
+from __future__ import annotations
 
-import pandas as pd
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class BaseStrategy(ABC):
@@ -27,6 +30,16 @@ class BaseStrategy(ABC):
             DataFrame with a ``signal`` column added.
         """
         ...
+
+    def fit(self, df: pd.DataFrame) -> None:  # noqa: B027
+        """Fit/optimize the strategy on training data.
+
+        Default implementation is a no-op. Override in subclasses
+        that support parameter optimization or model training.
+
+        Args:
+            df: Training OHLCV DataFrame.
+        """
 
     @abstractmethod
     def get_parameters(self) -> dict[str, Any]:
