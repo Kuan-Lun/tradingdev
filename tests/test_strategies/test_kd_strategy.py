@@ -2,7 +2,8 @@
 
 import pandas as pd
 
-from btc_strategy.data.schemas import KDStrategyConfig
+from btc_strategy.backtest.engine import BacktestEngine
+from btc_strategy.data.schemas import KDFitConfig, KDStrategyConfig
 from btc_strategy.strategies.kd_strategy import KDStrategy
 
 
@@ -11,11 +12,15 @@ class TestKDStrategy:
         self.config = KDStrategyConfig()
         self.strategy = KDStrategy(config=self.config)
 
-    def test_signal_column_exists(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
+    def test_signal_column_exists(
+        self, sample_ohlcv_with_kd: pd.DataFrame
+    ) -> None:
         result = self.strategy.generate_signals(sample_ohlcv_with_kd)
         assert "signal" in result.columns
 
-    def test_signal_values_valid(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
+    def test_signal_values_valid(
+        self, sample_ohlcv_with_kd: pd.DataFrame
+    ) -> None:
         result = self.strategy.generate_signals(sample_ohlcv_with_kd)
         unique_signals = set(result["signal"].unique())
         assert unique_signals.issubset({-1, 0, 1})
@@ -33,13 +38,74 @@ class TestKDStrategy:
         assert params["overbought"] == 80.0
         assert params["oversold"] == 20.0
 
-    def test_custom_config(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
+    def test_custom_config(
+        self, sample_ohlcv_with_kd: pd.DataFrame
+    ) -> None:
         config = KDStrategyConfig(overbought=90.0, oversold=10.0)
         strategy = KDStrategy(config=config)
         result = strategy.generate_signals(sample_ohlcv_with_kd)
         assert "signal" in result.columns
 
-    def test_no_look_ahead_bias(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
+    def test_no_look_ahead_bias(
+        self, sample_ohlcv_with_kd: pd.DataFrame
+    ) -> None:
         """First bar always has signal=0 (no prior data for crossover)."""
         result = self.strategy.generate_signals(sample_ohlcv_with_kd)
         assert result["signal"].iloc[0] == 0
+
+
+class TestKDStrategyFit:
+    def test_fit_without_fit_config_is_noop(
+        self, sample_ohlcv_with_kd: pd.DataFrame
+    ) -> None:
+        """fit() with no fit_config should not change parameters."""
+        config = KDStrategyConfig()
+        strategy = KDStrategy(config=config)
+        original_params = strategy.get_parameters().copy()
+        strategy.fit(sample_ohlcv_with_kd)
+        assert strategy.get_parameters() == original_params
+
+    def test_fit_updates_parameters(
+        self, sample_ohlcv_with_kd: pd.DataFrame
+    ) -> None:
+        """fit() with fit_config should search and may update params."""
+        config = KDStrategyConfig()
+        fit_config = KDFitConfig(
+            k_period_range=[9, 14],
+            d_period_range=[3],
+            smooth_k_range=[3],
+            overbought_range=[80.0],
+            oversold_range=[20.0],
+            target_metric="sharpe_ratio",
+        )
+        engine = BacktestEngine(
+            init_cash=10_000.0, fees=0.0, slippage=0.0
+        )
+        strategy = KDStrategy(
+            config=config,
+            fit_config=fit_config,
+            backtest_engine=engine,
+        )
+        strategy.fit(sample_ohlcv_with_kd)
+        params = strategy.get_parameters()
+        assert params["k_period"] in [9, 14]
+
+    def test_fit_generates_valid_signals_after(
+        self, sample_ohlcv_with_kd: pd.DataFrame
+    ) -> None:
+        """After fit(), generate_signals still produces valid output."""
+        fit_config = KDFitConfig(
+            k_period_range=[9, 14],
+            d_period_range=[3],
+            smooth_k_range=[3],
+            overbought_range=[80.0],
+            oversold_range=[20.0],
+        )
+        strategy = KDStrategy(
+            config=KDStrategyConfig(),
+            fit_config=fit_config,
+        )
+        strategy.fit(sample_ohlcv_with_kd)
+        result = strategy.generate_signals(sample_ohlcv_with_kd)
+        assert "signal" in result.columns
+        assert set(result["signal"].unique()).issubset({-1, 0, 1})
