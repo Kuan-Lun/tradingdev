@@ -160,6 +160,7 @@ btc-usdt-strategy/
 - merge commit 訊息需清楚描述該次 session 的完整成果
 - 格式：`feat: <一句話描述整體成果>`
 - 這樣 `git log --first-parent main` 可看到每次 vibe coding session 的完整成果
+- 合併完成後刪除已合併的 feature 分支：`git branch -d feature/<name>`
 
 ### Tag 規範
 
