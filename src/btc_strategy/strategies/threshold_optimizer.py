@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from btc_strategy.ml.features import FeatureEngineer
 from btc_strategy.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ class ThresholdOptimizer:
         model: XGBoostDirectionModel,
         candidates: list[float],
         default_threshold: float,
+        feature_engineer: FeatureEngineer | None = None,
     ) -> float:
         """Search for the lowest threshold where P&L >= 0.
 
@@ -48,9 +50,7 @@ class ThresholdOptimizer:
         Returns:
             Selected threshold value.
         """
-        from btc_strategy.ml.features import FeatureEngineer
-
-        fe = FeatureEngineer(lookback=0)
+        fe = feature_engineer if feature_engineer is not None else FeatureEngineer()
         feat_val = fe.transform(val_df, include_target=False)
         if len(feat_val) == 0:
             return default_threshold
