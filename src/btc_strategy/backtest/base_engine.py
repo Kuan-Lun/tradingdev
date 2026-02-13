@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pandas as pd
+
+    from btc_strategy.backtest.result import BacktestResult
 
 
 class BaseBacktestEngine(ABC):
@@ -35,13 +37,13 @@ class BaseBacktestEngine(ABC):
         self._take_profit = take_profit
 
     @abstractmethod
-    def run(self, df: pd.DataFrame) -> dict[str, Any]:
+    def run(self, df: pd.DataFrame) -> BacktestResult:
         """Run backtest on a DataFrame with a ``signal`` column.
 
         Args:
             df: DataFrame with at least ``close`` and ``signal``.
 
         Returns:
-            Dictionary of performance metrics.
+            BacktestResult containing metrics, equity curve, and trades.
         """
         ...

@@ -43,7 +43,7 @@ classDiagram
         -_position_size_usdt: float | None
         -_stop_loss: float | None
         -_take_profit: float | None
-        +run(df) dict*
+        +run(df) BacktestResult*
     }
 
     %% ──────────────── Crawler 實作 ────────────────
@@ -155,16 +155,28 @@ classDiagram
 
     %% ──────────────── 回測引擎實作 ────────────────
 
+    class BacktestResult {
+        <<dataclass>>
+        +metrics: dict
+        +equity_curve: ndarray
+        +trades: list~dict~
+        +timestamps: ndarray | None
+        +init_cash: float = 10000.0
+        +mode: str = "signal"
+    }
+
     class SignalBacktestEngine {
-        +run(df) dict
+        +run(df) BacktestResult
     }
 
     class VolumeBacktestEngine {
-        +run(df) dict
+        +run(df) BacktestResult
     }
 
     BaseBacktestEngine <|-- SignalBacktestEngine
     BaseBacktestEngine <|-- VolumeBacktestEngine
+    SignalBacktestEngine ..> BacktestResult : 產生
+    VolumeBacktestEngine ..> BacktestResult : 產生
 
     %% ──────────────── Validation 模組 ────────────────
 
@@ -193,6 +205,16 @@ classDiagram
         +train_metrics: dict
         +test_metrics: dict
         +strategy_params: dict
+        +train_backtest: BacktestResult | None
+        +test_backtest: BacktestResult | None
+    }
+
+    class PipelineResult {
+        <<dataclass>>
+        +mode: str
+        +backtest_result: BacktestResult | None
+        +fold_results: list~WalkForwardResult~
+        +config_snapshot: dict
     }
 
     WalkForwardValidator *-- WalkForwardConfig : 組合
@@ -200,6 +222,10 @@ classDiagram
     WalkForwardValidator *-- DataSplitter : 組合
     WalkForwardValidator ..> WalkForwardResult : 產生
     WalkForwardValidator ..> BaseStrategy : 呼叫 fit/generate_signals
+    WalkForwardResult o-- BacktestResult : train/test backtest
+
+    PipelineResult o-- BacktestResult : simple mode
+    PipelineResult o-- WalkForwardResult : walk-forward mode
 
     %% ──────────────── Pydantic 資料模型 ────────────────
 
@@ -326,9 +352,40 @@ classDiagram
         +create_strategy(raw_config, engine) BaseStrategy
     }
 
+    class cache_mod ["utils/cache"] {
+        +compute_cache_key(config_path, processed_path) str
+        +load_cached_result(config_path, processed_path) PipelineResult | None
+        +save_cached_result(result, config_path, processed_path) Path
+        +clear_cache() int
+    }
+
+    %% ──────────────── Dashboard 模組 ────────────────
+
+    class analysis_mod ["dashboard/analysis"] {
+        +build_equity_series(equity_curve, timestamps) Series
+        +build_trades_df(trades, timestamps) DataFrame
+        +cumulative_pnl(equity, init_cash) Series
+        +cumulative_pnl_pct(equity, init_cash) Series
+        +consecutive_loss_counts(trades_df) Series
+        +rolling_mdd_absolute(equity, window_bars) Series
+        +monthly_volume(trades_df) DataFrame
+        +filter_by_month(equity, trades_df, month) tuple
+        +available_months(timestamps) list
+    }
+
+    class dashboard_app ["dashboard/app"] {
+        +main() None
+    }
+
+    dashboard_app ..> analysis_mod : 使用
+    dashboard_app ..> cache_mod : 讀取 cache
+    dashboard_app ..> PipelineResult : 載入
+    dashboard_app ..> BacktestResult : 顯示
+
     SignalBacktestEngine ..> metrics_mod : 使用
     VolumeBacktestEngine ..> metrics_mod : 使用
     FeatureEngineer ..> tech_features_mod : 使用
+    cache_mod ..> PipelineResult : 序列化
 ```
 
 ## Pipeline Sequence Diagram
@@ -347,6 +404,7 @@ sequenceDiagram
     participant Strat as Strategy
     participant Engine as BacktestEngine
     participant Metrics as calculate_metrics
+    participant Cache as utils/cache
 
     Main->>Cfg: load_config(yaml_path)
     Cfg-->>Main: dict (raw config)
@@ -380,13 +438,16 @@ sequenceDiagram
     end
 
     rect rgb(230, 255, 230)
-        Note over Engine,Metrics: 回測執行
+        Note over Engine,Cache: 回測執行與快取
         Main->>Engine: run(df_with_signals)
         Note right of Engine: SignalBacktestEngine: vectorbt Portfolio<br/>VolumeBacktestEngine: 逐 bar 模擬
         Engine->>Metrics: calculate_metrics / calculate_metrics_from_simulation
         Metrics-->>Engine: metrics dict
-        Engine-->>Main: metrics dict
-        Main->>Main: format_metrics_report(metrics)
+        Engine-->>Main: BacktestResult(metrics, equity_curve, trades, …)
+        Main->>Main: format_metrics_report(result.metrics)
+        Main->>Main: PipelineResult(mode="simple", backtest_result=result, …)
+        Main->>Cache: save_cached_result(pipeline, config_path, processed_path)
+        Note right of Cache: 序列化 PipelineResult 至 data/cache/<hash>.pkl
     end
 ```
 
@@ -420,18 +481,65 @@ sequenceDiagram
             Note right of Strat: KD: grid search 最佳參數<br/>XGBoost: 選 lookback + threshold + 訓練模型
 
             WFV->>Strat: generate_signals(train_df)
-            WFV->>Engine: run(train_signals) → train_metrics
+            WFV->>Engine: run(train_signals) → train_result
+            WFV->>WFV: train_result.metrics → train_metrics
 
             WFV->>Strat: generate_signals(test_df)
             Note right of Strat: XGBoost: RollingRetrainer 滾動重訓
-            WFV->>Engine: run(test_signals) → test_metrics
+            WFV->>Engine: run(test_signals) → test_result
+            WFV->>WFV: test_result.metrics → test_metrics
 
-            WFV->>WFV: 收集 WalkForwardResult
+            WFV->>WFV: WalkForwardResult(…, train_backtest=train_result, test_backtest=test_result)
         end
     end
 
     WFV-->>Main: list[WalkForwardResult]
     Main->>Main: format_walk_forward_report(results)
+    Main->>Main: PipelineResult(mode="walk_forward", fold_results=results, …)
+    Main->>Main: save_cached_result(pipeline, config_path, processed_path)
+```
+
+### Dashboard 啟動流程（Viewer-Only）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as dashboard/app
+    participant Cache as utils/cache
+    participant Cfg as load_config
+    participant Analysis as dashboard/analysis
+    participant UI as Streamlit UI
+
+    App->>App: _parse_args() → config_path
+
+    alt session_state 已有 PipelineResult
+        App->>App: 直接使用 session_state
+    else 首次載入
+        App->>Cfg: load_config(config_path)
+        Cfg-->>App: raw_config
+        App->>Cache: load_cached_result(config_path, processed_path)
+        alt cache hit
+            Cache-->>App: PipelineResult
+            App->>App: 存入 session_state
+        else cache miss
+            App->>UI: st.error("Run pipeline first")
+            App->>App: st.stop()
+        end
+    end
+
+    alt pipeline.mode == "simple"
+        App->>App: _render_simple(pipeline) — 使用 backtest_result
+    else pipeline.mode == "walk_forward"
+        App->>UI: Sidebar: Fold 選擇器 + Train/Test 切換
+        App->>App: _render_walk_forward(pipeline) — 使用 fold.test_backtest 或 fold.train_backtest
+    end
+
+    rect rgb(230, 255, 245)
+        Note over Analysis,UI: 共用圖表渲染 _render_charts()
+        App->>Analysis: build_equity_series / build_trades_df
+        App->>Analysis: cumulative_pnl / consecutive_loss_counts / ...
+        App->>UI: KPI row + st.plotly_chart (5 tabs)
+    end
 ```
 
 ## Module Dependency Graph
@@ -440,6 +548,7 @@ sequenceDiagram
 graph TD
     subgraph Entry["進入點"]
         MAIN["main.py"]
+        DASH["dashboard/app.py"]
     end
 
     subgraph Crawlers["crawlers/"]
@@ -477,10 +586,17 @@ graph TD
         BBE[BaseBacktestEngine]
         SBE[SignalBacktestEngine]
         VBE[VolumeBacktestEngine]
+        BR[BacktestResult]
+        PR[PipelineResult]
         MT[metrics.py]
         RPT[report.py]
         BBE --> SBE
         BBE --> VBE
+    end
+
+    subgraph Dashboard["dashboard/"]
+        DAPP[app.py]
+        DANA[analysis.py]
     end
 
     subgraph Validation["validation/"]
@@ -501,10 +617,12 @@ graph TD
     subgraph Utils["utils/"]
         CFG[config.py]
         LOG[logger.py]
+        CACHE[cache.py]
     end
 
     MAIN --> CFG
     MAIN --> LOG
+    MAIN --> CACHE
     MAIN --> SCH
     MAIN --> BAC
     MAIN --> DL
@@ -512,6 +630,15 @@ graph TD
     MAIN --> REG
     MAIN --> BBE
     MAIN --> WFV
+    MAIN --> PR
+
+    DASH --> DAPP
+    DAPP --> DANA
+    DAPP --> CACHE
+    DAPP --> CFG
+    DAPP --> SCH
+    DAPP --> PR
+    DAPP --> BR
 
     REG --> KDS
     REG --> XGBS
@@ -540,7 +667,10 @@ graph TD
     WFV -.-> BS
 
     SBE --> MT
+    SBE --> BR
     VBE --> MT
+    VBE --> BR
+    CACHE --> PR
 
     style BVC stroke-dasharray: 5 5
 ```

@@ -76,8 +76,8 @@ class KDStrategy(BaseStrategy):
             )
             trial = KDStrategy(config=trial_config)
             signals = trial.generate_signals(df)
-            metrics = engine.run(signals)
-            value = metrics.get(target, float("-inf"))
+            result = engine.run(signals)
+            value = result.metrics.get(target, float("-inf"))
 
             if isinstance(value, float) and value > best_metric:
                 best_metric = value
