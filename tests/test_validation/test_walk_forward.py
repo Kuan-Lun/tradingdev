@@ -87,6 +87,28 @@ class TestWalkForwardValidator:
         assert "total_return" in summary
         assert "mean" in summary["total_return"]
 
+    def test_result_contains_full_backtest(
+        self, walk_forward_ohlcv_df: pd.DataFrame
+    ) -> None:
+        ts = walk_forward_ohlcv_df["timestamp"]
+        mid = ts.iloc[len(ts) // 2]
+        config = WalkForwardConfig(
+            train_start=ts.iloc[0].to_pydatetime(),
+            train_end=mid.to_pydatetime(),
+            test_start=mid.to_pydatetime(),
+            test_end=ts.iloc[-1].to_pydatetime(),
+        )
+        strategy = KDStrategy(config=KDStrategyConfig())
+        validator = WalkForwardValidator(config=config, engine=self.engine)
+        results = validator.validate(strategy, walk_forward_ohlcv_df)
+        r = results[0]
+        assert r.train_backtest is not None
+        assert r.test_backtest is not None
+        assert r.train_backtest.metrics == r.train_metrics
+        assert r.test_backtest.metrics == r.test_metrics
+        assert len(r.train_backtest.equity_curve) > 0
+        assert len(r.test_backtest.equity_curve) > 0
+
     def test_format_report(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
         ts = walk_forward_ohlcv_df["timestamp"]
         mid = ts.iloc[len(ts) // 2]

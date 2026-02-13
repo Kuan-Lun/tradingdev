@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from btc_strategy.backtest.base_engine import (
         BaseBacktestEngine,
     )
+    from btc_strategy.backtest.result import BacktestResult
     from btc_strategy.data.schemas import WalkForwardConfig
     from btc_strategy.strategies.base import BaseStrategy
 
@@ -34,6 +35,8 @@ class WalkForwardResult:
     train_metrics: dict[str, Any] = field(default_factory=dict)
     test_metrics: dict[str, Any] = field(default_factory=dict)
     strategy_params: dict[str, Any] = field(default_factory=dict)
+    train_backtest: BacktestResult | None = None
+    test_backtest: BacktestResult | None = None
 
 
 class WalkForwardValidator:
@@ -96,10 +99,12 @@ class WalkForwardValidator:
         strategy.fit(train_df)
 
         train_signals = strategy.generate_signals(train_df)
-        train_metrics = self._engine.run(train_signals)
+        train_result = self._engine.run(train_signals)
+        train_metrics = train_result.metrics
 
         test_signals = strategy.generate_signals(test_df)
-        test_metrics = self._engine.run(test_signals)
+        test_result = self._engine.run(test_signals)
+        test_metrics = test_result.metrics
 
         logger.info(
             "Fold %d: train %s=%.4f, test %s=%.4f",
@@ -119,4 +124,6 @@ class WalkForwardValidator:
             train_metrics=train_metrics,
             test_metrics=test_metrics,
             strategy_params=strategy.get_parameters(),
+            train_backtest=train_result,
+            test_backtest=test_result,
         )

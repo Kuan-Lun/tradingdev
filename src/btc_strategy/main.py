@@ -11,6 +11,9 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from btc_strategy.backtest.pipeline_result import (
+    PipelineResult,
+)
 from btc_strategy.backtest.report import (
     format_metrics_report,
 )
@@ -30,6 +33,7 @@ from btc_strategy.data.schemas import (
     WalkForwardConfig,
 )
 from btc_strategy.strategies.registry import create_strategy
+from btc_strategy.utils.cache import save_cached_result
 from btc_strategy.utils.config import load_config
 from btc_strategy.utils.logger import setup_logger
 from btc_strategy.validation.report import (
@@ -73,14 +77,32 @@ def main() -> None:
     if "validation" in raw_config:
         wf_cfg = WalkForwardConfig(**raw_config["validation"])
         validator = WalkForwardValidator(config=wf_cfg, engine=engine)
-        results = validator.validate(strategy, df)
-        report = format_walk_forward_report(results)
+        fold_results = validator.validate(strategy, df)
+        report = format_walk_forward_report(fold_results)
         logger.info("Walk-forward results:\n%s", report)
+        pipeline = PipelineResult(
+            mode="walk_forward",
+            fold_results=fold_results,
+            config_snapshot=raw_config,
+        )
     else:
         signals = strategy.generate_signals(df)
-        metrics = engine.run(signals)
-        report = format_metrics_report(metrics)
+        result = engine.run(signals)
+        report = format_metrics_report(result.metrics)
         logger.info("Backtest results:\n%s", report)
+        pipeline = PipelineResult(
+            mode="simple",
+            backtest_result=result,
+            config_snapshot=raw_config,
+        )
+
+    processed_path = Path(
+        str(raw_config["data"]["processed_path"])
+    )
+    cache_file = save_cached_result(
+        pipeline, args.config, processed_path
+    )
+    logger.info("Result cached → %s", cache_file)
 
 
 def _create_engine(

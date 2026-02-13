@@ -14,6 +14,7 @@ venv/
 # Data files
 data/raw/*
 data/processed/*
+data/cache/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 data/**/*.csv
