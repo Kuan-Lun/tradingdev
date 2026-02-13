@@ -1,0 +1,55 @@
+"""Strategy registry for dynamic strategy creation."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from btc_strategy.data.schemas import (
+    KDFitConfig,
+    KDStrategyConfig,
+    XGBoostStrategyConfig,
+)
+from btc_strategy.strategies.kd_strategy import KDStrategy
+from btc_strategy.strategies.xgboost_strategy import (
+    XGBoostStrategy,
+)
+
+if TYPE_CHECKING:
+    from btc_strategy.backtest.base_engine import (
+        BaseBacktestEngine,
+    )
+    from btc_strategy.strategies.base import BaseStrategy
+
+
+def create_strategy(
+    raw_config: dict[str, Any],
+    engine: BaseBacktestEngine,
+) -> BaseStrategy:
+    """Build a strategy instance from YAML configuration.
+
+    Raises:
+        ValueError: If the strategy name is not recognised.
+    """
+    name: str = raw_config["strategy"]["name"]
+    params = raw_config["strategy"]["parameters"]
+
+    if name == "kd_crossover":
+        strategy_config = KDStrategyConfig(**params)
+        fit_config: KDFitConfig | None = None
+        if "fit" in raw_config["strategy"]:
+            fit_config = KDFitConfig(**raw_config["strategy"]["fit"])
+        return KDStrategy(
+            config=strategy_config,
+            fit_config=fit_config,
+            backtest_engine=engine,
+        )
+
+    if name == "xgboost_direction":
+        strategy_config_xgb = XGBoostStrategyConfig(**params)
+        return XGBoostStrategy(
+            config=strategy_config_xgb,
+            backtest_engine=engine,
+        )
+
+    msg = f"Unknown strategy: {name}"
+    raise ValueError(msg)

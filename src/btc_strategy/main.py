@@ -1,4 +1,4 @@
-"""Main entry point for running the full backtest pipeline.
+"""Main entry point for the backtest pipeline.
 
 Usage::
 
@@ -9,65 +9,44 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from btc_strategy.backtest.engine import BacktestEngine
-from btc_strategy.backtest.metrics import format_metrics_report
-from btc_strategy.crawlers.binance_api import BinanceAPICrawler
+from btc_strategy.backtest.report import (
+    format_metrics_report,
+)
+from btc_strategy.backtest.signal_engine import (
+    SignalBacktestEngine,
+)
+from btc_strategy.backtest.volume_engine import (
+    VolumeBacktestEngine,
+)
+from btc_strategy.crawlers.binance_api import (
+    BinanceAPICrawler,
+)
 from btc_strategy.data.loader import DataLoader
 from btc_strategy.data.processor import DataProcessor
 from btc_strategy.data.schemas import (
     BacktestConfig,
-    KDFitConfig,
-    KDStrategyConfig,
     WalkForwardConfig,
-    XGBoostStrategyConfig,
 )
-from btc_strategy.strategies.kd_strategy import KDStrategy
-from btc_strategy.strategies.xgboost_strategy import XGBoostStrategy
+from btc_strategy.strategies.registry import create_strategy
 from btc_strategy.utils.config import load_config
 from btc_strategy.utils.logger import setup_logger
+from btc_strategy.validation.report import (
+    format_walk_forward_report,
+)
 from btc_strategy.validation.walk_forward import (
     WalkForwardValidator,
-    format_walk_forward_report,
 )
 
 if TYPE_CHECKING:
-    from btc_strategy.strategies.base import BaseStrategy
+    import pandas as pd
+
+    from btc_strategy.backtest.base_engine import (
+        BaseBacktestEngine,
+    )
 
 logger = setup_logger(__name__)
-
-
-def _create_strategy(
-    raw_config: dict[str, Any],
-    engine: BacktestEngine,
-) -> BaseStrategy:
-    """Build a strategy instance from YAML configuration."""
-    name: str = raw_config["strategy"]["name"]
-    params = raw_config["strategy"]["parameters"]
-
-    if name == "kd_crossover":
-        strategy_config = KDStrategyConfig(**params)
-        fit_config: KDFitConfig | None = None
-        if "fit" in raw_config["strategy"]:
-            fit_config = KDFitConfig(
-                **raw_config["strategy"]["fit"]
-            )
-        return KDStrategy(
-            config=strategy_config,
-            fit_config=fit_config,
-            backtest_engine=engine,
-        )
-
-    if name == "xgboost_direction":
-        strategy_config_xgb = XGBoostStrategyConfig(**params)
-        return XGBoostStrategy(
-            config=strategy_config_xgb,
-            backtest_engine=engine,
-        )
-
-    msg = f"Unknown strategy: {name}"
-    raise ValueError(msg)
 
 
 def main() -> None:
@@ -79,93 +58,74 @@ def main() -> None:
         "--config",
         type=Path,
         required=True,
-        help="Path to strategy YAML config",
     )
     args = parser.parse_args()
 
-    # 1. Load configuration
     raw_config = load_config(args.config)
-    backtest_config = BacktestConfig(**raw_config["backtest"])
+    bt_cfg = BacktestConfig(**raw_config["backtest"])
 
     logger.info("Strategy: %s", raw_config["strategy"]["name"])
-    logger.info(
-        "Backtest period: %s to %s",
-        backtest_config.start_date,
-        backtest_config.end_date,
+
+    df = _load_data(raw_config, bt_cfg)
+    engine = _create_engine(bt_cfg)
+    strategy = create_strategy(raw_config, engine)
+
+    if "validation" in raw_config:
+        wf_cfg = WalkForwardConfig(**raw_config["validation"])
+        validator = WalkForwardValidator(config=wf_cfg, engine=engine)
+        results = validator.validate(strategy, df)
+        report = format_walk_forward_report(results)
+        logger.info("Walk-forward results:\n%s", report)
+    else:
+        signals = strategy.generate_signals(df)
+        metrics = engine.run(signals)
+        report = format_metrics_report(metrics)
+        logger.info("Backtest results:\n%s", report)
+
+
+def _create_engine(
+    config: BacktestConfig,
+) -> BaseBacktestEngine:
+    """Create the appropriate engine based on mode."""
+    cls = VolumeBacktestEngine if config.mode == "volume" else SignalBacktestEngine
+    return cls(
+        init_cash=config.init_cash,
+        fees=config.fees,
+        slippage=config.slippage,
+        freq=config.timeframe,
+        position_size_usdt=config.position_size_usdt,
+        stop_loss=config.stop_loss,
+        take_profit=config.take_profit,
     )
 
-    # 2. Fetch data (skip if processed file already exists)
-    processed_path = Path(raw_config["data"]["processed_path"])
+
+def _load_data(
+    raw_config: dict[str, object],
+    bt_cfg: BacktestConfig,
+) -> pd.DataFrame:
+    """Load or fetch+process data."""
+    processed_path = Path(
+        str(raw_config["data"]["processed_path"])  # type: ignore[index]
+    )
     if not processed_path.exists():
         logger.info("Fetching data from Binance API...")
         crawler = BinanceAPICrawler()
         raw_df = crawler.fetch(
-            symbol=backtest_config.symbol,
-            timeframe=backtest_config.timeframe,
-            start=backtest_config.start_date,
-            end=backtest_config.end_date,
+            symbol=bt_cfg.symbol,
+            timeframe=bt_cfg.timeframe,
+            start=bt_cfg.start_date,
+            end=bt_cfg.end_date,
         )
-
-        raw_path = Path(raw_config["data"]["raw_path"])
+        raw_path = Path(
+            str(raw_config["data"]["raw_path"])  # type: ignore[index]
+        )
         crawler.save_raw(raw_df, raw_path)
-
-        logger.info("Processing data...")
         processor = DataProcessor()
         processed_df = processor.process(raw_df)
         processor.save_processed(processed_df, processed_path)
-    else:
-        logger.info(
-            "Found existing processed data at %s",
-            processed_path,
-        )
 
-    # 3. Load processed data
     loader = DataLoader()
-    df = loader.load_parquet(processed_path)
-
-    # 4. Create engine and strategy
-    engine = BacktestEngine(
-        init_cash=backtest_config.init_cash,
-        fees=backtest_config.fees,
-        slippage=backtest_config.slippage,
-        freq=backtest_config.timeframe,
-        position_size_usdt=backtest_config.position_size_usdt,
-        stop_loss=backtest_config.stop_loss,
-        take_profit=backtest_config.take_profit,
-        mode=backtest_config.mode,
-    )
-    strategy = _create_strategy(raw_config, engine)
-
-    # 5. Walk-forward validation or simple backtest
-    if "validation" in raw_config:
-        wf_config = WalkForwardConfig(
-            **raw_config["validation"]
-        )
-        validator = WalkForwardValidator(
-            config=wf_config, engine=engine
-        )
-        results = validator.validate(strategy, df)
-        report = format_walk_forward_report(results)
-        logger.info(
-            "Walk-forward validation results:\n%s", report
-        )
-    else:
-        # Simple single-run backtest (original flow)
-        logger.info("Generating signals...")
-        df_with_signals = strategy.generate_signals(df)
-
-        n_long = (df_with_signals["signal"] == 1).sum()
-        n_short = (df_with_signals["signal"] == -1).sum()
-        logger.info(
-            "Signals generated: %d long, %d short",
-            n_long,
-            n_short,
-        )
-
-        logger.info("Running backtest...")
-        metrics = engine.run(df_with_signals)
-        report = format_metrics_report(metrics)
-        logger.info("Backtest results:\n%s", report)
+    return loader.load_parquet(processed_path)
 
 
 if __name__ == "__main__":

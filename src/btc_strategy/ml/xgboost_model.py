@@ -46,9 +46,7 @@ class XGBoostDirectionModel(BaseModel):
                 ``target`` column.
             eval_df: Optional validation DataFrame for early stopping.
         """
-        feature_cols = [
-            c for c in df.columns if c not in _EXCLUDE_COLS
-        ]
+        feature_cols = [c for c in df.columns if c not in _EXCLUDE_COLS]
         self._feature_names = feature_cols
 
         x_train = df[feature_cols]
@@ -68,13 +66,9 @@ class XGBoostDirectionModel(BaseModel):
             subsample=self._config.subsample,
             colsample_bytree=self._config.colsample_bytree,
             random_state=self._config.random_state,
-            eval_metric=(
-                "mlogloss" if n_classes > 2 else "logloss"
-            ),
+            eval_metric=("mlogloss" if n_classes > 2 else "logloss"),
             early_stopping_rounds=(
-                self._config.early_stopping_rounds
-                if eval_df is not None
-                else None
+                self._config.early_stopping_rounds if eval_df is not None else None
             ),
         )
 
@@ -119,9 +113,7 @@ class XGBoostDirectionModel(BaseModel):
 
         x = df[self._feature_names]
         encoded_preds = self._model.predict(x)
-        preds = self._label_encoder.inverse_transform(
-            encoded_preds.astype(int)
-        )
+        preds = self._label_encoder.inverse_transform(encoded_preds.astype(int))
         return pd.Series(preds, index=df.index, dtype=float)
 
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
