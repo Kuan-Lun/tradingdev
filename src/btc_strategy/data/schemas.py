@@ -42,6 +42,10 @@ class BacktestConfig(BaseModel):
     init_cash: float = 10_000.0
     fees: float = 0.0006
     slippage: float = 0.0005
+    position_size_usdt: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    mode: str = "signal"
 
     @field_validator("end_date")
     @classmethod
@@ -122,4 +126,8 @@ class XGBoostStrategyConfig(BaseModel):
     lookback_candidates: list[int] = [12, 24, 48, 96, 168]
     retrain_interval: int = 24
     validation_ratio: float = 0.2
-    signal_threshold: float = 0.5
+    signal_threshold: float = 0.55
+    signal_threshold_candidates: list[float] | None = None
+    target_horizon: int = 1
+    min_bars_between_trades: int = 1
+    monthly_volume_target_usdt: float | None = None

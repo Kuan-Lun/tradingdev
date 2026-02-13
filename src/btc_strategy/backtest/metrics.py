@@ -1,8 +1,15 @@
-"""Performance metrics extraction from vectorbt Portfolio."""
+"""Performance metrics for vectorbt Portfolio and custom simulation."""
 
-from typing import Any
+from __future__ import annotations
 
-import vectorbt as vbt
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import numpy.typing as npt
+import pandas as pd
+
+if TYPE_CHECKING:
+    import vectorbt as vbt
 
 from btc_strategy.utils.logger import setup_logger
 
@@ -16,49 +23,240 @@ def calculate_metrics(pf: vbt.Portfolio) -> dict[str, Any]:
         pf: A vectorbt Portfolio object after backtest execution.
 
     Returns:
-        Dictionary containing:
-            - total_return (float): Total return as a ratio.
-            - sharpe_ratio (float): Annualized Sharpe ratio.
-            - max_drawdown (float): Maximum drawdown as a ratio.
-            - win_rate (float): Percentage of winning trades.
-            - profit_factor (float): Ratio of gross profit to gross loss.
-            - total_trades (int): Total number of trades.
-            - annual_return (float): Annualized return.
+        Dictionary of performance metrics including daily P&L stats.
     """
     trades = pf.trades
-    has_trades = len(trades.records_readable) > 0
+    records = trades.records_readable
+    has_trades = len(records) > 0
 
-    return {
+    # Total volume = sum of |entry_size * entry_price|
+    total_volume = 0.0
+    if has_trades and "Size" in records.columns:
+        entry_prices = records.get(
+            "Avg Entry Price",
+            records.get("Entry Price"),
+        )
+        if entry_prices is not None:
+            total_volume = float(
+                (records["Size"].abs() * entry_prices).sum()
+            )
+
+    # Daily P&L distribution
+    daily_pnl = _daily_pnl_stats(pf)
+
+    metrics: dict[str, Any] = {
         "total_return": float(pf.total_return()),
         "sharpe_ratio": float(pf.sharpe_ratio()),
         "max_drawdown": float(pf.max_drawdown()),
-        "win_rate": float(trades.win_rate()) if has_trades else 0.0,
-        "profit_factor": float(trades.profit_factor()) if has_trades else 0.0,
+        "win_rate": (
+            float(trades.win_rate()) if has_trades else 0.0
+        ),
+        "profit_factor": (
+            float(trades.profit_factor())
+            if has_trades
+            else 0.0
+        ),
         "total_trades": int(trades.count()),
+        "total_volume_usdt": total_volume,
         "annual_return": float(pf.annualized_return()),
+    }
+    metrics.update(daily_pnl)
+    return metrics
+
+
+def _daily_pnl_stats(pf: vbt.Portfolio) -> dict[str, Any]:
+    """Compute daily P&L distribution statistics.
+
+    Returns dict with keys prefixed ``daily_pnl_``.
+    """
+    try:
+        value = pf.value()
+        if len(value) < 2:
+            return _empty_daily_pnl()
+
+        # P&L in absolute USDT per bar, grouped by calendar day
+        pnl_series = value.diff().dropna()
+        if hasattr(pnl_series.index, "date"):
+            daily = pnl_series.groupby(
+                pnl_series.index.date
+            ).sum()
+        else:
+            daily = pnl_series
+
+        arr = np.array(daily, dtype=float)
+        if len(arr) == 0:
+            return _empty_daily_pnl()
+
+        return {
+            "daily_pnl_mean": float(np.mean(arr)),
+            "daily_pnl_std": float(np.std(arr)),
+            "daily_pnl_min": float(np.min(arr)),
+            "daily_pnl_max": float(np.max(arr)),
+            "daily_pnl_median": float(np.median(arr)),
+            "n_days": len(arr),
+        }
+    except Exception:
+        logger.debug(
+            "Could not compute daily P&L stats", exc_info=True
+        )
+        return _empty_daily_pnl()
+
+
+def _empty_daily_pnl() -> dict[str, Any]:
+    return {
+        "daily_pnl_mean": 0.0,
+        "daily_pnl_std": 0.0,
+        "daily_pnl_min": 0.0,
+        "daily_pnl_max": 0.0,
+        "daily_pnl_median": 0.0,
+        "n_days": 0,
+    }
+
+
+def calculate_metrics_from_simulation(
+    equity_curve: npt.NDArray[np.float64],
+    trades: list[dict[str, Any]],
+    init_cash: float,
+    timestamps: Any | None = None,
+) -> dict[str, Any]:
+    """Compute metrics from a custom bar-by-bar simulation.
+
+    Returns a dict with the same keys as :func:`calculate_metrics`
+    so that both engine modes produce interchangeable results.
+
+    Args:
+        equity_curve: Per-bar portfolio equity values.
+        trades: List of trade dicts with at least ``net_pnl``,
+            ``size_usdt``, and ``gross_pnl``.
+        init_cash: Starting capital.
+        timestamps: Optional array of bar timestamps for daily
+            P&L grouping.
+    """
+    n = len(equity_curve)
+    final_equity = float(equity_curve[-1]) if n > 0 else init_cash
+
+    total_return = (final_equity - init_cash) / init_cash
+    total_trades = len(trades)
+
+    # Volume: entry + exit for each trade → ×2
+    total_volume = sum(t["size_usdt"] for t in trades) * 2
+
+    # Win / loss stats
+    wins = [t for t in trades if t["net_pnl"] > 0]
+    losses = [t for t in trades if t["net_pnl"] <= 0]
+    win_rate = len(wins) / total_trades if total_trades else 0.0
+    sum_wins = sum(t["net_pnl"] for t in wins)
+    sum_losses = abs(sum(t["net_pnl"] for t in losses))
+    profit_factor = (
+        sum_wins / sum_losses if sum_losses > 0 else 0.0
+    )
+
+    # Daily P&L from equity curve
+    daily_pnl = _daily_pnl_from_equity(
+        equity_curve, timestamps
+    )
+
+    # Sharpe & drawdown from equity curve
+    if n >= 2:
+        returns = np.diff(equity_curve) / equity_curve[:-1]
+        n_days = daily_pnl.get("n_days", 1)
+        bars_per_day = max(n / max(n_days, 1), 1)
+        ann_factor = np.sqrt(365 * bars_per_day)
+        std = float(np.std(returns))
+        sharpe = (
+            float(np.mean(returns)) / std * ann_factor
+            if std > 0
+            else 0.0
+        )
+
+        cummax = np.maximum.accumulate(equity_curve)
+        drawdowns = (cummax - equity_curve) / cummax
+        max_drawdown = float(np.max(drawdowns))
+
+        total_days = max(n_days, 1)
+        annual_return = (
+            (1 + total_return) ** (365 / total_days) - 1
+        )
+    else:
+        sharpe = 0.0
+        max_drawdown = 0.0
+        annual_return = 0.0
+
+    metrics: dict[str, Any] = {
+        "total_return": total_return,
+        "sharpe_ratio": sharpe,
+        "max_drawdown": max_drawdown,
+        "win_rate": win_rate,
+        "profit_factor": profit_factor,
+        "total_trades": total_trades,
+        "total_volume_usdt": total_volume,
+        "annual_return": annual_return,
+    }
+    metrics.update(daily_pnl)
+    return metrics
+
+
+def _daily_pnl_from_equity(
+    equity_curve: npt.NDArray[np.float64],
+    timestamps: Any | None = None,
+) -> dict[str, Any]:
+    """Compute daily P&L stats from an equity curve array."""
+    if len(equity_curve) < 2:
+        return _empty_daily_pnl()
+
+    pnl_arr: npt.NDArray[np.float64] = np.diff(equity_curve)
+
+    if timestamps is not None:
+        try:
+            ts = pd.Series(timestamps[1:])
+            dates = ts.dt.date if hasattr(ts.dt, "date") else ts
+            groups: Any = dates.values
+            daily = pd.Series(pnl_arr).groupby(groups).sum()
+            pnl_arr = np.asarray(daily, dtype=np.float64)
+        except Exception:
+            pass  # keep pnl_arr as-is
+    arr = pnl_arr
+
+    if len(arr) == 0:
+        return _empty_daily_pnl()
+
+    return {
+        "daily_pnl_mean": float(np.mean(arr)),
+        "daily_pnl_std": float(np.std(arr)),
+        "daily_pnl_min": float(np.min(arr)),
+        "daily_pnl_max": float(np.max(arr)),
+        "daily_pnl_median": float(np.median(arr)),
+        "n_days": len(arr),
     }
 
 
 def format_metrics_report(metrics: dict[str, Any]) -> str:
-    """Format metrics dictionary into a human-readable report.
+    """Format metrics dictionary into a human-readable report."""
+    vol = metrics.get("total_volume_usdt", 0)
+    n_days = metrics.get("n_days", 0)
+    monthly_vol = vol / max(n_days, 1) * 30
 
-    Args:
-        metrics: Dictionary returned by :func:`calculate_metrics`.
-
-    Returns:
-        Formatted multi-line string.
-    """
     lines = [
-        "=" * 50,
+        "=" * 55,
         "  Backtest Performance Report",
-        "=" * 50,
-        f"  Total Return:    {metrics['total_return']:>10.2%}",
-        f"  Annual Return:   {metrics['annual_return']:>10.2%}",
-        f"  Sharpe Ratio:    {metrics['sharpe_ratio']:>10.4f}",
-        f"  Max Drawdown:    {metrics['max_drawdown']:>10.2%}",
-        f"  Win Rate:        {metrics['win_rate']:>10.2%}",
-        f"  Profit Factor:   {metrics['profit_factor']:>10.4f}",
-        f"  Total Trades:    {metrics['total_trades']:>10d}",
-        "=" * 50,
+        "=" * 55,
+        f"  Total Return:      {metrics['total_return']:>10.2%}",
+        f"  Annual Return:     {metrics['annual_return']:>10.2%}",
+        f"  Sharpe Ratio:      {metrics['sharpe_ratio']:>10.4f}",
+        f"  Max Drawdown:      {metrics['max_drawdown']:>10.2%}",
+        f"  Win Rate:          {metrics['win_rate']:>10.2%}",
+        f"  Profit Factor:     {metrics['profit_factor']:>10.4f}",
+        "-" * 55,
+        f"  Total Trades:      {metrics['total_trades']:>10d}",
+        f"  Total Volume:      {vol:>13,.0f} USDT",
+        f"  Est. Monthly Vol:  {monthly_vol:>13,.0f} USDT",
+        "-" * 55,
+        f"  Daily P&L  mean:   {metrics.get('daily_pnl_mean', 0):>+10.2f} USDT",
+        f"  Daily P&L  std:    {metrics.get('daily_pnl_std', 0):>10.2f} USDT",
+        f"  Daily P&L  min:    {metrics.get('daily_pnl_min', 0):>+10.2f} USDT",
+        f"  Daily P&L  max:    {metrics.get('daily_pnl_max', 0):>+10.2f} USDT",
+        f"  Daily P&L  median: {metrics.get('daily_pnl_median', 0):>+10.2f} USDT",
+        f"  Period:            {metrics.get('n_days', 0):>7d} days",
+        "=" * 55,
     ]
     return "\n".join(lines)

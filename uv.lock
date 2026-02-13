@@ -159,6 +159,14 @@ dev = [
     { name = "types-pyyaml" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pandas-stubs" },
+    { name = "ruff" },
+    { name = "types-pyyaml" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "ccxt", specifier = ">=4.0" },
@@ -179,6 +187,14 @@ requires-dist = [
     { name = "xgboost", specifier = ">=2.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.19.1" },
+    { name = "pandas-stubs", specifier = ">=3.0.0.260204" },
+    { name = "ruff", specifier = ">=0.15.0" },
+    { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
+]
 
 [[package]]
 name = "ccxt"
