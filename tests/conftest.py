@@ -15,9 +15,7 @@ def _make_ohlcv(
     """Helper to build a synthetic OHLCV DataFrame."""
     rng = np.random.default_rng(seed=seed)
 
-    timestamps = pd.date_range(
-        start=start, periods=n, freq="h", tz=UTC
-    )
+    timestamps = pd.date_range(start=start, periods=n, freq="h", tz=UTC)
 
     returns = rng.normal(0.0001, 0.005, size=n)
     close = 40_000.0 * np.cumprod(1 + returns)

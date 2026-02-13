@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 class BaseModel(ABC):
-    """Base interface for ML models used in strategy development."""
+    """Base interface for ML models used in strategies."""
 
     @abstractmethod
     def train(
@@ -18,22 +18,15 @@ class BaseModel(ABC):
         df: pd.DataFrame,
         eval_df: pd.DataFrame | None = None,
     ) -> None:
-        """Train the model on the provided data.
-
-        Args:
-            df: Training DataFrame with features and target.
-            eval_df: Optional validation DataFrame for early stopping.
-        """
+        """Train the model on the provided data."""
         ...
 
     @abstractmethod
     def predict(self, df: pd.DataFrame) -> pd.Series[float]:
-        """Generate predictions for the provided data.
+        """Generate predictions for the provided data."""
+        ...
 
-        Args:
-            df: Feature DataFrame.
-
-        Returns:
-            Series of predictions.
-        """
+    @abstractmethod
+    def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Return class probabilities for each row."""
         ...

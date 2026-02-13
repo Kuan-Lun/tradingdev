@@ -27,21 +27,17 @@ class TestXGBoostStrategy:
     ) -> None:
         """generate_signals() before fit() should raise."""
         strategy = XGBoostStrategy(config=self._make_config())
-        with pytest.raises(RuntimeError, match="not been fitted"):
+        with pytest.raises(RuntimeError, match="not fitted"):
             strategy.generate_signals(large_ohlcv_df)
 
-    def test_fit_selects_lookback(
-        self, large_ohlcv_df: pd.DataFrame
-    ) -> None:
+    def test_fit_selects_lookback(self, large_ohlcv_df: pd.DataFrame) -> None:
         """After fit(), best_lookback should be from candidates."""
         strategy = XGBoostStrategy(config=self._make_config())
         strategy.fit(large_ohlcv_df)
         params = strategy.get_parameters()
         assert params["best_lookback"] in [6, 12]
 
-    def test_generate_signals_valid(
-        self, large_ohlcv_df: pd.DataFrame
-    ) -> None:
+    def test_generate_signals_valid(self, large_ohlcv_df: pd.DataFrame) -> None:
         """After fit(), generate_signals produces valid signal column."""
         config = self._make_config()
         strategy = XGBoostStrategy(config=config)
