@@ -61,7 +61,10 @@ def _create_strategy(
 
     if name == "xgboost_direction":
         strategy_config_xgb = XGBoostStrategyConfig(**params)
-        return XGBoostStrategy(config=strategy_config_xgb)
+        return XGBoostStrategy(
+            config=strategy_config_xgb,
+            backtest_engine=engine,
+        )
 
     msg = f"Unknown strategy: {name}"
     raise ValueError(msg)
@@ -126,6 +129,10 @@ def main() -> None:
         fees=backtest_config.fees,
         slippage=backtest_config.slippage,
         freq=backtest_config.timeframe,
+        position_size_usdt=backtest_config.position_size_usdt,
+        stop_loss=backtest_config.stop_loss,
+        take_profit=backtest_config.take_profit,
+        mode=backtest_config.mode,
     )
     strategy = _create_strategy(raw_config, engine)
 

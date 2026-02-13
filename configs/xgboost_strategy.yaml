@@ -1,39 +1,61 @@
-# XGBoost Direction Prediction Strategy
+# XGBoost Direction Prediction Strategy — Market-Making Volume Mode
+#
+# 場景：第三方造市服務，目標是最大化每月交易量（單邊 12.5M USDT），
+#       同時將月虧損控制在可接受範圍內。
+#
+# 核心機制：
+#   1. threshold 極低 → 幾乎每根 bar 都有方向信號（long 或 short）
+#   2. SL/TP 短線觸發 → 持倉被平後立刻可重新進場 → 加速週轉
+#   3. fit() 搜尋最低 threshold 使月虧損 < 可接受範圍
+#   4. 每筆只交易 200 USDT → 單筆風險極小
 
 strategy:
   name: "xgboost_direction"
-  description: "XGBoost-based direction prediction with rolling retraining"
+  description: "Market-making volume strategy — maximize volume, minimize loss"
   parameters:
     model:
-      n_estimators: 100
-      max_depth: 6
-      learning_rate: 0.1
-      subsample: 0.8
-      colsample_bytree: 0.8
-      early_stopping_rounds: 10
+      n_estimators: 300
+      max_depth: 4
+      learning_rate: 0.05
+      subsample: 0.7
+      colsample_bytree: 0.7
+      early_stopping_rounds: 20
       random_state: 42
-    lookback_candidates: [12, 24, 48, 96, 168]
-    retrain_interval: 24
+    lookback_candidates: [360, 720, 1440]
+    retrain_interval: 720
     validation_ratio: 0.2
-    signal_threshold: 0.5
+    target_horizon: 5 # 預測 5 分鐘方向
+    signal_threshold: 0.0 # 預設：模型最高機率方向即為信號，永遠持倉
+    signal_threshold_candidates: # fit 搜尋：從最低開始，找月虧損可接受的門檻
+      - 0.0
+      - 0.35
+      - 0.40
+      - 0.45
+      - 0.50
+    min_bars_between_trades: 1 # 無冷卻期 — 最大交易頻率
+    monthly_volume_target_usdt: 12500000 # 月度單邊交易量目標
 
 validation:
-  train_start: "2024-01-01"
+  train_start: "2024-12-01"
   train_end: "2024-12-31"
   test_start: "2025-01-01"
-  test_end: "2025-12-31"
-  target_metric: "sharpe_ratio"
+  test_end: "2025-01-15"
+  target_metric: "total_volume_usdt"
 
 backtest:
   symbol: "BTC/USDT"
-  timeframe: "1h"
-  start_date: "2024-01-01"
-  end_date: "2025-12-31"
-  init_cash: 10000.0
+  timeframe: "1m"
+  start_date: "2024-12-01"
+  end_date: "2025-01-15"
+  init_cash: 100000.0 # 營運資金（不是投資本金，是流動性緩衝）
   fees: 0.0006
   slippage: 0.0005
+  position_size_usdt: 200.0 # 固定每筆 200 USDT
+  stop_loss: 0.005 # 0.5% 停損 — 平倉後可立刻重新進場，加速交易週轉
+  take_profit: 0.004 # 0.4% 停利 — 快進快出，觸發後立刻釋放額度
+  mode: "volume" # volume mode: SL/TP 後立即重入場，最大化交易量
 
 data:
   source: "binance_api"
-  raw_path: "data/raw/btcusdt_1h_2024_2025.csv"
-  processed_path: "data/processed/btcusdt_1h_2024_2025.parquet"
+  raw_path: "data/raw/btcusdt_1m_2024_2025.csv"
+  processed_path: "data/processed/btcusdt_1m_2024_2025.parquet"
