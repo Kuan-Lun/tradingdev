@@ -76,6 +76,7 @@ class XGBoostStrategy(BaseStrategy):
                 best_model,
                 self._config.signal_threshold_candidates,
                 self._config.signal_threshold,
+                feature_engineer=best_fe,
             )
 
         # Retrain final model on full data
