@@ -5,6 +5,7 @@ from datetime import UTC
 import numpy as np
 import pandas as pd
 
+from btc_strategy.backtest.result import BacktestResult
 from btc_strategy.backtest.signal_engine import (
     SignalBacktestEngine,
 )
@@ -23,7 +24,9 @@ def _make_ohlcv_df(
     close = np.array(prices)
     return pd.DataFrame(
         {
-            "timestamp": pd.date_range("2024-01-01", periods=n, freq="h", tz=UTC),
+            "timestamp": pd.date_range(
+                "2024-01-01", periods=n, freq="h", tz=UTC
+            ),
             "open": close - spread * 0.1,
             "high": close + spread,
             "low": close - spread,
@@ -54,9 +57,13 @@ EXPECTED_KEYS = {
 
 class TestSignalBacktestEngine:
     def setup_method(self) -> None:
-        self.engine = SignalBacktestEngine(init_cash=10_000.0, fees=0.0, slippage=0.0)
+        self.engine = SignalBacktestEngine(
+            init_cash=10_000.0, fees=0.0, slippage=0.0
+        )
 
-    def _make_simple_df(self, prices: list[float], signals: list[int]) -> pd.DataFrame:
+    def _make_simple_df(
+        self, prices: list[float], signals: list[int]
+    ) -> pd.DataFrame:
         n = len(prices)
         return pd.DataFrame(
             {
@@ -71,39 +78,69 @@ class TestSignalBacktestEngine:
             }
         )
 
+    def test_returns_backtest_result(self) -> None:
+        prices = [100.0] * 20
+        signals = [0] * 20
+        df = self._make_simple_df(prices, signals)
+        result = self.engine.run(df)
+        assert isinstance(result, BacktestResult)
+        assert result.mode == "signal"
+        assert len(result.equity_curve) == 20
+
     def test_all_long_on_uptrend(self) -> None:
         prices = [100.0 + i * 1.0 for i in range(50)]
         signals = [1] * 50
         df = self._make_simple_df(prices, signals)
-        metrics = self.engine.run(df)
-        assert metrics["total_return"] > 0
+        result = self.engine.run(df)
+        assert result.metrics["total_return"] > 0
 
     def test_no_signal_no_trades(self) -> None:
         prices = [100.0 + i for i in range(50)]
         signals = [0] * 50
         df = self._make_simple_df(prices, signals)
-        metrics = self.engine.run(df)
-        assert metrics["total_trades"] == 0
+        result = self.engine.run(df)
+        assert result.metrics["total_trades"] == 0
 
     def test_fees_reduce_returns(self) -> None:
         prices = [100.0 + i * 1.0 for i in range(50)]
         signals = [1] * 50
         df = self._make_simple_df(prices, signals)
-        metrics_no_fees = self.engine.run(df)
+        result_no_fees = self.engine.run(df)
 
-        engine_fees = SignalBacktestEngine(init_cash=10_000.0, fees=0.01, slippage=0.0)
-        metrics_fees = engine_fees.run(df)
-        assert metrics_fees["total_return"] < metrics_no_fees["total_return"]
+        engine_fees = SignalBacktestEngine(
+            init_cash=10_000.0, fees=0.01, slippage=0.0
+        )
+        result_fees = engine_fees.run(df)
+        assert (
+            result_fees.metrics["total_return"]
+            < result_no_fees.metrics["total_return"]
+        )
 
     def test_metrics_keys(self) -> None:
         prices = [100.0] * 20
         signals = [0] * 20
         df = self._make_simple_df(prices, signals)
-        metrics = self.engine.run(df)
-        assert set(metrics.keys()) == EXPECTED_KEYS
+        result = self.engine.run(df)
+        assert set(result.metrics.keys()) == EXPECTED_KEYS
 
 
 class TestVolumeBacktestEngine:
+    def test_returns_backtest_result(self) -> None:
+        prices = [100.0] * 20
+        signals = [1] * 20
+        df = _make_ohlcv_df(prices, signals)
+        engine = VolumeBacktestEngine(
+            init_cash=10_000.0,
+            fees=0.0,
+            slippage=0.0,
+            position_size_usdt=200.0,
+        )
+        result = engine.run(df)
+        assert isinstance(result, BacktestResult)
+        assert result.mode == "volume"
+        assert len(result.equity_curve) == 20
+        assert result.timestamps is not None
+
     def test_reentry_after_sl(self) -> None:
         prices = [100.0] * 5 + [95.0] + [100.0] * 14
         signals = [1] * 20
@@ -115,8 +152,8 @@ class TestVolumeBacktestEngine:
             position_size_usdt=200.0,
             stop_loss=0.01,
         )
-        metrics = engine.run(df)
-        assert metrics["total_trades"] >= 2
+        result = engine.run(df)
+        assert result.metrics["total_trades"] >= 2
 
     def test_direction_change(self) -> None:
         prices = [100.0] * 20
@@ -128,8 +165,8 @@ class TestVolumeBacktestEngine:
             slippage=0.0,
             position_size_usdt=200.0,
         )
-        metrics = engine.run(df)
-        assert metrics["total_trades"] >= 2
+        result = engine.run(df)
+        assert result.metrics["total_trades"] >= 2
 
     def test_always_in_position(self) -> None:
         n = 200
@@ -147,8 +184,8 @@ class TestVolumeBacktestEngine:
             stop_loss=0.005,
             take_profit=0.004,
         )
-        metrics = engine.run(df)
-        assert metrics["total_trades"] > 10
+        result = engine.run(df)
+        assert result.metrics["total_trades"] > 10
 
     def test_metrics_keys(self) -> None:
         prices = [100.0] * 20
@@ -160,8 +197,8 @@ class TestVolumeBacktestEngine:
             slippage=0.0,
             position_size_usdt=200.0,
         )
-        metrics = engine.run(df)
-        assert set(metrics.keys()) == EXPECTED_KEYS
+        result = engine.run(df)
+        assert set(result.metrics.keys()) == EXPECTED_KEYS
 
     def test_more_trades_than_signal_mode(self) -> None:
         n = 100
@@ -188,9 +225,12 @@ class TestVolumeBacktestEngine:
             stop_loss=0.005,
             take_profit=0.004,
         )
-        sig_m = sig_engine.run(df)
-        vol_m = vol_engine.run(df)
-        assert vol_m["total_trades"] >= sig_m["total_trades"]
+        sig_r = sig_engine.run(df)
+        vol_r = vol_engine.run(df)
+        assert (
+            vol_r.metrics["total_trades"]
+            >= sig_r.metrics["total_trades"]
+        )
 
     def test_no_signal_no_trades(self) -> None:
         prices = [100.0] * 20
@@ -202,5 +242,5 @@ class TestVolumeBacktestEngine:
             slippage=0.0,
             position_size_usdt=200.0,
         )
-        metrics = engine.run(df)
-        assert metrics["total_trades"] == 0
+        result = engine.run(df)
+        assert result.metrics["total_trades"] == 0

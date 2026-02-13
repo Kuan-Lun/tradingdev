@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import vectorbt as vbt
 
 from btc_strategy.backtest.base_engine import BaseBacktestEngine
 from btc_strategy.backtest.metrics import calculate_metrics
+from btc_strategy.backtest.result import BacktestResult
 from btc_strategy.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -23,7 +25,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
     The signal is shifted by 1 bar to avoid look-ahead bias.
     """
 
-    def run(self, df: pd.DataFrame) -> dict[str, Any]:
+    def run(self, df: pd.DataFrame) -> BacktestResult:
         """Run signal-mode backtest."""
         close = df["close"].astype(float)
         signal = df["signal"].shift(1).fillna(0).astype(int)
@@ -69,4 +71,50 @@ class SignalBacktestEngine(BaseBacktestEngine):
             "Backtest complete: %d trades",
             metrics["total_trades"],
         )
-        return metrics
+
+        equity_curve = np.asarray(pf.value(), dtype=np.float64)
+        trades = _extract_trades(pf)
+        timestamps = None
+        if "timestamp" in df.columns:
+            timestamps = df["timestamp"].to_numpy()
+
+        return BacktestResult(
+            metrics=metrics,
+            equity_curve=equity_curve,
+            trades=trades,
+            timestamps=timestamps,
+            init_cash=self._init_cash,
+            mode="signal",
+        )
+
+
+def _extract_trades(pf: vbt.Portfolio) -> list[dict[str, Any]]:
+    """Extract trade records from a vectorbt Portfolio."""
+    records = pf.trades.records_readable
+    if len(records) == 0:
+        return []
+
+    trades: list[dict[str, Any]] = []
+    for _, row in records.iterrows():
+        entry_price = row.get(
+            "Avg Entry Price", row.get("Entry Price", 0.0)
+        )
+        exit_price = row.get(
+            "Avg Exit Price", row.get("Exit Price", 0.0)
+        )
+        size = row.get("Size", 0.0)
+        pnl = row.get("PnL", 0.0)
+        direction = 1 if row.get("Direction", "Long") == "Long" else -1
+
+        trades.append(
+            {
+                "direction": direction,
+                "entry_price": float(entry_price),
+                "exit_price": float(exit_price),
+                "size_usdt": float(size * entry_price),
+                "gross_pnl": float(pnl),
+                "fee": 0.0,
+                "net_pnl": float(pnl),
+            }
+        )
+    return trades

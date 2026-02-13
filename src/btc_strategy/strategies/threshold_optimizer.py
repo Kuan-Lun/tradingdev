@@ -63,9 +63,9 @@ class ThresholdOptimizer:
             signal_df = signal_df.reset_index(drop=True)
             signal_df["signal"] = signals.values
 
-            metrics = self._engine.run(signal_df)
-            total_return = metrics.get("total_return", -1.0)
-            total_trades = metrics.get("total_trades", 0)
+            result = self._engine.run(signal_df)
+            total_return = result.metrics.get("total_return", -1.0)
+            total_trades = result.metrics.get("total_trades", 0)
 
             logger.info(
                 "Threshold %.2f: return=%.4f, trades=%d",

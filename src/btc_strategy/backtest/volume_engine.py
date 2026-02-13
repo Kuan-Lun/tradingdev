@@ -10,6 +10,7 @@ from btc_strategy.backtest.base_engine import BaseBacktestEngine
 from btc_strategy.backtest.metrics import (
     calculate_metrics_from_simulation,
 )
+from btc_strategy.backtest.result import BacktestResult
 from btc_strategy.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -26,7 +27,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
     indicated by the current signal.
     """
 
-    def run(self, df: pd.DataFrame) -> dict[str, Any]:
+    def run(self, df: pd.DataFrame) -> BacktestResult:
         """Run volume-mode backtest."""
         close_s = df["close"].astype(float)
         high_s = df["high"].astype(float) if "high" in df.columns else close_s
@@ -141,7 +142,14 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             metrics["total_trades"],
             metrics["total_volume_usdt"],
         )
-        return metrics
+        return BacktestResult(
+            metrics=metrics,
+            equity_curve=equity,
+            trades=trades,
+            timestamps=timestamps,
+            init_cash=self._init_cash,
+            mode="volume",
+        )
 
 
 def _check_sl_tp(
