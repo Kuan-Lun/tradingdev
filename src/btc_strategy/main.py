@@ -109,7 +109,11 @@ def _create_engine(
     config: BacktestConfig,
 ) -> BaseBacktestEngine:
     """Create the appropriate engine based on mode."""
-    cls = VolumeBacktestEngine if config.mode == "volume" else SignalBacktestEngine
+    cls = (
+        VolumeBacktestEngine
+        if config.mode == "volume"
+        else SignalBacktestEngine
+    )
     return cls(
         init_cash=config.init_cash,
         fees=config.fees,
