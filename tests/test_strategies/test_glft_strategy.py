@@ -76,6 +76,19 @@ class TestGLFTStrategyConfig:
                 max_holding_bars=10,
             )
 
+    def test_implied_vol_type_accepted(self) -> None:
+        """vol_type='implied' is valid when dvol_processed_path set."""
+        config = GLFTStrategyConfig(
+            vol_type="implied",
+            dvol_processed_path="data/processed/dvol.parquet",
+        )
+        assert config.vol_type == "implied"
+
+    def test_implied_requires_dvol_path(self) -> None:
+        """vol_type='implied' without dvol_processed_path raises."""
+        with pytest.raises(ValidationError, match="dvol_processed_path"):
+            GLFTStrategyConfig(vol_type="implied")
+
 
 # ── State machine tests ──────────────────────────────────────
 
@@ -284,14 +297,8 @@ class TestGLFTFit:
         assert params["best_gamma"] in config.gamma_candidates
         assert params["best_kappa"] in config.kappa_candidates
         assert params["best_ema_window"] in config.ema_window_candidates
-        assert (
-            params["best_max_holding_bars"]
-            in config.max_holding_bars_candidates
-        )
-        assert (
-            params["best_vol_window"]
-            in config.vol_window_candidates
-        )
+        assert params["best_max_holding_bars"] in config.max_holding_bars_candidates
+        assert params["best_vol_window"] in config.vol_window_candidates
 
     def test_fit_without_engine_uses_defaults(
         self,
@@ -363,3 +370,110 @@ class TestGLFTIntegration:
 
         assert result.metrics["total_trades"] >= 0
         assert "total_return" in result.metrics
+
+
+# ── Implied volatility (DVOL) tests ─────────────────────────
+
+
+def _make_implied_config(
+    **overrides: object,
+) -> GLFTStrategyConfig:
+    """Config with vol_type='implied' for fast tests."""
+    defaults: dict[str, object] = {
+        "gamma": 0.01,
+        "kappa": 1.5,
+        "ema_window": 10,
+        "vol_window": 0,
+        "vol_type": "implied",
+        "dvol_processed_path": "dummy.parquet",
+        "min_holding_bars": 3,
+        "max_holding_bars": 15,
+        "gamma_candidates": [0.005, 0.01],
+        "kappa_candidates": [1.0, 1.5],
+        "ema_window_candidates": [10],
+        "max_holding_bars_candidates": [15],
+        "vol_window_candidates": [10, 20],
+    }
+    defaults.update(overrides)
+    return GLFTStrategyConfig(**defaults)  # type: ignore[arg-type]
+
+
+class TestGLFTImpliedVolatility:
+    def test_compute_volatility_implied_conversion(
+        self,
+    ) -> None:
+        """sigma = dvol / 100 / sqrt(525960)."""
+        config = _make_implied_config()
+        strategy = GLFTStrategy(config=config)
+
+        dvol = np.array([45.0, 60.0, 30.0])
+        close = np.array([40000.0, 40000.0, 40000.0])
+        high = close.copy()
+        low = close.copy()
+
+        sigma = strategy._compute_volatility(close, high, low, dvol=dvol)
+
+        expected = dvol / 100.0 / np.sqrt(525_960.0)
+        np.testing.assert_allclose(sigma, expected, rtol=1e-10)
+
+    def test_compute_volatility_implied_no_dvol_raises(
+        self,
+    ) -> None:
+        """Calling implied vol without dvol array raises."""
+        config = _make_implied_config()
+        strategy = GLFTStrategy(config=config)
+
+        close = np.array([40000.0])
+        high = close.copy()
+        low = close.copy()
+
+        with pytest.raises(ValueError, match="dvol array"):
+            strategy._compute_volatility(close, high, low)
+
+    def test_generate_signals_with_dvol(
+        self,
+        sample_ohlcv_with_dvol_df: pd.DataFrame,
+    ) -> None:
+        """End-to-end signal generation with implied vol."""
+        config = _make_implied_config()
+        strategy = GLFTStrategy(config=config)
+        result = strategy.generate_signals(sample_ohlcv_with_dvol_df)
+
+        assert "signal" in result.columns
+        assert not result["signal"].isna().any()
+        assert set(result["signal"].unique()).issubset({-1.0, 0.0, 1.0})
+
+    def test_generate_signals_implied_missing_dvol_raises(
+        self,
+        sample_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        """Missing dvol column raises ValueError."""
+        config = _make_implied_config()
+        strategy = GLFTStrategy(config=config)
+
+        with pytest.raises(ValueError, match="dvol"):
+            strategy.generate_signals(sample_ohlcv_df)
+
+    def test_fit_implied_ignores_vol_window(
+        self,
+        large_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        """fit() with implied vol should use [0] for vol_window."""
+        # Add a dvol column so generate_signals works
+        df = large_ohlcv_df.copy()
+        rng = np.random.default_rng(seed=99)
+        df["dvol"] = rng.uniform(30.0, 80.0, size=len(df))
+
+        engine = VolumeBacktestEngine(
+            init_cash=10_000,
+            fees=0.0,
+            slippage=0.0,
+            position_size_usdt=100.0,
+            signal_as_position=True,
+        )
+        config = _make_implied_config()
+        strategy = GLFTStrategy(config=config, backtest_engine=engine)
+        strategy.fit(df)
+        params = strategy.get_parameters()
+        # vol_window should be 0 (the sentinel for implied)
+        assert params["best_vol_window"] == 0

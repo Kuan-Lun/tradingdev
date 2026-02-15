@@ -60,8 +60,16 @@ classDiagram
     }
     note for BinanceVisionCrawler "Skeleton — 尚未實作"
 
+    class DeribitDVOLCrawler {
+        -_client: httpx.Client
+        +fetch(symbol, timeframe, start, end) pd.DataFrame
+        +save_raw(df, output_path) None
+    }
+    note for DeribitDVOLCrawler "Deribit DVOL 隱含波動度指數"
+
     BaseCrawler <|-- BinanceAPICrawler
     BaseCrawler <|-- BinanceVisionCrawler
+    BaseCrawler <|-- DeribitDVOLCrawler
 
     %% ──────────────── Indicator 實作 ────────────────
 
@@ -128,7 +136,7 @@ classDiagram
         +fit(df) None
         +generate_signals(df) pd.DataFrame
         +get_parameters() dict
-        -_compute_volatility(close, high, low) ndarray
+        -_compute_volatility(close, high, low, dvol?) ndarray
         -_run_glft_state_machine(close, ema, sigma, ...) ndarray
     }
 
@@ -277,6 +285,15 @@ classDiagram
 
     %% ──────────────── Pydantic 資料模型 ────────────────
 
+    class DVOLBar {
+        <<pydantic>>
+        +timestamp: datetime
+        +dvol_open: float
+        +dvol_high: float
+        +dvol_low: float
+        +dvol_close: float
+    }
+
     class OHLCVBar {
         <<pydantic>>
         +timestamp: datetime
@@ -386,6 +403,8 @@ classDiagram
         +ema_window: int = 21
         +vol_window: int = 30
         +vol_type: str = "realized"
+        +dvol_raw_path: str | None
+        +dvol_processed_path: str | None
         +min_holding_bars: int = 5
         +max_holding_bars: int = 30
         +gamma_candidates: list~float~
@@ -643,12 +662,14 @@ graph TD
         BC[BaseCrawler]
         BAC[BinanceAPICrawler]
         BVC[BinanceVisionCrawler]
+        DDC[DeribitDVOLCrawler]
         BC --> BAC
         BC --> BVC
+        BC --> DDC
     end
 
     subgraph Data["data/"]
-        SCH["schemas.py<br/>OHLCVBar · BacktestConfig<br/>KDStrategyConfig · KDFitConfig<br/>WalkForwardConfig<br/>XGBoostModelConfig · XGBoostStrategyConfig<br/>SafetyVolumeStrategyConfig · GLFTStrategyConfig"]
+        SCH["schemas.py<br/>DVOLBar · OHLCVBar · BacktestConfig<br/>KDStrategyConfig · KDFitConfig<br/>WalkForwardConfig<br/>XGBoostModelConfig · XGBoostStrategyConfig<br/>SafetyVolumeStrategyConfig · GLFTStrategyConfig"]
         DL[DataLoader]
         DP[DataProcessor]
     end
@@ -719,6 +740,7 @@ graph TD
     MAIN --> CACHE
     MAIN --> SCH
     MAIN --> BAC
+    MAIN -.-> DDC
     MAIN --> DL
     MAIN --> DP
     MAIN --> REG

@@ -122,13 +122,19 @@ class GLFTStrategy(BaseStrategy):
         target = self._config.target_metric
         min_ar = self._config.min_annual_return
 
+        # When using implied vol, vol_window is irrelevant
+        vol_win_candidates = self._config.vol_window_candidates
+        if self._config.vol_type == "implied":
+            vol_win_candidates = [0]
+            logger.info("vol_type='implied': vol_window_candidates ignored")
+
         grid: list[_ParamTuple] = list(
             itertools.product(
                 self._config.gamma_candidates,
                 self._config.kappa_candidates,
                 self._config.ema_window_candidates,
                 self._config.max_holding_bars_candidates,
-                self._config.vol_window_candidates,
+                vol_win_candidates,
                 self._config.min_entry_edge_candidates,
                 self._config.trend_ema_candidates,
             ),
@@ -141,17 +147,15 @@ class GLFTStrategy(BaseStrategy):
             n_jobs,
         )
 
-        results: list[tuple[_ParamTuple, dict[str, Any]]] = (
-            Parallel(n_jobs=n_jobs)(
-                delayed(_evaluate_glft_combo)(
-                    df,
-                    self._config,
-                    combo,
-                    self._backtest_engine,
-                    target,
-                )
-                for combo in grid
+        results: list[tuple[_ParamTuple, dict[str, Any]]] = Parallel(n_jobs=n_jobs)(
+            delayed(_evaluate_glft_combo)(
+                df,
+                self._config,
+                combo,
+                self._backtest_engine,
+                target,
             )
+            for combo in grid
         )
 
         n_filtered = 0
@@ -176,8 +180,7 @@ class GLFTStrategy(BaseStrategy):
 
         if n_filtered > 0:
             logger.info(
-                "GLFT fit: %d/%d combos filtered "
-                "(annual_return < %.4f)",
+                "GLFT fit: %d/%d combos filtered (annual_return < %.4f)",
                 n_filtered,
                 len(grid),
                 min_ar if min_ar is not None else 0.0,
@@ -212,13 +215,21 @@ class GLFTStrategy(BaseStrategy):
         high = np.asarray(df["high"].astype(float).values)
         low = np.asarray(df["low"].astype(float).values)
 
+        # Extract DVOL series when using implied volatility
+        dvol: npt.NDArray[np.floating[Any]] | None = None
+        if self._config.vol_type == "implied":
+            if "dvol" not in df.columns:
+                msg = "DataFrame must contain 'dvol' column when vol_type is 'implied'"
+                raise ValueError(msg)
+            dvol = np.asarray(df["dvol"].astype(float).values)
+
         ema = np.asarray(
             pd.Series(close)
             .ewm(span=self._best_ema_window, adjust=False)
             .mean()
             .values,
         )
-        sigma = self._compute_volatility(close, high, low)
+        sigma = self._compute_volatility(close, high, low, dvol=dvol)
 
         # Trend filter: slow EMA direction (+1=up, -1=down, 0=flat)
         trend_dir: npt.NDArray[np.floating[Any]] | None = None
@@ -268,39 +279,49 @@ class GLFTStrategy(BaseStrategy):
     # Volatility estimation
     # ------------------------------------------------------------------
 
+    # Minutes in a year (365.25 * 24 * 60) — used for
+    # annualized-to-per-bar volatility conversion.
+    _MINUTES_PER_YEAR: float = 525_960.0
+
     def _compute_volatility(
         self,
         close: npt.NDArray[np.floating[Any]],
         high: npt.NDArray[np.floating[Any]],
         low: npt.NDArray[np.floating[Any]],
+        dvol: npt.NDArray[np.floating[Any]] | None = None,
     ) -> npt.NDArray[np.floating[Any]]:
-        """Compute rolling volatility (sigma)."""
-        window = self._best_vol_window
+        """Compute volatility (sigma).
 
-        if self._config.vol_type == "parkinson":
+        When ``vol_type`` is ``"implied"``, *dvol* must be provided
+        (annualized % from Deribit DVOL).  Otherwise a rolling
+        historical estimator is used.
+        """
+        if self._config.vol_type == "implied":
+            if dvol is None:
+                msg = "dvol array is required when vol_type is 'implied'"
+                raise ValueError(msg)
+            # DVOL is annualized vol in % (e.g. 45 = 45%).
+            # Convert to per-bar (1 min) sigma:
+            #   sigma = DVOL / 100 / sqrt(minutes_per_year)
+            sigma = dvol / 100.0 / np.sqrt(self._MINUTES_PER_YEAR)
+        elif self._config.vol_type == "parkinson":
+            window = self._best_vol_window
             # Parkinson estimator: uses high-low range
             log_hl = np.log(
                 np.maximum(high, 1e-10) / np.maximum(low, 1e-10),
             )
             parkinson_var = log_hl**2 / (4.0 * math.log(2))
             sigma = np.sqrt(
-                pd.Series(parkinson_var)
-                .rolling(window, min_periods=1)
-                .mean()
-                .values,
+                pd.Series(parkinson_var).rolling(window, min_periods=1).mean().values,
             )
         else:
+            window = self._best_vol_window
             # Realized volatility: rolling std of log returns
             log_ret = np.diff(
                 np.log(np.maximum(close, 1e-10)),
             )
             log_ret = np.concatenate([[0.0], log_ret])
-            sigma = (
-                pd.Series(log_ret)
-                .rolling(window, min_periods=1)
-                .std()
-                .values
-            )
+            sigma = pd.Series(log_ret).rolling(window, min_periods=1).std().values
 
         # Replace NaN/zero with a tiny positive value
         sigma = np.where(
@@ -350,9 +371,7 @@ class GLFTStrategy(BaseStrategy):
         if gamma < 1e-12:
             spread_const = 1.0 / kappa
         else:
-            spread_const = (
-                math.log(1.0 + gamma / kappa) / gamma
-            )
+            spread_const = math.log(1.0 + gamma / kappa) / gamma
 
         state = 0  # 0=flat, 1=long, -1=short
         bars_in_pos = 0
@@ -378,10 +397,7 @@ class GLFTStrategy(BaseStrategy):
                 # (log-return), so σ_abs = σ_pct × fair.
                 #   δ_pct = δ_abs / fair
                 #         = γ·σ²·fair·τ/2 + spread_const/fair
-                glft_hs = (
-                    gamma * sig_sq * fair * tau / 2.0
-                    + spread_const / fair
-                )
+                glft_hs = gamma * sig_sq * fair * tau / 2.0 + spread_const / fair
                 half_spread = max(glft_hs, min_entry_edge)
 
                 want_long = deviation < -half_spread
@@ -417,22 +433,15 @@ class GLFTStrategy(BaseStrategy):
                     continue
 
                 # Inventory-adjusted deviation (%-space)
-                inventory_adj = (
-                    q * gamma * sig_sq * fair * tau
-                )
+                inventory_adj = q * gamma * sig_sq * fair * tau
                 adjusted_dev = deviation + inventory_adj
 
                 # Exit: GLFT spread in %-space (no entry-edge
                 # floor — fees were paid on entry, exit follows
                 # inventory risk logic)
-                half_spread = (
-                    gamma * sig_sq * fair * tau / 2.0
-                    + spread_const / fair
-                )
+                half_spread = gamma * sig_sq * fair * tau / 2.0 + spread_const / fair
 
-                if (
-                    state == 1 and adjusted_dev > half_spread
-                ) or (
+                if (state == 1 and adjusted_dev > half_spread) or (
                     state == -1 and adjusted_dev < -half_spread
                 ):
                     state = 0
