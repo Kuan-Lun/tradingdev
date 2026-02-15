@@ -101,8 +101,41 @@ classDiagram
         -_search_lookback(train_df, val_df) tuple
     }
 
+    class SafetyVolumeStrategy {
+        -_config: SafetyVolumeStrategyConfig
+        -_backtest_engine: BaseBacktestEngine | None
+        -_risk_model: XGBoostDirectionModel | None
+        -_risk_fe: RiskFeatureEngineer | None
+        -_best_lookback: int | None
+        -_best_threshold: float
+        -_train_data: pd.DataFrame | None
+        +fit(df) None
+        +generate_signals(df) pd.DataFrame
+        +get_parameters() dict
+        -_search_lookback(train_df, val_df) tuple
+        -_search_threshold(val_df, model, fe, lookback) float
+        -_predict_risk_rolling(df) ndarray
+        -_compute_directions(df) ndarray
+        -_run_state_machine(risk, dirs) ndarray
+    }
+
+    class GLFTStrategy {
+        -_config: GLFTStrategyConfig
+        -_backtest_engine: BaseBacktestEngine | None
+        -_best_gamma: float
+        -_best_kappa: float
+        -_best_ema_window: int
+        +fit(df) None
+        +generate_signals(df) pd.DataFrame
+        +get_parameters() dict
+        -_compute_volatility(close, high, low) ndarray
+        -_run_glft_state_machine(close, ema, sigma, ...) ndarray
+    }
+
     BaseStrategy <|-- KDStrategy
     BaseStrategy <|-- XGBoostStrategy
+    BaseStrategy <|-- SafetyVolumeStrategy
+    BaseStrategy <|-- GLFTStrategy
     KDStrategy *-- KDIndicator : 組合
     KDStrategy *-- KDStrategyConfig : 組合
     XGBoostStrategy *-- XGBoostStrategyConfig : 組合
@@ -110,6 +143,10 @@ classDiagram
     XGBoostStrategy *-- FeatureEngineer : 組合
     XGBoostStrategy *-- RollingRetrainer : 使用
     XGBoostStrategy *-- ThresholdOptimizer : 使用
+    SafetyVolumeStrategy *-- SafetyVolumeStrategyConfig : 組合
+    SafetyVolumeStrategy *-- XGBoostDirectionModel : 組合
+    SafetyVolumeStrategy *-- RiskFeatureEngineer : 組合
+    GLFTStrategy *-- GLFTStrategyConfig : 組合
 
     %% ──────────────── Strategy 輔助類別 ────────────────
 
@@ -149,6 +186,17 @@ classDiagram
         -_feature_names: list
         +transform(df, include_target) pd.DataFrame
         +get_feature_names() list
+    }
+
+    class RiskFeatureEngineer {
+        -_lookback: int
+        -_target_holding_bars: int
+        -_fee_rate: float
+        -_max_loss_pct: float
+        -_feature_names: list
+        +transform(df, include_target) pd.DataFrame
+        +get_feature_names() list
+        -_compute_safe_target(df) pd.Series
     }
 
     BaseModel <|-- XGBoostDirectionModel
@@ -251,6 +299,8 @@ classDiagram
         +position_size_usdt: float | None
         +stop_loss: float | None
         +take_profit: float | None
+        +signal_as_position: bool = False
+        +re_entry_after_sl: bool = True
         +mode: str = "signal"
     }
 
@@ -307,6 +357,44 @@ classDiagram
         +target_horizon: int = 1
         +min_bars_between_trades: int = 1
         +monthly_volume_target_usdt: float | None
+    }
+
+    class SafetyVolumeStrategyConfig {
+        <<pydantic>>
+        +risk_model: XGBoostModelConfig
+        +risk_threshold: float = 0.5
+        +risk_threshold_candidates: list~float~ | None
+        +target_holding_bars: int = 5
+        +max_acceptable_loss_pct: float = 0.003
+        +fee_rate: float = 0.0011
+        +use_ml_direction: bool = False
+        +sma_fast: int = 5
+        +sma_slow: int = 20
+        +min_holding_bars: int = 5
+        +max_holding_bars: int = 30
+        +lookback_candidates: list~int~
+        +retrain_interval: int = 720
+        +validation_ratio: float = 0.2
+        +position_size_usdt: float = 3000.0
+        +monthly_volume_target_usdt: float | None
+    }
+
+    class GLFTStrategyConfig {
+        <<pydantic>>
+        +gamma: float = 0.01
+        +kappa: float = 1.5
+        +ema_window: int = 21
+        +vol_window: int = 30
+        +vol_type: str = "realized"
+        +min_holding_bars: int = 5
+        +max_holding_bars: int = 30
+        +gamma_candidates: list~float~
+        +kappa_candidates: list~float~
+        +ema_window_candidates: list~int~
+        +target_metric: str = "total_return"
+        +position_size_usdt: float = 3000.0
+        +monthly_volume_target_usdt: float | None
+        +fee_rate: float = 0.0011
     }
 
     %% ──────────────── 資料管線 ────────────────
@@ -560,7 +648,7 @@ graph TD
     end
 
     subgraph Data["data/"]
-        SCH["schemas.py<br/>OHLCVBar · BacktestConfig<br/>KDStrategyConfig · KDFitConfig<br/>WalkForwardConfig<br/>XGBoostModelConfig<br/>XGBoostStrategyConfig"]
+        SCH["schemas.py<br/>OHLCVBar · BacktestConfig<br/>KDStrategyConfig · KDFitConfig<br/>WalkForwardConfig<br/>XGBoostModelConfig · XGBoostStrategyConfig<br/>SafetyVolumeStrategyConfig · GLFTStrategyConfig"]
         DL[DataLoader]
         DP[DataProcessor]
     end
@@ -575,11 +663,15 @@ graph TD
         BS[BaseStrategy]
         KDS[KDStrategy]
         XGBS[XGBoostStrategy]
+        SFVS[SafetyVolumeStrategy]
+        GLFTS[GLFTStrategy]
         REG[registry.py]
         RR[RollingRetrainer]
         TO[ThresholdOptimizer]
         BS --> KDS
         BS --> XGBS
+        BS --> SFVS
+        BS --> GLFTS
     end
 
     subgraph Backtest["backtest/"]
@@ -610,6 +702,7 @@ graph TD
         BM[BaseModel]
         XGBM[XGBoostDirectionModel]
         FE[FeatureEngineer]
+        RFE[RiskFeatureEngineer]
         TF[technical_features.py]
         BM --> XGBM
     end
@@ -618,6 +711,7 @@ graph TD
         CFG[config.py]
         LOG[logger.py]
         CACHE[cache.py]
+        PAR[parallel.py]
     end
 
     MAIN --> CFG
@@ -642,11 +736,14 @@ graph TD
 
     REG --> KDS
     REG --> XGBS
+    REG --> SFVS
+    REG --> GLFTS
     REG -.-> BS
 
     KDS --> KDI
     KDS --> SCH
     KDS --> BBE
+    KDS --> PAR
 
     XGBS --> XGBM
     XGBS --> FE
@@ -658,7 +755,16 @@ graph TD
     RR --> FE
     TO --> BBE
 
+    SFVS --> XGBM
+    SFVS --> RFE
+    SFVS --> SCH
+
+    GLFTS --> SCH
+    GLFTS --> BBE
+    GLFTS --> PAR
+
     FE --> TF
+    RFE --> TF
 
     WFV --> BBE
     WFV --> SCH
