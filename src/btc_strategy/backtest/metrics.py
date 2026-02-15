@@ -33,8 +33,17 @@ def calculate_metrics(pf: vbt.Portfolio) -> dict[str, Any]:
 
     daily_pnl = _daily_pnl_from_portfolio(pf)
 
+    total_ret = float(pf.total_return())
+    value_series = pf.value()
+    total_pnl = (
+        float(value_series.iloc[-1] - value_series.iloc[0])
+        if len(value_series) > 1
+        else 0.0
+    )
+
     metrics: dict[str, Any] = {
-        "total_return": float(pf.total_return()),
+        "total_return": total_ret,
+        "total_pnl_usdt": total_pnl,
         "sharpe_ratio": float(pf.sharpe_ratio()),
         "max_drawdown": float(pf.max_drawdown()),
         "win_rate": (float(trades.win_rate()) if has_trades else 0.0),
@@ -113,8 +122,11 @@ def calculate_metrics_from_simulation(
         max_drawdown = 0.0
         annual_return = 0.0
 
+    total_pnl_usdt = final_equity - init_cash
+
     metrics: dict[str, Any] = {
         "total_return": total_return,
+        "total_pnl_usdt": total_pnl_usdt,
         "sharpe_ratio": sharpe,
         "max_drawdown": max_drawdown,
         "win_rate": win_rate,

@@ -5,10 +5,13 @@ from __future__ import annotations
 import itertools
 from typing import TYPE_CHECKING, Any
 
+from joblib import Parallel, delayed
+
 from btc_strategy.data.schemas import KDStrategyConfig
 from btc_strategy.indicators.kd import KDIndicator
 from btc_strategy.strategies.base import BaseStrategy
 from btc_strategy.utils.logger import setup_logger
+from btc_strategy.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -19,6 +22,24 @@ if TYPE_CHECKING:
     from btc_strategy.data.schemas import KDFitConfig
 
 logger = setup_logger(__name__)
+
+
+def _evaluate_kd_combo(
+    df: pd.DataFrame,
+    trial_config: KDStrategyConfig,
+    engine: BaseBacktestEngine,
+    target: str,
+) -> tuple[KDStrategyConfig, float]:
+    """Evaluate a single KD parameter combination.
+
+    This is a module-level function so it can be pickled by joblib.
+    """
+    trial = KDStrategy(config=trial_config)
+    signals = trial.generate_signals(df)
+    result = engine.run(signals)
+    value = result.metrics.get(target, float("-inf"))
+    metric = value if isinstance(value, float) else float("-inf")
+    return trial_config, metric
 
 
 class KDStrategy(BaseStrategy):
@@ -61,27 +82,34 @@ class KDStrategy(BaseStrategy):
             )
         )
 
-        logger.info("KD grid search: %d combinations", len(grid))
+        n_jobs = estimate_n_jobs(df)
+        logger.info(
+            "KD grid search: %d combinations (n_jobs=%d)",
+            len(grid),
+            n_jobs,
+        )
 
-        best_metric = -float("inf")
-        best_config = self._config
-
-        for k_p, d_p, sm_k, ob, os_ in grid:
-            trial_config = KDStrategyConfig(
+        configs = [
+            KDStrategyConfig(
                 k_period=k_p,
                 d_period=d_p,
                 smooth_k=sm_k,
                 overbought=ob,
                 oversold=os_,
             )
-            trial = KDStrategy(config=trial_config)
-            signals = trial.generate_signals(df)
-            result = engine.run(signals)
-            value = result.metrics.get(target, float("-inf"))
+            for k_p, d_p, sm_k, ob, os_ in grid
+        ]
 
-            if isinstance(value, float) and value > best_metric:
+        results: list[tuple[KDStrategyConfig, float]] = Parallel(
+            n_jobs=n_jobs,
+        )(delayed(_evaluate_kd_combo)(df, cfg, engine, target) for cfg in configs)
+
+        best_config = self._config
+        best_metric = -float("inf")
+        for cfg, value in results:
+            if value > best_metric:
                 best_metric = value
-                best_config = trial_config
+                best_config = cfg
 
         self._config = best_config
         self._indicator = KDIndicator(

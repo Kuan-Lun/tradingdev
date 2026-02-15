@@ -134,10 +134,25 @@ class XGBoostDirectionModel(BaseModel):
 
         x = df[self._feature_names]
         proba = self._model.predict_proba(x)
+
+        n_classes_encoder = len(self._label_encoder.classes_)
+        n_cols_proba = proba.shape[1]
+
+        if n_cols_proba == n_classes_encoder:
+            columns = self._label_encoder.classes_
+        elif n_classes_encoder == 1 and n_cols_proba == 2:
+            # XGBoost binary classifier always outputs 2 columns
+            # even when LabelEncoder saw only 1 class during fit.
+            # Internal class 0 = LabelEncoder.classes_[0] (the
+            # only known class).  Col-0 → only_class, col-1 → other.
+            only_class = self._label_encoder.classes_[0]
+            other_class = 1 - only_class if only_class in (0, 1) else 0
+            columns = [only_class, other_class]
+        else:
+            columns = list(range(n_cols_proba))
+
         return pd.DataFrame(
-            proba,
-            index=df.index,
-            columns=self._label_encoder.classes_,
+            proba, index=df.index, columns=columns,
         )
 
     def get_parameters(self) -> dict[str, Any]:

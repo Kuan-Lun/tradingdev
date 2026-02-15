@@ -12,6 +12,24 @@ if TYPE_CHECKING:
     )
 
 
+_INTEGER_METRIC_KEYS = frozenset(
+    {"total_volume_usdt", "total_pnl_usdt", "total_trades", "n_days"},
+)
+
+_PERCENT_METRIC_KEYS = frozenset(
+    {"total_return", "annual_return", "max_drawdown", "win_rate"},
+)
+
+
+def _fmt_metric(key: str, value: float) -> str:
+    """Format a metric value based on its key."""
+    if key in _INTEGER_METRIC_KEYS:
+        return f"{value:>+14,.0f}"
+    if key in _PERCENT_METRIC_KEYS:
+        return f"{value:>14.2%}"
+    return f"{value:>14.4f}"
+
+
 def summarize_results(
     results: list[WalkForwardResult],
 ) -> dict[str, Any]:
@@ -58,14 +76,14 @@ def format_walk_forward_report(
         lines.append("    Train metrics:")
         for k, v in r.train_metrics.items():
             if isinstance(v, float):
-                lines.append(f"      {k:>20s}: {v:>10.4f}")
+                lines.append(f"      {k:>20s}: {_fmt_metric(k, v)}")
             else:
                 lines.append(f"      {k:>20s}: {v!s:>10s}")
 
         lines.append("    Test metrics:")
         for k, v in r.test_metrics.items():
             if isinstance(v, float):
-                lines.append(f"      {k:>20s}: {v:>10.4f}")
+                lines.append(f"      {k:>20s}: {_fmt_metric(k, v)}")
             else:
                 lines.append(f"      {k:>20s}: {v!s:>10s}")
 
@@ -75,11 +93,17 @@ def format_walk_forward_report(
         lines.append("  Summary across folds:")
         for key, stats in summary.items():
             if isinstance(stats, dict):
+                if key in _INTEGER_METRIC_KEYS:
+                    fmt = ",.0f"
+                elif key in _PERCENT_METRIC_KEYS:
+                    fmt = ".2%"
+                else:
+                    fmt = ".4f"
                 lines.append(
-                    f"    {key}: mean={stats['mean']:.4f} "
-                    f"std={stats['std']:.4f} "
-                    f"[{stats['min']:.4f}, "
-                    f"{stats['max']:.4f}]"
+                    f"    {key}: mean={stats['mean']:{fmt}} "
+                    f"std={stats['std']:{fmt}} "
+                    f"[{stats['min']:{fmt}}, "
+                    f"{stats['max']:{fmt}}]"
                 )
 
     lines.append("=" * 60)

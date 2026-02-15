@@ -39,6 +39,7 @@ def _make_ohlcv_df(
 
 EXPECTED_KEYS = {
     "total_return",
+    "total_pnl_usdt",
     "sharpe_ratio",
     "max_drawdown",
     "win_rate",

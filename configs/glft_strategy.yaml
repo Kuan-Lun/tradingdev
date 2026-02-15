@@ -1,0 +1,74 @@
+strategy:
+  name: "glft_market_making"
+  description: "GLFT market-making strategy — analytical spread-based entry/exit"
+  parameters:
+    # Core GLFT parameters
+    gamma: 0.01 # Risk aversion (inventory penalty)
+    kappa: 1.5 # Order arrival intensity
+    ema_window: 21 # EMA window for fair value
+
+    # Volatility estimation
+    vol_window: 30 # Rolling window for sigma
+    vol_type: "parkinson" # "realized" or "parkinson"
+
+    # Holding management (exchange compliance)
+    min_holding_bars: 5 # 5 min @1m — exchange rule compliance
+    max_holding_bars: 30 # 30 min @1m — natural tau horizon
+
+    # fit() grid search candidates
+    # gamma controls vol-adaptive threshold (corrected formula)
+    # gamma=0.01 → ~0.07% at median vol; gamma=0.05 → ~0.35%
+    gamma_candidates: [0.005, 0.01, 0.02, 0.05]
+    kappa_candidates: [1, 5, 10]
+    ema_window_candidates: [13, 21, 34]
+    max_holding_bars_candidates: [13, 21]
+    vol_window_candidates: [13, 21]
+    target_metric: "total_volume_usdt"
+
+    # Entry threshold (independent of fee_rate)
+    # Must be >= fee_rate * 2; higher = more selective, fewer trades
+    min_entry_edge: 0.0015
+    min_entry_edge_candidates: [0.0012, 0.0015]
+
+    # Trend filter: slow EMA window; 0 = disabled
+    trend_ema_window: 0
+    trend_ema_candidates: [0, 100, 200]
+
+    # Position & volume
+    position_size_usdt: 3000.0
+    monthly_volume_target_usdt: 12500000
+    fee_rate: 0.0006
+
+    # Constrained optimization: annual_return >= this threshold,
+    # then maximize target_metric (total_volume_usdt)
+    min_annual_return: -0.18 # ~1500 USD/month on 100k
+
+# Walk-forward validation
+validation:
+  train_start: "2024-01-01"
+  train_end: "2024-12-31"
+  test_start: "2025-01-01"
+  test_end: "2025-12-31"
+  target_metric: "total_return"
+
+# Backtest engine config
+backtest:
+  symbol: "BTC/USDT"
+  timeframe: "1m"
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
+  init_cash: 100000.0
+  fees: 0.0006
+  slippage: 0
+  position_size_usdt: 3000.0
+  stop_loss: 0.03 # 3% emergency SL
+  take_profit: null
+  signal_as_position: true # signal=0 → close position
+  re_entry_after_sl: false
+  mode: "volume"
+
+# Data paths
+data:
+  source: "binance_api"
+  raw_path: "data/raw/btcusdt_1m_2024_2025.csv"
+  processed_path: "data/processed/btcusdt_1m_2024_2025.parquet"

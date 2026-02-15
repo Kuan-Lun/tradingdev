@@ -27,6 +27,8 @@ class BaseBacktestEngine(ABC):
         position_size_usdt: float | None = None,
         stop_loss: float | None = None,
         take_profit: float | None = None,
+        signal_as_position: bool = False,
+        re_entry_after_sl: bool = True,
     ) -> None:
         self._init_cash = init_cash
         self._fees = fees
@@ -35,6 +37,8 @@ class BaseBacktestEngine(ABC):
         self._position_size_usdt = position_size_usdt
         self._stop_loss = stop_loss
         self._take_profit = take_profit
+        self._signal_as_position = signal_as_position
+        self._re_entry_after_sl = re_entry_after_sl
 
     @abstractmethod
     def run(self, df: pd.DataFrame) -> BacktestResult:

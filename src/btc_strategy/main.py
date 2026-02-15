@@ -122,6 +122,8 @@ def _create_engine(
         position_size_usdt=config.position_size_usdt,
         stop_loss=config.stop_loss,
         take_profit=config.take_profit,
+        signal_as_position=config.signal_as_position,
+        re_entry_after_sl=config.re_entry_after_sl,
     )
 
 
