@@ -71,8 +71,36 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `vol_window` | 30 | 滾動波動率估計窗口 |
-| `vol_type` | "realized" | 波動率類型："realized" (log-return std) 或 "parkinson" (high-low) |
+| `vol_window` | 30 | 滾動波動率估計窗口（`implied` 時不使用） |
+| `vol_type` | "realized" | `"realized"` / `"parkinson"` / `"implied"` |
+| `dvol_raw_path` | null | DVOL 原始 CSV 路徑（`implied` 時必填） |
+| `dvol_processed_path` | null | DVOL 處理後 Parquet 路徑（`implied` 時必填） |
+
+### Implied Volatility (DVOL)
+
+當 `vol_type: "implied"` 時，策略使用 **Deribit DVOL** 指數作為波動度來源，而非從歷史價格估計。
+
+**DVOL 簡介**：
+- Deribit 的 BTC 隱含波動度指數，類似傳統市場的 VIX
+- 衡量市場預期的未來 30 天年化波動度（單位：%）
+- 由選擇權市場價格反推（forward-looking）
+- 公開 API，免 API Key，支援 1 分鐘解析度
+
+**轉換公式**（年化 % → per-bar sigma）：
+```
+sigma_per_bar = DVOL / 100 / sqrt(525960)
+```
+其中 `525960 = 365.25 × 24 × 60`（年分鐘數）。
+
+**優勢**：
+- 前瞻性：反映市場共識而非歷史數據
+- 無小樣本問題：不需要估計任何參數
+- 對突發事件即時反應：選擇權市場領先價格市場
+
+**注意**：
+- DVOL 資料從約 2021 年開始可用
+- `vol_window` 和 `vol_window_candidates` 在此模式下被忽略
+- 首次運行時會自動從 Deribit API 下載 DVOL 資料
 
 ### Holding Management
 
@@ -133,6 +161,25 @@ backtest:
   re_entry_after_sl: false    # SL 後不自動重入場
   stop_loss: 0.03             # 3% 緊急 SL
   mode: "volume"
+```
+
+### Implied Volatility 配置範例
+
+```yaml
+strategy:
+  name: "glft_market_making"
+  parameters:
+    gamma: 0.01
+    kappa: 1.5
+    ema_window: 21
+    vol_window: 0                # implied 模式不使用
+    vol_type: "implied"
+    dvol_raw_path: "data/raw/btc_dvol_1m_2024_2025.csv"
+    dvol_processed_path: "data/processed/btc_dvol_1m_2024_2025.parquet"
+    min_holding_bars: 5
+    max_holding_bars: 30
+    vol_window_candidates: [0]   # implied 模式自動忽略
+    # ... 其他參數同上
 ```
 
 ## 使用方式

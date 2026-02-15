@@ -67,3 +67,15 @@ def large_ohlcv_df() -> pd.DataFrame:
 def walk_forward_ohlcv_df() -> pd.DataFrame:
     """500-row OHLCV DataFrame spanning ~20 days, for walk-forward tests."""
     return _make_ohlcv(500, seed=789)
+
+
+@pytest.fixture
+def sample_ohlcv_with_dvol_df() -> pd.DataFrame:
+    """100-row OHLCV DataFrame with a synthetic ``dvol`` column.
+
+    DVOL values are uniform random between 30 and 80 (annualized %).
+    """
+    df = _make_ohlcv(100, seed=42)
+    rng = np.random.default_rng(seed=42)
+    df["dvol"] = rng.uniform(30.0, 80.0, size=100)
+    return df

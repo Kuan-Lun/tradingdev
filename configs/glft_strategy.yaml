@@ -8,8 +8,11 @@ strategy:
     ema_window: 21 # EMA window for fair value
 
     # Volatility estimation
-    vol_window: 30 # Rolling window for sigma
-    vol_type: "parkinson" # "realized" or "parkinson"
+    vol_window: 30 # Rolling window for sigma (unused when vol_type: "implied")
+    vol_type: "implied" # "realized", "parkinson", or "implied"
+    # DVOL paths (required when vol_type: "implied"):
+    dvol_raw_path: "data/raw/btc_dvol_1m_2024_2025.csv"
+    dvol_processed_path: "data/processed/btc_dvol_1m_2024_2025.parquet"
 
     # Holding management (exchange compliance)
     min_holding_bars: 5 # 5 min @1m — exchange rule compliance
@@ -18,11 +21,11 @@ strategy:
     # fit() grid search candidates
     # gamma controls vol-adaptive threshold (corrected formula)
     # gamma=0.01 → ~0.07% at median vol; gamma=0.05 → ~0.35%
-    gamma_candidates: [0.005, 0.01, 0.02, 0.05]
-    kappa_candidates: [1, 5, 10]
-    ema_window_candidates: [13, 21, 34]
-    max_holding_bars_candidates: [13, 21]
-    vol_window_candidates: [13, 21]
+    gamma_candidates: [0, 0.01, 0.1]
+    kappa_candidates: [1, 10, 20, 50]
+    ema_window_candidates: [5, 8, 13]
+    max_holding_bars_candidates: [5, 8, 13]
+    # vol_window_candidates: [13, 21]
     target_metric: "total_volume_usdt"
 
     # Entry threshold (independent of fee_rate)

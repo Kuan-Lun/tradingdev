@@ -6,6 +6,25 @@ from typing import Literal, Self
 from pydantic import BaseModel, field_validator, model_validator
 
 
+class DVOLBar(BaseModel):
+    """Single Deribit DVOL (implied volatility index) data point."""
+
+    timestamp: datetime
+    dvol_open: float
+    dvol_high: float
+    dvol_low: float
+    dvol_close: float
+
+    @field_validator("dvol_close")
+    @classmethod
+    def dvol_close_positive(cls, v: float) -> float:
+        """Validate dvol_close > 0."""
+        if v <= 0:
+            msg = "dvol_close must be positive"
+            raise ValueError(msg)
+        return v
+
+
 class OHLCVBar(BaseModel):
     """Single OHLCV candle bar."""
 
@@ -183,7 +202,11 @@ class GLFTStrategyConfig(BaseModel):
 
     # Volatility estimation
     vol_window: int = 30
-    vol_type: Literal["realized", "parkinson"] = "realized"
+    vol_type: Literal["realized", "parkinson", "implied"] = "realized"
+
+    # DVOL data paths (required when vol_type == "implied")
+    dvol_raw_path: str | None = None
+    dvol_processed_path: str | None = None
 
     # Holding management (exchange compliance)
     min_holding_bars: int = 5
@@ -251,5 +274,13 @@ class GLFTStrategyConfig(BaseModel):
         """Validate max_holding_bars > min_holding_bars."""
         if self.max_holding_bars <= self.min_holding_bars:
             msg = "max_holding_bars must be greater than min_holding_bars"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def implied_requires_dvol_path(self) -> Self:
+        """Validate dvol_processed_path is set when vol_type is 'implied'."""
+        if self.vol_type == "implied" and self.dvol_processed_path is None:
+            msg = "dvol_processed_path is required when vol_type is 'implied'"
             raise ValueError(msg)
         return self

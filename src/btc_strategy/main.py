@@ -96,12 +96,8 @@ def main() -> None:
             config_snapshot=raw_config,
         )
 
-    processed_path = Path(
-        str(raw_config["data"]["processed_path"])
-    )
-    cache_file = save_cached_result(
-        pipeline, args.config, processed_path
-    )
+    processed_path = Path(str(raw_config["data"]["processed_path"]))
+    cache_file = save_cached_result(pipeline, args.config, processed_path)
     logger.info("Result cached → %s", cache_file)
 
 
@@ -109,11 +105,7 @@ def _create_engine(
     config: BacktestConfig,
 ) -> BaseBacktestEngine:
     """Create the appropriate engine based on mode."""
-    cls = (
-        VolumeBacktestEngine
-        if config.mode == "volume"
-        else SignalBacktestEngine
-    )
+    cls = VolumeBacktestEngine if config.mode == "volume" else SignalBacktestEngine
     return cls(
         init_cash=config.init_cash,
         fees=config.fees,
@@ -153,7 +145,78 @@ def _load_data(
         processor.save_processed(processed_df, processed_path)
 
     loader = DataLoader()
-    return loader.load_parquet(processed_path)
+    df = loader.load_parquet(processed_path)
+
+    # Merge DVOL data when strategy uses implied volatility
+    strategy_cfg = raw_config["strategy"]
+    params = strategy_cfg["parameters"]  # type: ignore[index]
+    if params.get("vol_type") == "implied":
+        df = _merge_dvol(df, params, bt_cfg, loader)
+
+    return df
+
+
+def _merge_dvol(
+    df: pd.DataFrame,
+    params: dict[str, object],
+    bt_cfg: BacktestConfig,
+    loader: DataLoader,
+) -> pd.DataFrame:
+    """Fetch (if needed) and merge DVOL data into the OHLCV frame."""
+    dvol_processed_str = params.get("dvol_processed_path")
+    if dvol_processed_str is None:
+        msg = (
+            "dvol_processed_path must be set in strategy "
+            "parameters when vol_type is 'implied'"
+        )
+        raise ValueError(msg)
+    dvol_processed = Path(str(dvol_processed_str))
+    if not dvol_processed.exists():
+        from btc_strategy.crawlers.deribit_dvol import (
+            DeribitDVOLCrawler,
+        )
+
+        logger.info("Fetching DVOL data from Deribit API...")
+        dvol_crawler = DeribitDVOLCrawler()
+        # DVOL uses currency (e.g. "BTC"), not pair
+        currency = bt_cfg.symbol.split("/")[0]
+        dvol_raw_df = dvol_crawler.fetch(
+            symbol=currency,
+            timeframe=bt_cfg.timeframe,
+            start=bt_cfg.start_date,
+            end=bt_cfg.end_date,
+        )
+        dvol_raw_path = Path(
+            str(
+                params.get(
+                    "dvol_raw_path",
+                    "data/raw/btc_dvol.csv",
+                )
+            )
+        )
+        dvol_crawler.save_raw(dvol_raw_df, dvol_raw_path)
+        # Skip DataProcessor.process() — it expects OHLCV columns.
+        # The crawler already sorts, deduplicates, and filters.
+        # Just ensure UTC and save as parquet.
+        if dvol_raw_df["timestamp"].dt.tz is None:
+            dvol_raw_df["timestamp"] = dvol_raw_df[
+                "timestamp"
+            ].dt.tz_localize("UTC")
+        dvol_processed.parent.mkdir(parents=True, exist_ok=True)
+        dvol_raw_df.to_parquet(dvol_processed, index=False)
+
+    dvol_df = loader.load_parquet(dvol_processed)
+    dvol_df = dvol_df[["timestamp", "dvol_close"]].rename(
+        columns={"dvol_close": "dvol"}
+    )
+    df = df.merge(dvol_df, on="timestamp", how="left")
+
+    n_missing = int(df["dvol"].isna().sum())
+    if n_missing > 0:
+        logger.warning("Forward-filling %d missing DVOL values", n_missing)
+        df["dvol"] = df["dvol"].ffill().bfill()
+
+    return df
 
 
 if __name__ == "__main__":
