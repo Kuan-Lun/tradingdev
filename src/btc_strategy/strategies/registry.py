@@ -5,11 +5,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from btc_strategy.data.schemas import (
+    GLFTStrategyConfig,
     KDFitConfig,
     KDStrategyConfig,
+    SafetyVolumeStrategyConfig,
     XGBoostStrategyConfig,
 )
+from btc_strategy.strategies.glft_strategy import GLFTStrategy
 from btc_strategy.strategies.kd_strategy import KDStrategy
+from btc_strategy.strategies.safety_volume_strategy import (
+    SafetyVolumeStrategy,
+)
 from btc_strategy.strategies.xgboost_strategy import (
     XGBoostStrategy,
 )
@@ -48,6 +54,20 @@ def create_strategy(
         strategy_config_xgb = XGBoostStrategyConfig(**params)
         return XGBoostStrategy(
             config=strategy_config_xgb,
+            backtest_engine=engine,
+        )
+
+    if name == "safety_first_volume":
+        sfv_config = SafetyVolumeStrategyConfig(**params)
+        return SafetyVolumeStrategy(
+            config=sfv_config,
+            backtest_engine=engine,
+        )
+
+    if name == "glft_market_making":
+        glft_config = GLFTStrategyConfig(**params)
+        return GLFTStrategy(
+            config=glft_config,
             backtest_engine=engine,
         )
 

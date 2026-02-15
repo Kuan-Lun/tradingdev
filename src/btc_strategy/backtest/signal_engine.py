@@ -26,8 +26,13 @@ class SignalBacktestEngine(BaseBacktestEngine):
     """
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
-        """Run signal-mode backtest."""
+        """Run signal-mode backtest.
+
+        Execution uses the **open** price of the bar following the
+        signal (after ``shift(1)``) to avoid look-ahead bias.
+        """
         close = df["close"].astype(float)
+        open_ = df["open"].astype(float) if "open" in df.columns else close
         signal = df["signal"].shift(1).fillna(0).astype(int)
 
         entries = (signal == 1) & (signal.shift(1) != 1)
@@ -44,6 +49,8 @@ class SignalBacktestEngine(BaseBacktestEngine):
 
         kwargs: dict[str, Any] = {
             "close": close,
+            "open": open_,
+            "price": open_,
             "entries": entries,
             "exits": exits,
             "short_entries": short_entries,

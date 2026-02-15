@@ -15,6 +15,7 @@ def format_metrics_report(metrics: dict[str, Any]) -> str:
         "=" * 55,
         "  Backtest Performance Report",
         "=" * 55,
+        f"  Total P&L:         {metrics.get('total_pnl_usdt', 0):>+10,.0f} USDT",
         f"  Total Return:      {metrics['total_return']:>10.2%}",
         f"  Annual Return:     {metrics['annual_return']:>10.2%}",
         f"  Sharpe Ratio:      {metrics['sharpe_ratio']:>10.4f}",

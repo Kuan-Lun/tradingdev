@@ -20,21 +20,39 @@ logger = setup_logger(__name__)
 
 
 class VolumeBacktestEngine(BaseBacktestEngine):
-    """Bar-by-bar simulation with forced re-entry after SL/TP.
+    """Bar-by-bar simulation for volume-oriented strategies.
 
-    Position size is always ``position_size_usdt``.  After every
-    SL/TP exit the simulator immediately re-enters in the direction
-    indicated by the current signal.
+    Position size is always ``position_size_usdt``.
+
+    Behaviour flags (inherited from ``BaseBacktestEngine``):
+
+    * ``re_entry_after_sl`` (default ``True``): After every SL/TP
+      exit the simulator immediately re-enters in the direction
+      indicated by the current signal.  Set to ``False`` to go flat
+      after a stop-out and wait for the next signal change.
+    * ``signal_as_position`` (default ``False``): When ``True``,
+      ``signal=0`` is interpreted as "go flat" (close any open
+      position).  When ``False`` (legacy), ``signal=0`` means
+      "do nothing / keep the current position".
     """
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
-        """Run volume-mode backtest."""
+        """Run volume-mode backtest.
+
+        Execution model:
+        - Signal from bar *t* is acted upon at bar *t+1* (``shift(1)``).
+        - Entry / signal-driven exit prices use bar *t+1*'s **open**.
+        - SL / TP checks use bar *t+1*'s **high** and **low**.
+        - Equity mark-to-market uses bar *t+1*'s **close**.
+        """
         close_s = df["close"].astype(float)
+        open_s = df["open"].astype(float) if "open" in df.columns else close_s
         high_s = df["high"].astype(float) if "high" in df.columns else close_s
         low_s = df["low"].astype(float) if "low" in df.columns else close_s
         signal_s = df["signal"].shift(1).fillna(0).astype(int)
 
         close = close_s.to_numpy()
+        open_ = open_s.to_numpy()
         high = high_s.to_numpy()
         low = low_s.to_numpy()
         signal = signal_s.to_numpy()
@@ -61,14 +79,21 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             tp,
         )
 
+        sig_as_pos = self._signal_as_position
+        re_entry = self._re_entry_after_sl
+
         for i in range(n):
             sig = int(signal[i])
+            o = float(open_[i])
             c = float(close[i])
             h = float(high[i])
             lo = float(low[i])
 
+            # --- SL / TP check (uses high/low for intra-bar) ---
             if pos_dir != 0:
-                exit_price = _check_sl_tp(pos_dir, entry_price, h, lo, sl, tp)
+                exit_price = _check_sl_tp(
+                    pos_dir, entry_price, h, lo, sl, tp,
+                )
                 if exit_price is not None:
                     trade = _close_position(
                         pos_dir,
@@ -82,36 +107,55 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     pos_dir = 0
                     pos_qty = 0.0
 
-                    if sig != 0:
+                    # Re-entry after SL happens intra-bar; use
+                    # close as best estimate of the re-entry fill.
+                    if re_entry and sig != 0:
                         entry_price = c
                         pos_qty = size_usdt / c
                         cash -= size_usdt * fee_rate
                         pos_dir = sig
 
+            # --- signal_as_position: signal=0 → close at open ---
+            if sig_as_pos and pos_dir != 0 and sig == 0:
+                trade = _close_position(
+                    pos_dir,
+                    pos_qty,
+                    entry_price,
+                    o,
+                    fee_rate,
+                )
+                trades.append(trade)
+                cash += trade["net_pnl"]
+                pos_dir = 0
+                pos_qty = 0.0
+
+            # --- reversal at open ---
             if pos_dir != 0 and sig != 0 and sig != pos_dir:
                 trade = _close_position(
                     pos_dir,
                     pos_qty,
                     entry_price,
-                    c,
+                    o,
                     fee_rate,
                 )
                 trades.append(trade)
                 cash += trade["net_pnl"]
-                entry_price = c
-                pos_qty = size_usdt / c
+                entry_price = o
+                pos_qty = size_usdt / o
                 cash -= size_usdt * fee_rate
                 pos_dir = sig
 
+            # --- new entry from flat at open ---
             elif pos_dir == 0 and sig != 0:
-                entry_price = c
-                pos_qty = size_usdt / c
+                entry_price = o
+                pos_qty = size_usdt / o
                 cash -= size_usdt * fee_rate
                 pos_dir = sig
 
+            # --- mark-to-market at close ---
             if pos_dir != 0:
                 unrealised = pos_dir * pos_qty * (c - entry_price)
-                equity[i] = cash + size_usdt + unrealised
+                equity[i] = cash + unrealised
             else:
                 equity[i] = cash
 
