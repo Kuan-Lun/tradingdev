@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from btc_strategy.data.schemas import (
+    GLFTMLStrategyConfig,
     GLFTStrategyConfig,
     KDFitConfig,
     KDStrategyConfig,
     SafetyVolumeStrategyConfig,
     XGBoostStrategyConfig,
 )
+from btc_strategy.strategies.glft_ml_strategy import GLFTMLStrategy
 from btc_strategy.strategies.glft_strategy import GLFTStrategy
 from btc_strategy.strategies.kd_strategy import KDStrategy
 from btc_strategy.strategies.safety_volume_strategy import (
@@ -68,6 +70,13 @@ def create_strategy(
         glft_config = GLFTStrategyConfig(**params)
         return GLFTStrategy(
             config=glft_config,
+            backtest_engine=engine,
+        )
+
+    if name == "glft_ml":
+        glft_ml_config = GLFTMLStrategyConfig(**params)
+        return GLFTMLStrategy(
+            config=glft_ml_config,
             backtest_engine=engine,
         )
 

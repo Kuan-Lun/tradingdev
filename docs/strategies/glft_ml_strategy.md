@@ -1,0 +1,129 @@
+# GLFT + ML Direction Prediction Strategy
+
+## 策略概述
+
+結合 GLFT（Gueant-Lehalle-Fernandez-Tapia）解析型做市模型與 AutoGluon ML
+方向預測器。ML 模型預測短期（5-15 分鐘）方向，用於提前掛 limit order，
+以 maker fee（0.02%/side）取代 taker fee（0.06%/side）。
+
+與純 GLFT 策略的關鍵差異：
+- ML 方向過濾：只在 ML 預測方向一致時開倉
+- Maker fee：假設使用 limit order（fee_rate=0.0002）
+- 更低的 entry edge 門檻（因手續費更低）
+
+## 信號邏輯
+
+1. **ML 方向預測**：AutoGluon TabularPredictor 預測 N 分鐘後的價格方向
+   - ML=1（看漲）：只允許做多
+   - ML=-1（看跌）：只允許做空
+   - ML=0（信心不足）：不開倉
+
+2. **GLFT 開倉條件**（與 ML 方向一致時）：
+   - 價格偏離 EMA 超過 `min_entry_edge`
+   - 偏離方向符合 ML 預測方向
+
+3. **平倉條件**（與純 GLFT 相同）：
+   - Profit target: 偏離回歸 `profit_target_ratio` 比例
+   - Strategy stop-loss: 偏離擴大超過 `strategy_sl`
+   - Max holding: 超過 `max_holding_bars` 強制平倉
+
+## 參數說明
+
+### ML 參數
+
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| prediction_horizon | 5 | ML 預測方向的未來 N 分鐘 |
+| feature_lookback | 60 | 特徵工程回看窗口（bars） |
+| ml_time_limit | 300 | AutoGluon 訓練時間限制（秒） |
+| ml_presets | "medium_quality" | AutoGluon 預設品質級別 |
+| confidence_threshold | 0.55 | ML 預測信心門檻 |
+
+### GLFT 核心參數
+
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| gamma | 0.0 | 風險厭惡係數（%-space） |
+| kappa | 1000.0 | 訂單到達強度（%-space） |
+| ema_window | 15 | 公允價格 EMA 窗口 |
+
+### 進出場參數
+
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| min_entry_edge | 0.0012 | 最低進場偏離（>= fee_rate * 2） |
+| profit_target_ratio | 0.75 | 獲利目標（entry deviation 的比例） |
+| strategy_sl | 0.003 | 策略止損（超過 entry 偏離的額外容忍） |
+| min_holding_bars | 5 | 最小持倉 bars（交易所合規） |
+| max_holding_bars | 13 | 最大持倉 bars |
+
+### 波動度與費率
+
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| vol_type | "implied" | 波動度估計（realized/parkinson/implied） |
+| fee_rate | 0.0002 | Maker fee（limit order） |
+| position_size_usdt | 3000.0 | 每筆交易大小 |
+
+## 特徵工程
+
+`DirectionFeatureEngineer` 產生約 50 個特徵：
+
+- **收益率特徵**：1/5/15/30/60 分鐘 log return 及其 lag
+- **滾動統計**：均值、標準差、偏度、峰度
+- **EMA 偏離**：多個窗口的 close/EMA 偏離比
+- **波動度**：rolling std、Parkinson estimator、DVOL
+- **成交量**：volume ratio、rolling volume z-score
+- **時間特徵**：hour/day-of-week cyclical encoding
+- **技術指標**：RSI、Bollinger Band width
+
+## YAML 配置範例
+
+```yaml
+strategy:
+  name: "glft_ml"
+  parameters:
+    prediction_horizon: 5
+    feature_lookback: 60
+    ml_time_limit: 300
+    ml_presets: "medium_quality"
+    confidence_threshold: 0.55
+    gamma: 0.0
+    kappa: 1000.0
+    ema_window: 15
+    vol_type: "implied"
+    dvol_raw_path: "data/raw/btc_dvol_1m_2024_2025.csv"
+    dvol_processed_path: "data/processed/btc_dvol_1m_2024_2025.parquet"
+    min_holding_bars: 5
+    max_holding_bars: 13
+    min_entry_edge: 0.0012
+    profit_target_ratio: 0.75
+    strategy_sl: 0.003
+    position_size_usdt: 3000.0
+    fee_rate: 0.0002
+```
+
+## 使用方式
+
+```bash
+uv run python -m btc_strategy.main configs/glft_ml_strategy.yaml
+```
+
+## Walk-Forward 結果（2024 train / 2025 test）
+
+ML 方向預測在 OOS 等同隨機（50% 勝率），顯示 BTC 短期方向在
+1-15 分鐘尺度上缺乏可被簡單 ML 模型捕捉的持續性 alpha。
+
+## 與純 GLFT 策略的比較
+
+| 面向 | GLFT | GLFT + ML |
+|------|------|-----------|
+| 方向決定 | 均值回歸（價格偏離 EMA） | ML 預測 + GLFT 偏離 |
+| 手續費 | taker (0.06%/side) | maker (0.02%/side) |
+| ML 依賴 | 無 | AutoGluon TabularPredictor |
+| OOS 邊際 | 穩定（train/test 一致） | ML 過擬合風險高 |
+| 適用場景 | 低費率環境 | 需要有效 ML alpha |
+
+## 參考文獻
+
+- Gueant, O., Lehalle, C-A., Fernandez-Tapia, J. (2012). *Dealing with the inventory risk: a solution to the market making problem.*

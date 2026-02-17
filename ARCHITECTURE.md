@@ -140,10 +140,23 @@ classDiagram
         -_run_glft_state_machine(close, ema, sigma, ...) ndarray
     }
 
+    class GLFTMLStrategy {
+        -_config: GLFTMLStrategyConfig
+        -_backtest_engine: BaseBacktestEngine | None
+        -_ml_model: AutoGluonDirectionModel | None
+        -_feature_engineer: DirectionFeatureEngineer | None
+        +fit(df) None
+        +generate_signals(df) pd.DataFrame
+        +get_parameters() dict
+        -_grid_search_glft(feat_df, ml_directions) None
+        -_run_ml_glft_state_machine(close, ema, sigma, ...) ndarray
+    }
+
     BaseStrategy <|-- KDStrategy
     BaseStrategy <|-- XGBoostStrategy
     BaseStrategy <|-- SafetyVolumeStrategy
     BaseStrategy <|-- GLFTStrategy
+    BaseStrategy <|-- GLFTMLStrategy
     KDStrategy *-- KDIndicator : 組合
     KDStrategy *-- KDStrategyConfig : 組合
     XGBoostStrategy *-- XGBoostStrategyConfig : 組合
@@ -155,6 +168,9 @@ classDiagram
     SafetyVolumeStrategy *-- XGBoostDirectionModel : 組合
     SafetyVolumeStrategy *-- RiskFeatureEngineer : 組合
     GLFTStrategy *-- GLFTStrategyConfig : 組合
+    GLFTMLStrategy *-- GLFTMLStrategyConfig : 組合
+    GLFTMLStrategy *-- AutoGluonDirectionModel : 組合
+    GLFTMLStrategy *-- DirectionFeatureEngineer : 組合
 
     %% ──────────────── Strategy 輔助類別 ────────────────
 
@@ -207,7 +223,30 @@ classDiagram
         -_compute_safe_target(df) pd.Series
     }
 
+    class AutoGluonDirectionModel {
+        -_time_limit: int
+        -_presets: str
+        -_eval_metric: str
+        -_predictor: TabularPredictor | None
+        -_feature_names: list
+        -_model_path: Path | None
+        +train(df, eval_df) None
+        +predict(df) pd.Series
+        +predict_proba(df) pd.DataFrame
+        +cleanup() None
+        +get_parameters() dict
+    }
+
+    class DirectionFeatureEngineer {
+        -_lookback: int
+        -_prediction_horizon: int
+        -_feature_names: list
+        +transform(df, include_target) pd.DataFrame
+        +get_feature_names() list
+    }
+
     BaseModel <|-- XGBoostDirectionModel
+    BaseModel <|-- AutoGluonDirectionModel
 
     %% ──────────────── 回測引擎實作 ────────────────
 
@@ -398,8 +437,8 @@ classDiagram
 
     class GLFTStrategyConfig {
         <<pydantic>>
-        +gamma: float = 0.01
-        +kappa: float = 1.5
+        +gamma: float = 500.0
+        +kappa: float = 1000.0
         +ema_window: int = 21
         +vol_window: int = 30
         +vol_type: str = "realized"
@@ -407,13 +446,36 @@ classDiagram
         +dvol_processed_path: str | None
         +min_holding_bars: int = 5
         +max_holding_bars: int = 30
+        +min_entry_edge: float = 0.0012
+        +profit_target_ratio: float = 1.0
+        +strategy_sl: float = 0.005
+        +momentum_guard: bool = True
+        +signal_agg_minutes: int = 1
         +gamma_candidates: list~float~
         +kappa_candidates: list~float~
         +ema_window_candidates: list~int~
         +target_metric: str = "total_return"
         +position_size_usdt: float = 3000.0
         +monthly_volume_target_usdt: float | None
-        +fee_rate: float = 0.0011
+        +fee_rate: float = 0.0006
+        +min_annual_return: float | None
+    }
+
+    class GLFTMLStrategyConfig {
+        <<pydantic>>
+        +prediction_horizon: int = 5
+        +feature_lookback: int = 60
+        +ml_time_limit: int = 300
+        +ml_presets: str = "medium_quality"
+        +confidence_threshold: float = 0.55
+        +gamma: float = 0.0
+        +kappa: float = 1000.0
+        +ema_window: int = 15
+        +vol_type: str = "implied"
+        +min_entry_edge: float = 0.0012
+        +profit_target_ratio: float = 0.75
+        +strategy_sl: float = 0.003
+        +fee_rate: float = 0.0002
     }
 
     %% ──────────────── 資料管線 ────────────────
@@ -669,7 +731,7 @@ graph TD
     end
 
     subgraph Data["data/"]
-        SCH["schemas.py<br/>DVOLBar · OHLCVBar · BacktestConfig<br/>KDStrategyConfig · KDFitConfig<br/>WalkForwardConfig<br/>XGBoostModelConfig · XGBoostStrategyConfig<br/>SafetyVolumeStrategyConfig · GLFTStrategyConfig"]
+        SCH["schemas.py<br/>DVOLBar · OHLCVBar · BacktestConfig<br/>KDStrategyConfig · KDFitConfig<br/>WalkForwardConfig<br/>XGBoostModelConfig · XGBoostStrategyConfig<br/>SafetyVolumeStrategyConfig<br/>GLFTStrategyConfig · GLFTMLStrategyConfig"]
         DL[DataLoader]
         DP[DataProcessor]
     end
@@ -686,6 +748,7 @@ graph TD
         XGBS[XGBoostStrategy]
         SFVS[SafetyVolumeStrategy]
         GLFTS[GLFTStrategy]
+        GLFTMLS[GLFTMLStrategy]
         REG[registry.py]
         RR[RollingRetrainer]
         TO[ThresholdOptimizer]
@@ -693,6 +756,7 @@ graph TD
         BS --> XGBS
         BS --> SFVS
         BS --> GLFTS
+        BS --> GLFTMLS
     end
 
     subgraph Backtest["backtest/"]
@@ -722,10 +786,13 @@ graph TD
     subgraph ML["ml/"]
         BM[BaseModel]
         XGBM[XGBoostDirectionModel]
+        AGM[AutoGluonDirectionModel]
         FE[FeatureEngineer]
         RFE[RiskFeatureEngineer]
+        DFE[DirectionFeatureEngineer]
         TF[technical_features.py]
         BM --> XGBM
+        BM --> AGM
     end
 
     subgraph Utils["utils/"]
@@ -760,6 +827,7 @@ graph TD
     REG --> XGBS
     REG --> SFVS
     REG --> GLFTS
+    REG --> GLFTMLS
     REG -.-> BS
 
     KDS --> KDI
@@ -784,6 +852,12 @@ graph TD
     GLFTS --> SCH
     GLFTS --> BBE
     GLFTS --> PAR
+
+    GLFTMLS --> AGM
+    GLFTMLS --> DFE
+    GLFTMLS --> SCH
+    GLFTMLS --> BBE
+    GLFTMLS --> PAR
 
     FE --> TF
     RFE --> TF

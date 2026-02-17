@@ -195,9 +195,11 @@ class GLFTStrategyConfig(BaseModel):
     model for signal-based backtesting.
     """
 
-    # Core GLFT parameters
-    gamma: float = 0.01
-    kappa: float = 1.5
+    # Core GLFT parameters (dimensionless %-space)
+    # gamma and kappa operate in pure percentage space,
+    # independent of the asset's price level.
+    gamma: float = 500.0
+    kappa: float = 1000.0
     ema_window: int = 21
 
     # Volatility estimation
@@ -214,18 +216,15 @@ class GLFTStrategyConfig(BaseModel):
 
     # fit() grid search candidates
     gamma_candidates: list[float] = [
-        0.001,
-        0.005,
-        0.01,
-        0.05,
-        0.1,
+        0.0,
+        200.0,
+        500.0,
+        1000.0,
     ]
     kappa_candidates: list[float] = [
-        0.5,
-        1.0,
-        1.5,
-        2.0,
-        5.0,
+        500.0,
+        1000.0,
+        5000.0,
     ]
     ema_window_candidates: list[int] = [10, 21, 50]
     max_holding_bars_candidates: list[int] = [30]
@@ -246,6 +245,27 @@ class GLFTStrategyConfig(BaseModel):
     # When enabled, only allow entries aligned with slow EMA direction
     trend_ema_window: int = 0
     trend_ema_candidates: list[int] = [0]
+
+    # Exit: profit target — fraction of entry deviation to capture
+    # before exiting.  1.0 = wait for full mean-reversion to EMA;
+    # >1.0 = wait for overshoot beyond EMA.
+    profit_target_ratio: float = 1.0
+    profit_target_ratio_candidates: list[float] = [0.5, 0.75, 1.0]
+
+    # Exit: strategy-level stop-loss — max additional adverse
+    # deviation (in normalised units) beyond entry deviation.
+    # 0 = disabled.
+    strategy_sl: float = 0.005
+
+    # Entry: momentum guard — only enter when deviation is
+    # narrowing (price moving back toward EMA), not widening.
+    momentum_guard: bool = True
+
+    # Multi-timeframe: aggregate N 1-min bars into one for EMA
+    # computation.  1 = no aggregation (default); 5 = 5-min EMA.
+    # Execution remains at 1-min resolution.
+    signal_agg_minutes: int = 1
+    signal_agg_minutes_candidates: list[int] = [1]
 
     # Constrained optimization: filter by annual_return >= threshold,
     # then maximize target_metric (e.g. total_volume_usdt)
@@ -282,5 +302,66 @@ class GLFTStrategyConfig(BaseModel):
         """Validate dvol_processed_path is set when vol_type is 'implied'."""
         if self.vol_type == "implied" and self.dvol_processed_path is None:
             msg = "dvol_processed_path is required when vol_type is 'implied'"
+            raise ValueError(msg)
+        return self
+
+
+class GLFTMLStrategyConfig(BaseModel):
+    """GLFT + ML direction prediction strategy configuration.
+
+    Combines the GLFT analytical spread model with an AutoGluon ML
+    direction predictor for limit-order market making.
+    """
+
+    # --- ML parameters ---
+    prediction_horizon: int = 5
+    feature_lookback: int = 60
+    ml_time_limit: int = 300
+    ml_presets: str = "medium_quality"
+    confidence_threshold: float = 0.55
+    confidence_threshold_candidates: list[float] = [0.52, 0.55, 0.60]
+
+    # --- GLFT core parameters (%-space) ---
+    gamma: float = 0.0
+    kappa: float = 1000.0
+    ema_window: int = 15
+
+    # --- Volatility ---
+    vol_window: int = 30
+    vol_type: Literal["realized", "parkinson", "implied"] = "implied"
+    dvol_raw_path: str | None = None
+    dvol_processed_path: str | None = None
+
+    # --- Holding management ---
+    min_holding_bars: int = 5
+    max_holding_bars: int = 13
+
+    # --- Grid search candidates ---
+    gamma_candidates: list[float] = [0.0, 200.0, 500.0]
+    kappa_candidates: list[float] = [500.0, 1000.0]
+    ema_window_candidates: list[int] = [5, 15, 30, 75]
+    max_holding_bars_candidates: list[int] = [8, 13, 30]
+    min_entry_edge_candidates: list[float] = [0.0008, 0.0012, 0.002]
+    profit_target_ratio_candidates: list[float] = [0.5, 0.75, 1.0]
+    target_metric: str = "total_volume_usdt"
+
+    # --- Entry/Exit ---
+    min_entry_edge: float = 0.0012
+    profit_target_ratio: float = 0.75
+    strategy_sl: float = 0.003
+
+    # --- Position & volume ---
+    position_size_usdt: float = 3000.0
+    monthly_volume_target_usdt: float | None = None
+    fee_rate: float = 0.0002  # Maker fee
+
+    # --- Constrained optimisation ---
+    min_annual_return: float | None = None
+
+    @model_validator(mode="after")
+    def glft_ml_max_gt_min_holding(self) -> Self:
+        """Validate max_holding_bars > min_holding_bars."""
+        if self.max_holding_bars <= self.min_holding_bars:
+            msg = "max_holding_bars must be greater than min_holding_bars"
             raise ValueError(msg)
         return self

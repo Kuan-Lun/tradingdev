@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = setup_logger(__name__)
 
 # Type alias for the full parameter tuple searched by fit()
-_ParamTuple = tuple[float, float, int, int, int, float, int]
+_ParamTuple = tuple[float, float, int, int, int, float, int, float, int]
 
 
 def _evaluate_glft_combo(
@@ -49,7 +49,11 @@ def _evaluate_glft_combo(
         Tuple of (params, metrics_dict) for the main process to
         apply constraint filtering.
     """
-    gamma, kappa, ema_w, max_hold, vol_win, entry_edge, trend_ema = params
+    (
+        gamma, kappa, ema_w, max_hold,
+        vol_win, entry_edge, trend_ema, pt_ratio,
+        sig_agg,
+    ) = params
     trial = GLFTStrategy(config=config)
     trial._best_gamma = gamma
     trial._best_kappa = kappa
@@ -58,6 +62,8 @@ def _evaluate_glft_combo(
     trial._best_vol_window = vol_win
     trial._best_min_entry_edge = entry_edge
     trial._best_trend_ema_window = trend_ema
+    trial._best_profit_target_ratio = pt_ratio
+    trial._best_signal_agg_minutes = sig_agg
 
     signals = trial.generate_signals(df)
     result = engine.run(signals)
@@ -92,6 +98,12 @@ class GLFTStrategy(BaseStrategy):
         self._best_vol_window: int = config.vol_window
         self._best_min_entry_edge: float = config.min_entry_edge
         self._best_trend_ema_window: int = config.trend_ema_window
+        self._best_profit_target_ratio: float = (
+            config.profit_target_ratio
+        )
+        self._best_signal_agg_minutes: int = (
+            config.signal_agg_minutes
+        )
 
     # ------------------------------------------------------------------
     # BaseStrategy interface
@@ -119,6 +131,8 @@ class GLFTStrategy(BaseStrategy):
         best_vol_win = self._config.vol_window
         best_entry_edge = self._config.min_entry_edge
         best_trend_ema = self._config.trend_ema_window
+        best_pt_ratio = self._config.profit_target_ratio
+        best_sig_agg = self._config.signal_agg_minutes
         target = self._config.target_metric
         min_ar = self._config.min_annual_return
 
@@ -137,6 +151,8 @@ class GLFTStrategy(BaseStrategy):
                 vol_win_candidates,
                 self._config.min_entry_edge_candidates,
                 self._config.trend_ema_candidates,
+                self._config.profit_target_ratio_candidates,
+                self._config.signal_agg_minutes_candidates,
             ),
         )
 
@@ -177,6 +193,8 @@ class GLFTStrategy(BaseStrategy):
                 best_vol_win = params[4]
                 best_entry_edge = params[5]
                 best_trend_ema = params[6]
+                best_pt_ratio = params[7]
+                best_sig_agg = params[8]
 
         if n_filtered > 0:
             logger.info(
@@ -193,11 +211,14 @@ class GLFTStrategy(BaseStrategy):
         self._best_vol_window = best_vol_win
         self._best_min_entry_edge = best_entry_edge
         self._best_trend_ema_window = best_trend_ema
+        self._best_profit_target_ratio = best_pt_ratio
+        self._best_signal_agg_minutes = best_sig_agg
 
         logger.info(
-            "GLFT fit complete: gamma=%.4f, kappa=%.4f, ema=%d, "
-            "max_hold=%d, vol_win=%d, entry_edge=%.4f, "
-            "trend_ema=%d (%s=%.4f)",
+            "GLFT fit complete: gamma=%.4f, kappa=%.4f, "
+            "ema=%d, max_hold=%d, vol_win=%d, "
+            "entry_edge=%.4f, trend_ema=%d, "
+            "pt_ratio=%.2f, sig_agg=%d (%s=%.4f)",
             best_gamma,
             best_kappa,
             best_ema,
@@ -205,6 +226,8 @@ class GLFTStrategy(BaseStrategy):
             best_vol_win,
             best_entry_edge,
             best_trend_ema,
+            best_pt_ratio,
+            best_sig_agg,
             target,
             best_value,
         )
@@ -223,11 +246,10 @@ class GLFTStrategy(BaseStrategy):
                 raise ValueError(msg)
             dvol = np.asarray(df["dvol"].astype(float).values)
 
-        ema = np.asarray(
-            pd.Series(close)
-            .ewm(span=self._best_ema_window, adjust=False)
-            .mean()
-            .values,
+        ema = self._compute_ema(
+            close,
+            self._best_ema_window,
+            self._best_signal_agg_minutes,
         )
         sigma = self._compute_volatility(close, high, low, dvol=dvol)
 
@@ -257,6 +279,9 @@ class GLFTStrategy(BaseStrategy):
             max_hold=self._best_max_holding_bars,
             min_entry_edge=self._best_min_entry_edge,
             trend_dir=trend_dir,
+            profit_target_ratio=self._best_profit_target_ratio,
+            strategy_sl=self._config.strategy_sl,
+            momentum_guard=self._config.momentum_guard,
         )
 
         result = df.copy()
@@ -273,7 +298,67 @@ class GLFTStrategy(BaseStrategy):
         params["best_vol_window"] = self._best_vol_window
         params["best_min_entry_edge"] = self._best_min_entry_edge
         params["best_trend_ema_window"] = self._best_trend_ema_window
+        params["best_profit_target_ratio"] = (
+            self._best_profit_target_ratio
+        )
+        params["best_signal_agg_minutes"] = (
+            self._best_signal_agg_minutes
+        )
         return params
+
+    # ------------------------------------------------------------------
+    # Multi-timeframe EMA
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_ema(
+        close: npt.NDArray[np.floating[Any]],
+        ema_window: int,
+        agg_minutes: int,
+    ) -> npt.NDArray[np.floating[Any]]:
+        """Compute EMA, optionally on aggregated N-min bars.
+
+        When ``agg_minutes > 1``, the close series is resampled to
+        N-minute bars (taking the last close in each window), the
+        EMA is computed on these resampled values, and the result
+        is mapped back to 1-minute resolution with a 1-period lag
+        to prevent look-ahead bias.
+
+        Returns an array of the same length as *close*.
+        """
+        if agg_minutes <= 1:
+            return np.asarray(
+                pd.Series(close)
+                .ewm(span=ema_window, adjust=False)
+                .mean()
+                .values,
+            )
+
+        n = len(close)
+        ag = agg_minutes
+
+        # Resample: take close at end of each N-min window
+        # Indices: ag-1, 2*ag-1, 3*ag-1, ...
+        n_complete = (n // ag) * ag
+        agg_close = close[ag - 1 : n_complete : ag]
+
+        # EMA on resampled closes
+        agg_ema = np.asarray(
+            pd.Series(agg_close)
+            .ewm(span=ema_window, adjust=False)
+            .mean()
+            .values,
+        )
+
+        # Map back to 1-min resolution.
+        # At 1-min bar i, the most recently completed N-min bar
+        # has index k = (i + 1) // ag - 1.
+        # k < 0 for bars before the first complete window;
+        # clipped to 0 (uses first EMA value — slight warm-up
+        # inaccuracy, harmless).
+        k_idx = (np.arange(n) + 1) // ag - 1
+        k_idx = np.clip(k_idx, 0, len(agg_ema) - 1)
+        return np.asarray(agg_ema[k_idx], dtype=np.float64)
 
     # ------------------------------------------------------------------
     # Volatility estimation
@@ -346,6 +431,9 @@ class GLFTStrategy(BaseStrategy):
         max_hold: int,
         min_entry_edge: float = 0.0012,
         trend_dir: npt.NDArray[np.floating[Any]] | None = None,
+        profit_target_ratio: float = 1.0,
+        strategy_sl: float = 0.005,
+        momentum_guard: bool = True,
     ) -> npt.NDArray[np.floating[Any]]:
         """GLFT state machine producing position-state signals.
 
@@ -356,6 +444,17 @@ class GLFTStrategy(BaseStrategy):
         When ``trend_dir`` is provided, entries are restricted to
         the trend direction (long only in uptrend, short only in
         downtrend).
+
+        ``profit_target_ratio`` controls exit: the fraction of the
+        entry deviation to capture before exiting.  1.0 means wait
+        for full mean-reversion back to EMA (deviation ≈ 0).
+
+        ``strategy_sl`` is the maximum additional adverse deviation
+        (beyond entry deviation) before cutting losses.  0 disables.
+
+        ``momentum_guard`` when True, only enters when deviation is
+        narrowing (price moving back toward EMA), filtering out
+        entries into momentum moves.
 
         Returns an array of ``(1, -1, 0)`` where:
 
@@ -371,10 +470,13 @@ class GLFTStrategy(BaseStrategy):
         if gamma < 1e-12:
             spread_const = 1.0 / kappa
         else:
-            spread_const = math.log(1.0 + gamma / kappa) / gamma
+            spread_const = (
+                math.log(1.0 + gamma / kappa) / gamma
+            )
 
         state = 0  # 0=flat, 1=long, -1=short
         bars_in_pos = 0
+        entry_dev = 0.0  # deviation at entry time
 
         for i in range(n):
             s = close[i]
@@ -393,15 +495,39 @@ class GLFTStrategy(BaseStrategy):
             if state == 0:
                 # --- FLAT: evaluate entry ---
                 tau = float(max_hold)
-                # GLFT half-spread in %-space.  σ is in pct
-                # (log-return), so σ_abs = σ_pct × fair.
-                #   δ_pct = δ_abs / fair
-                #         = γ·σ²·fair·τ/2 + spread_const/fair
-                glft_hs = gamma * sig_sq * fair * tau / 2.0 + spread_const / fair
+                # GLFT half-spread in pure %-space.
+                # γ and κ are dimensionless %-space params,
+                # so the spread is price-independent and
+                # only adapts to volatility (σ).
+                glft_hs = (
+                    gamma * sig_sq * tau / 2.0
+                    + spread_const
+                )
                 half_spread = max(glft_hs, min_entry_edge)
 
                 want_long = deviation < -half_spread
                 want_short = deviation > half_spread
+
+                # Momentum guard: only enter when deviation
+                # is narrowing (price reverting toward EMA)
+                if momentum_guard and i > 0:
+                    prev_fair = ema[i - 1]
+                    if prev_fair > 0:
+                        prev_dev = (
+                            (close[i - 1] - prev_fair)
+                            / prev_fair
+                        )
+                        # Long: deviation increasing (less
+                        # negative) = price recovering
+                        if want_long and deviation <= prev_dev:
+                            want_long = False
+                        # Short: deviation decreasing (less
+                        # positive) = price pulling back
+                        if (
+                            want_short
+                            and deviation >= prev_dev
+                        ):
+                            want_short = False
 
                 # Apply trend filter
                 if trend_dir is not None:
@@ -414,37 +540,56 @@ class GLFTStrategy(BaseStrategy):
                 if want_long:
                     state = 1
                     bars_in_pos = 0
+                    entry_dev = deviation
                 elif want_short:
                     state = -1
                     bars_in_pos = 0
+                    entry_dev = deviation
             else:
                 # --- IN POSITION ---
                 bars_in_pos += 1
-                tau = float(max(max_hold - bars_in_pos, 1))
-                q = float(state)
 
                 if bars_in_pos < min_hold:
                     signals[i] = float(state)
                     continue
 
+                # Force exit at max holding period
                 if bars_in_pos >= max_hold:
                     state = 0
                     signals[i] = 0.0
                     continue
 
-                # Inventory-adjusted deviation (%-space)
-                inventory_adj = q * gamma * sig_sq * fair * tau
-                adjusted_dev = deviation + inventory_adj
-
-                # Exit: GLFT spread in %-space (no entry-edge
-                # floor — fees were paid on entry, exit follows
-                # inventory risk logic)
-                half_spread = gamma * sig_sq * fair * tau / 2.0 + spread_const / fair
-
-                if (state == 1 and adjusted_dev > half_spread) or (
-                    state == -1 and adjusted_dev < -half_spread
+                # Strategy-level stop-loss: cut when adverse
+                # deviation exceeds threshold beyond entry
+                if strategy_sl > 0 and (
+                    (
+                        state == 1
+                        and deviation < entry_dev - strategy_sl
+                    )
+                    or (
+                        state == -1
+                        and deviation > entry_dev + strategy_sl
+                    )
                 ):
                     state = 0
+                    signals[i] = 0.0
+                    continue
+
+                # Profit target: exit when deviation reverts
+                # toward EMA by the specified ratio.
+                # target = entry_dev * (1 - ratio):
+                #   ratio=1.0 → target=0 (full reversion)
+                #   ratio=0.5 → target=half of entry_dev
+                if profit_target_ratio > 0:
+                    target = entry_dev * (
+                        1.0 - profit_target_ratio
+                    )
+                    if (
+                        state == 1 and deviation >= target
+                    ) or (
+                        state == -1 and deviation <= target
+                    ):
+                        state = 0
 
             signals[i] = float(state)
 
