@@ -66,6 +66,7 @@ class XGBoostDirectionModel(BaseModel):
             subsample=self._config.subsample,
             colsample_bytree=self._config.colsample_bytree,
             random_state=self._config.random_state,
+            n_jobs=self._config.n_jobs,
             eval_metric=("mlogloss" if n_classes > 2 else "logloss"),
             early_stopping_rounds=(
                 self._config.early_stopping_rounds if eval_df is not None else None
@@ -152,7 +153,9 @@ class XGBoostDirectionModel(BaseModel):
             columns = list(range(n_cols_proba))
 
         return pd.DataFrame(
-            proba, index=df.index, columns=columns,
+            proba,
+            index=df.index,
+            columns=columns,
         )
 
     def get_parameters(self) -> dict[str, Any]:

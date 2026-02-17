@@ -116,6 +116,35 @@ class KDFitConfig(BaseModel):
     target_metric: str = "sharpe_ratio"
 
 
+class ParallelConfig(BaseModel):
+    """Parallel execution configuration.
+
+    Controls how many CPU cores are used for grid-search and ML training.
+    """
+
+    reserve_cores: int = 2
+    safety_factor: float = 0.6
+    overhead_multiplier: float = 3.0
+
+    @field_validator("reserve_cores")
+    @classmethod
+    def reserve_cores_non_negative(cls, v: int) -> int:
+        """Validate reserve_cores >= 0."""
+        if v < 0:
+            msg = "reserve_cores must be non-negative"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("safety_factor")
+    @classmethod
+    def safety_factor_range(cls, v: float) -> float:
+        """Validate 0 < safety_factor <= 1."""
+        if not 0 < v <= 1:
+            msg = "safety_factor must be between 0 (exclusive) and 1 (inclusive)"
+            raise ValueError(msg)
+        return v
+
+
 class WalkForwardConfig(BaseModel):
     """Walk-forward validation configuration."""
 
@@ -139,6 +168,7 @@ class XGBoostModelConfig(BaseModel):
     colsample_bytree: float = 0.8
     early_stopping_rounds: int = 10
     random_state: int = 42
+    n_jobs: int | None = None
 
 
 class XGBoostStrategyConfig(BaseModel):

@@ -26,7 +26,10 @@ if TYPE_CHECKING:
     from btc_strategy.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from btc_strategy.data.schemas import GLFTStrategyConfig
+    from btc_strategy.data.schemas import (
+        GLFTStrategyConfig,
+        ParallelConfig,
+    )
 
 logger = setup_logger(__name__)
 
@@ -50,8 +53,14 @@ def _evaluate_glft_combo(
         apply constraint filtering.
     """
     (
-        gamma, kappa, ema_w, max_hold,
-        vol_win, entry_edge, trend_ema, pt_ratio,
+        gamma,
+        kappa,
+        ema_w,
+        max_hold,
+        vol_win,
+        entry_edge,
+        trend_ema,
+        pt_ratio,
         sig_agg,
     ) = params
     trial = GLFTStrategy(config=config)
@@ -86,9 +95,11 @@ class GLFTStrategy(BaseStrategy):
         self,
         config: GLFTStrategyConfig,
         backtest_engine: BaseBacktestEngine | None = None,
+        parallel_config: ParallelConfig | None = None,
     ) -> None:
         self._config = config
         self._backtest_engine = backtest_engine
+        self._parallel_config = parallel_config
 
         # Populated by fit() -- or use config defaults
         self._best_gamma: float = config.gamma
@@ -98,12 +109,8 @@ class GLFTStrategy(BaseStrategy):
         self._best_vol_window: int = config.vol_window
         self._best_min_entry_edge: float = config.min_entry_edge
         self._best_trend_ema_window: int = config.trend_ema_window
-        self._best_profit_target_ratio: float = (
-            config.profit_target_ratio
-        )
-        self._best_signal_agg_minutes: int = (
-            config.signal_agg_minutes
-        )
+        self._best_profit_target_ratio: float = config.profit_target_ratio
+        self._best_signal_agg_minutes: int = config.signal_agg_minutes
 
     # ------------------------------------------------------------------
     # BaseStrategy interface
@@ -156,7 +163,13 @@ class GLFTStrategy(BaseStrategy):
             ),
         )
 
-        n_jobs = estimate_n_jobs(df)
+        p_cfg = self._parallel_config
+        n_jobs = estimate_n_jobs(
+            df,
+            safety_factor=p_cfg.safety_factor if p_cfg else 0.6,
+            overhead_multiplier=p_cfg.overhead_multiplier if p_cfg else 3.0,
+            reserve_cores=p_cfg.reserve_cores if p_cfg else 2,
+        )
         logger.info(
             "GLFT grid search: %d combinations (n_jobs=%d)",
             len(grid),
@@ -298,12 +311,8 @@ class GLFTStrategy(BaseStrategy):
         params["best_vol_window"] = self._best_vol_window
         params["best_min_entry_edge"] = self._best_min_entry_edge
         params["best_trend_ema_window"] = self._best_trend_ema_window
-        params["best_profit_target_ratio"] = (
-            self._best_profit_target_ratio
-        )
-        params["best_signal_agg_minutes"] = (
-            self._best_signal_agg_minutes
-        )
+        params["best_profit_target_ratio"] = self._best_profit_target_ratio
+        params["best_signal_agg_minutes"] = self._best_signal_agg_minutes
         return params
 
     # ------------------------------------------------------------------
@@ -328,10 +337,7 @@ class GLFTStrategy(BaseStrategy):
         """
         if agg_minutes <= 1:
             return np.asarray(
-                pd.Series(close)
-                .ewm(span=ema_window, adjust=False)
-                .mean()
-                .values,
+                pd.Series(close).ewm(span=ema_window, adjust=False).mean().values,
             )
 
         n = len(close)
@@ -344,10 +350,7 @@ class GLFTStrategy(BaseStrategy):
 
         # EMA on resampled closes
         agg_ema = np.asarray(
-            pd.Series(agg_close)
-            .ewm(span=ema_window, adjust=False)
-            .mean()
-            .values,
+            pd.Series(agg_close).ewm(span=ema_window, adjust=False).mean().values,
         )
 
         # Map back to 1-min resolution.
@@ -470,9 +473,7 @@ class GLFTStrategy(BaseStrategy):
         if gamma < 1e-12:
             spread_const = 1.0 / kappa
         else:
-            spread_const = (
-                math.log(1.0 + gamma / kappa) / gamma
-            )
+            spread_const = math.log(1.0 + gamma / kappa) / gamma
 
         state = 0  # 0=flat, 1=long, -1=short
         bars_in_pos = 0
@@ -499,10 +500,7 @@ class GLFTStrategy(BaseStrategy):
                 # γ and κ are dimensionless %-space params,
                 # so the spread is price-independent and
                 # only adapts to volatility (σ).
-                glft_hs = (
-                    gamma * sig_sq * tau / 2.0
-                    + spread_const
-                )
+                glft_hs = gamma * sig_sq * tau / 2.0 + spread_const
                 half_spread = max(glft_hs, min_entry_edge)
 
                 want_long = deviation < -half_spread
@@ -513,20 +511,14 @@ class GLFTStrategy(BaseStrategy):
                 if momentum_guard and i > 0:
                     prev_fair = ema[i - 1]
                     if prev_fair > 0:
-                        prev_dev = (
-                            (close[i - 1] - prev_fair)
-                            / prev_fair
-                        )
+                        prev_dev = (close[i - 1] - prev_fair) / prev_fair
                         # Long: deviation increasing (less
                         # negative) = price recovering
                         if want_long and deviation <= prev_dev:
                             want_long = False
                         # Short: deviation decreasing (less
                         # positive) = price pulling back
-                        if (
-                            want_short
-                            and deviation >= prev_dev
-                        ):
+                        if want_short and deviation >= prev_dev:
                             want_short = False
 
                 # Apply trend filter
@@ -562,14 +554,8 @@ class GLFTStrategy(BaseStrategy):
                 # Strategy-level stop-loss: cut when adverse
                 # deviation exceeds threshold beyond entry
                 if strategy_sl > 0 and (
-                    (
-                        state == 1
-                        and deviation < entry_dev - strategy_sl
-                    )
-                    or (
-                        state == -1
-                        and deviation > entry_dev + strategy_sl
-                    )
+                    (state == 1 and deviation < entry_dev - strategy_sl)
+                    or (state == -1 and deviation > entry_dev + strategy_sl)
                 ):
                     state = 0
                     signals[i] = 0.0
@@ -581,12 +567,8 @@ class GLFTStrategy(BaseStrategy):
                 #   ratio=1.0 → target=0 (full reversion)
                 #   ratio=0.5 → target=half of entry_dev
                 if profit_target_ratio > 0:
-                    target = entry_dev * (
-                        1.0 - profit_target_ratio
-                    )
-                    if (
-                        state == 1 and deviation >= target
-                    ) or (
+                    target = entry_dev * (1.0 - profit_target_ratio)
+                    if (state == 1 and deviation >= target) or (
                         state == -1 and deviation <= target
                     ):
                         state = 0

@@ -21,9 +21,9 @@ strategy:
     # fit() grid search candidates
     # gamma controls vol-adaptive threshold (corrected formula)
     # gamma=0.01 → ~0.07% at median vol; gamma=0.05 → ~0.35%
-    gamma_candidates: [0, 200, 500, 1000]
-    kappa_candidates: [500, 1000, 5000]
-    ema_window_candidates: [5, 15, 30, 75, 150]
+    gamma_candidates: [0, 0.1, 1]
+    kappa_candidates: [250, 500, 750]
+    ema_window_candidates: [5, 15, 30]
     max_holding_bars_candidates: [6, 8, 13]
     # vol_window_candidates: [13, 21]
     target_metric: "total_volume_usdt"
@@ -31,7 +31,7 @@ strategy:
     # Entry threshold (independent of fee_rate)
     # Must be >= fee_rate * 2; higher = more selective, fewer trades
     min_entry_edge: 0.0015
-    min_entry_edge_candidates: [0.0012, 0.002, 0.003, 0.005]
+    min_entry_edge_candidates: [0.002, 0.003, 0.005]
 
     # Trend filter: slow EMA window; 0 = disabled
     trend_ema_window: 0
@@ -62,6 +62,12 @@ strategy:
     # Constrained optimization: annual_return >= this threshold,
     # then maximize target_metric (total_volume_usdt)
     min_annual_return: -0.18 # ~1500 USD/month on 100k
+
+# Parallel execution
+parallel:
+  reserve_cores: 2 # Cores reserved for OS (P-core aware on Apple Silicon)
+  safety_factor: 0.6 # Fraction of available RAM for workers
+  overhead_multiplier: 3.0
 
 # Walk-forward validation
 validation:

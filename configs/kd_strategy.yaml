@@ -10,6 +10,12 @@ strategy:
     overbought: 80.0
     oversold: 20.0
 
+# Parallel execution
+parallel:
+  reserve_cores: 2        # Cores reserved for OS (P-core aware on Apple Silicon)
+  safety_factor: 0.6      # Fraction of available RAM for workers
+  overhead_multiplier: 3.0
+
 backtest:
   symbol: "BTC/USDT"
   timeframe: "1h"

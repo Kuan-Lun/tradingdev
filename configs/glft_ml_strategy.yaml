@@ -46,6 +46,12 @@ strategy:
     # --- Constrained optimisation ---
     min_annual_return: -0.18
 
+# Parallel execution
+parallel:
+  reserve_cores: 2        # Cores reserved for OS (P-core aware on Apple Silicon)
+  safety_factor: 0.6      # Fraction of available RAM for workers
+  overhead_multiplier: 3.0
+
 # Walk-forward validation
 validation:
   train_start: "2024-01-01"
