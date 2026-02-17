@@ -2,9 +2,9 @@ strategy:
   name: "glft_market_making"
   description: "GLFT market-making strategy — analytical spread-based entry/exit"
   parameters:
-    # Core GLFT parameters
-    gamma: 0.01 # Risk aversion (inventory penalty)
-    kappa: 1.5 # Order arrival intensity
+    # Core GLFT parameters (dimensionless %-space)
+    gamma: 500 # Risk aversion in %-space
+    kappa: 1000 # Order arrival intensity in %-space
     ema_window: 21 # EMA window for fair value
 
     # Volatility estimation
@@ -21,21 +21,38 @@ strategy:
     # fit() grid search candidates
     # gamma controls vol-adaptive threshold (corrected formula)
     # gamma=0.01 → ~0.07% at median vol; gamma=0.05 → ~0.35%
-    gamma_candidates: [0, 0.01, 0.1]
-    kappa_candidates: [1, 10, 20, 50]
-    ema_window_candidates: [5, 8, 13]
-    max_holding_bars_candidates: [5, 8, 13]
+    gamma_candidates: [0, 200, 500, 1000]
+    kappa_candidates: [500, 1000, 5000]
+    ema_window_candidates: [5, 15, 30, 75, 150]
+    max_holding_bars_candidates: [6, 8, 13]
     # vol_window_candidates: [13, 21]
     target_metric: "total_volume_usdt"
 
     # Entry threshold (independent of fee_rate)
     # Must be >= fee_rate * 2; higher = more selective, fewer trades
     min_entry_edge: 0.0015
-    min_entry_edge_candidates: [0.0012, 0.0015]
+    min_entry_edge_candidates: [0.0012, 0.002, 0.003, 0.005]
 
     # Trend filter: slow EMA window; 0 = disabled
     trend_ema_window: 0
-    trend_ema_candidates: [0, 100, 200]
+    trend_ema_candidates: [0, 200]
+
+    # Exit: profit target — fraction of entry deviation to capture
+    # 1.0 = full mean-reversion to EMA; >1 = overshoot
+    profit_target_ratio: 1.0
+    profit_target_ratio_candidates: [0.5, 0.75, 1.0]
+
+    # Exit: strategy-level stop-loss — max adverse deviation beyond entry
+    # 0.005 = cut loss if price moves 0.5% further against you
+    strategy_sl: 0.003
+
+    # Entry: momentum guard — only enter when deviation is narrowing
+    momentum_guard: false
+
+    # Multi-timeframe: aggregate N 1-min bars for EMA computation
+    # 1 = no aggregation; 5 = 5-min EMA with 1-min execution
+    signal_agg_minutes: 1
+    signal_agg_minutes_candidates: [1]
 
     # Position & volume
     position_size_usdt: 3000.0
