@@ -18,6 +18,7 @@ dependencies = [
     "streamlit>=1.30",
     "plotly>=5.18",
     "psutil>=5.9",
+    "autogluon-tabular[all]>=1.5.0",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,7 @@ pythonpath = ["src"]
 dev = [
     "mypy>=1.19.1",
     "pandas-stubs>=3.0.0.260204",
+    "pytest>=9.0.2",
     "ruff>=0.15.0",
     "types-pyyaml>=6.0.12.20250915",
 ]

@@ -9,6 +9,7 @@ from btc_strategy.data.schemas import (
     GLFTStrategyConfig,
     KDFitConfig,
     KDStrategyConfig,
+    ParallelConfig,
     SafetyVolumeStrategyConfig,
     XGBoostStrategyConfig,
 )
@@ -32,14 +33,22 @@ if TYPE_CHECKING:
 def create_strategy(
     raw_config: dict[str, Any],
     engine: BaseBacktestEngine,
+    parallel_config: ParallelConfig | None = None,
 ) -> BaseStrategy:
     """Build a strategy instance from YAML configuration.
+
+    Args:
+        raw_config: Raw YAML configuration dictionary.
+        engine: Backtest engine instance.
+        parallel_config: Parallel execution settings.  When ``None``,
+            default values are used.
 
     Raises:
         ValueError: If the strategy name is not recognised.
     """
     name: str = raw_config["strategy"]["name"]
     params = raw_config["strategy"]["parameters"]
+    p_cfg = parallel_config or ParallelConfig()
 
     if name == "kd_crossover":
         strategy_config = KDStrategyConfig(**params)
@@ -50,6 +59,7 @@ def create_strategy(
             config=strategy_config,
             fit_config=fit_config,
             backtest_engine=engine,
+            parallel_config=p_cfg,
         )
 
     if name == "xgboost_direction":
@@ -71,6 +81,7 @@ def create_strategy(
         return GLFTStrategy(
             config=glft_config,
             backtest_engine=engine,
+            parallel_config=p_cfg,
         )
 
     if name == "glft_ml":
@@ -78,6 +89,7 @@ def create_strategy(
         return GLFTMLStrategy(
             config=glft_ml_config,
             backtest_engine=engine,
+            parallel_config=p_cfg,
         )
 
     msg = f"Unknown strategy: {name}"

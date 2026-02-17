@@ -30,6 +30,7 @@ from btc_strategy.data.loader import DataLoader
 from btc_strategy.data.processor import DataProcessor
 from btc_strategy.data.schemas import (
     BacktestConfig,
+    ParallelConfig,
     WalkForwardConfig,
 )
 from btc_strategy.strategies.registry import create_strategy
@@ -67,12 +68,13 @@ def main() -> None:
 
     raw_config = load_config(args.config)
     bt_cfg = BacktestConfig(**raw_config["backtest"])
+    parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
 
     logger.info("Strategy: %s", raw_config["strategy"]["name"])
 
     df = _load_data(raw_config, bt_cfg)
     engine = _create_engine(bt_cfg)
-    strategy = create_strategy(raw_config, engine)
+    strategy = create_strategy(raw_config, engine, parallel_cfg)
 
     if "validation" in raw_config:
         wf_cfg = WalkForwardConfig(**raw_config["validation"])
@@ -199,9 +201,7 @@ def _merge_dvol(
         # The crawler already sorts, deduplicates, and filters.
         # Just ensure UTC and save as parquet.
         if dvol_raw_df["timestamp"].dt.tz is None:
-            dvol_raw_df["timestamp"] = dvol_raw_df[
-                "timestamp"
-            ].dt.tz_localize("UTC")
+            dvol_raw_df["timestamp"] = dvol_raw_df["timestamp"].dt.tz_localize("UTC")
         dvol_processed.parent.mkdir(parents=True, exist_ok=True)
         dvol_raw_df.to_parquet(dvol_processed, index=False)
 

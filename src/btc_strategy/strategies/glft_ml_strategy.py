@@ -26,7 +26,10 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
     from btc_strategy.backtest.base_engine import BaseBacktestEngine
-    from btc_strategy.data.schemas import GLFTMLStrategyConfig
+    from btc_strategy.data.schemas import (
+        GLFTMLStrategyConfig,
+        ParallelConfig,
+    )
 
 logger = setup_logger(__name__)
 
@@ -51,19 +54,23 @@ class GLFTMLStrategy(BaseStrategy):
         self,
         config: GLFTMLStrategyConfig,
         backtest_engine: BaseBacktestEngine | None = None,
+        parallel_config: ParallelConfig | None = None,
     ) -> None:
         self._config = config
         self._backtest_engine = backtest_engine
+        self._parallel_config = parallel_config
 
         # ML components
         self._feature_eng = DirectionFeatureEngineer(
             lookback=config.feature_lookback,
             prediction_horizon=config.prediction_horizon,
         )
+        num_cpus = self._compute_num_cpus()
         self._ml_model = AutoGluonDirectionModel(
             time_limit=config.ml_time_limit,
             presets=config.ml_presets,
             verbosity=0,
+            num_cpus=num_cpus,
         )
         self._ml_trained = False
         self._confidence_threshold: float = config.confidence_threshold
@@ -76,6 +83,15 @@ class GLFTMLStrategy(BaseStrategy):
         self._best_min_entry_edge: float = config.min_entry_edge
         self._best_profit_target_ratio: float = config.profit_target_ratio
         self._best_confidence_threshold: float = config.confidence_threshold
+
+    def _compute_num_cpus(self) -> int | None:
+        """Derive ``num_cpus`` for AutoGluon from parallel config."""
+        if self._parallel_config is None:
+            return None
+        from btc_strategy.utils.parallel import _get_performance_core_count
+
+        perf = _get_performance_core_count()
+        return max(1, perf - self._parallel_config.reserve_cores)
 
     # ------------------------------------------------------------------
     # BaseStrategy interface
@@ -94,11 +110,16 @@ class GLFTMLStrategy(BaseStrategy):
             return
 
         # --- Step 1: Train ML model ---
-        logger.info("GLFT-ML fit: engineering features (horizon=%d)...",
-                     self._config.prediction_horizon)
+        logger.info(
+            "GLFT-ML fit: engineering features (horizon=%d)...",
+            self._config.prediction_horizon,
+        )
         feat_df = self._feature_eng.transform(df, include_target=True)
-        logger.info("GLFT-ML fit: %d samples, %d features",
-                     len(feat_df), len(self._feature_eng.get_feature_names()))
+        logger.info(
+            "GLFT-ML fit: %d samples, %d features",
+            len(feat_df),
+            len(self._feature_eng.get_feature_names()),
+        )
 
         self._ml_model.train(feat_df)
         self._ml_trained = True
@@ -108,7 +129,8 @@ class GLFTMLStrategy(BaseStrategy):
         # proba has columns [0, 1] for [down, up]
         # Convert to direction: 1 (up), -1 (down), 0 (uncertain)
         ml_directions = self._compute_ml_directions(
-            proba, self._config.confidence_threshold,
+            proba,
+            self._config.confidence_threshold,
         )
 
         # --- Step 3: Grid-search GLFT parameters ---
@@ -117,16 +139,15 @@ class GLFTMLStrategy(BaseStrategy):
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """Generate position-state signals via GLFT + ML."""
         if not self._ml_trained:
-            logger.warning(
-                "ML model not trained; falling back to pure GLFT signals"
-            )
+            logger.warning("ML model not trained; falling back to pure GLFT signals")
             return self._generate_pure_glft(df)
 
         feat_df = self._feature_eng.transform(df, include_target=False)
 
         proba = self._ml_model.predict_proba(feat_df)
         ml_directions = self._compute_ml_directions(
-            proba, self._best_confidence_threshold,
+            proba,
+            self._best_confidence_threshold,
         )
 
         close = np.asarray(feat_df["close"].astype(float).values)
@@ -255,7 +276,9 @@ class GLFTMLStrategy(BaseStrategy):
         total_combos = len(grid) * len(conf_candidates)
         logger.info(
             "GLFT-ML grid search: %d GLFT combos × %d conf thresholds = %d",
-            len(grid), len(conf_candidates), total_combos,
+            len(grid),
+            len(conf_candidates),
+            total_combos,
         )
 
         n_filtered = 0
@@ -269,7 +292,10 @@ class GLFTMLStrategy(BaseStrategy):
 
                 ema = self._compute_ema(close, ema_w)
                 sigma = self._compute_volatility(
-                    close, high, low, dvol=dvol,
+                    close,
+                    high,
+                    low,
+                    dvol=dvol,
                 )
 
                 signals = self._run_ml_glft_state_machine(
@@ -311,7 +337,8 @@ class GLFTMLStrategy(BaseStrategy):
         if n_filtered > 0:
             logger.info(
                 "GLFT-ML fit: %d/%d combos filtered (annual_return < %.4f)",
-                n_filtered, total_combos,
+                n_filtered,
+                total_combos,
                 min_ar if min_ar is not None else 0.0,
             )
 
@@ -327,9 +354,15 @@ class GLFTMLStrategy(BaseStrategy):
             "GLFT-ML fit complete: gamma=%.1f, kappa=%.1f, ema=%d, "
             "max_hold=%d, entry_edge=%.4f, pt_ratio=%.2f, "
             "conf_thresh=%.2f (%s=%.4f)",
-            best_gamma, best_kappa, best_ema, best_max_hold,
-            best_entry_edge, best_pt_ratio, best_conf,
-            target, best_value,
+            best_gamma,
+            best_kappa,
+            best_ema,
+            best_max_hold,
+            best_entry_edge,
+            best_pt_ratio,
+            best_conf,
+            target,
+            best_value,
         )
 
     # ------------------------------------------------------------------
@@ -343,10 +376,7 @@ class GLFTMLStrategy(BaseStrategy):
     ) -> npt.NDArray[np.floating[Any]]:
         """Compute EMA on 1-min close."""
         return np.asarray(
-            pd.Series(close)
-            .ewm(span=ema_window, adjust=False)
-            .mean()
-            .values,
+            pd.Series(close).ewm(span=ema_window, adjust=False).mean().values,
         )
 
     # ------------------------------------------------------------------
@@ -372,12 +402,12 @@ class GLFTMLStrategy(BaseStrategy):
             window = self._config.vol_window
             log_ret = np.diff(np.log(np.maximum(close, 1e-10)))
             log_ret = np.concatenate([[0.0], log_ret])
-            sigma = (
-                pd.Series(log_ret).rolling(window, min_periods=1).std().values
-            )
+            sigma = pd.Series(log_ret).rolling(window, min_periods=1).std().values
 
         sigma = np.where(
-            np.isnan(sigma) | (sigma <= 0), 1e-10, sigma,
+            np.isnan(sigma) | (sigma <= 0),
+            1e-10,
+            sigma,
         )
         return np.asarray(sigma, dtype=np.float64)
 
@@ -482,9 +512,8 @@ class GLFTMLStrategy(BaseStrategy):
 
                 if profit_target_ratio > 0:
                     target = entry_dev * (1.0 - profit_target_ratio)
-                    if (
-                        (state == 1 and deviation >= target)
-                        or (state == -1 and deviation <= target)
+                    if (state == 1 and deviation >= target) or (
+                        state == -1 and deviation <= target
                     ):
                         state = 0
 

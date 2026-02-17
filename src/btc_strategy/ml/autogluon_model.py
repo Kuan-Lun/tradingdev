@@ -15,8 +15,20 @@ from btc_strategy.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 _EXCLUDE_COLS = frozenset(
-    {"target", "timestamp", "open", "high", "low", "close", "volume",
-     "dvol", "dvol_open", "dvol_high", "dvol_low", "dvol_close"}
+    {
+        "target",
+        "timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "dvol",
+        "dvol_open",
+        "dvol_high",
+        "dvol_low",
+        "dvol_close",
+    }
 )
 
 
@@ -33,11 +45,13 @@ class AutoGluonDirectionModel(BaseModel):
         presets: str = "medium_quality",
         eval_metric: str = "accuracy",
         verbosity: int = 0,
+        num_cpus: int | None = None,
     ) -> None:
         self._time_limit = time_limit
         self._presets = presets
         self._eval_metric = eval_metric
         self._verbosity = verbosity
+        self._num_cpus = num_cpus
         self._predictor: Any = None  # TabularPredictor
         self._feature_names: list[str] = []
         self._model_path: Path | None = None
@@ -77,6 +91,8 @@ class AutoGluonDirectionModel(BaseModel):
             "time_limit": self._time_limit,
             "presets": self._presets,
         }
+        if self._num_cpus is not None:
+            fit_kwargs["num_cpus"] = self._num_cpus
         if eval_df is not None:
             tuning_data = eval_df[feature_cols + ["target"]].copy()
             fit_kwargs["tuning_data"] = tuning_data
@@ -133,8 +149,11 @@ class AutoGluonDirectionModel(BaseModel):
 
     def get_parameters(self) -> dict[str, Any]:
         """Return model configuration."""
-        return {
+        params: dict[str, Any] = {
             "time_limit": self._time_limit,
             "presets": self._presets,
             "eval_metric": self._eval_metric,
         }
+        if self._num_cpus is not None:
+            params["num_cpus"] = self._num_cpus
+        return params

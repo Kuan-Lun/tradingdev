@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from btc_strategy.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from btc_strategy.data.schemas import KDFitConfig
+    from btc_strategy.data.schemas import KDFitConfig, ParallelConfig
 
 logger = setup_logger(__name__)
 
@@ -50,10 +50,12 @@ class KDStrategy(BaseStrategy):
         config: KDStrategyConfig,
         fit_config: KDFitConfig | None = None,
         backtest_engine: BaseBacktestEngine | None = None,
+        parallel_config: ParallelConfig | None = None,
     ) -> None:
         self._config = config
         self._fit_config = fit_config
         self._backtest_engine = backtest_engine
+        self._parallel_config = parallel_config
         self._indicator = KDIndicator(
             k_period=config.k_period,
             d_period=config.d_period,
@@ -82,7 +84,13 @@ class KDStrategy(BaseStrategy):
             )
         )
 
-        n_jobs = estimate_n_jobs(df)
+        p_cfg = self._parallel_config
+        n_jobs = estimate_n_jobs(
+            df,
+            safety_factor=p_cfg.safety_factor if p_cfg else 0.6,
+            overhead_multiplier=p_cfg.overhead_multiplier if p_cfg else 3.0,
+            reserve_cores=p_cfg.reserve_cores if p_cfg else 2,
+        )
         logger.info(
             "KD grid search: %d combinations (n_jobs=%d)",
             len(grid),
