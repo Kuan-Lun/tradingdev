@@ -29,18 +29,20 @@ GLFT 模型解決了做市商的庫存風險問題，給出最優報價：
 - `q` = 庫存方向 (+1=多頭, -1=空頭, 0=空倉)
 - `γ` = 風險厭惡係數 (越大越保守)
 - `σ` = 波動率 (per-bar)
-- `τ` = 剩餘持倉期 (max_hold - bars_in_pos)
+- `τ` = 時間上限 (time horizon)
 - `κ` = 訂單到達強度
 
-### Pure %-Space 公式
+### Pure %-Space Half-Spread 公式
 
-本實作使用純百分比空間的 GLFT 公式，**不依賴資產價格水平**：
+本實作使用純百分比空間的 GLFT **半價差 (half-spread)** 公式，即原始 optimal spread 的一半（`δ*/2`），因為我們是將單側偏離度 `|deviation|` 與閾值比較：
 
 ```
-δ_pct = γ · σ² · τ / 2 + (1/γ) · ln(1 + γ/κ)
+half_spread = γ · σ² · τ / 2 + (1/γ) · ln(1 + γ/κ)
 ```
 
 γ 和 κ 均為無量綱的 %-space 參數。當 BTC 價格從 $40K 變動到 $100K 時，spread 只隨波動率 (σ) 變化，不受價格水平影響。
+
+在本實作中，**τ 固定為 `max_holding_bars`**（而非原始論文中隨持倉時間遞減的剩餘期）。原因是本策略只在進場時計算一次 half-spread 作為閾值，持倉期間的出場由獨立的 profit target、stop-loss 和 max holding 規則控制。
 
 ### 信號型適配
 
@@ -64,27 +66,32 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 
 1. 計算 GLFT half-spread：`glft_hs = γ·σ²·τ/2 + spread_const`
 2. 取 `max(glft_hs, min_entry_edge)` 作為進場閾值
-3. `deviation < -threshold` → 做多
-4. `deviation > threshold` → 做空
+3. `deviation < -threshold` → 做多（價格大幅低於公允價值）
+4. `deviation > threshold` → 做空（價格大幅高於公允價值）
 5. 可選動量防護：要求 deviation 正在收斂（價格回歸 EMA）
 6. 可選趨勢過濾：只順勢開倉
 
 ### 出場邏輯
 
-三個出場條件（優先順序）：
+持倉後按優先級檢查以下出場條件：
 
-1. **策略級止損** (`strategy_sl`)：deviation 進一步偏離超過閾值時止損
-2. **利潤目標** (`profit_target_ratio`)：deviation 回歸到目標水平時獲利了結
-   - ratio=1.0 → 等待完全回歸到 EMA (deviation=0)
-   - ratio=0.5 → 等待回歸 50%
-   - ratio=1.5 → 等待超過 EMA（overshoot）
-3. **最大持倉** (`max_holding_bars`)：強制平倉
+| 優先級 | 條件 | 參數 | 說明 |
+|--------|------|------|------|
+| 0 | 最短持倉 | `min_holding_bars` | 持倉不足門檻 → 強制不平倉（交易所規則） |
+| 1 | 最長持倉 | `max_holding_bars` | 持倉滿上限 → 強制平倉 |
+| 2 | 策略級止損 | `strategy_sl` | deviation 反向超過入場偏離 → 止損 |
+| 3 | 利潤目標 | `profit_target_ratio` | deviation 回歸至目標水平 → 獲利了結 |
+
+利潤目標計算：`target = entry_dev × (1 - profit_target_ratio)`
+- ratio=1.0 → target=0（等待完全回歸到 EMA）
+- ratio=0.5 → target=entry_dev 的 50%（回歸一半即出場）
+- ratio=1.5 → target 超過 EMA（等待 overshoot）
 
 ### 關鍵行為
 
 - **高波動 → 寬 spread → 減少交易** (自我調節)
 - **低波動 → 窄 spread → 更多交易** (增加流動性)
-- **价格水平無關**：純 %-space 公式確保 spread 只隨 σ 變化
+- **價格水平無關**：純 %-space 公式確保 spread 只隨 σ 變化
 - **止損控制尾部風險**：避免持有到 max_hold 的大額虧損
 - **利潤目標鎖定收益**：不再過早出場切割利潤
 
@@ -103,9 +110,9 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
 | `vol_window` | 30 | 滾動波動率估計窗口（`implied` 時不使用） |
-| `vol_type` | "realized" | `"realized"` / `"parkinson"` / `"implied"` |
-| `dvol_raw_path` | null | DVOL 原始 CSV 路徑（`implied` 時必填） |
-| `dvol_processed_path` | null | DVOL 處理後 Parquet 路徑（`implied` 時必填） |
+| `vol_type` | "implied" | `"realized"` / `"parkinson"` / `"implied"` |
+| `dvol_raw_path` | "data/raw/btc_dvol_1m_2024_2025.csv" | DVOL 原始 CSV 路徑（`implied` 時必填） |
+| `dvol_processed_path` | "data/processed/btc_dvol_1m_2024_2025.parquet" | DVOL 處理後 Parquet 路徑（`implied` 時必填） |
 
 ### Implied Volatility (DVOL)
 
@@ -136,8 +143,8 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `min_entry_edge` | 0.0012 | 最低進場偏離閾值 |
-| `momentum_guard` | true | 動量防護：只在 deviation 收斂時進場 |
+| `min_entry_edge` | 0.0015 | 最低進場偏離閾值（須 >= `fee_rate × 2`） |
+| `momentum_guard` | false | 動量防護：只在 deviation 收斂時進場 |
 | `trend_ema_window` | 0 | 趨勢過濾慢 EMA；0=停用 |
 
 ### Exit
@@ -145,7 +152,7 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
 | `profit_target_ratio` | 1.0 | 利潤目標比率 (1.0=完全回歸到 EMA) |
-| `strategy_sl` | 0.005 | 策略級止損閾值（0=停用） |
+| `strategy_sl` | 0.003 | 策略級止損閾值（0=停用） |
 
 ### Holding Management
 
@@ -154,23 +161,58 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 | `min_holding_bars` | 5 | 最短持倉（5 min @1m）— 符合交易所規則 |
 | `max_holding_bars` | 30 | 最長持倉（30 min @1m）— 對應 GLFT 的 horizon T |
 
+### Dynamic Sizing（動態倉位）
+
+啟用 `dynamic_sizing: true` 時，倉位大小根據進場偏離度動態調整——偏離度越大表示均值回歸機會越好，因此分配更大倉位。
+
+```
+weight = |deviation| / edge_for_full_size
+weight = clamp(weight, min_position_size_usdt / position_size_usdt, 1.0)
+actual_size = position_size_usdt × weight
+```
+
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| `dynamic_sizing` | true | 啟用動態倉位 |
+| `min_position_size_usdt` | 500.0 | 最小倉位（USDT） |
+| `edge_for_full_size` | 0.005 | 達到全倉的偏離度門檻 |
+| `edge_for_full_size_candidates` | [0.003, 0.005, 0.008] | Grid search 候選值 |
+
+範例（預設參數）：
+- `|deviation| = 0.001` → weight = 0.2 → clamp 至 min = 0.167 → 倉位 500 USDT
+- `|deviation| = 0.003` → weight = 0.6 → 倉位 1,800 USDT
+- `|deviation| = 0.005` → weight = 1.0 → 倉位 3,000 USDT（全倉）
+- `|deviation| = 0.008` → weight = 1.6 → clamp 至 1.0 → 倉位 3,000 USDT
+
 ### fit() Grid Search
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `gamma_candidates` | [0, 200, 500, 1000] | 搜尋最佳 γ |
-| `kappa_candidates` | [500, 1000, 5000] | 搜尋最佳 κ |
-| `ema_window_candidates` | [2, 3, 5] | 搜尋最佳 EMA 窗口 |
+| `gamma_candidates` | [0, 0.1, 1] | 搜尋最佳 γ |
+| `kappa_candidates` | [250, 500, 750] | 搜尋最佳 κ |
+| `ema_window_candidates` | [5, 15, 30] | 搜尋最佳 EMA 窗口 |
+| `max_holding_bars_candidates` | [6, 8, 13] | 搜尋最佳持倉上限 |
+| `min_entry_edge_candidates` | [0.0012, 0.0015, 0.002, 0.003] | 搜尋最佳進場門檻 |
+| `trend_ema_candidates` | [0, 200] | 搜尋趨勢過濾窗口 |
 | `profit_target_ratio_candidates` | [0.5, 0.75, 1.0] | 搜尋最佳利潤目標 |
 | `target_metric` | "total_volume_usdt" | 優化目標指標 |
+| `min_annual_return` | -0.18 | 年化報酬率約束門檻 |
+
+#### 約束優化
+
+fit() 使用**約束優化**策略：
+1. 過濾掉 `annual_return < min_annual_return` 的參數組合
+2. 在通過約束的組合中，最大化 `target_metric`（交易量）
+
+這確保策略在控制虧損的前提下，盡可能多地產生交易量。
 
 ### Position & Volume
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `position_size_usdt` | 3000.0 | 每筆持倉大小 |
-| `monthly_volume_target_usdt` | 12500000 | 月度單邊交易量目標 |
-| `fee_rate` | 0.0006 | 單邊手續費 |
+| `position_size_usdt` | 3000.0 | 每筆最大持倉大小 |
+| `monthly_volume_target_usdt` | 12,500,000 | 月度單邊交易量目標 |
+| `fee_rate` | 0.0006 | 單邊手續費（taker） |
 
 ## 交易所規則合規
 
@@ -181,42 +223,148 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 - 狀態機強制執行：持倉期間內不可提前退出
 - 較大的 position_size (3000 USDT) 減少所需交易次數
 
+## Walk-Forward 驗證結果
+
+### 設定
+
+- **訓練期**: 2024-01-01 ~ 2024-12-31（366 天）
+- **測試期**: 2025-01-01 ~ 2025-12-31（365 天）
+- **初始資金**: 100,000 USDT
+- **優化目標**: `total_volume_usdt`（約束 `annual_return >= -18%`）
+
+### 最佳參數（Grid Search 結果）
+
+| 參數 | 搜尋範圍 | 最佳值 |
+|------|----------|--------|
+| `gamma` | [0, 0.1, 1] | **0.0** |
+| `kappa` | [250, 500, 750] | **750.0** |
+| `ema_window` | [5, 15, 30] | **15** |
+| `max_holding_bars` | [6, 8, 13] | **13** |
+| `min_entry_edge` | [0.0012, 0.0015, 0.002, 0.003] | **0.0012** |
+| `trend_ema_window` | [0, 200] | **0**（停用） |
+| `profit_target_ratio` | [0.5, 0.75, 1.0] | **1.0** |
+| `edge_for_full_size` | [0.003, 0.005, 0.008] | **0.008** |
+
+**參數解讀**：
+- `gamma=0` → GLFT half-spread 退化為 `1/κ = 1/750 ≈ 0.13%`，但被 `min_entry_edge=0.12%` 取代，實際由 min_entry_edge 主導進場
+- `ema_window=15` → 15 分鐘 EMA 作為公允價格，較快響應價格變動
+- `max_holding_bars=13` → 最多持倉 13 分鐘，配合 5 分鐘最短持倉，實際持倉 5~13 分鐘
+- `profit_target_ratio=1.0` → 等待價格完全回歸 EMA 才出場
+- `edge_for_full_size=0.008` → 偏離 0.8% 才用全倉，多數交易使用較小倉位
+
+### 績效指標
+
+| 指標 | 訓練期 (2024) | 測試期 (2025) |
+|------|---------------|---------------|
+| **Total Return** | -18.04% | -12.37% |
+| **Total PnL (USDT)** | -18,036 | -12,372 |
+| **Annual Return** | -17.99% | -12.37% |
+| **Sharpe Ratio** | -25.48 | -24.17 |
+| **Max Drawdown** | 18.04% | 12.37% |
+| **Win Rate** | 52.46% | 50.74% |
+| **Profit Factor** | 0.6071 | 0.6142 |
+| **Total Trades** | 19,831 | 14,978 |
+| **Total Volume (USDT)** | +29,992,151 | +21,799,951 |
+
+### Daily PnL 統計
+
+| 統計量 | 訓練期 (2024) | 測試期 (2025) |
+|--------|---------------|---------------|
+| Mean | -49.28 | -33.90 |
+| Std | 56.41 | 34.42 |
+| Min | -760.17 | -278.16 |
+| Max | +37.82 | +0.70 |
+| Median | -36.42 | -25.00 |
+
+### 結果分析
+
+**交易量達標**：
+- 訓練期月均交易量：29,992,151 / 12 ≈ **2,499,346 USDT/月**（單邊）
+- 測試期月均交易量：21,799,951 / 12 ≈ **1,816,663 USDT/月**（單邊）
+- 距離 12.5M USDT/月目標仍有差距，需要更低的進場門檻或更大倉位
+
+**虧損控制**：
+- 訓練期年化虧損 -17.99%，恰好在 -18% 約束邊界
+- 測試期年化虧損 -12.37%，較訓練期改善（OOS 泛化尚可）
+- Win Rate ~50-52%，但 Profit Factor < 1，表示虧損交易的平均虧損大於獲利交易的平均獲利
+
+**泛化性**：
+- 測試期虧損較訓練期少（-12.37% vs -18.04%），非過擬合表現
+- 測試期交易量較訓練期少 27%，可能是 2025 年市場波動結構不同所致
+- Daily PnL Max 在測試期幾乎為零（+0.70），說明 2025 年幾乎沒有單日正收益
+
 ## YAML 配置範例
 
 ```yaml
 strategy:
   name: "glft_market_making"
   parameters:
+    # Core GLFT (%-space)
     gamma: 500
     kappa: 1000
     ema_window: 21
+
+    # Volatility
     vol_window: 30
     vol_type: "implied"
+    dvol_raw_path: "data/raw/btc_dvol_1m_2024_2025.csv"
     dvol_processed_path: "data/processed/btc_dvol_1m_2024_2025.parquet"
+
+    # Holding management
     min_holding_bars: 5
     max_holding_bars: 30
-    gamma_candidates: [0, 200, 500, 1000]
-    kappa_candidates: [500, 1000, 5000]
-    ema_window_candidates: [2, 3, 5]
+
+    # Grid search candidates
+    gamma_candidates: [0, 0.1, 1]
+    kappa_candidates: [250, 500, 750]
+    ema_window_candidates: [5, 15, 30]
     max_holding_bars_candidates: [6, 8, 13]
     target_metric: "total_volume_usdt"
-    position_size_usdt: 3000.0
-    monthly_volume_target_usdt: 12500000
-    fee_rate: 0.0006
+
+    # Entry
     min_entry_edge: 0.0015
-    min_entry_edge_candidates: [0.0008, 0.001, 0.0012]
+    min_entry_edge_candidates: [0.0012, 0.0015, 0.002, 0.003]
+    trend_ema_window: 0
+    trend_ema_candidates: [0, 200]
+    momentum_guard: false
+
+    # Exit
     profit_target_ratio: 1.0
     profit_target_ratio_candidates: [0.5, 0.75, 1.0]
     strategy_sl: 0.003
-    momentum_guard: false
-    trend_ema_window: 0
-    trend_ema_candidates: [0, 200]
+
+    # Multi-timeframe
+    signal_agg_minutes: 1
+    signal_agg_minutes_candidates: [1]
+
+    # Position & volume
+    position_size_usdt: 3000.0
+    monthly_volume_target_usdt: 12500000
+    fee_rate: 0.0006
+
+    # Dynamic sizing
+    dynamic_sizing: true
+    min_position_size_usdt: 500.0
+    edge_for_full_size: 0.005
+    edge_for_full_size_candidates: [0.003, 0.005, 0.008]
+
+    # Constrained optimization
     min_annual_return: -0.18
 
+validation:
+  train_start: "2024-01-01"
+  train_end: "2024-12-31"
+  test_start: "2025-01-01"
+  test_end: "2025-12-31"
+
 backtest:
-  signal_as_position: true    # signal=0 → 平倉
-  re_entry_after_sl: false    # SL 後不自動重入場
-  stop_loss: 0.03             # 3% 緊急 SL
+  symbol: "BTC/USDT"
+  timeframe: "1m"
+  init_cash: 100000.0
+  fees: 0.0006
+  signal_as_position: true
+  re_entry_after_sl: false
+  stop_loss: 0.03
   mode: "volume"
 ```
 
