@@ -31,7 +31,7 @@ strategy:
     # Entry threshold (independent of fee_rate)
     # Must be >= fee_rate * 2; higher = more selective, fewer trades
     min_entry_edge: 0.0015
-    min_entry_edge_candidates: [0.002, 0.003, 0.005]
+    min_entry_edge_candidates: [0.0012, 0.0015, 0.002, 0.003]
 
     # Trend filter: slow EMA window; 0 = disabled
     trend_ema_window: 0
@@ -58,6 +58,12 @@ strategy:
     position_size_usdt: 3000.0
     monthly_volume_target_usdt: 12500000
     fee_rate: 0.0006
+
+    # Dynamic position sizing — scale by |deviation| / edge_for_full_size
+    dynamic_sizing: true
+    min_position_size_usdt: 500.0
+    edge_for_full_size: 0.005
+    edge_for_full_size_candidates: [0.003, 0.005, 0.008]
 
     # Constrained optimization: annual_return >= this threshold,
     # then maximize target_metric (total_volume_usdt)
