@@ -107,7 +107,7 @@ class TestGLFTStateMachine:
         ema = np.full(n, 100.0)
         sigma = np.full(n, 0.005)
 
-        signals = GLFTStrategy._run_glft_state_machine(
+        signals, _ = GLFTStrategy._run_glft_state_machine(
             close=close,
             ema=ema,
             sigma=sigma,
@@ -137,7 +137,7 @@ class TestGLFTStateMachine:
         ema = np.full(n, 100.0)
         sigma = np.full(n, 0.001)
 
-        signals = GLFTStrategy._run_glft_state_machine(
+        signals, _ = GLFTStrategy._run_glft_state_machine(
             close=close,
             ema=ema,
             sigma=sigma,
@@ -169,7 +169,7 @@ class TestGLFTStateMachine:
         ema = np.full(n, 100.0)
         sigma = np.full(n, 0.01)
 
-        signals = GLFTStrategy._run_glft_state_machine(
+        signals, _ = GLFTStrategy._run_glft_state_machine(
             close=close,
             ema=ema,
             sigma=sigma,
@@ -189,7 +189,7 @@ class TestGLFTStateMachine:
         ema = np.full(n, 100.0)
         sigma = np.full(n, 0.001)  # low vol → tight spread
 
-        signals = GLFTStrategy._run_glft_state_machine(
+        signals, _ = GLFTStrategy._run_glft_state_machine(
             close=close,
             ema=ema,
             sigma=sigma,
@@ -209,7 +209,7 @@ class TestGLFTStateMachine:
         ema = np.full(n, 100.0)
         sigma = np.full(n, 0.001)
 
-        signals = GLFTStrategy._run_glft_state_machine(
+        signals, _ = GLFTStrategy._run_glft_state_machine(
             close=close,
             ema=ema,
             sigma=sigma,
@@ -477,3 +477,145 @@ class TestGLFTImpliedVolatility:
         params = strategy.get_parameters()
         # vol_window should be 0 (the sentinel for implied)
         assert params["best_vol_window"] == 0
+
+
+# ── Dynamic position sizing tests ─────────────────────────
+
+
+class TestGLFTDynamicSizing:
+    def test_size_weight_column_present(
+        self,
+        sample_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        """dynamic_sizing=True adds size_weight column."""
+        config = _make_config(dynamic_sizing=True)
+        strategy = GLFTStrategy(config=config)
+        result = strategy.generate_signals(sample_ohlcv_df)
+        assert "size_weight" in result.columns
+        assert len(result["size_weight"]) == len(sample_ohlcv_df)
+
+    def test_size_weight_all_ones_when_disabled(
+        self,
+        sample_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        """dynamic_sizing=False -> all weights are 1.0."""
+        config = _make_config(dynamic_sizing=False)
+        strategy = GLFTStrategy(config=config)
+        result = strategy.generate_signals(sample_ohlcv_df)
+        assert "size_weight" in result.columns
+        np.testing.assert_array_equal(
+            result["size_weight"].values,
+            np.ones(len(result)),
+        )
+
+    def test_size_weight_range(self) -> None:
+        """Weights must be in [min_weight, 1.0]."""
+        n = 100
+        close = np.full(n, 95.0)  # 5% below EMA
+        ema = np.full(n, 100.0)
+        sigma = np.full(n, 0.001)
+        min_w = 500.0 / 3000.0
+
+        _, weights = GLFTStrategy._run_glft_state_machine(
+            close=close,
+            ema=ema,
+            sigma=sigma,
+            gamma=0.001,
+            kappa=1.0,
+            min_hold=2,
+            max_hold=15,
+            dynamic_sizing=True,
+            min_weight=min_w,
+            edge_for_full_size=0.005,
+        )
+
+        # In-position bars should have weight in [min_w, 1.0]
+        in_pos = weights[weights != 1.0]
+        if len(in_pos) > 0:
+            assert np.all(in_pos >= min_w - 1e-10)
+            assert np.all(in_pos <= 1.0 + 1e-10)
+
+    def test_size_weight_proportional(self) -> None:
+        """Larger deviation -> larger weight."""
+        n = 20
+        sigma = np.full(n, 0.001)
+        ema = np.full(n, 100.0)
+        min_w = 500.0 / 3000.0
+        efs = 0.10  # 10% for full size
+
+        # Use gamma=0 so spread_const=1/kappa is small
+        # Small deviation: 2% below EMA
+        close_small = np.full(n, 98.0)
+        _, w_small = GLFTStrategy._run_glft_state_machine(
+            close=close_small,
+            ema=ema,
+            sigma=sigma,
+            gamma=0.0,
+            kappa=1000.0,
+            min_hold=2,
+            max_hold=15,
+            min_entry_edge=0.001,
+            dynamic_sizing=True,
+            min_weight=min_w,
+            edge_for_full_size=efs,
+        )
+
+        # Large deviation: 8% below EMA
+        close_large = np.full(n, 92.0)
+        _, w_large = GLFTStrategy._run_glft_state_machine(
+            close=close_large,
+            ema=ema,
+            sigma=sigma,
+            gamma=0.0,
+            kappa=1000.0,
+            min_hold=2,
+            max_hold=15,
+            min_entry_edge=0.001,
+            dynamic_sizing=True,
+            min_weight=min_w,
+            edge_for_full_size=efs,
+        )
+
+        # First entry bar weight should be larger for bigger deviation
+        assert w_large[0] > w_small[0]
+
+    def test_size_weight_carries_through_hold(self) -> None:
+        """Weight stays constant during holding period."""
+        n = 30
+        close = np.full(n, 95.0)  # 5% below EMA
+        ema = np.full(n, 100.0)
+        sigma = np.full(n, 0.001)
+        min_w = 500.0 / 3000.0
+
+        signals, weights = GLFTStrategy._run_glft_state_machine(
+            close=close,
+            ema=ema,
+            sigma=sigma,
+            gamma=0.001,
+            kappa=1.0,
+            min_hold=2,
+            max_hold=15,
+            dynamic_sizing=True,
+            min_weight=min_w,
+            edge_for_full_size=0.10,
+        )
+
+        # Find first position span
+        entry_w = None
+        for i in range(n):
+            if signals[i] != 0:
+                if entry_w is None:
+                    entry_w = weights[i]
+                else:
+                    assert weights[i] == entry_w
+            elif entry_w is not None:
+                break  # position ended
+
+    def test_min_position_le_max_validator(self) -> None:
+        """min_position_size_usdt > position_size_usdt raises."""
+        with pytest.raises(ValidationError):
+            _make_config(
+                dynamic_sizing=True,
+                min_position_size_usdt=5000.0,
+                position_size_usdt=3000.0,
+            )

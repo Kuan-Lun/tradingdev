@@ -297,6 +297,13 @@ class GLFTStrategyConfig(BaseModel):
     signal_agg_minutes: int = 1
     signal_agg_minutes_candidates: list[int] = [1]
 
+    # Dynamic position sizing: scale position by |deviation| / edge_for_full_size.
+    # When disabled, all positions use position_size_usdt (legacy behaviour).
+    dynamic_sizing: bool = False
+    min_position_size_usdt: float = 500.0
+    edge_for_full_size: float = 0.005
+    edge_for_full_size_candidates: list[float] = [0.003, 0.005, 0.008]
+
     # Constrained optimization: filter by annual_return >= threshold,
     # then maximize target_metric (e.g. total_volume_usdt)
     min_annual_return: float | None = None
@@ -332,6 +339,17 @@ class GLFTStrategyConfig(BaseModel):
         """Validate dvol_processed_path is set when vol_type is 'implied'."""
         if self.vol_type == "implied" and self.dvol_processed_path is None:
             msg = "dvol_processed_path is required when vol_type is 'implied'"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def min_position_le_max(self) -> Self:
+        """Validate min_position_size_usdt <= position_size_usdt."""
+        if (
+            self.dynamic_sizing
+            and self.min_position_size_usdt > self.position_size_usdt
+        ):
+            msg = "min_position_size_usdt must be <= position_size_usdt"
             raise ValueError(msg)
         return self
 

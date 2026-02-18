@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 logger = setup_logger(__name__)
 
 # Type alias for the full parameter tuple searched by fit()
-_ParamTuple = tuple[float, float, int, int, int, float, int, float, int]
+_ParamTuple = tuple[float, float, int, int, int, float, int, float, int, float]
 
 
 def _evaluate_glft_combo(
@@ -62,6 +62,7 @@ def _evaluate_glft_combo(
         trend_ema,
         pt_ratio,
         sig_agg,
+        efs,
     ) = params
     trial = GLFTStrategy(config=config)
     trial._best_gamma = gamma
@@ -73,6 +74,7 @@ def _evaluate_glft_combo(
     trial._best_trend_ema_window = trend_ema
     trial._best_profit_target_ratio = pt_ratio
     trial._best_signal_agg_minutes = sig_agg
+    trial._best_edge_for_full_size = efs
 
     signals = trial.generate_signals(df)
     result = engine.run(signals)
@@ -111,6 +113,7 @@ class GLFTStrategy(BaseStrategy):
         self._best_trend_ema_window: int = config.trend_ema_window
         self._best_profit_target_ratio: float = config.profit_target_ratio
         self._best_signal_agg_minutes: int = config.signal_agg_minutes
+        self._best_edge_for_full_size: float = config.edge_for_full_size
 
     # ------------------------------------------------------------------
     # BaseStrategy interface
@@ -140,6 +143,7 @@ class GLFTStrategy(BaseStrategy):
         best_trend_ema = self._config.trend_ema_window
         best_pt_ratio = self._config.profit_target_ratio
         best_sig_agg = self._config.signal_agg_minutes
+        best_efs = self._config.edge_for_full_size
         target = self._config.target_metric
         min_ar = self._config.min_annual_return
 
@@ -148,6 +152,13 @@ class GLFTStrategy(BaseStrategy):
         if self._config.vol_type == "implied":
             vol_win_candidates = [0]
             logger.info("vol_type='implied': vol_window_candidates ignored")
+
+        # Only grid-search edge_for_full_size when dynamic sizing is on
+        efs_candidates: list[float] = (
+            self._config.edge_for_full_size_candidates
+            if self._config.dynamic_sizing
+            else [self._config.edge_for_full_size]
+        )
 
         grid: list[_ParamTuple] = list(
             itertools.product(
@@ -160,6 +171,7 @@ class GLFTStrategy(BaseStrategy):
                 self._config.trend_ema_candidates,
                 self._config.profit_target_ratio_candidates,
                 self._config.signal_agg_minutes_candidates,
+                efs_candidates,
             ),
         )
 
@@ -208,6 +220,7 @@ class GLFTStrategy(BaseStrategy):
                 best_trend_ema = params[6]
                 best_pt_ratio = params[7]
                 best_sig_agg = params[8]
+                best_efs = params[9]
 
         if n_filtered > 0:
             logger.info(
@@ -226,12 +239,13 @@ class GLFTStrategy(BaseStrategy):
         self._best_trend_ema_window = best_trend_ema
         self._best_profit_target_ratio = best_pt_ratio
         self._best_signal_agg_minutes = best_sig_agg
+        self._best_edge_for_full_size = best_efs
 
         logger.info(
             "GLFT fit complete: gamma=%.4f, kappa=%.4f, "
             "ema=%d, max_hold=%d, vol_win=%d, "
             "entry_edge=%.4f, trend_ema=%d, "
-            "pt_ratio=%.2f, sig_agg=%d (%s=%.4f)",
+            "pt_ratio=%.2f, sig_agg=%d, efs=%.4f (%s=%.4f)",
             best_gamma,
             best_kappa,
             best_ema,
@@ -241,6 +255,7 @@ class GLFTStrategy(BaseStrategy):
             best_trend_ema,
             best_pt_ratio,
             best_sig_agg,
+            best_efs,
             target,
             best_value,
         )
@@ -282,7 +297,14 @@ class GLFTStrategy(BaseStrategy):
             slope = np.diff(slow_ema, prepend=slow_ema[0])
             trend_dir = np.sign(slope)
 
-        signals = self._run_glft_state_machine(
+        dyn = self._config.dynamic_sizing
+        min_weight = (
+            self._config.min_position_size_usdt / self._config.position_size_usdt
+            if dyn
+            else 0.0
+        )
+
+        signals, size_weights = self._run_glft_state_machine(
             close=close,
             ema=ema,
             sigma=sigma,
@@ -295,10 +317,14 @@ class GLFTStrategy(BaseStrategy):
             profit_target_ratio=self._best_profit_target_ratio,
             strategy_sl=self._config.strategy_sl,
             momentum_guard=self._config.momentum_guard,
+            dynamic_sizing=dyn,
+            min_weight=min_weight,
+            edge_for_full_size=self._best_edge_for_full_size,
         )
 
         result = df.copy()
         result["signal"] = signals
+        result["size_weight"] = size_weights
         return result
 
     def get_parameters(self) -> dict[str, Any]:
@@ -313,6 +339,7 @@ class GLFTStrategy(BaseStrategy):
         params["best_trend_ema_window"] = self._best_trend_ema_window
         params["best_profit_target_ratio"] = self._best_profit_target_ratio
         params["best_signal_agg_minutes"] = self._best_signal_agg_minutes
+        params["best_edge_for_full_size"] = self._best_edge_for_full_size
         return params
 
     # ------------------------------------------------------------------
@@ -437,7 +464,10 @@ class GLFTStrategy(BaseStrategy):
         profit_target_ratio: float = 1.0,
         strategy_sl: float = 0.005,
         momentum_guard: bool = True,
-    ) -> npt.NDArray[np.floating[Any]]:
+        dynamic_sizing: bool = False,
+        min_weight: float = 0.0,
+        edge_for_full_size: float = 0.005,
+    ) -> tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.floating[Any]]]:
         """GLFT state machine producing position-state signals.
 
         ``min_entry_edge`` is the minimum normalized price deviation
@@ -459,7 +489,13 @@ class GLFTStrategy(BaseStrategy):
         narrowing (price moving back toward EMA), filtering out
         entries into momentum moves.
 
-        Returns an array of ``(1, -1, 0)`` where:
+        When ``dynamic_sizing`` is True, the returned ``size_weights``
+        array contains per-bar position-size weights in
+        ``[min_weight, 1.0]``, proportional to ``|deviation| /
+        edge_for_full_size``.  When False, weights are all 1.0.
+
+        Returns a tuple of ``(signals, size_weights)`` where signals
+        contains ``(1, -1, 0)``:
 
         - ``1``  = long position
         - ``-1`` = short position
@@ -467,6 +503,7 @@ class GLFTStrategy(BaseStrategy):
         """
         n = len(close)
         signals = np.zeros(n, dtype=np.float64)
+        size_weights = np.ones(n, dtype=np.float64)
 
         # Pre-compute the constant part of the half-spread
         # (1/gamma) * ln(1 + gamma/kappa)  →  limit γ→0 is 1/kappa
@@ -478,6 +515,7 @@ class GLFTStrategy(BaseStrategy):
         state = 0  # 0=flat, 1=long, -1=short
         bars_in_pos = 0
         entry_dev = 0.0  # deviation at entry time
+        current_weight = 1.0  # weight for current position
 
         for i in range(n):
             s = close[i]
@@ -488,6 +526,7 @@ class GLFTStrategy(BaseStrategy):
                 signals[i] = float(state)
                 if state != 0:
                     bars_in_pos += 1
+                    size_weights[i] = current_weight
                 continue
 
             # Normalized deviation from fair value
@@ -529,17 +568,20 @@ class GLFTStrategy(BaseStrategy):
                     elif td < 0:
                         want_long = False
 
-                if want_long:
-                    state = 1
+                if want_long or want_short:
+                    state = 1 if want_long else -1
                     bars_in_pos = 0
                     entry_dev = deviation
-                elif want_short:
-                    state = -1
-                    bars_in_pos = 0
-                    entry_dev = deviation
+                    if dynamic_sizing and edge_for_full_size > 0:
+                        raw_w = abs(deviation) / edge_for_full_size
+                        current_weight = min(max(raw_w, min_weight), 1.0)
+                    else:
+                        current_weight = 1.0
+                    size_weights[i] = current_weight
             else:
                 # --- IN POSITION ---
                 bars_in_pos += 1
+                size_weights[i] = current_weight
 
                 if bars_in_pos < min_hold:
                     signals[i] = float(state)
@@ -575,4 +617,4 @@ class GLFTStrategy(BaseStrategy):
 
             signals[i] = float(state)
 
-        return signals
+        return signals, size_weights

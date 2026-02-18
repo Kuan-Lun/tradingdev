@@ -59,6 +59,13 @@ class VolumeBacktestEngine(BaseBacktestEngine):
 
         n = len(close)
         size_usdt = self._position_size_usdt or 200.0
+
+        # Dynamic position sizing: per-bar weight if available
+        if "size_weight" in df.columns:
+            weight_s = df["size_weight"].shift(1).fillna(1.0)
+            weights = weight_s.astype(float).to_numpy()
+        else:
+            weights = np.ones(n, dtype=np.float64)
         sl = self._stop_loss
         tp = self._take_profit
         fee_rate = self._fees + self._slippage
@@ -92,7 +99,12 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             # --- SL / TP check (uses high/low for intra-bar) ---
             if pos_dir != 0:
                 exit_price = _check_sl_tp(
-                    pos_dir, entry_price, h, lo, sl, tp,
+                    pos_dir,
+                    entry_price,
+                    h,
+                    lo,
+                    sl,
+                    tp,
                 )
                 if exit_price is not None:
                     trade = _close_position(
@@ -110,9 +122,10 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     # Re-entry after SL happens intra-bar; use
                     # close as best estimate of the re-entry fill.
                     if re_entry and sig != 0:
+                        eff = size_usdt * weights[i]
                         entry_price = c
-                        pos_qty = size_usdt / c
-                        cash -= size_usdt * fee_rate
+                        pos_qty = eff / c
+                        cash -= eff * fee_rate
                         pos_dir = sig
 
             # --- signal_as_position: signal=0 → close at open ---
@@ -140,16 +153,18 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 )
                 trades.append(trade)
                 cash += trade["net_pnl"]
+                eff = size_usdt * weights[i]
                 entry_price = o
-                pos_qty = size_usdt / o
-                cash -= size_usdt * fee_rate
+                pos_qty = eff / o
+                cash -= eff * fee_rate
                 pos_dir = sig
 
             # --- new entry from flat at open ---
             elif pos_dir == 0 and sig != 0:
+                eff = size_usdt * weights[i]
                 entry_price = o
-                pos_qty = size_usdt / o
-                cash -= size_usdt * fee_rate
+                pos_qty = eff / o
+                cash -= eff * fee_rate
                 pos_dir = sig
 
             # --- mark-to-market at close ---
