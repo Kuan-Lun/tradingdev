@@ -1,0 +1,25 @@
+{
+    // === Python 環境 ===
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python3",
+
+    // === 關閉 Pylance 內建型別檢查，改用 mypy ===
+    "python.analysis.typeCheckingMode": "off",
+
+    // === mypy 型別檢查 ===
+    "mypy.runUsingActiveInterpreter": true,
+    "mypy.targets": ["src/"],
+
+    // === Ruff（取代 Pylance 的 lint / format）===
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    },
+
+    // === 關閉其他 linter，避免與 ruff 衝突 ===
+    "python.linting.enabled": false,
+    "flake8.enabled": false
+}
