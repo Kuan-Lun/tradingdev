@@ -26,17 +26,13 @@ cd btc-usdt-strategy
 
 # 2. 安裝依賴並建立虛擬環境（含 editable install）
 uv sync
-uv pip install -e .
 
 # 3. 驗證安裝
 uv run python -c "import btc_strategy; print('OK')"
 ```
 
-> **為什麼需要 `uv pip install -e .`？**
->
-> 本專案使用 src layout，套件原始碼位於 `src/btc_strategy/`。
-> `uv sync` 會安裝所有依賴，但其產生的 editable install 可能無法正確將 `src/` 加入 Python path。
-> 補執行 `uv pip install -e .` 可確保 `btc_strategy` 模組能被正確 import。
+> **注意**：請使用 uv v0.10 以上版本。舊版 uv 建立的 venv 在 Python 3.13 下可能無法正確處理 editable install。
+> 如遇到 `ModuleNotFoundError`，請執行 `uv self update` 升級後重新 `rm -rf .venv && uv sync`。
 
 ## 執行回測
 
