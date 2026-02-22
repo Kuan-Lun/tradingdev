@@ -157,8 +157,8 @@ btc-usdt-strategy/
 ### 合併規範
 
 - 使用 **merge commit**（`git merge --no-ff`）合併回 main
-- merge commit 訊息需清楚描述該次 session 的完整成果
-- 格式：`feat: <一句話描述整體成果>`
+- merge commit 訊息使用 **git 標準格式**，由 git 自動產生，不需額外指定
+- 格式：`Merge branch 'feature/<name>' into main`
 - 這樣 `git log --first-parent main` 可看到每次 vibe coding session 的完整成果
 - 合併完成後刪除已合併的 feature 分支：`git branch -d feature/<name>`
 
