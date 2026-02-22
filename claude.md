@@ -25,7 +25,7 @@
 ```
 btc-usdt-strategy/
 ├── pyproject.toml              # uv 專案配置、依賴管理
-├── claude.md                   # Claude 協作指引
+├── CLAUDE.md                   # Claude 協作指引
 ├── mypy.ini                    # mypy strict 配置
 ├── ruff.toml                   # Ruff 配置
 ├── configs/                    # 策略參數與回測配置 (YAML)
