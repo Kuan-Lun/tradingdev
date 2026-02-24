@@ -6,17 +6,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from btc_strategy.backtest.volume_engine import VolumeBacktestEngine
-from btc_strategy.data.schemas import (
+from quant_backtest.backtest.volume_engine import VolumeBacktestEngine
+from quant_backtest.data.schemas import (
     SafetyVolumeStrategyConfig,
     XGBoostModelConfig,
 )
-from btc_strategy.ml.risk_features import RiskFeatureEngineer
-from btc_strategy.strategies.safety_volume_strategy import (
+from quant_backtest.ml.risk_features import RiskFeatureEngineer
+from quant_backtest.strategies.safety_volume_strategy import (
     SafetyVolumeStrategy,
 )
 
 # ── Helpers ──────────────────────────────────────────────────
+
 
 def _make_config() -> SafetyVolumeStrategyConfig:
     """Create a lightweight config for fast tests."""
@@ -42,9 +43,11 @@ def _make_config() -> SafetyVolumeStrategyConfig:
 
 # ── RiskFeatureEngineer tests ────────────────────────────────
 
+
 class TestRiskFeatureEngineer:
     def test_transform_produces_features(
-        self, sample_ohlcv_df: pd.DataFrame,
+        self,
+        sample_ohlcv_df: pd.DataFrame,
     ) -> None:
         """transform() should add feature columns."""
         fe = RiskFeatureEngineer(
@@ -62,17 +65,20 @@ class TestRiskFeatureEngineer:
         assert len(result) > 0
 
     def test_transform_no_target(
-        self, sample_ohlcv_df: pd.DataFrame,
+        self,
+        sample_ohlcv_df: pd.DataFrame,
     ) -> None:
         """transform(include_target=False) should omit target."""
         fe = RiskFeatureEngineer(lookback=12)
         result = fe.transform(
-            sample_ohlcv_df, include_target=False,
+            sample_ohlcv_df,
+            include_target=False,
         )
         assert "target" not in result.columns
 
     def test_safe_target_values(
-        self, sample_ohlcv_df: pd.DataFrame,
+        self,
+        sample_ohlcv_df: pd.DataFrame,
     ) -> None:
         """Target should only contain 0 and 1."""
         fe = RiskFeatureEngineer(
@@ -80,13 +86,15 @@ class TestRiskFeatureEngineer:
             target_holding_bars=3,
         )
         result = fe.transform(
-            sample_ohlcv_df, include_target=True,
+            sample_ohlcv_df,
+            include_target=True,
         )
         unique = set(result["target"].unique())
         assert unique.issubset({0, 1})
 
     def test_feature_names_populated(
-        self, sample_ohlcv_df: pd.DataFrame,
+        self,
+        sample_ohlcv_df: pd.DataFrame,
     ) -> None:
         """get_feature_names() should return non-empty list."""
         fe = RiskFeatureEngineer(lookback=12)
@@ -99,6 +107,7 @@ class TestRiskFeatureEngineer:
 
 # ── State machine tests ──────────────────────────────────────
 
+
 class TestStateMachine:
     def test_min_holding_enforced(self) -> None:
         """Position should not exit before min_holding_bars."""
@@ -106,7 +115,11 @@ class TestStateMachine:
         dirs = np.array([1, 1, 1, 1, 1, 1])
 
         signals = SafetyVolumeStrategy._run_state_machine_with_threshold(
-            risk, dirs, threshold=0.5, min_hold=4, max_hold=100,
+            risk,
+            dirs,
+            threshold=0.5,
+            min_hold=4,
+            max_hold=100,
         )
 
         # Enter at bar 0 (p_safe=0.8 >= 0.5)
@@ -124,7 +137,11 @@ class TestStateMachine:
         dirs = np.full(10, 1)
 
         signals = SafetyVolumeStrategy._run_state_machine_with_threshold(
-            risk, dirs, threshold=0.5, min_hold=2, max_hold=5,
+            risk,
+            dirs,
+            threshold=0.5,
+            min_hold=2,
+            max_hold=5,
         )
 
         assert signals[0] == 1  # enter
@@ -137,7 +154,11 @@ class TestStateMachine:
         dirs = np.array([1, 1, 1, 1, 1])
 
         signals = SafetyVolumeStrategy._run_state_machine_with_threshold(
-            risk, dirs, threshold=0.5, min_hold=2, max_hold=100,
+            risk,
+            dirs,
+            threshold=0.5,
+            min_hold=2,
+            max_hold=100,
         )
 
         assert signals[0] == 1
@@ -152,12 +173,16 @@ class TestStateMachine:
         dirs = np.array([1, 1, 1, -1, -1, -1, -1, -1, -1, -1])
 
         signals = SafetyVolumeStrategy._run_state_machine_with_threshold(
-            risk, dirs, threshold=0.5, min_hold=2, max_hold=100,
+            risk,
+            dirs,
+            threshold=0.5,
+            min_hold=2,
+            max_hold=100,
         )
 
-        assert signals[0] == 1   # enter long
-        assert signals[1] == 1   # hold (min_hold)
-        assert signals[2] == 1   # hold (bars_in_pos=2 >= min_hold)
+        assert signals[0] == 1  # enter long
+        assert signals[1] == 1  # hold (min_hold)
+        assert signals[2] == 1  # hold (bars_in_pos=2 >= min_hold)
         assert signals[3] == -1  # reversal to short
 
     def test_no_entry_when_unsafe(self) -> None:
@@ -166,7 +191,11 @@ class TestStateMachine:
         dirs = np.full(5, 1)
 
         signals = SafetyVolumeStrategy._run_state_machine_with_threshold(
-            risk, dirs, threshold=0.5, min_hold=2, max_hold=100,
+            risk,
+            dirs,
+            threshold=0.5,
+            min_hold=2,
+            max_hold=100,
         )
 
         assert all(s == 0 for s in signals)
@@ -177,7 +206,11 @@ class TestStateMachine:
         dirs = np.zeros(5, dtype=int)
 
         signals = SafetyVolumeStrategy._run_state_machine_with_threshold(
-            risk, dirs, threshold=0.5, min_hold=2, max_hold=100,
+            risk,
+            dirs,
+            threshold=0.5,
+            min_hold=2,
+            max_hold=100,
         )
 
         assert all(s == 0 for s in signals)
@@ -185,18 +218,21 @@ class TestStateMachine:
 
 # ── VolumeBacktestEngine new flags ───────────────────────────
 
+
 class TestVolumeEngineNewFlags:
     def _make_df(self, signals: list[int]) -> pd.DataFrame:
         """Build a minimal df for the engine."""
         n = len(signals)
         close = np.full(n, 100.0)
-        return pd.DataFrame({
-            "open": close,
-            "close": close,
-            "high": close * 1.001,
-            "low": close * 0.999,
-            "signal": signals,
-        })
+        return pd.DataFrame(
+            {
+                "open": close,
+                "close": close,
+                "high": close * 1.001,
+                "low": close * 0.999,
+                "signal": signals,
+            }
+        )
 
     def test_signal_as_position_closes_on_zero(self) -> None:
         """signal=0 should close position when signal_as_position=True."""
@@ -204,7 +240,7 @@ class TestVolumeEngineNewFlags:
             init_cash=10_000,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=100.0,
+            position_size=100.0,
             signal_as_position=True,
         )
         # Shift by 1 is done in engine, so signal [0,1,1,0,0]
@@ -221,7 +257,7 @@ class TestVolumeEngineNewFlags:
             init_cash=10_000,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=100.0,
+            position_size=100.0,
             stop_loss=0.001,
             re_entry_after_sl=False,
         )
@@ -230,13 +266,15 @@ class TestVolumeEngineNewFlags:
         close = np.full(n, 100.0)
         high = np.full(n, 100.1)
         low = np.full(n, 99.8)  # low enough to trigger 0.1% SL
-        df = pd.DataFrame({
-            "open": close,
-            "close": close,
-            "high": high,
-            "low": low,
-            "signal": [0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        })
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "close": close,
+                "high": high,
+                "low": low,
+                "signal": [0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            }
+        )
         result = engine.run(df)
 
         # With re_entry=False, after SL exit it should NOT
@@ -249,9 +287,11 @@ class TestVolumeEngineNewFlags:
 
 # ── Strategy integration tests ───────────────────────────────
 
+
 class TestSafetyVolumeStrategy:
     def test_generate_signals_before_fit_raises(
-        self, large_ohlcv_df: pd.DataFrame,
+        self,
+        large_ohlcv_df: pd.DataFrame,
     ) -> None:
         """generate_signals() before fit() should raise."""
         strategy = SafetyVolumeStrategy(config=_make_config())
@@ -259,7 +299,8 @@ class TestSafetyVolumeStrategy:
             strategy.generate_signals(large_ohlcv_df)
 
     def test_fit_selects_lookback(
-        self, large_ohlcv_df: pd.DataFrame,
+        self,
+        large_ohlcv_df: pd.DataFrame,
     ) -> None:
         """After fit(), best_lookback should be from candidates."""
         strategy = SafetyVolumeStrategy(config=_make_config())
@@ -268,7 +309,8 @@ class TestSafetyVolumeStrategy:
         assert params["best_lookback"] in [6, 12]
 
     def test_generate_signals_valid(
-        self, large_ohlcv_df: pd.DataFrame,
+        self,
+        large_ohlcv_df: pd.DataFrame,
     ) -> None:
         """After fit(), generate_signals produces valid signals."""
         config = _make_config()

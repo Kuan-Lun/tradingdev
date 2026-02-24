@@ -40,7 +40,7 @@ classDiagram
         -_fees: float
         -_slippage: float
         -_freq: str
-        -_position_size_usdt: float | None
+        -_position_size: float | None
         -_stop_loss: float | None
         -_take_profit: float | None
         +run(df) BacktestResult*
@@ -352,7 +352,7 @@ classDiagram
         +init_cash: float = 10000.0
         +fees: float = 0.0006
         +slippage: float = 0.0005
-        +position_size_usdt: float | None
+        +position_size: float | None
         +stop_loss: float | None
         +take_profit: float | None
         +signal_as_position: bool = False
@@ -412,7 +412,7 @@ classDiagram
         +signal_threshold_candidates: list~float~ | None
         +target_horizon: int = 1
         +min_bars_between_trades: int = 1
-        +monthly_volume_target_usdt: float | None
+        +monthly_volume_target: float | None
     }
 
     class SafetyVolumeStrategyConfig {
@@ -431,8 +431,8 @@ classDiagram
         +lookback_candidates: list~int~
         +retrain_interval: int = 720
         +validation_ratio: float = 0.2
-        +position_size_usdt: float = 3000.0
-        +monthly_volume_target_usdt: float | None
+        +position_size: float = 3000.0
+        +monthly_volume_target: float | None
     }
 
     class GLFTStrategyConfig {
@@ -455,8 +455,8 @@ classDiagram
         +kappa_candidates: list~float~
         +ema_window_candidates: list~int~
         +target_metric: str = "total_return"
-        +position_size_usdt: float = 3000.0
-        +monthly_volume_target_usdt: float | None
+        +position_size: float = 3000.0
+        +monthly_volume_target: float | None
         +fee_rate: float = 0.0006
         +min_annual_return: float | None
     }
@@ -479,6 +479,35 @@ classDiagram
     }
 
     %% ──────────────── 資料管線 ────────────────
+
+    class DataConfig {
+        <<pydantic>>
+        +source: str = "binance_api"
+        +raw_dir: str = "data/raw"
+        +processed_dir: str = "data/processed"
+    }
+
+    class DataManager {
+        -_data_cfg: DataConfig
+        -_bt_cfg: BacktestConfig
+        -_now_fn: Callable
+        -_crawler: BinanceAPICrawler
+        -_loader: DataLoader
+        -_processor: DataProcessor
+        +load() tuple~DataFrame, Path~
+        +effective_processed_path: Path
+        -_ensure_year_cached(year) DataFrame
+        -_fetch_and_cache_year(year, complete) DataFrame
+        -_trim_to_range(df) DataFrame
+        -_raw_path_for_year(year, partial) Path
+        -_processed_path_for_year(year, partial) Path
+    }
+
+    DataManager *-- DataConfig : 組合
+    DataManager *-- BacktestConfig : 組合
+    DataManager *-- BinanceAPICrawler : 組合
+    DataManager *-- DataLoader : 組合
+    DataManager *-- DataProcessor : 組合
 
     class DataLoader {
         +load_parquet(path) pd.DataFrame
@@ -566,6 +595,7 @@ sequenceDiagram
     autonumber
     participant Main as main()
     participant Cfg as load_config
+    participant DM as DataManager
     participant Crawler as BinanceAPICrawler
     participant Proc as DataProcessor
     participant Loader as DataLoader
@@ -578,23 +608,29 @@ sequenceDiagram
     Main->>Cfg: load_config(yaml_path)
     Cfg-->>Main: dict (raw config)
     Main->>Main: BacktestConfig(**config["backtest"])
+    Main->>Main: DataConfig(**config["data"])
     Main->>Main: _create_engine(bt_cfg) → Engine
 
     rect rgb(230, 245, 255)
-        Note over Crawler,Proc: 資料取得與清洗
-        Main->>Main: _load_data(raw_config, bt_cfg)
-        alt 已有 processed 檔案
-            Main->>Loader: load_parquet(path)
-        else 已有 raw 檔案
-            Main->>Loader: load_csv(path)
-            Main->>Proc: process(raw_df)
-        else 需要爬取
-            Main->>Crawler: fetch(symbol, timeframe, start, end)
-            Crawler-->>Main: raw DataFrame (OHLCV)
-            Main->>Crawler: save_raw(df, raw_path)
-            Main->>Proc: process(raw_df)
-            Main->>Proc: save_processed(df, processed_path)
+        Note over DM,Proc: 年度快取資料取得與清洗
+        Main->>DM: DataManager(data_cfg, bt_cfg)
+        Main->>DM: load()
+        loop 每個所需年份
+            alt 已有完整年 parquet
+                DM->>Loader: load_parquet(year.parquet)
+            else partial 存在且該年已結束
+                DM->>DM: 刪除 partial，重新抓取
+                DM->>Crawler: fetch(symbol, tf, year_start, year_end)
+                DM->>Proc: process(raw_df)
+            else partial 存在且該年未結束
+                DM->>Loader: load_parquet(year_partial.parquet)
+            else 無快取
+                DM->>Crawler: fetch(symbol, tf, year_start, year_end/now)
+                DM->>Proc: process(raw_df)
+            end
         end
+        DM->>DM: concat + trim to start_date~end_date
+        DM-->>Main: (DataFrame, effective_path)
     end
 
     rect rgb(255, 245, 230)
@@ -731,9 +767,12 @@ graph TD
     end
 
     subgraph Data["data/"]
-        SCH["schemas.py<br/>DVOLBar · OHLCVBar · BacktestConfig<br/>KDStrategyConfig · KDFitConfig<br/>WalkForwardConfig<br/>XGBoostModelConfig · XGBoostStrategyConfig<br/>SafetyVolumeStrategyConfig<br/>GLFTStrategyConfig · GLFTMLStrategyConfig"]
+        SCH["schemas.py<br/>DVOLBar · OHLCVBar · DataConfig · BacktestConfig<br/>KDStrategyConfig · KDFitConfig<br/>WalkForwardConfig<br/>XGBoostModelConfig · XGBoostStrategyConfig<br/>SafetyVolumeStrategyConfig<br/>GLFTStrategyConfig · GLFTMLStrategyConfig"]
+        DM[DataManager]
         DL[DataLoader]
         DP[DataProcessor]
+        DM --> DL
+        DM --> DP
     end
 
     subgraph Indicators["indicators/"]
@@ -806,20 +845,21 @@ graph TD
     MAIN --> LOG
     MAIN --> CACHE
     MAIN --> SCH
-    MAIN --> BAC
+    MAIN --> DM
     MAIN -.-> DDC
     MAIN --> DL
-    MAIN --> DP
     MAIN --> REG
     MAIN --> BBE
     MAIN --> WFV
     MAIN --> PR
+    DM --> BAC
 
     DASH --> DAPP
     DAPP --> DANA
     DAPP --> CACHE
     DAPP --> CFG
     DAPP --> SCH
+    DAPP --> DM
     DAPP --> PR
     DAPP --> BR
 

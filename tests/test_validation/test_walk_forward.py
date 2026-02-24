@@ -2,19 +2,19 @@
 
 import pandas as pd
 
-from btc_strategy.backtest.signal_engine import (
+from quant_backtest.backtest.signal_engine import (
     SignalBacktestEngine,
 )
-from btc_strategy.data.schemas import (
+from quant_backtest.data.schemas import (
     KDStrategyConfig,
     WalkForwardConfig,
 )
-from btc_strategy.strategies.kd_strategy import KDStrategy
-from btc_strategy.validation.report import (
+from quant_backtest.strategies.kd_strategy import KDStrategy
+from quant_backtest.validation.report import (
     format_walk_forward_report,
     summarize_results,
 )
-from btc_strategy.validation.walk_forward import (
+from quant_backtest.validation.walk_forward import (
     WalkForwardValidator,
 )
 

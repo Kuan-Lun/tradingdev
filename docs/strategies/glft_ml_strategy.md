@@ -63,7 +63,7 @@
 |------|--------|------|
 | vol_type | "implied" | 波動度估計（realized/parkinson/implied） |
 | fee_rate | 0.0002 | Maker fee（limit order） |
-| position_size_usdt | 3000.0 | 每筆交易大小 |
+| position_size | 3000.0 | 每筆交易大小 |
 
 ## 特徵工程
 
@@ -99,14 +99,14 @@ strategy:
     min_entry_edge: 0.0012
     profit_target_ratio: 0.75
     strategy_sl: 0.003
-    position_size_usdt: 3000.0
+    position_size: 3000.0
     fee_rate: 0.0002
 ```
 
 ## 使用方式
 
 ```bash
-uv run python -m btc_strategy.main configs/glft_ml_strategy.yaml
+uv run python -m quant_backtest.main configs/glft_ml_strategy.yaml
 ```
 
 ## Walk-Forward 結果（2024 train / 2025 test）

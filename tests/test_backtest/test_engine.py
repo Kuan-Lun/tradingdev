@@ -5,11 +5,11 @@ from datetime import UTC
 import numpy as np
 import pandas as pd
 
-from btc_strategy.backtest.result import BacktestResult
-from btc_strategy.backtest.signal_engine import (
+from quant_backtest.backtest.result import BacktestResult
+from quant_backtest.backtest.signal_engine import (
     SignalBacktestEngine,
 )
-from btc_strategy.backtest.volume_engine import (
+from quant_backtest.backtest.volume_engine import (
     VolumeBacktestEngine,
 )
 
@@ -24,9 +24,7 @@ def _make_ohlcv_df(
     close = np.array(prices)
     return pd.DataFrame(
         {
-            "timestamp": pd.date_range(
-                "2024-01-01", periods=n, freq="h", tz=UTC
-            ),
+            "timestamp": pd.date_range("2024-01-01", periods=n, freq="h", tz=UTC),
             "open": close - spread * 0.1,
             "high": close + spread,
             "low": close - spread,
@@ -39,13 +37,13 @@ def _make_ohlcv_df(
 
 EXPECTED_KEYS = {
     "total_return",
-    "total_pnl_usdt",
+    "total_pnl",
     "sharpe_ratio",
     "max_drawdown",
     "win_rate",
     "profit_factor",
     "total_trades",
-    "total_volume_usdt",
+    "total_volume",
     "annual_return",
     "daily_pnl_mean",
     "daily_pnl_std",
@@ -58,13 +56,9 @@ EXPECTED_KEYS = {
 
 class TestSignalBacktestEngine:
     def setup_method(self) -> None:
-        self.engine = SignalBacktestEngine(
-            init_cash=10_000.0, fees=0.0, slippage=0.0
-        )
+        self.engine = SignalBacktestEngine(init_cash=10_000.0, fees=0.0, slippage=0.0)
 
-    def _make_simple_df(
-        self, prices: list[float], signals: list[int]
-    ) -> pd.DataFrame:
+    def _make_simple_df(self, prices: list[float], signals: list[int]) -> pd.DataFrame:
         n = len(prices)
         return pd.DataFrame(
             {
@@ -108,13 +102,10 @@ class TestSignalBacktestEngine:
         df = self._make_simple_df(prices, signals)
         result_no_fees = self.engine.run(df)
 
-        engine_fees = SignalBacktestEngine(
-            init_cash=10_000.0, fees=0.01, slippage=0.0
-        )
+        engine_fees = SignalBacktestEngine(init_cash=10_000.0, fees=0.01, slippage=0.0)
         result_fees = engine_fees.run(df)
         assert (
-            result_fees.metrics["total_return"]
-            < result_no_fees.metrics["total_return"]
+            result_fees.metrics["total_return"] < result_no_fees.metrics["total_return"]
         )
 
     def test_metrics_keys(self) -> None:
@@ -134,7 +125,7 @@ class TestVolumeBacktestEngine:
             init_cash=10_000.0,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=200.0,
+            position_size=200.0,
         )
         result = engine.run(df)
         assert isinstance(result, BacktestResult)
@@ -150,7 +141,7 @@ class TestVolumeBacktestEngine:
             init_cash=10_000.0,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=200.0,
+            position_size=200.0,
             stop_loss=0.01,
         )
         result = engine.run(df)
@@ -164,7 +155,7 @@ class TestVolumeBacktestEngine:
             init_cash=10_000.0,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=200.0,
+            position_size=200.0,
         )
         result = engine.run(df)
         assert result.metrics["total_trades"] >= 2
@@ -181,7 +172,7 @@ class TestVolumeBacktestEngine:
             init_cash=10_000.0,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=200.0,
+            position_size=200.0,
             stop_loss=0.005,
             take_profit=0.004,
         )
@@ -196,7 +187,7 @@ class TestVolumeBacktestEngine:
             init_cash=10_000.0,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=200.0,
+            position_size=200.0,
         )
         result = engine.run(df)
         assert set(result.metrics.keys()) == EXPECTED_KEYS
@@ -214,7 +205,7 @@ class TestVolumeBacktestEngine:
             init_cash=10_000.0,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=200.0,
+            position_size=200.0,
             stop_loss=0.005,
             take_profit=0.004,
         )
@@ -222,16 +213,13 @@ class TestVolumeBacktestEngine:
             init_cash=10_000.0,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=200.0,
+            position_size=200.0,
             stop_loss=0.005,
             take_profit=0.004,
         )
         sig_r = sig_engine.run(df)
         vol_r = vol_engine.run(df)
-        assert (
-            vol_r.metrics["total_trades"]
-            >= sig_r.metrics["total_trades"]
-        )
+        assert vol_r.metrics["total_trades"] >= sig_r.metrics["total_trades"]
 
     def test_no_signal_no_trades(self) -> None:
         prices = [100.0] * 20
@@ -241,7 +229,7 @@ class TestVolumeBacktestEngine:
             init_cash=10_000.0,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=200.0,
+            position_size=200.0,
         )
         result = engine.run(df)
         assert result.metrics["total_trades"] == 0

@@ -35,5 +35,3 @@ backtest:
 
 data:
   source: "binance_api"
-  raw_path: "data/raw/btcusdt_1h_2024_2025.csv"
-  processed_path: "data/processed/btcusdt_1h_2024_2025.parquet"

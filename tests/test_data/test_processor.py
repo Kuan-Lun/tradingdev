@@ -5,7 +5,7 @@ from datetime import UTC
 import numpy as np
 import pandas as pd
 
-from btc_strategy.data.processor import DataProcessor
+from quant_backtest.data.processor import DataProcessor
 
 
 class TestDataProcessor:

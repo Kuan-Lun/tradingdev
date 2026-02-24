@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from btc_strategy.backtest.volume_engine import VolumeBacktestEngine
-from btc_strategy.data.schemas import GLFTStrategyConfig
-from btc_strategy.strategies.glft_strategy import GLFTStrategy
+from quant_backtest.backtest.volume_engine import VolumeBacktestEngine
+from quant_backtest.data.schemas import GLFTStrategyConfig
+from quant_backtest.strategies.glft_strategy import GLFTStrategy
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -44,8 +44,8 @@ class TestGLFTStrategyConfig:
     def test_default_values(self) -> None:
         """Default config should have valid parameter values."""
         config = GLFTStrategyConfig()
-        assert config.gamma == 0.01
-        assert config.kappa == 1.5
+        assert config.gamma == 500.0
+        assert config.kappa == 1000.0
         assert config.ema_window == 21
         assert config.min_holding_bars == 5
         assert config.max_holding_bars == 30
@@ -111,8 +111,8 @@ class TestGLFTStateMachine:
             close=close,
             ema=ema,
             sigma=sigma,
-            gamma=0.01,
-            kappa=1.5,
+            gamma=0.0,
+            kappa=1000.0,
             min_hold=5,
             max_hold=30,
         )
@@ -193,8 +193,8 @@ class TestGLFTStateMachine:
             close=close,
             ema=ema,
             sigma=sigma,
-            gamma=0.001,
-            kappa=1.0,
+            gamma=0.0,
+            kappa=1000.0,
             min_hold=2,
             max_hold=15,
         )
@@ -213,8 +213,8 @@ class TestGLFTStateMachine:
             close=close,
             ema=ema,
             sigma=sigma,
-            gamma=0.001,
-            kappa=1.0,
+            gamma=0.0,
+            kappa=1000.0,
             min_hold=2,
             max_hold=15,
         )
@@ -284,7 +284,7 @@ class TestGLFTFit:
             init_cash=10_000,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=100.0,
+            position_size=100.0,
             signal_as_position=True,
         )
         config = _make_config()
@@ -352,7 +352,7 @@ class TestGLFTIntegration:
             init_cash=10_000,
             fees=0.0006,
             slippage=0.0005,
-            position_size_usdt=100.0,
+            position_size=100.0,
             stop_loss=0.03,
             signal_as_position=True,
             re_entry_after_sl=False,
@@ -468,7 +468,7 @@ class TestGLFTImpliedVolatility:
             init_cash=10_000,
             fees=0.0,
             slippage=0.0,
-            position_size_usdt=100.0,
+            position_size=100.0,
             signal_as_position=True,
         )
         config = _make_implied_config()
@@ -612,10 +612,10 @@ class TestGLFTDynamicSizing:
                 break  # position ended
 
     def test_min_position_le_max_validator(self) -> None:
-        """min_position_size_usdt > position_size_usdt raises."""
+        """min_position_size > position_size raises."""
         with pytest.raises(ValidationError):
             _make_config(
                 dynamic_sizing=True,
-                min_position_size_usdt=5000.0,
-                position_size_usdt=3000.0,
+                min_position_size=5000.0,
+                position_size=3000.0,
             )

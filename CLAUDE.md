@@ -1,8 +1,8 @@
-# BTC/USDT 合約交易策略回測專案
+# 量化交易策略回測框架
 
 ## 專案概述
 
-本專案用於開發與回測 BTC/USDT 永續合約交易策略。目前範圍僅限於歷史回測，不包含實盤交易。
+本專案為通用量化交易策略回測框架，支援多種交易標的（如 BTC/USDT 永續合約等）的策略開發與歷史回測。目前範圍僅限於歷史回測，不包含實盤交易。
 開發模式以 vibe coding 為主，由 Claude 撰寫程式碼，需嚴格遵守本文件規範。
 
 ## 技術棧
@@ -23,7 +23,7 @@
 ## 專案結構
 
 ```
-btc-usdt-strategy/
+quant-backtest/
 ├── pyproject.toml              # uv 專案配置、依賴管理
 ├── CLAUDE.md                   # Claude 協作指引
 ├── mypy.ini                    # mypy strict 配置
@@ -33,7 +33,7 @@ btc-usdt-strategy/
 │   ├── raw/                    # 原始爬取資料 (CSV/ZIP)
 │   └── processed/              # 清洗對齊後的回測用資料 (Parquet)
 ├── src/
-│   └── btc_strategy/           # 主套件 (src layout)
+│   └── quant_backtest/         # 主套件 (src layout)
 │       ├── crawlers/           # 資料爬取模組
 │       │   ├── base.py         # ABC: BaseCrawler
 │       │   ├── binance_api.py  # Binance 公開 API 爬取
@@ -86,7 +86,9 @@ btc-usdt-strategy/
 
 ## 資料規範
 
-### K 線欄位定義
+### OHLCV 標準欄位定義
+
+以下為通用 OHLCV 欄位定義，適用於任何交易標的（如加密貨幣、股票、期貨等）：
 
 | 欄位 | 型別 | 說明 |
 |------|------|------|
@@ -98,6 +100,8 @@ btc-usdt-strategy/
 | volume | float | 成交量 |
 
 ### 資料來源
+
+框架支援多種資料來源，可透過擴展爬蟲模組接入不同交易所或資料供應商。目前內建支援：
 
 - **Binance Data Vision** (`data.binance.vision`): 批次下載大量歷史 K 線資料，免註冊
 - **Binance 公開 API** (透過 ccxt): 補齊近期資料，免 API Key

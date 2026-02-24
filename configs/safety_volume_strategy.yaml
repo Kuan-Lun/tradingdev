@@ -47,8 +47,8 @@ strategy:
     validation_ratio: 0.2
 
     # 持倉大小與交易量目標
-    position_size_usdt: 3000.0   # 每筆 3,000 USDT
-    monthly_volume_target_usdt: 12500000  # 月度單邊 12.5M USDT
+    position_size: 3000.0   # 每筆 3,000
+    monthly_volume_target: 12500000  # 月度單邊 12.5M
 
 validation:
   train_start: "2024-12-01"
@@ -65,7 +65,7 @@ backtest:
   init_cash: 100000.0
   fees: 0.0006
   slippage: 0.0005
-  position_size_usdt: 3000.0
+  position_size: 3000.0
   stop_loss: 0.03               # 3% 緊急 SL（黑天鵝保護）
   take_profit: null              # 不用 TP，由策略控制出場
   signal_as_position: true       # signal=0 → 平倉
@@ -74,5 +74,3 @@ backtest:
 
 data:
   source: "binance_api"
-  raw_path: "data/raw/btcusdt_1m_2024_2025.csv"
-  processed_path: "data/processed/btcusdt_1m_2024_2025.parquet"

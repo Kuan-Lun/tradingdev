@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from btc_strategy.utils.parallel import (
+from quant_backtest.utils.parallel import (
     _get_performance_core_count,
     estimate_n_jobs,
 )
@@ -19,7 +19,7 @@ class TestGetPerformanceCoreCount:
 
     def test_fallback_on_non_darwin(self) -> None:
         """On non-Darwin platforms, should fall back to os.cpu_count()."""
-        with patch("btc_strategy.utils.parallel.platform") as mock_platform:
+        with patch("quant_backtest.utils.parallel.platform") as mock_platform:
             mock_platform.system.return_value = "Linux"
             count = _get_performance_core_count()
             assert count >= 1
@@ -27,8 +27,8 @@ class TestGetPerformanceCoreCount:
     def test_fallback_on_sysctl_failure(self) -> None:
         """When sysctl fails, should fall back to os.cpu_count()."""
         with (
-            patch("btc_strategy.utils.parallel.platform") as mock_platform,
-            patch("btc_strategy.utils.parallel.subprocess") as mock_subprocess,
+            patch("quant_backtest.utils.parallel.platform") as mock_platform,
+            patch("quant_backtest.utils.parallel.subprocess") as mock_subprocess,
         ):
             mock_platform.system.return_value = "Darwin"
             mock_subprocess.run.side_effect = OSError("sysctl not found")
@@ -39,8 +39,8 @@ class TestGetPerformanceCoreCount:
     def test_apple_silicon_returns_pcore_count(self) -> None:
         """Simulate Apple Silicon sysctl returning P-core count."""
         with (
-            patch("btc_strategy.utils.parallel.platform") as mock_platform,
-            patch("btc_strategy.utils.parallel.subprocess") as mock_subprocess,
+            patch("quant_backtest.utils.parallel.platform") as mock_platform,
+            patch("quant_backtest.utils.parallel.subprocess") as mock_subprocess,
         ):
             mock_platform.system.return_value = "Darwin"
             mock_result = mock_subprocess.run.return_value
