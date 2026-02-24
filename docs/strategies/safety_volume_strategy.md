@@ -83,8 +83,8 @@ FLAT ──(safe + direction)──► LONG/SHORT
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `position_size_usdt` | 3000.0 | 每筆持倉大小 |
-| `monthly_volume_target_usdt` | 12500000 | 月度單邊交易量目標 |
+| `position_size` | 3000.0 | 每筆持倉大小 |
+| `monthly_volume_target` | 12500000 | 月度單邊交易量目標 |
 
 ## 交易所規則合規
 
@@ -117,8 +117,8 @@ strategy:
     max_holding_bars: 30
     lookback_candidates: [360, 720, 1440]
     retrain_interval: 720
-    position_size_usdt: 3000.0
-    monthly_volume_target_usdt: 12500000
+    position_size: 3000.0
+    monthly_volume_target: 12500000
 
 backtest:
   # ... (see configs/safety_volume_strategy.yaml)
@@ -130,7 +130,7 @@ backtest:
 ## 使用方式
 
 ```bash
-uv run python -m btc_strategy.main --config configs/safety_volume_strategy.yaml
+uv run python -m quant_backtest.main --config configs/safety_volume_strategy.yaml
 ```
 
 ## 與 XGBoost Direction Strategy 的比較

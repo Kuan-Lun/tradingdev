@@ -1,6 +1,6 @@
-# BTC/USDT 合約交易策略回測
+# 量化交易策略回測框架
 
-BTC/USDT 永續合約交易策略的開發與歷史回測框架。
+量化交易策略的開發與歷史回測框架，支援多種資產類型。
 
 ## 環境需求
 
@@ -22,13 +22,13 @@ brew install uv
 ```bash
 # 1. Clone 專案
 git clone <repo-url>
-cd btc-usdt-strategy
+cd quant-backtest
 
 # 2. 安裝依賴並建立虛擬環境（含 editable install）
 uv sync
 
 # 3. 驗證安裝
-uv run python -c "import btc_strategy; print('OK')"
+uv run python -c "import quant_backtest; print('OK')"
 ```
 
 > **注意**：請使用 uv v0.10 以上版本。舊版 uv 建立的 venv 在 Python 3.13 下可能無法正確處理 editable install。
@@ -37,7 +37,7 @@ uv run python -c "import btc_strategy; print('OK')"
 ## 執行回測
 
 ```bash
-uv run python -m btc_strategy.main --config configs/<strategy>.yaml
+uv run python -m quant_backtest.main --config configs/<strategy>.yaml
 ```
 
 回測完成後，結果會自動快取至 `data/cache/`，供 Dashboard 讀取。
@@ -57,7 +57,7 @@ uv run python -m btc_strategy.main --config configs/<strategy>.yaml
 回測完成後，透過 Streamlit 啟動視覺化介面：
 
 ```bash
-uv run streamlit run src/btc_strategy/dashboard/app.py -- --config configs/<strategy>.yaml
+uv run streamlit run src/quant_backtest/dashboard/app.py -- --config configs/<strategy>.yaml
 ```
 
 ## 使用 Claude Code 新增策略

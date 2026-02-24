@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from btc_strategy.ml.features import FeatureEngineer
+from quant_backtest.ml.features import FeatureEngineer
 
 
 class TestFeatureEngineer:

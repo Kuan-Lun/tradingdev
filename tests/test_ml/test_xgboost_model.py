@@ -3,9 +3,9 @@
 import pandas as pd
 import pytest
 
-from btc_strategy.data.schemas import XGBoostModelConfig
-from btc_strategy.ml.features import FeatureEngineer
-from btc_strategy.ml.xgboost_model import XGBoostDirectionModel
+from quant_backtest.data.schemas import XGBoostModelConfig
+from quant_backtest.ml.features import FeatureEngineer
+from quant_backtest.ml.xgboost_model import XGBoostDirectionModel
 
 
 class TestXGBoostDirectionModel:

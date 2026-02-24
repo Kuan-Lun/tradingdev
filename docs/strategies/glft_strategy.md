@@ -167,14 +167,14 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 
 ```
 weight = |deviation| / edge_for_full_size
-weight = clamp(weight, min_position_size_usdt / position_size_usdt, 1.0)
-actual_size = position_size_usdt × weight
+weight = clamp(weight, min_position_size / position_size, 1.0)
+actual_size = position_size × weight
 ```
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
 | `dynamic_sizing` | true | 啟用動態倉位 |
-| `min_position_size_usdt` | 500.0 | 最小倉位（USDT） |
+| `min_position_size` | 500.0 | 最小倉位（USDT） |
 | `edge_for_full_size` | 0.005 | 達到全倉的偏離度門檻 |
 | `edge_for_full_size_candidates` | [0.003, 0.005, 0.008] | Grid search 候選值 |
 
@@ -195,7 +195,7 @@ actual_size = position_size_usdt × weight
 | `min_entry_edge_candidates` | [0.0012, 0.0015, 0.002, 0.003] | 搜尋最佳進場門檻 |
 | `trend_ema_candidates` | [0, 200] | 搜尋趨勢過濾窗口 |
 | `profit_target_ratio_candidates` | [0.5, 0.75, 1.0] | 搜尋最佳利潤目標 |
-| `target_metric` | "total_volume_usdt" | 優化目標指標 |
+| `target_metric` | "total_volume" | 優化目標指標 |
 | `min_annual_return` | -0.18 | 年化報酬率約束門檻 |
 
 #### 約束優化
@@ -210,8 +210,8 @@ fit() 使用**約束優化**策略：
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `position_size_usdt` | 3000.0 | 每筆最大持倉大小 |
-| `monthly_volume_target_usdt` | 12,500,000 | 月度單邊交易量目標 |
+| `position_size` | 3000.0 | 每筆最大持倉大小 |
+| `monthly_volume_target` | 12,500,000 | 月度單邊交易量目標 |
 | `fee_rate` | 0.0006 | 單邊手續費（taker） |
 
 ## 交易所規則合規
@@ -230,7 +230,7 @@ fit() 使用**約束優化**策略：
 - **訓練期**: 2024-01-01 ~ 2024-12-31（366 天）
 - **測試期**: 2025-01-01 ~ 2025-12-31（365 天）
 - **初始資金**: 100,000 USDT
-- **優化目標**: `total_volume_usdt`（約束 `annual_return >= -18%`）
+- **優化目標**: `total_volume`（約束 `annual_return >= -18%`）
 
 ### 最佳參數（Grid Search 結果）
 
@@ -319,7 +319,7 @@ strategy:
     kappa_candidates: [250, 500, 750]
     ema_window_candidates: [5, 15, 30]
     max_holding_bars_candidates: [6, 8, 13]
-    target_metric: "total_volume_usdt"
+    target_metric: "total_volume"
 
     # Entry
     min_entry_edge: 0.0015
@@ -338,13 +338,13 @@ strategy:
     signal_agg_minutes_candidates: [1]
 
     # Position & volume
-    position_size_usdt: 3000.0
-    monthly_volume_target_usdt: 12500000
+    position_size: 3000.0
+    monthly_volume_target: 12500000
     fee_rate: 0.0006
 
     # Dynamic sizing
     dynamic_sizing: true
-    min_position_size_usdt: 500.0
+    min_position_size: 500.0
     edge_for_full_size: 0.005
     edge_for_full_size_candidates: [0.003, 0.005, 0.008]
 
@@ -371,7 +371,7 @@ backtest:
 ## 使用方式
 
 ```bash
-uv run python -m btc_strategy.main --config configs/glft_strategy.yaml
+uv run python -m quant_backtest.main --config configs/glft_strategy.yaml
 ```
 
 ## 與其他策略的比較

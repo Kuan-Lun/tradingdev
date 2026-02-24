@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from btc_strategy.crawlers.deribit_dvol import DeribitDVOLCrawler
+from quant_backtest.crawlers.deribit_dvol import DeribitDVOLCrawler
 
 
 class TestDeribitDVOLCrawler:
@@ -30,7 +30,7 @@ class TestDeribitDVOLCrawler:
             },
         }
 
-    @patch("btc_strategy.crawlers.deribit_dvol.httpx.Client")
+    @patch("quant_backtest.crawlers.deribit_dvol.httpx.Client")
     def test_fetch_returns_dataframe(self, mock_client_cls: MagicMock) -> None:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
@@ -56,7 +56,7 @@ class TestDeribitDVOLCrawler:
             "dvol_close",
         ]
 
-    @patch("btc_strategy.crawlers.deribit_dvol.httpx.Client")
+    @patch("quant_backtest.crawlers.deribit_dvol.httpx.Client")
     def test_fetch_timestamps_are_utc(self, mock_client_cls: MagicMock) -> None:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
@@ -74,8 +74,8 @@ class TestDeribitDVOLCrawler:
 
         assert df["timestamp"].dt.tz is not None
 
-    @patch("btc_strategy.crawlers.deribit_dvol.httpx.Client")
-    @patch("btc_strategy.crawlers.deribit_dvol.time.sleep")
+    @patch("quant_backtest.crawlers.deribit_dvol.httpx.Client")
+    @patch("quant_backtest.crawlers.deribit_dvol.time.sleep")
     def test_fetch_pagination(
         self,
         mock_sleep: MagicMock,
@@ -109,7 +109,7 @@ class TestDeribitDVOLCrawler:
         assert mock_client.get.call_count == 2
         mock_sleep.assert_called_once()
 
-    @patch("btc_strategy.crawlers.deribit_dvol.httpx.Client")
+    @patch("quant_backtest.crawlers.deribit_dvol.httpx.Client")
     def test_fetch_empty_response(self, mock_client_cls: MagicMock) -> None:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
@@ -135,7 +135,7 @@ class TestDeribitDVOLCrawler:
         with pytest.raises(ValueError, match="Unsupported timeframe"):
             crawler.fetch("BTC", "5m", start, end)
 
-    @patch("btc_strategy.crawlers.deribit_dvol.httpx.Client")
+    @patch("quant_backtest.crawlers.deribit_dvol.httpx.Client")
     def test_save_raw_creates_csv(
         self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
@@ -161,7 +161,7 @@ class TestDeribitDVOLCrawler:
         crawler.save_raw(df, output)
         assert output.exists()
 
-    @patch("btc_strategy.crawlers.deribit_dvol.httpx.Client")
+    @patch("quant_backtest.crawlers.deribit_dvol.httpx.Client")
     def test_fetch_deduplicates_timestamps(self, mock_client_cls: MagicMock) -> None:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client

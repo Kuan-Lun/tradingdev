@@ -3,11 +3,11 @@
 import pandas as pd
 import pytest
 
-from btc_strategy.data.schemas import (
+from quant_backtest.data.schemas import (
     XGBoostModelConfig,
     XGBoostStrategyConfig,
 )
-from btc_strategy.strategies.xgboost_strategy import XGBoostStrategy
+from quant_backtest.strategies.xgboost_strategy import XGBoostStrategy
 
 
 class TestXGBoostStrategy:

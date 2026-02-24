@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from btc_strategy.data.loader import DataLoader
+from quant_backtest.data.loader import DataLoader
 
 
 class TestDataLoader:

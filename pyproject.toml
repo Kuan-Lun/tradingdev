@@ -1,7 +1,7 @@
 [project]
-name = "btc-usdt-strategy"
+name = "quant-backtest"
 version = "0.1.0"
-description = "BTC/USDT perpetual futures contract backtesting strategies"
+description = "Quantitative trading strategy backtesting framework"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "vectorbt>=0.28.0",
@@ -35,7 +35,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/btc_strategy"]
+packages = ["src/quant_backtest"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

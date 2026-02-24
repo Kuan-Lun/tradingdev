@@ -3,14 +3,14 @@
 import pandas as pd
 import pytest
 
-from btc_strategy.backtest.signal_engine import (
+from quant_backtest.backtest.signal_engine import (
     SignalBacktestEngine,
 )
-from btc_strategy.data.schemas import (
+from quant_backtest.data.schemas import (
     KDFitConfig,
     KDStrategyConfig,
 )
-from btc_strategy.strategies.kd_strategy import KDStrategy
+from quant_backtest.strategies.kd_strategy import KDStrategy
 
 
 class TestKDStrategy:

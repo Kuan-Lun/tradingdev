@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from btc_strategy.indicators.kd import KDIndicator
+from quant_backtest.indicators.kd import KDIndicator
 
 
 class TestKDIndicator:
