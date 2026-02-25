@@ -83,14 +83,28 @@ def _daily_pnl_from_portfolio(
 def calculate_metrics_from_simulation(
     equity_curve: npt.NDArray[np.float64],
     trades: list[dict[str, Any]],
-    init_cash: float,
+    init_cash: float | None,
     timestamps: Any | None = None,
 ) -> dict[str, Any]:
-    """Compute metrics from a custom bar-by-bar simulation."""
-    n = len(equity_curve)
-    final_equity = float(equity_curve[-1]) if n > 0 else init_cash
+    """Compute metrics from a custom bar-by-bar simulation.
 
-    total_return = (final_equity - init_cash) / init_cash
+    When ``init_cash`` is ``None`` (volume / fixed-notional mode),
+    the equity curve is treated as cumulative P&L starting from zero.
+    Percentage-based metrics (``total_return``, ``annual_return``) are
+    set to ``0.0``, and ``max_drawdown`` is reported in absolute terms
+    (USDT).
+    """
+    n = len(equity_curve)
+    is_volume_mode = init_cash is None
+    effective_init = init_cash if init_cash is not None else 0.0
+    final_equity = float(equity_curve[-1]) if n > 0 else effective_init
+
+    total_pnl = final_equity - effective_init
+    if is_volume_mode:
+        total_return = 0.0
+    else:
+        total_return = total_pnl / effective_init if effective_init != 0 else 0.0
+
     total_trades = len(trades)
     total_volume = sum(t["size_quote"] for t in trades) * 2
 
@@ -104,25 +118,37 @@ def calculate_metrics_from_simulation(
     daily_pnl = _daily_pnl_from_equity(equity_curve, timestamps)
 
     if n >= 2:
-        returns = np.diff(equity_curve) / equity_curve[:-1]
         n_days = daily_pnl.get("n_days", 1)
         bars_per_day = max(n / max(n_days, 1), 1)
         ann_factor = np.sqrt(365 * bars_per_day)
-        std = float(np.std(returns))
-        sharpe = float(np.mean(returns)) / std * ann_factor if std > 0 else 0.0
 
-        cummax = np.maximum.accumulate(equity_curve)
-        drawdowns = (cummax - equity_curve) / cummax
-        max_drawdown = float(np.max(drawdowns))
+        if is_volume_mode:
+            # Absolute P&L-based Sharpe (dollar Sharpe)
+            pnl_diffs = np.diff(equity_curve)
+            std = float(np.std(pnl_diffs))
+            sharpe = float(np.mean(pnl_diffs)) / std * ann_factor if std > 0 else 0.0
 
-        total_days = max(n_days, 1)
-        annual_return = (1 + total_return) ** (365 / total_days) - 1
+            # Max drawdown in absolute USDT
+            cummax = np.maximum.accumulate(equity_curve)
+            max_drawdown = float(np.max(cummax - equity_curve))
+
+            annual_return = 0.0
+        else:
+            # Percentage-based metrics (signal mode)
+            returns = np.diff(equity_curve) / equity_curve[:-1]
+            std = float(np.std(returns))
+            sharpe = float(np.mean(returns)) / std * ann_factor if std > 0 else 0.0
+
+            cummax = np.maximum.accumulate(equity_curve)
+            drawdowns = (cummax - equity_curve) / cummax
+            max_drawdown = float(np.max(drawdowns))
+
+            total_days = max(n_days, 1)
+            annual_return = (1 + total_return) ** (365 / total_days) - 1
     else:
         sharpe = 0.0
         max_drawdown = 0.0
         annual_return = 0.0
-
-    total_pnl = final_equity - init_cash
 
     metrics: dict[str, Any] = {
         "total_return": total_return,
