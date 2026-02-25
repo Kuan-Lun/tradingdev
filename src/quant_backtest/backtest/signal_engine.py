@@ -31,6 +31,11 @@ class SignalBacktestEngine(BaseBacktestEngine):
         Execution uses the **open** price of the bar following the
         signal (after ``shift(1)``) to avoid look-ahead bias.
         """
+        init_cash = self._init_cash
+        if init_cash is None:
+            msg = "SignalBacktestEngine requires init_cash to be set"
+            raise ValueError(msg)
+
         close = df["close"].astype(float)
         open_ = df["open"].astype(float) if "open" in df.columns else close
         signal = df["signal"].shift(1).fillna(0).astype(int)
@@ -42,7 +47,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
 
         logger.info(
             "Running backtest (signal mode): init_cash=%.0f, fees=%.4f, slippage=%.4f",
-            self._init_cash,
+            init_cash,
             self._fees,
             self._slippage,
         )
@@ -55,7 +60,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
             "exits": exits,
             "short_entries": short_entries,
             "short_exits": short_exits,
-            "init_cash": self._init_cash,
+            "init_cash": init_cash,
             "fees": self._fees,
             "slippage": self._slippage,
             "freq": self._freq,
@@ -90,7 +95,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
             equity_curve=equity_curve,
             trades=trades,
             timestamps=timestamps,
-            init_cash=self._init_cash,
+            init_cash=init_cash,
             mode="signal",
         )
 

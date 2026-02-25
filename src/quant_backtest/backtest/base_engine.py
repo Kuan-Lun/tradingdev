@@ -20,7 +20,7 @@ class BaseBacktestEngine(ABC):
 
     def __init__(
         self,
-        init_cash: float = 10_000.0,
+        init_cash: float | None = None,
         fees: float = 0.0006,
         slippage: float = 0.0005,
         freq: str = "1h",
