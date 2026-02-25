@@ -24,6 +24,7 @@ _REQUEST_DELAY = 0.5  # seconds between paginated requests
 
 # Deribit resolution parameter (seconds): 1m = "60"
 _TIMEFRAME_MAP: dict[str, str] = {
+    "1s": "1",
     "1m": "60",
     "1h": "3600",
     "12h": "43200",
