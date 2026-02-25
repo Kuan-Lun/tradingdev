@@ -81,6 +81,7 @@ class TestPathGeneration:
             timeframe="1h",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 12, 31),
+            mode="volume",
         )
         self.manager = DataManager(
             data_config=self.data_cfg,
@@ -150,6 +151,7 @@ class TestDataManagerYearly:
         bt_cfg = BacktestConfig(
             symbol="BTC/USDT",
             timeframe="1h",
+            mode="volume",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 12, 31),
         )
@@ -185,6 +187,7 @@ class TestDataManagerYearly:
         bt_cfg = BacktestConfig(
             symbol="BTC/USDT",
             timeframe="1h",
+            mode="volume",
             start_date=datetime(2026, 1, 1),
             end_date=datetime(2026, 12, 31),
         )
@@ -224,6 +227,7 @@ class TestDataManagerYearly:
         bt_cfg = BacktestConfig(
             symbol="BTC/USDT",
             timeframe="1h",
+            mode="volume",
             start_date=datetime(2025, 1, 1),
             end_date=datetime(2025, 12, 31),
         )
@@ -264,6 +268,7 @@ class TestDataManagerYearly:
         bt_cfg = BacktestConfig(
             symbol="BTC/USDT",
             timeframe="1h",
+            mode="volume",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 12, 31),
         )
@@ -299,6 +304,7 @@ class TestDataManagerYearly:
         bt_cfg = BacktestConfig(
             symbol="BTC/USDT",
             timeframe="1h",
+            mode="volume",
             start_date=datetime(2024, 1, 2),
             end_date=datetime(2024, 1, 3),
         )
@@ -331,6 +337,7 @@ class TestDataManagerYearly:
         bt_cfg = BacktestConfig(
             symbol="BTC/USDT",
             timeframe="1h",
+            mode="volume",
             start_date=datetime(2026, 1, 1),
             end_date=datetime(2026, 12, 31),
         )

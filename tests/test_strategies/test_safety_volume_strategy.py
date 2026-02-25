@@ -237,7 +237,6 @@ class TestVolumeEngineNewFlags:
     def test_signal_as_position_closes_on_zero(self) -> None:
         """signal=0 should close position when signal_as_position=True."""
         engine = VolumeBacktestEngine(
-            init_cash=10_000,
             fees=0.0,
             slippage=0.0,
             position_size=100.0,
@@ -254,7 +253,6 @@ class TestVolumeEngineNewFlags:
     def test_no_re_entry_after_sl(self) -> None:
         """After SL hit, should not re-enter immediately."""
         engine = VolumeBacktestEngine(
-            init_cash=10_000,
             fees=0.0,
             slippage=0.0,
             position_size=100.0,

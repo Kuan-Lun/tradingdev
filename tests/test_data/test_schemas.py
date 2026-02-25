@@ -44,15 +44,40 @@ class TestOHLCVBar:
 
 
 class TestBacktestConfig:
-    def test_valid_config(self) -> None:
+    def test_valid_signal_config(self) -> None:
         config = BacktestConfig(
             symbol="BTC/USDT",
             timeframe="1h",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 12, 31),
+            init_cash=10_000.0,
+            mode="signal",
         )
         assert config.init_cash == 10_000.0
         assert config.fees == 0.0006
+
+    def test_valid_volume_config(self) -> None:
+        config = BacktestConfig(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date=datetime(2024, 1, 1),
+            end_date=datetime(2024, 12, 31),
+            mode="volume",
+        )
+        assert config.init_cash is None
+        assert config.monthly_max_loss == 1500.0
+
+    def test_signal_mode_requires_init_cash(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="init_cash is required"):
+            BacktestConfig(
+                symbol="BTC/USDT",
+                timeframe="1h",
+                start_date=datetime(2024, 1, 1),
+                end_date=datetime(2024, 12, 31),
+                mode="signal",
+            )
 
     def test_default_values(self) -> None:
         config = BacktestConfig(
@@ -60,6 +85,7 @@ class TestBacktestConfig:
             timeframe="1h",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 12, 31),
+            mode="volume",
         )
         assert config.slippage == 0.0005
 
