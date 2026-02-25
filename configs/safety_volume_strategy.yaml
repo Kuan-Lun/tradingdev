@@ -62,8 +62,8 @@ backtest:
   timeframe: "1m"
   start_date: "2024-12-01"
   end_date: "2025-01-15"
-  init_cash: 100000.0
   fees: 0.0006
+  monthly_max_loss: 1500.0
   slippage: 0.0005
   position_size: 3000.0
   stop_loss: 0.03               # 3% 緊急 SL（黑天鵝保護）

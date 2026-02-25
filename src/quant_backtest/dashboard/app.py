@@ -125,9 +125,15 @@ def _render_charts(  # noqa: PLR0915
 
     # --- KPI row ----------------------------------------------------------
     cols = st.columns(6)
-    cols[0].metric("Total Return", f"{metrics['total_return']:.2%}")
+    if is_volume_mode:
+        cols[0].metric("Total P&L", f"{metrics['total_pnl']:+,.0f} USDT")
+    else:
+        cols[0].metric("Total Return", f"{metrics['total_return']:.2%}")
     cols[1].metric("Sharpe", f"{metrics['sharpe_ratio']:.3f}")
-    cols[2].metric("Max DD", f"{metrics['max_drawdown']:.2%}")
+    if is_volume_mode:
+        cols[2].metric("Max DD", f"{metrics['max_drawdown']:,.0f} USDT")
+    else:
+        cols[2].metric("Max DD", f"{metrics['max_drawdown']:.2%}")
     cols[3].metric("Win Rate", f"{metrics['win_rate']:.1%}")
     cols[4].metric("Trades", f"{metrics['total_trades']:,}")
     cols[5].metric(
@@ -162,7 +168,7 @@ def _render_charts(  # noqa: PLR0915
 
     # -- Tab 1: Cumulative PnL
     with tab_pnl:
-        if unit == "Absolute":
+        if unit == "Absolute" or is_volume_mode:
             pnl_series = cumulative_pnl(eq_view, result.init_cash)
             y_label = "Cumulative PnL"
         else:

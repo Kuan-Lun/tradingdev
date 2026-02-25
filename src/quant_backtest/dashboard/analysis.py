@@ -55,17 +55,29 @@ def build_trades_df(
 
 def cumulative_pnl(
     equity: pd.Series[float],
-    init_cash: float,
+    init_cash: float | None,
 ) -> pd.Series[float]:
-    """Compute cumulative PnL (absolute) from equity curve."""
+    """Compute cumulative PnL (absolute) from equity curve.
+
+    When ``init_cash`` is ``None`` (volume mode), the equity curve
+    already represents cumulative P&L from zero.
+    """
+    if init_cash is None:
+        return equity
     return equity - init_cash
 
 
 def cumulative_pnl_pct(
     equity: pd.Series[float],
-    init_cash: float,
+    init_cash: float | None,
 ) -> pd.Series[float]:
-    """Compute cumulative PnL as percentage."""
+    """Compute cumulative PnL as percentage.
+
+    Returns a zero series when ``init_cash`` is ``None`` (volume mode)
+    since percentage return is not meaningful without a capital base.
+    """
+    if init_cash is None or init_cash == 0:
+        return pd.Series(0.0, index=equity.index)
     return (equity - init_cash) / init_cash * 100
 
 

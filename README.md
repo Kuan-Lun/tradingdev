@@ -33,6 +33,9 @@ uv run python -c "import quant_backtest; print('OK')"
 
 > **注意**：請使用 uv v0.10 以上版本。舊版 uv 建立的 venv 在 Python 3.13 下可能無法正確處理 editable install。
 > 如遇到 `ModuleNotFoundError`，請執行 `uv self update` 升級後重新 `rm -rf .venv && uv sync`。
+>
+> **macOS 使用者**：Python 3.13 的 `site` 模組會跳過帶有 macOS 隱藏屬性（`UF_HIDDEN`）的 `.pth` 檔案。
+> 若 editable install 突然失效，可執行 `uv pip install --reinstall -e .` 重新產生 `.pth` 檔案來修復。
 
 ## 執行回測
 

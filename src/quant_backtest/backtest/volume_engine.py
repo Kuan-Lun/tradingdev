@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from quant_backtest.backtest.base_engine import BaseBacktestEngine
 from quant_backtest.backtest.metrics import (
@@ -13,16 +14,19 @@ from quant_backtest.backtest.metrics import (
 from quant_backtest.backtest.result import BacktestResult
 from quant_backtest.utils.logger import setup_logger
 
-if TYPE_CHECKING:
-    import pandas as pd
-
 logger = setup_logger(__name__)
 
 
 class VolumeBacktestEngine(BaseBacktestEngine):
     """Bar-by-bar simulation for volume-oriented strategies.
 
-    Position size is always ``position_size``.
+    Equity is tracked as **cumulative P&L from zero** (no init_cash).
+    Each trade independently uses a fixed notional ``position_size``.
+
+    An optional **monthly circuit breaker** (``monthly_max_loss``)
+    force-closes any open position and halts trading for the remainder
+    of the calendar month once the monthly cumulative loss exceeds the
+    threshold.  Trading resumes at the start of the next month.
 
     Behaviour flags (inherited from ``BaseBacktestEngine``):
 
@@ -35,6 +39,31 @@ class VolumeBacktestEngine(BaseBacktestEngine):
       position).  When ``False`` (legacy), ``signal=0`` means
       "do nothing / keep the current position".
     """
+
+    def __init__(
+        self,
+        fees: float = 0.0006,
+        slippage: float = 0.0005,
+        freq: str = "1h",
+        position_size: float | None = None,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        signal_as_position: bool = False,
+        re_entry_after_sl: bool = True,
+        monthly_max_loss: float = 1500.0,
+    ) -> None:
+        super().__init__(
+            init_cash=None,
+            fees=fees,
+            slippage=slippage,
+            freq=freq,
+            position_size=position_size,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            signal_as_position=signal_as_position,
+            re_entry_after_sl=re_entry_after_sl,
+        )
+        self._monthly_max_loss = monthly_max_loss
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
         """Run volume-mode backtest.
@@ -70,7 +99,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         tp = self._take_profit
         fee_rate = self._fees + self._slippage
 
-        cash = self._init_cash
+        cash = 0.0
         equity = np.empty(n, dtype=np.float64)
         trades: list[dict[str, Any]] = []
 
@@ -78,12 +107,22 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         entry_price = 0.0
         pos_qty = 0.0
 
+        # Monthly circuit breaker state
+        monthly_pnl = 0.0
+        current_month: tuple[int, int] | None = None
+        circuit_breaker_active = False
+
+        # Extract timestamps for monthly tracking
+        has_timestamps = "timestamp" in df.columns
+        timestamps_arr = df["timestamp"].to_numpy() if has_timestamps else None
+
         logger.info(
-            "Running backtest (volume mode): init_cash=%.0f, size=%.0f, sl=%s, tp=%s",
-            self._init_cash,
+            "Running backtest (volume mode): size=%.0f, sl=%s, tp=%s, "
+            "monthly_max_loss=%.0f",
             size_quote,
             sl,
             tp,
+            self._monthly_max_loss,
         )
 
         sig_as_pos = self._signal_as_position
@@ -95,6 +134,20 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             c = float(close[i])
             h = float(high[i])
             lo = float(low[i])
+
+            # --- Month boundary check ---
+            if has_timestamps:
+                ts = pd.Timestamp(timestamps_arr[i])  # type: ignore[index]
+                bar_month = (ts.year, ts.month)
+                if current_month is not None and bar_month != current_month:
+                    monthly_pnl = 0.0
+                    circuit_breaker_active = False
+                current_month = bar_month
+
+            # --- Circuit breaker: skip all trading, mark-to-market only ---
+            if circuit_breaker_active:
+                equity[i] = cash  # no open position
+                continue
 
             # --- SL / TP check (uses high/low for intra-bar) ---
             if pos_dir != 0:
@@ -116,16 +169,21 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     )
                     trades.append(trade)
                     cash += trade["net_pnl"]
+                    monthly_pnl += trade["net_pnl"]
                     pos_dir = 0
                     pos_qty = 0.0
 
-                    # Re-entry after SL happens intra-bar; use
-                    # close as best estimate of the re-entry fill.
-                    if re_entry and sig != 0:
+                    # Check circuit breaker before re-entry
+                    if has_timestamps and monthly_pnl <= -self._monthly_max_loss:
+                        circuit_breaker_active = True
+                    elif re_entry and sig != 0:
+                        # Re-entry after SL happens intra-bar; use
+                        # close as best estimate of the re-entry fill.
                         eff = size_quote * weights[i]
                         entry_price = c
                         pos_qty = eff / c
                         cash -= eff * fee_rate
+                        monthly_pnl -= eff * fee_rate
                         pos_dir = sig
 
             # --- signal_as_position: signal=0 → close at open ---
@@ -139,6 +197,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 )
                 trades.append(trade)
                 cash += trade["net_pnl"]
+                monthly_pnl += trade["net_pnl"]
                 pos_dir = 0
                 pos_qty = 0.0
 
@@ -153,10 +212,12 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 )
                 trades.append(trade)
                 cash += trade["net_pnl"]
+                monthly_pnl += trade["net_pnl"]
                 eff = size_quote * weights[i]
                 entry_price = o
                 pos_qty = eff / o
                 cash -= eff * fee_rate
+                monthly_pnl -= eff * fee_rate
                 pos_dir = sig
 
             # --- new entry from flat at open ---
@@ -165,6 +226,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 entry_price = o
                 pos_qty = eff / o
                 cash -= eff * fee_rate
+                monthly_pnl -= eff * fee_rate
                 pos_dir = sig
 
             # --- mark-to-market at close ---
@@ -173,6 +235,33 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 equity[i] = cash + unrealised
             else:
                 equity[i] = cash
+
+            # --- Circuit breaker check after trading ---
+            # Include unrealised P&L so open losing positions
+            # also trigger the breaker.
+            effective_monthly = monthly_pnl
+            if pos_dir != 0:
+                effective_monthly += pos_dir * pos_qty * (c - entry_price)
+            if (
+                has_timestamps
+                and not circuit_breaker_active
+                and effective_monthly <= -self._monthly_max_loss
+            ):
+                circuit_breaker_active = True
+                if pos_dir != 0:
+                    trade = _close_position(
+                        pos_dir,
+                        pos_qty,
+                        entry_price,
+                        c,
+                        fee_rate,
+                    )
+                    trades.append(trade)
+                    cash += trade["net_pnl"]
+                    monthly_pnl += trade["net_pnl"]
+                    pos_dir = 0
+                    pos_qty = 0.0
+                    equity[i] = cash
 
         if pos_dir != 0:
             trade = _close_position(
@@ -193,7 +282,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         metrics = calculate_metrics_from_simulation(
             equity_curve=equity,
             trades=trades,
-            init_cash=self._init_cash,
+            init_cash=None,
             timestamps=timestamps,
         )
         logger.info(
@@ -206,7 +295,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             equity_curve=equity,
             trades=trades,
             timestamps=timestamps,
-            init_cash=self._init_cash,
+            init_cash=None,
             mode="volume",
         )
 

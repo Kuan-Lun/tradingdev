@@ -36,7 +36,7 @@ classDiagram
 
     class BaseBacktestEngine {
         <<abstract>>
-        -_init_cash: float
+        -_init_cash: float | None
         -_fees: float
         -_slippage: float
         -_freq: str
@@ -256,7 +256,7 @@ classDiagram
         +equity_curve: ndarray
         +trades: list~dict~
         +timestamps: ndarray | None
-        +init_cash: float = 10000.0
+        +init_cash: float | None = None
         +mode: str = "signal"
     }
 
@@ -265,6 +265,7 @@ classDiagram
     }
 
     class VolumeBacktestEngine {
+        -_monthly_max_loss: float
         +run(df) BacktestResult
     }
 
@@ -349,7 +350,7 @@ classDiagram
         +timeframe: str
         +start_date: datetime
         +end_date: datetime
-        +init_cash: float = 10000.0
+        +init_cash: float | None = None
         +fees: float = 0.0006
         +slippage: float = 0.0005
         +position_size: float | None
@@ -358,6 +359,7 @@ classDiagram
         +signal_as_position: bool = False
         +re_entry_after_sl: bool = True
         +mode: str = "signal"
+        +monthly_max_loss: float = 1500.0
     }
 
     class KDStrategyConfig {
@@ -531,8 +533,8 @@ classDiagram
 
     class metrics_mod ["backtest/metrics"] {
         +calculate_metrics(pf) dict
-        +calculate_metrics_from_simulation(equity, trades, init_cash, ts) dict
-        +format_metrics_report(metrics) str
+        +calculate_metrics_from_simulation(equity, trades, init_cash?, ts) dict
+        +format_metrics_report(metrics, mode) str
     }
 
     class report_mod ["validation/report"] {
@@ -562,8 +564,8 @@ classDiagram
     class analysis_mod ["dashboard/analysis"] {
         +build_equity_series(equity_curve, timestamps) Series
         +build_trades_df(trades, timestamps) DataFrame
-        +cumulative_pnl(equity, init_cash) Series
-        +cumulative_pnl_pct(equity, init_cash) Series
+        +cumulative_pnl(equity, init_cash?) Series
+        +cumulative_pnl_pct(equity, init_cash?) Series
         +consecutive_loss_counts(trades_df) Series
         +rolling_mdd_absolute(equity, window_bars) Series
         +monthly_volume(trades_df) DataFrame
@@ -649,7 +651,7 @@ sequenceDiagram
         Engine->>Metrics: calculate_metrics / calculate_metrics_from_simulation
         Metrics-->>Engine: metrics dict
         Engine-->>Main: BacktestResult(metrics, equity_curve, trades, …)
-        Main->>Main: format_metrics_report(result.metrics)
+        Main->>Main: format_metrics_report(result.metrics, mode)
         Main->>Main: PipelineResult(mode="simple", backtest_result=result, …)
         Main->>Cache: save_cached_result(pipeline, config_path, processed_path)
         Note right of Cache: 序列化 PipelineResult 至 data/cache/<hash>.pkl

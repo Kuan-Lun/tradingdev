@@ -281,7 +281,6 @@ class TestGLFTFit:
     ) -> None:
         """After fit(), best params should be from candidates."""
         engine = VolumeBacktestEngine(
-            init_cash=10_000,
             fees=0.0,
             slippage=0.0,
             position_size=100.0,
@@ -349,7 +348,6 @@ class TestGLFTIntegration:
     ) -> None:
         """Full pipeline: fit -> generate_signals -> engine.run."""
         engine = VolumeBacktestEngine(
-            init_cash=10_000,
             fees=0.0006,
             slippage=0.0005,
             position_size=100.0,
@@ -465,7 +463,6 @@ class TestGLFTImpliedVolatility:
         df["dvol"] = rng.uniform(30.0, 80.0, size=len(df))
 
         engine = VolumeBacktestEngine(
-            init_cash=10_000,
             fees=0.0,
             slippage=0.0,
             position_size=100.0,
