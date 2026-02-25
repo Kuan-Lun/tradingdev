@@ -88,7 +88,7 @@ def main() -> None:
     else:
         signals = strategy.generate_signals(df)
         result = engine.run(signals)
-        report = format_metrics_report(result.metrics)
+        report = format_metrics_report(result.metrics, mode=result.mode)
         logger.info("Backtest results:\n%s", report)
         pipeline = PipelineResult(
             mode="simple",
@@ -104,8 +104,19 @@ def _create_engine(
     config: BacktestConfig,
 ) -> BaseBacktestEngine:
     """Create the appropriate engine based on mode."""
-    cls = VolumeBacktestEngine if config.mode == "volume" else SignalBacktestEngine
-    return cls(
+    if config.mode == "volume":
+        return VolumeBacktestEngine(
+            fees=config.fees,
+            slippage=config.slippage,
+            freq=config.timeframe,
+            position_size=config.position_size,
+            stop_loss=config.stop_loss,
+            take_profit=config.take_profit,
+            signal_as_position=config.signal_as_position,
+            re_entry_after_sl=config.re_entry_after_sl,
+            monthly_max_loss=config.monthly_max_loss,
+        )
+    return SignalBacktestEngine(
         init_cash=config.init_cash,
         fees=config.fees,
         slippage=config.slippage,
