@@ -122,10 +122,10 @@ class GLFTStrategy(BaseStrategy):
     def fit(self, df: pd.DataFrame) -> None:
         """Grid-search over GLFT parameters.
 
-        When ``min_annual_return`` is set, only parameter combinations
-        whose ``annual_return`` meets the threshold are considered.
-        Among those, the combination with the highest ``target_metric``
-        (e.g. ``total_volume``) is selected.
+        When ``min_monthly_pnl`` is set, only parameter combinations
+        whose estimated monthly PnL (``daily_pnl_mean * 30``) meets the
+        threshold are considered.  Among those, the combination with the
+        highest ``target_metric`` (e.g. ``total_volume``) is selected.
         """
         if self._backtest_engine is None:
             logger.warning(
@@ -145,7 +145,7 @@ class GLFTStrategy(BaseStrategy):
         best_sig_agg = self._config.signal_agg_minutes
         best_efs = self._config.edge_for_full_size
         target = self._config.target_metric
-        min_ar = self._config.min_annual_return
+        min_mp = self._config.min_monthly_pnl
 
         # When using implied vol, vol_window is irrelevant
         vol_win_candidates = self._config.vol_window_candidates
@@ -201,9 +201,10 @@ class GLFTStrategy(BaseStrategy):
 
         n_filtered = 0
         for params, metrics in results:
-            if min_ar is not None:
-                ar = metrics.get("annual_return", -math.inf)
-                if not isinstance(ar, (int, float)) or ar < min_ar:
+            if min_mp is not None:
+                dpm = metrics.get("daily_pnl_mean", -math.inf)
+                monthly_pnl = dpm * 30 if isinstance(dpm, (int, float)) else -math.inf
+                if monthly_pnl < min_mp:
                     n_filtered += 1
                     continue
 
@@ -224,10 +225,10 @@ class GLFTStrategy(BaseStrategy):
 
         if n_filtered > 0:
             logger.info(
-                "GLFT fit: %d/%d combos filtered (annual_return < %.4f)",
+                "GLFT fit: %d/%d combos filtered (monthly_pnl < %.2f)",
                 n_filtered,
                 len(grid),
-                min_ar if min_ar is not None else 0.0,
+                min_mp if min_mp is not None else 0.0,
             )
 
         self._best_gamma = best_gamma

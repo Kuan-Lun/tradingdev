@@ -240,7 +240,7 @@ class GLFTMLStrategy(BaseStrategy):
 
         cfg = self._config
         target = cfg.target_metric
-        min_ar = cfg.min_annual_return
+        min_mp = cfg.min_monthly_pnl
 
         close = np.asarray(feat_df["close"].astype(float).values)
         high = np.asarray(feat_df["high"].astype(float).values)
@@ -317,9 +317,12 @@ class GLFTMLStrategy(BaseStrategy):
                 result = self._backtest_engine.run(sig_df)
                 metrics = result.metrics
 
-                if min_ar is not None:
-                    ar = metrics.get("annual_return", -math.inf)
-                    if not isinstance(ar, (int, float)) or ar < min_ar:
+                if min_mp is not None:
+                    dpm = metrics.get("daily_pnl_mean", -math.inf)
+                    monthly_pnl = (
+                        dpm * 30 if isinstance(dpm, (int, float)) else -math.inf
+                    )
+                    if monthly_pnl < min_mp:
                         n_filtered += 1
                         continue
 
@@ -336,10 +339,10 @@ class GLFTMLStrategy(BaseStrategy):
 
         if n_filtered > 0:
             logger.info(
-                "GLFT-ML fit: %d/%d combos filtered (annual_return < %.4f)",
+                "GLFT-ML fit: %d/%d combos filtered (monthly_pnl < %.2f)",
                 n_filtered,
                 total_combos,
-                min_ar if min_ar is not None else 0.0,
+                min_mp if min_mp is not None else 0.0,
             )
 
         self._best_gamma = best_gamma

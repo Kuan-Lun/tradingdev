@@ -331,9 +331,9 @@ class GLFTStrategyConfig(BaseModel):
     edge_for_full_size: float = 0.005
     edge_for_full_size_candidates: list[float] = [0.003, 0.005, 0.008]
 
-    # Constrained optimization: filter by annual_return >= threshold,
+    # Constrained optimization: filter by estimated monthly PnL >= threshold,
     # then maximize target_metric (e.g. total_volume)
-    min_annual_return: float | None = None
+    min_monthly_pnl: float | None = None
 
     @field_validator("gamma")
     @classmethod
@@ -428,7 +428,7 @@ class GLFTMLStrategyConfig(BaseModel):
     fee_rate: float = 0.0002  # Maker fee
 
     # --- Constrained optimisation ---
-    min_annual_return: float | None = None
+    min_monthly_pnl: float | None = None
 
     @model_validator(mode="after")
     def glft_ml_max_gt_min_holding(self) -> Self:

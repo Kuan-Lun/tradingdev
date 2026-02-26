@@ -44,7 +44,7 @@ strategy:
     fee_rate: 0.0002  # Maker fee (limit orders)
 
     # --- Constrained optimisation ---
-    min_annual_return: -0.18
+    min_monthly_pnl: -1500
 
 # Parallel execution
 parallel:

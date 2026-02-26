@@ -460,7 +460,7 @@ classDiagram
         +position_size: float = 3000.0
         +monthly_volume_target: float | None
         +fee_rate: float = 0.0006
-        +min_annual_return: float | None
+        +min_monthly_pnl: float | None
     }
 
     class GLFTMLStrategyConfig {
