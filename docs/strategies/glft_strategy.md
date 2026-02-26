@@ -196,12 +196,12 @@ actual_size = position_size × weight
 | `trend_ema_candidates` | [0, 200] | 搜尋趨勢過濾窗口 |
 | `profit_target_ratio_candidates` | [0.5, 0.75, 1.0] | 搜尋最佳利潤目標 |
 | `target_metric` | "total_volume" | 優化目標指標 |
-| `min_annual_return` | -0.18 | 年化報酬率約束門檻 |
+| `min_monthly_pnl` | -1500 | 月均 PnL 約束門檻（USDT） |
 
 #### 約束優化
 
 fit() 使用**約束優化**策略：
-1. 過濾掉 `annual_return < min_annual_return` 的參數組合
+1. 過濾掉估計月均 PnL（`daily_pnl_mean * 30`）低於 `min_monthly_pnl` 的參數組合
 2. 在通過約束的組合中，最大化 `target_metric`（交易量）
 
 這確保策略在控制虧損的前提下，盡可能多地產生交易量。
@@ -230,7 +230,7 @@ fit() 使用**約束優化**策略：
 - **訓練期**: 2024-01-01 ~ 2024-12-31（366 天）
 - **測試期**: 2025-01-01 ~ 2025-12-31（365 天）
 - **初始資金**: 100,000 USDT
-- **優化目標**: `total_volume`（約束 `annual_return >= -18%`）
+- **優化目標**: `total_volume`（約束月均 PnL >= -1500 USDT）
 
 ### 最佳參數（Grid Search 結果）
 
@@ -349,7 +349,7 @@ strategy:
     edge_for_full_size_candidates: [0.003, 0.005, 0.008]
 
     # Constrained optimization
-    min_annual_return: -0.18
+    min_monthly_pnl: -1500
 
 validation:
   train_start: "2024-01-01"
