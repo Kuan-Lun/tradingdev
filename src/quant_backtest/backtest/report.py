@@ -25,14 +25,14 @@ def format_metrics_report(
 
     if is_volume:
         lines.append(
-            f"  Max Drawdown:      {metrics['max_drawdown']:>10,.0f} USDT",
+            f"  Max Drawdown:      {-metrics['max_drawdown']:>10,.0f} USDT",
         )
     else:
         lines.extend(
             [
                 f"  Total Return:      {metrics['total_return']:>10.2%}",
                 f"  Annual Return:     {metrics['annual_return']:>10.2%}",
-                f"  Max Drawdown:      {metrics['max_drawdown']:>10.2%}",
+                f"  Max Drawdown:      {-metrics['max_drawdown']:>10.2%}",
             ]
         )
 
