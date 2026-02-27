@@ -52,6 +52,14 @@ EXPECTED_KEYS = {
     "daily_pnl_max",
     "daily_pnl_median",
     "n_days",
+    "monthly_pnl_mean",
+    "monthly_pnl_std",
+    "monthly_pnl_min",
+    "monthly_pnl_max",
+    "monthly_pnl_median",
+    "n_months",
+    "monthly_trades_mean",
+    "monthly_volume_mean",
 }
 
 

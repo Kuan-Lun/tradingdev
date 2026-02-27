@@ -52,6 +52,15 @@ def format_metrics_report(
             f"  Daily P&L  max:    {metrics.get('daily_pnl_max', 0):>+10.2f}",
             f"  Daily P&L  median: {metrics.get('daily_pnl_median', 0):>+10.2f}",
             f"  Period:            {metrics.get('n_days', 0):>7d} days",
+            "-" * 55,
+            f"  Monthly P&L  mean:   {metrics.get('monthly_pnl_mean', 0):>+10.2f}",
+            f"  Monthly P&L  std:    {metrics.get('monthly_pnl_std', 0):>10.2f}",
+            f"  Monthly P&L  min:    {metrics.get('monthly_pnl_min', 0):>+10.2f}",
+            f"  Monthly P&L  max:    {metrics.get('monthly_pnl_max', 0):>+10.2f}",
+            f"  Monthly P&L  median: {metrics.get('monthly_pnl_median', 0):>+10.2f}",
+            f"  Monthly Trades:      {metrics.get('monthly_trades_mean', 0):>10,.0f}",
+            f"  Monthly Volume:      {metrics.get('monthly_volume_mean', 0):>10,.0f}",
+            f"  Period:              {metrics.get('n_months', 0):>7d} months",
             "=" * 55,
         ]
     )
