@@ -32,6 +32,7 @@ def calculate_metrics(pf: vbt.Portfolio) -> dict[str, Any]:
             total_volume = float((records["Size"].abs() * entry_prices).sum())
 
     daily_pnl = _daily_pnl_from_portfolio(pf)
+    monthly_pnl = _monthly_pnl_from_portfolio(pf)
 
     total_ret = float(pf.total_return())
     value_series = pf.value()
@@ -41,6 +42,9 @@ def calculate_metrics(pf: vbt.Portfolio) -> dict[str, Any]:
         else 0.0
     )
 
+    total_trades_count = int(trades.count())
+    n_months = monthly_pnl.get("n_months", 0)
+
     metrics: dict[str, Any] = {
         "total_return": total_ret,
         "total_pnl": total_pnl,
@@ -48,11 +52,18 @@ def calculate_metrics(pf: vbt.Portfolio) -> dict[str, Any]:
         "max_drawdown": float(pf.max_drawdown()),
         "win_rate": (float(trades.win_rate()) if has_trades else 0.0),
         "profit_factor": (float(trades.profit_factor()) if has_trades else 0.0),
-        "total_trades": int(trades.count()),
+        "total_trades": total_trades_count,
         "total_volume": total_volume,
         "annual_return": float(pf.annualized_return()),
     }
     metrics.update(daily_pnl)
+    metrics.update(monthly_pnl)
+    metrics["monthly_trades_mean"] = (
+        total_trades_count / n_months if n_months > 0 else 0.0
+    )
+    metrics["monthly_volume_mean"] = (
+        total_volume / n_months if n_months > 0 else 0.0
+    )
     return metrics
 
 
@@ -116,6 +127,7 @@ def calculate_metrics_from_simulation(
     profit_factor = sum_wins / sum_losses if sum_losses > 0 else 0.0
 
     daily_pnl = _daily_pnl_from_equity(equity_curve, timestamps)
+    monthly_pnl = _monthly_pnl_from_equity(equity_curve, timestamps)
 
     if n >= 2:
         n_days = daily_pnl.get("n_days", 1)
@@ -150,6 +162,8 @@ def calculate_metrics_from_simulation(
         max_drawdown = 0.0
         annual_return = 0.0
 
+    n_months = monthly_pnl.get("n_months", 0)
+
     metrics: dict[str, Any] = {
         "total_return": total_return,
         "total_pnl": total_pnl,
@@ -162,6 +176,13 @@ def calculate_metrics_from_simulation(
         "annual_return": annual_return,
     }
     metrics.update(daily_pnl)
+    metrics.update(monthly_pnl)
+    metrics["monthly_trades_mean"] = (
+        total_trades / n_months if n_months > 0 else 0.0
+    )
+    metrics["monthly_volume_mean"] = (
+        total_volume / n_months if n_months > 0 else 0.0
+    )
     return metrics
 
 
@@ -211,4 +232,87 @@ def _empty_daily_pnl() -> dict[str, Any]:
         "daily_pnl_max": 0.0,
         "daily_pnl_median": 0.0,
         "n_days": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Monthly P&L statistics
+# ---------------------------------------------------------------------------
+
+
+def _monthly_pnl_from_portfolio(
+    pf: vbt.Portfolio,
+) -> dict[str, Any]:
+    """Compute monthly P&L stats from a vectorbt Portfolio."""
+    try:
+        value = pf.value()
+        if len(value) < 2:
+            return _empty_monthly_pnl()
+
+        pnl_series = value.diff().dropna()
+        if hasattr(pnl_series.index, "to_period"):
+            monthly = pnl_series.groupby(pnl_series.index.to_period("M")).sum()
+        else:
+            return _empty_monthly_pnl()
+
+        return _compute_monthly_stats(np.array(monthly, dtype=float))
+    except Exception:
+        logger.debug(
+            "Could not compute monthly P&L stats",
+            exc_info=True,
+        )
+        return _empty_monthly_pnl()
+
+
+def _monthly_pnl_from_equity(
+    equity_curve: npt.NDArray[np.float64],
+    timestamps: Any | None = None,
+) -> dict[str, Any]:
+    """Compute monthly P&L stats from an equity curve."""
+    if len(equity_curve) < 2:
+        return _empty_monthly_pnl()
+
+    pnl_arr: npt.NDArray[np.float64] = np.diff(equity_curve)
+
+    if timestamps is not None:
+        try:
+            ts = pd.Series(timestamps[1:])
+            if hasattr(ts.dt, "tz") and ts.dt.tz is not None:
+                ts = ts.dt.tz_localize(None)
+            periods = ts.dt.to_period("M") if hasattr(ts.dt, "to_period") else None
+            if periods is not None:
+                monthly = pd.Series(pnl_arr).groupby(periods.values).sum()  # type: ignore[arg-type]
+                return _compute_monthly_stats(
+                    np.asarray(monthly, dtype=np.float64),
+                )
+        except Exception:
+            pass
+
+    return _empty_monthly_pnl()
+
+
+def _compute_monthly_stats(
+    arr: npt.NDArray[np.float64],
+) -> dict[str, Any]:
+    """Shared monthly P&L statistics computation."""
+    if len(arr) == 0:
+        return _empty_monthly_pnl()
+    return {
+        "monthly_pnl_mean": float(np.mean(arr)),
+        "monthly_pnl_std": float(np.std(arr)),
+        "monthly_pnl_min": float(np.min(arr)),
+        "monthly_pnl_max": float(np.max(arr)),
+        "monthly_pnl_median": float(np.median(arr)),
+        "n_months": len(arr),
+    }
+
+
+def _empty_monthly_pnl() -> dict[str, Any]:
+    return {
+        "monthly_pnl_mean": 0.0,
+        "monthly_pnl_std": 0.0,
+        "monthly_pnl_min": 0.0,
+        "monthly_pnl_max": 0.0,
+        "monthly_pnl_median": 0.0,
+        "n_months": 0,
     }

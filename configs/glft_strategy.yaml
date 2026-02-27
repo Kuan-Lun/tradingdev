@@ -61,7 +61,7 @@ strategy:
 
     # Dynamic position sizing — scale by |deviation| / edge_for_full_size
     dynamic_sizing: true
-    min_position_size: 500.0
+    min_position_size: 10000.0
     edge_for_full_size: 0.005
     edge_for_full_size_candidates: [0.003, 0.005, 0.008]
 

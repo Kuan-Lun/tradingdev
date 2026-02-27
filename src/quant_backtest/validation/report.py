@@ -13,7 +13,15 @@ if TYPE_CHECKING:
 
 
 _INTEGER_METRIC_KEYS = frozenset(
-    {"total_volume", "total_pnl", "total_trades", "n_days"},
+    {
+        "total_volume",
+        "total_pnl",
+        "total_trades",
+        "n_days",
+        "n_months",
+        "monthly_trades_mean",
+        "monthly_volume_mean",
+    },
 )
 
 _PERCENT_METRIC_KEYS = frozenset(
