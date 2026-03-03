@@ -21,12 +21,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 # ---------------------------------------------------------------------------
-# Ensure project root is on sys.path so 'quant_backtest' and top-level
-# 'strategies/' are importable regardless of the working directory.
+# Ensure project root and src/ are on sys.path so 'quant_backtest' and
+# top-level 'strategies/' are importable regardless of invocation method.
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+for _p in (_PROJECT_ROOT, _PROJECT_ROOT / "src"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from mcp_server import job_store  # noqa: E402 (must come after sys.path fix)
 from quant_backtest.backtest.signal_engine import SignalBacktestEngine  # noqa: E402

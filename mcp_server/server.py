@@ -80,11 +80,18 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import yaml
-from mcp.server.fastmcp import FastMCP
+# Ensure project root and src/ are on sys.path so 'mcp_server' and
+# 'quant_backtest' are importable regardless of invocation method.
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+for _p in (_PROJECT_ROOT, _PROJECT_ROOT / "src"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
-from mcp_server import job_store
-from quant_backtest.utils.logger import setup_logger
+import yaml  # noqa: E402
+from mcp.server.fastmcp import FastMCP  # noqa: E402
+
+from mcp_server import job_store  # noqa: E402
+from quant_backtest.utils.logger import setup_logger  # noqa: E402
 
 logger = setup_logger(__name__)
 
