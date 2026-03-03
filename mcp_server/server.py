@@ -466,4 +466,24 @@ def list_jobs() -> list[dict[str, Any]]:
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    mcp.run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Quant Backtest MCP Server")
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Run as HTTP SSE server (for claude.ai web). Default: stdio.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="HTTP port when --web is set (default: 8000)",
+    )
+    args = parser.parse_args()
+
+    if args.web:
+        mcp.settings.port = args.port
+        mcp.run(transport="sse")
+    else:
+        mcp.run()
