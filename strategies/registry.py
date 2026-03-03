@@ -13,13 +13,13 @@ from quant_backtest.data.schemas import (
     SafetyVolumeStrategyConfig,
     XGBoostStrategyConfig,
 )
-from quant_backtest.strategies.glft_ml_strategy import GLFTMLStrategy
-from quant_backtest.strategies.glft_strategy import GLFTStrategy
-from quant_backtest.strategies.kd_strategy import KDStrategy
-from quant_backtest.strategies.safety_volume_strategy import (
+from strategies.glft_ml_strategy import GLFTMLStrategy
+from strategies.glft_strategy import GLFTStrategy
+from strategies.kd_strategy import KDStrategy
+from strategies.safety_volume_strategy import (
     SafetyVolumeStrategy,
 )
-from quant_backtest.strategies.xgboost_strategy import (
+from strategies.xgboost_strategy import (
     XGBoostStrategy,
 )
 

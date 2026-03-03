@@ -44,7 +44,7 @@ strategy:
 
     # Exit: strategy-level stop-loss — max adverse deviation beyond entry
     # 0.005 = cut loss if price moves 0.5% further against you
-    strategy_sl: 0.003
+    strategy_sl: 0.01
 
     # Entry: momentum guard — only enter when deviation is narrowing
     momentum_guard: false

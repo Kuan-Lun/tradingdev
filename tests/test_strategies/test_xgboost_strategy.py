@@ -7,7 +7,7 @@ from quant_backtest.data.schemas import (
     XGBoostModelConfig,
     XGBoostStrategyConfig,
 )
-from quant_backtest.strategies.xgboost_strategy import XGBoostStrategy
+from strategies.xgboost_strategy import XGBoostStrategy
 
 
 class TestXGBoostStrategy:

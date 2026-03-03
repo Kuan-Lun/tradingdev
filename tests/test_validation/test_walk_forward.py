@@ -9,7 +9,7 @@ from quant_backtest.data.schemas import (
     KDStrategyConfig,
     WalkForwardConfig,
 )
-from quant_backtest.strategies.kd_strategy import KDStrategy
+from strategies.kd_strategy import KDStrategy
 from quant_backtest.validation.report import (
     format_walk_forward_report,
     summarize_results,
