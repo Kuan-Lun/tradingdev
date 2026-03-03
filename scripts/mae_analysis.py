@@ -206,7 +206,9 @@ def plot_monthly_mae(mae_df: pd.DataFrame) -> go.Figure:
 def main() -> None:
     st.set_page_config(page_title="MAE Analysis", layout="wide")
     st.title("Max Adverse Excursion (MAE) Analysis")
-    st.caption("評估 BTC/USDT 在固定持倉時間內的最大逆向移動，判斷 stop-loss 設定是否合理")
+    st.caption(
+        "評估 BTC/USDT 在固定持倉時間內的最大逆向移動，判斷 stop-loss 設定是否合理"
+    )
 
     if not DATA_PATH.exists():
         st.error(f"Data file not found: {DATA_PATH}")
