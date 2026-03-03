@@ -10,7 +10,7 @@ from quant_backtest.data.schemas import (
     KDFitConfig,
     KDStrategyConfig,
 )
-from quant_backtest.strategies.kd_strategy import KDStrategy
+from strategies.kd_strategy import KDStrategy
 
 
 class TestKDStrategy:

@@ -10,10 +10,10 @@ from sklearn.metrics import accuracy_score
 from quant_backtest.ml.features import FeatureEngineer
 from quant_backtest.ml.xgboost_model import XGBoostDirectionModel
 from quant_backtest.strategies.base import BaseStrategy
-from quant_backtest.strategies.rolling_retrainer import (
+from strategies.rolling_retrainer import (
     RollingRetrainer,
 )
-from quant_backtest.strategies.threshold_optimizer import (
+from strategies.threshold_optimizer import (
     ThresholdOptimizer,
 )
 from quant_backtest.utils.logger import setup_logger

@@ -39,7 +39,7 @@ packages = ["src/quant_backtest"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [dependency-groups]
 dev = [

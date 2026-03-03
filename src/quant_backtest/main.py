@@ -31,7 +31,7 @@ from quant_backtest.data.schemas import (
     ParallelConfig,
     WalkForwardConfig,
 )
-from quant_backtest.strategies.registry import create_strategy
+from strategies.registry import create_strategy
 from quant_backtest.utils.cache import save_cached_result
 from quant_backtest.utils.config import load_config
 from quant_backtest.utils.logger import setup_logger

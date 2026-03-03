@@ -12,7 +12,7 @@ from quant_backtest.data.schemas import (
     XGBoostModelConfig,
 )
 from quant_backtest.ml.risk_features import RiskFeatureEngineer
-from quant_backtest.strategies.safety_volume_strategy import (
+from strategies.safety_volume_strategy import (
     SafetyVolumeStrategy,
 )
 
