@@ -19,6 +19,7 @@ dependencies = [
     "plotly>=5.18",
     "psutil>=5.9",
     "autogluon-tabular[all]>=1.5.0",
+    "mcp[cli]>=1.0",
 ]
 
 [project.optional-dependencies]
