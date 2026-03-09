@@ -89,6 +89,9 @@ for _p in (_PROJECT_ROOT, _PROJECT_ROOT / "src"):
 
 import yaml  # noqa: E402
 from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.server.fastmcp.server import (  # type: ignore[attr-defined]  # noqa: E402
+    TransportSecuritySettings,
+)
 
 from mcp_server import job_store  # noqa: E402
 from quant_backtest.utils.logger import setup_logger  # noqa: E402
@@ -99,38 +102,35 @@ _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 mcp = FastMCP(
     name="quant-backtest",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
     instructions="""
 You are a quantitative trading strategy assistant backed by a local
 backtesting framework (vectorbt).
 
 Available tools
 ---------------
+• get_strategy_template – **call this FIRST** to get BaseStrategy source,
+  example code, and YAML template; follow these patterns exactly
 • list_available_data   – see what OHLCV data is cached locally
 • save_strategy         – persist LLM-generated Python + YAML to disk
 • start_backtest        – launch a background backtest (non-blocking)
 • get_job_status        – poll progress or retrieve completed results
 • list_jobs             – show all past / running jobs
 
-Strategy authoring rules
-------------------------
-1. Strategy class MUST inherit BaseStrategy:
-       from quant_backtest.strategies.base import BaseStrategy
-2. Required methods:
-       generate_signals(df: pd.DataFrame) -> pd.DataFrame
-           adds a 'signal' column: 1 (long) / -1 (short) / 0 (flat)
-       get_parameters() -> dict[str, Any]
-3. Constructor should accept `backtest_engine` kwarg:
-       def __init__(self, backtest_engine: "BaseBacktestEngine") -> None
-4. YAML must include strategy.class, strategy.file, and
-   backtest.init_cash (when mode is "signal").
-
 Workflow
 --------
-Step 1: Call list_available_data() to confirm data exists.
-Step 2: Generate code + YAML, then call save_strategy().
-Step 3: Show the user the strategy logic and confirm before running.
-Step 4: Call start_backtest() and tell the user to ask again later.
-Step 5: When the user asks, call get_job_status() to retrieve results.
+Step 1: Call get_strategy_template() to get the reference code.
+Step 2: Call list_available_data() to check what data is cached.
+Step 3: Write strategy code + YAML following the template exactly.
+Step 4: Call save_strategy() to persist files.
+Step 5: Show the user the strategy logic and confirm before running.
+Step 6: Call start_backtest() and tell the user to wait.
+Step 7: When the user asks, call get_job_status() to retrieve results.
+
+IMPORTANT: You MUST call get_strategy_template() before writing any
+strategy code. Do NOT guess the class structure or YAML format.
 """,
 )
 
@@ -175,6 +175,159 @@ def _is_pid_alive(pid: int | None) -> bool:
         return True
     except (ProcessLookupError, PermissionError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Tool 0: get_strategy_template
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def get_strategy_template() -> dict[str, str]:
+    """Return reference code and YAML template for writing a new strategy.
+
+    **IMPORTANT**: Always call this tool FIRST before writing any strategy
+    code.  It returns the BaseStrategy ABC source, a complete example
+    strategy, and a matching YAML config so you can follow the exact
+    patterns required by this project.
+    """
+    base_path = _PROJECT_ROOT / "src" / "quant_backtest" / "strategies" / "base.py"
+    base_source = base_path.read_text(encoding="utf-8") if base_path.exists() else ""
+
+    example_code = '''\
+"""Example: Simple moving-average crossover strategy."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import pandas as pd
+
+from quant_backtest.strategies.base import BaseStrategy
+
+if TYPE_CHECKING:
+    from quant_backtest.backtest.base_engine import BaseBacktestEngine
+
+
+class SmaCrossoverStrategy(BaseStrategy):
+    """Buy when fast SMA crosses above slow SMA, sell on reverse."""
+
+    def __init__(
+        self,
+        backtest_engine: BaseBacktestEngine | None = None,
+        fast_period: int = 10,
+        slow_period: int = 30,
+    ) -> None:
+        self._engine = backtest_engine
+        self._fast_period = fast_period
+        self._slow_period = slow_period
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        result = df.copy()
+        fast = result["close"].rolling(self._fast_period).mean()
+        slow = result["close"].rolling(self._slow_period).mean()
+        fast_prev = fast.shift(1)
+        slow_prev = slow.shift(1)
+
+        result["signal"] = 0
+        result.loc[(fast > slow) & (fast_prev <= slow_prev), "signal"] = 1
+        result.loc[(fast < slow) & (fast_prev >= slow_prev), "signal"] = -1
+        return result
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {
+            "fast_period": self._fast_period,
+            "slow_period": self._slow_period,
+        }
+'''
+
+    example_yaml = """\
+strategy:
+  name: "sma_crossover"
+  class: "SmaCrossoverStrategy"          # must match Python class name
+  file: "strategies/sma_crossover.py"    # relative to project root
+  description: "Simple moving-average crossover"
+  parameters:
+    fast_period: 10
+    slow_period: 30
+
+backtest:
+  symbol: "BTC/USDT"
+  timeframe: "1h"
+  start_date: "2024-01-01"
+  end_date: "2024-12-31"
+  init_cash: 10000.0
+  fees: 0.0006
+  slippage: 0.0005
+  mode: "signal"
+
+data:
+  source: "binance_api"
+"""
+
+    api_reference = """\
+## DataFrame columns (OHLCV)
+Input df always has: timestamp, open, high, low, close, volume
+
+## Available imports for strategy code
+
+### Required
+from quant_backtest.strategies.base import BaseStrategy
+
+### Optional — built-in indicator
+from quant_backtest.indicators.kd import KDIndicator
+  KDIndicator(k_period=14, d_period=3, smooth_k=3)
+  .calculate(df) → adds 'stoch_k', 'stoch_d' columns
+
+### Optional — logging (use instead of print)
+from quant_backtest.utils.logger import setup_logger
+  logger = setup_logger(__name__)
+
+### TYPE_CHECKING only (for type hints)
+from quant_backtest.backtest.base_engine import BaseBacktestEngine
+
+## pandas methods for computing indicators (no external library needed)
+- SMA:  df["close"].rolling(window).mean()
+- EMA:  df["close"].ewm(span=period, adjust=False).mean()
+- STD:  df["close"].rolling(window).std()
+- Shift: series.shift(1)  # previous bar value
+- Min/Max: df["low"].rolling(window).min() / df["high"].rolling(window).max()
+
+## YAML config fields
+### Required
+strategy.name        — snake_case strategy name
+strategy.class       — exact Python class name
+strategy.file        — "strategies/<name>.py" (relative to project root)
+backtest.symbol      — e.g. "BTC/USDT"
+backtest.timeframe   — e.g. "1h", "1d", "15m"
+backtest.start_date  — "YYYY-MM-DD"
+backtest.end_date    — "YYYY-MM-DD"
+backtest.init_cash   — required when mode is "signal"
+backtest.mode        — "signal" (default)
+
+### Optional
+strategy.description — human-readable description
+strategy.parameters  — dict of strategy params (for documentation)
+backtest.fees        — default 0.0006 (0.06%)
+backtest.slippage    — default 0.0005 (0.05%)
+backtest.stop_loss   — optional stop-loss ratio
+backtest.take_profit — optional take-profit ratio
+data.source          — "binance_api" (default)
+"""
+
+    return {
+        "base_strategy_source": base_source,
+        "example_strategy_code": example_code,
+        "example_yaml_config": example_yaml,
+        "api_reference": api_reference,
+        "notes": (
+            "1. strategy.class must match the Python class name exactly. "
+            "2. strategy.file must be 'strategies/<name>.py'. "
+            "3. Constructor should accept backtest_engine as optional kwarg. "
+            "4. generate_signals() must add a 'signal' column (1/-1/0) to df. "
+            "5. Use pandas built-in methods (rolling, ewm, shift) for indicators — "
+            "do NOT import external indicator libraries like ta-lib or pandas-ta. "
+            "6. backtest.init_cash is required when mode is 'signal'."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +632,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--web",
         action="store_true",
-        help="Run as HTTP SSE server (for claude.ai web). Default: stdio.",
+        help="Run as HTTP server (for claude.ai web). Default: stdio.",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["sse", "streamable-http"],
+        default="streamable-http",
+        help="HTTP transport when --web is set (default: streamable-http)",
     )
     parser.add_argument(
         "--port",
@@ -491,6 +650,6 @@ if __name__ == "__main__":
 
     if args.web:
         mcp.settings.port = args.port
-        mcp.run(transport="sse")
+        mcp.run(transport=args.transport)
     else:
         mcp.run()
