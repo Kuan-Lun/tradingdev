@@ -1,13 +1,18 @@
-"""FastMCP server exposing 5 backtesting tools.
+"""FastMCP server exposing 8 backtesting tools.
 
 Conversational workflow
 -----------------------
-1. LLM generates strategy Python code + YAML config in the conversation.
-2. LLM calls ``save_strategy`` → files written to strategies/ and configs/.
-3. LLM confirms logic with the user and asks whether to run.
-4. User confirms → LLM calls ``start_backtest`` → worker subprocess spawned,
+1. User describes a strategy idea.
+2. LLM calls ``list_strategies`` to check if a similar strategy exists.
+3. If similar found → LLM calls ``get_strategy`` to retrieve source code,
+   presents the trading logic, and asks: modify existing or create new?
+4. LLM calls ``get_strategy_template`` for code patterns.
+5. LLM generates/modifies strategy Python code + YAML config.
+6. LLM calls ``save_strategy`` → files written to strategies/ and configs/.
+7. LLM confirms logic with the user and asks whether to run.
+8. User confirms → LLM calls ``start_backtest`` → worker subprocess spawned,
    job_id returned immediately (non-blocking).
-5. User asks for progress → LLM calls ``get_job_status`` → returns status,
+9. User asks for progress → LLM calls ``get_job_status`` → returns status,
    elapsed time, or final metrics when done.
 
 Claude Desktop configuration
@@ -100,8 +105,118 @@ logger = setup_logger(__name__)
 
 _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
+# Strategy helper files that should not appear in list_strategies results
+_STRATEGY_HELPER_FILES = frozenset(
+    {"__init__.py", "registry.py", "rolling_retrainer.py", "threshold_optimizer.py"}
+)
+
+
+# ---------------------------------------------------------------------------
+# Helper: extract strategy metadata via AST + YAML (no heavy imports)
+# ---------------------------------------------------------------------------
+def _extract_strategy_metadata(name: str) -> dict[str, Any] | None:
+    """Return rich metadata for a strategy by parsing its .py and .yaml files.
+
+    Returns None if the strategy .py file does not exist.
+    """
+    py_path = _PROJECT_ROOT / "strategies" / f"{name}.py"
+    yaml_path = _PROJECT_ROOT / "configs" / f"{name}.yaml"
+
+    if not py_path.exists():
+        return None
+
+    # --- AST-based extraction from .py ---
+    source = py_path.read_text(encoding="utf-8")
+    class_name: str = ""
+    docstring: str = ""
+    indicators_used: list[str] = []
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        tree = None
+
+    if tree is not None:
+        for node in ast.walk(tree):
+            # Extract first class definition
+            if isinstance(node, ast.ClassDef) and not class_name:
+                class_name = node.name
+                # Extract docstring
+                if (
+                    node.body
+                    and isinstance(node.body[0], ast.Expr)
+                    and isinstance(node.body[0].value, ast.Constant)
+                    and isinstance(node.body[0].value.value, str)
+                ):
+                    docstring = node.body[0].value.value.strip()
+            # Extract indicator-related imports
+            if isinstance(node, ast.ImportFrom) and node.module:
+                for alias in node.names:
+                    alias_name = alias.name
+                    if any(
+                        kw in alias_name
+                        for kw in ("Indicator", "Feature", "Model", "Indicator")
+                    ):
+                        indicators_used.append(alias_name)
+
+    # --- YAML config extraction ---
+    yaml_data: dict[str, Any] = {}
+    has_config = yaml_path.exists()
+    if has_config:
+        try:
+            raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                yaml_data = raw
+        except yaml.YAMLError:
+            pass
+
+    strat_section = yaml_data.get("strategy", {})
+    bt_section = yaml_data.get("backtest", {})
+
+    # --- Recent backtest result from job store ---
+    recent_backtest: dict[str, Any] | None = None
+    try:
+        all_jobs = job_store.list_all_jobs()
+        for job in all_jobs:
+            if job.get("strategy_name") == name and job.get("status") == "done":
+                result_path = job.get("result_path")
+                if result_path:
+                    metrics = job_store.load_result(result_path)
+                    recent_backtest = {
+                        "job_id": job.get("job_id"),
+                        "symbol": job.get("symbol"),
+                        "timeframe": job.get("timeframe"),
+                        "start_date": job.get("start_date"),
+                        "end_date": job.get("end_date"),
+                        "metrics": metrics,
+                    }
+                break  # list_all_jobs is sorted newest-first
+    except Exception:  # noqa: BLE001
+        pass
+
+    # --- File modification time ---
+    mtime = datetime.fromtimestamp(py_path.stat().st_mtime, tz=UTC).isoformat()
+
+    return {
+        "name": name,
+        "strategy_name": strat_section.get("name", name),
+        "class_name": class_name,
+        "description": strat_section.get("description", ""),
+        "trading_logic_summary": docstring,
+        "indicators_used": indicators_used,
+        "parameters": strat_section.get("parameters", {}),
+        "symbol": bt_section.get("symbol", ""),
+        "timeframe": bt_section.get("timeframe", ""),
+        "mode": bt_section.get("mode", "signal"),
+        "has_config": has_config,
+        "last_modified": mtime,
+        "recent_backtest": recent_backtest,
+    }
+
+
 mcp = FastMCP(
     name="quant-backtest",
+    json_response=True,
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
     ),
@@ -111,8 +226,12 @@ backtesting framework (vectorbt).
 
 Available tools
 ---------------
-• get_strategy_template – **call this FIRST** to get BaseStrategy source,
-  example code, and YAML template; follow these patterns exactly
+• get_strategy_template – get BaseStrategy source, example code, and YAML
+  template; follow these patterns exactly when writing strategy code
+• list_strategies       – list all existing strategies with rich metadata
+  (description, trading logic, indicators, backtest results)
+• get_strategy          – retrieve full source code and YAML config for a
+  specific strategy
 • list_available_data   – see what OHLCV data is cached locally
 • save_strategy         – persist LLM-generated Python + YAML to disk
 • start_backtest        – launch a background backtest (non-blocking)
@@ -121,16 +240,25 @@ Available tools
 
 Workflow
 --------
-Step 1: Call get_strategy_template() to get the reference code.
-Step 2: Call list_available_data() to check what data is cached.
-Step 3: Write strategy code + YAML following the template exactly.
-Step 4: Call save_strategy() to persist files.
-Step 5: Show the user the strategy logic and confirm before running.
-Step 6: Call start_backtest() and tell the user to wait.
-Step 7: When the user asks, call get_job_status() to retrieve results.
+Step 1: When the user describes a strategy idea, call list_strategies()
+        FIRST to check if a similar strategy already exists.
+Step 2: If a similar strategy exists, call get_strategy(name) to retrieve
+        its full source code. Present the existing strategy's trading logic
+        to the user in plain language and ask:
+        "This existing strategy does X. Would you like to modify it, or
+        create a completely new one?"
+Step 3: If creating or modifying, call get_strategy_template() to get the
+        reference code patterns and YAML template.
+Step 4: Call list_available_data() to check what data is cached.
+Step 5: Write strategy code + YAML following the template exactly.
+Step 6: Call save_strategy() to persist files.
+Step 7: Show the user the strategy logic and confirm before running.
+Step 8: Call start_backtest() and tell the user to wait.
+Step 9: When the user asks, call get_job_status() to retrieve results.
 
-IMPORTANT: You MUST call get_strategy_template() before writing any
-strategy code. Do NOT guess the class structure or YAML format.
+IMPORTANT: You MUST call list_strategies() before writing any new strategy
+code, to avoid duplicating existing strategies. You MUST call
+get_strategy_template() before writing code to get the correct patterns.
 """,
 )
 
@@ -327,11 +455,100 @@ data.source          — "binance_api" (default)
             "do NOT import external indicator libraries like ta-lib or pandas-ta. "
             "6. backtest.init_cash is required when mode is 'signal'."
         ),
+        "workflow_guidance": (
+            "IMPORTANT — Before creating a new strategy:\n"
+            "1. Call list_strategies() to see all existing strategies.\n"
+            "2. Compare the user's description against each strategy's "
+            "description, trading_logic_summary, and indicators_used.\n"
+            "3. If a similar strategy exists, call get_strategy(name) to "
+            "retrieve its full source code.\n"
+            "4. Present the existing strategy's trading logic to the user "
+            "in plain language and ask:\n"
+            "   - 'This existing strategy does X. Would you like to modify "
+            "it, or create a completely new one?'\n"
+            "5. If modifying: apply changes to the existing code and call "
+            "save_strategy() with the SAME name to overwrite.\n"
+            "6. If creating new: follow the template below to write from "
+            "scratch with a NEW name.\n"
+            "This avoids duplicating strategies and helps the user build "
+            "on proven logic."
+        ),
     }
 
 
 # ---------------------------------------------------------------------------
-# Tool 1: list_available_data
+# Tool 1: list_strategies
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def list_strategies() -> list[dict[str, Any]]:
+    """List all existing strategies with rich metadata.
+
+    Returns strategy name, description, trading logic summary, indicators
+    used, target symbol/timeframe, last modified time, and recent backtest
+    results.  Use this to check whether a similar strategy already exists
+    before creating a new one.
+    """
+    strategies_dir = _PROJECT_ROOT / "strategies"
+    if not strategies_dir.exists():
+        return []
+
+    results: list[dict[str, Any]] = []
+    for py_file in sorted(strategies_dir.glob("*.py")):
+        if py_file.name in _STRATEGY_HELPER_FILES:
+            continue
+        name = py_file.stem
+        meta = _extract_strategy_metadata(name)
+        if meta is not None:
+            results.append(meta)
+
+    # Sort by last modified (newest first)
+    results.sort(key=lambda m: m.get("last_modified", ""), reverse=True)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Tool 2: get_strategy
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def get_strategy(name: str) -> dict[str, Any]:
+    """Retrieve full source code and YAML config for an existing strategy.
+
+    Args:
+        name: Strategy file stem in snake_case (e.g. "kd_strategy").
+              Use list_strategies() to discover available names.
+
+    Returns:
+        On success: {"success": True, "name": str, "source_code": str,
+                     "yaml_config": str | None, "metadata": dict}
+        On failure: {"success": False, "error": str}
+    """
+    py_path = _PROJECT_ROOT / "strategies" / f"{name}.py"
+    yaml_path = _PROJECT_ROOT / "configs" / f"{name}.yaml"
+
+    if not py_path.exists():
+        return {
+            "success": False,
+            "error": f"Strategy not found: strategies/{name}.py",
+        }
+
+    source_code = py_path.read_text(encoding="utf-8")
+    yaml_config: str | None = None
+    if yaml_path.exists():
+        yaml_config = yaml_path.read_text(encoding="utf-8")
+
+    metadata = _extract_strategy_metadata(name)
+
+    return {
+        "success": True,
+        "name": name,
+        "source_code": source_code,
+        "yaml_config": yaml_config,
+        "metadata": metadata,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 3: list_available_data
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def list_available_data() -> list[dict[str, Any]]:
@@ -368,7 +585,7 @@ def list_available_data() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Tool 2: save_strategy
+# Tool 4: save_strategy
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def save_strategy(
@@ -452,7 +669,7 @@ def save_strategy(
 
 
 # ---------------------------------------------------------------------------
-# Tool 3: start_backtest
+# Tool 5: start_backtest
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def start_backtest(
@@ -536,7 +753,7 @@ def start_backtest(
 
 
 # ---------------------------------------------------------------------------
-# Tool 4: get_job_status
+# Tool 6: get_job_status
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def get_job_status(job_id: str) -> dict[str, Any]:
@@ -592,7 +809,7 @@ def get_job_status(job_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Tool 5: list_jobs
+# Tool 7: list_jobs
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def list_jobs() -> list[dict[str, Any]]:
