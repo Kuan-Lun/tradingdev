@@ -259,6 +259,13 @@ Step 9: When the user asks, call get_job_status() to retrieve results.
 IMPORTANT: You MUST call list_strategies() before writing any new strategy
 code, to avoid duplicating existing strategies. You MUST call
 get_strategy_template() before writing code to get the correct patterns.
+
+Language
+--------
+ALWAYS reply in the same language the user used. If the user writes in
+Traditional Chinese (繁體中文), reply in Traditional Chinese. If the user
+writes in English, reply in English. Never switch to a different language
+unless the user explicitly asks.
 """,
 )
 
