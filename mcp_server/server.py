@@ -700,6 +700,48 @@ def save_strategy(
     except OSError as exc:
         return _fail(f"File write error: {exc}")
 
+    # Run ruff and mypy checks on the generated Python file
+    lint_errors: list[str] = []
+
+    try:
+        ruff_result = subprocess.run(
+            ["uv", "run", "ruff", "check", str(py_path)],
+            capture_output=True,
+            text=True,
+            cwd=str(_PROJECT_ROOT),
+            timeout=30,
+        )
+        if ruff_result.returncode != 0:
+            lint_errors.append(f"[ruff] {ruff_result.stdout.strip()}")
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("ruff check skipped: %s", exc)
+
+    try:
+        mypy_result = subprocess.run(
+            ["uv", "run", "mypy", str(py_path)],
+            capture_output=True,
+            text=True,
+            cwd=str(_PROJECT_ROOT),
+            timeout=60,
+        )
+        if mypy_result.returncode != 0:
+            lint_errors.append(f"[mypy] {mypy_result.stdout.strip()}")
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("mypy check skipped: %s", exc)
+
+    if lint_errors:
+        combined = "\n\n".join(lint_errors)
+        logger.warning("Strategy '%s' saved with lint/type errors:\n%s", name, combined)
+        return {
+            "success": False,
+            "py_path": str(py_path.relative_to(_PROJECT_ROOT)),
+            "yaml_path": str(yaml_path.relative_to(_PROJECT_ROOT)),
+            "error": (
+                f"Files saved but code quality checks failed. "
+                f"Please fix and call save_strategy again:\n\n{combined}"
+            ),
+        }
+
     logger.info("Saved strategy '%s' → %s + %s", name, py_path, yaml_path)
     return {
         "success": True,
