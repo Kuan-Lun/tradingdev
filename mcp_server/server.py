@@ -226,20 +226,25 @@ backtesting framework (vectorbt).
 
 Available tools
 ---------------
-• get_strategy_template – get BaseStrategy source, example code, and YAML
+• get_strategy_template   – get BaseStrategy source, example code, and YAML
   template; follow these patterns exactly when writing strategy code
-• list_strategies       – list all existing strategies with rich metadata
+• list_strategies         – list all existing strategies with rich metadata
   (description, trading logic, indicators, backtest results)
-• get_strategy          – retrieve full source code and YAML config for a
+• get_strategy            – retrieve full source code and YAML config for a
   specific strategy
-• list_available_data   – see what OHLCV data is cached locally
-• save_strategy         – persist LLM-generated Python + YAML to disk
-• start_backtest        – launch a background backtest (non-blocking)
-• get_job_status        – poll progress or retrieve completed results
-• list_jobs             – show all past / running jobs
+• list_available_data     – see what OHLCV data is cached locally
+• save_strategy           – persist LLM-generated Python + YAML to disk
+• start_backtest          – launch a background backtest (non-blocking)
+• start_optimization      – launch parameter optimization (grid search) with
+  train/test split, trial estimation, and user confirmation
+• confirm_optimization    – confirm an optimization job after reviewing the
+  estimated run time
+• get_job_status          – poll progress or retrieve completed results
+  (works for both backtest and optimization jobs)
+• list_jobs               – show all past / running jobs
 
-Workflow
---------
+Backtest workflow
+-----------------
 Step 1: When the user describes a strategy idea, call list_strategies()
         FIRST to check if a similar strategy already exists.
 Step 2: If a similar strategy exists, call get_strategy(name) to retrieve
@@ -256,9 +261,38 @@ Step 7: Show the user the strategy logic and confirm before running.
 Step 8: Call start_backtest() and tell the user to wait.
 Step 9: When the user asks, call get_job_status() to retrieve results.
 
+Optimization workflow
+---------------------
+Use this when the user wants to search for optimal parameters across a range.
+
+Step 1: Ensure the strategy is already saved (follow backtest workflow
+        steps 1–6 first).  The strategy __init__ must accept the
+        parameters to optimise as keyword arguments.
+Step 2: Call start_optimization() with param_ranges (dict of param name →
+        list of candidate values), optimization_metric, and train/test
+        date ranges.
+Step 3: The worker runs ONE trial combination first (5-min timeout) and
+        reports the estimated total time.  Call get_job_status() — when
+        status is "pending_confirmation", tell the user the estimate and
+        ask if they want to proceed.
+Step 4: If the user confirms, call confirm_optimization(job_id).
+Step 5: Poll get_job_status() for progress (status "optimizing" shows
+        completed / total_combinations and estimated_remaining_seconds).
+Step 6: When done, get_job_status() returns best_params, train_metrics,
+        and test_metrics (out-of-sample).
+
 IMPORTANT: You MUST call list_strategies() before writing any new strategy
 code, to avoid duplicating existing strategies. You MUST call
 get_strategy_template() before writing code to get the correct patterns.
+
+Required-parameter confirmation
+-------------------------------
+Before calling start_backtest or start_optimization, if the user has NOT
+explicitly specified ALL of the following parameters, you MUST ask the
+user to confirm — do NOT guess or infer default values:
+• symbol     (trading pair, e.g. "BTC/USDT")
+• timeframe  (candle interval, e.g. "1m", "1h", "1d")
+• start_date / end_date (backtest period)
 
 Language
 --------
@@ -760,29 +794,239 @@ def start_backtest(
 
 
 # ---------------------------------------------------------------------------
+# Tool 5b: start_optimization
+# ---------------------------------------------------------------------------
+_VALID_OPTIMIZATION_METRICS = frozenset(
+    {
+        "total_return",
+        "total_pnl",
+        "annual_return",
+        "sharpe_ratio",
+        "max_drawdown",
+        "win_rate",
+        "profit_factor",
+    }
+)
+
+
+@mcp.tool()
+def start_optimization(
+    strategy_name: str,
+    symbol: str,
+    timeframe: str,
+    param_ranges: dict[str, list[Any]],
+    optimization_metric: str,
+    train_start: str,
+    train_end: str,
+    test_start: str,
+    test_end: str,
+) -> dict[str, Any]:
+    """Launch a parameter optimization job (non-blocking).
+
+    The worker first runs ONE trial combination with a 5-minute timeout to
+    estimate total time, then pauses for confirmation.  Call
+    confirm_optimization(job_id) after reviewing the estimate.
+
+    Args:
+        strategy_name: Matches a file in strategies/ and configs/.
+        symbol:        Trading pair (e.g. "BTC/USDT").
+        timeframe:     Candle interval (e.g. "1h", "1d").
+        param_ranges:  Dict of param name → list of candidate values.
+                       Example: {"fast_period": [5,6,7], "slow_period": [20,30]}
+        optimization_metric: Metric to maximise ("sharpe_ratio", "total_return", etc.)
+        train_start:   Training period start "YYYY-MM-DD".
+        train_end:     Training period end "YYYY-MM-DD".
+        test_start:    Out-of-sample test start "YYYY-MM-DD".
+        test_end:      Out-of-sample test end "YYYY-MM-DD".
+
+    Returns:
+        {"job_id": str, "message": str, "total_combinations": int}
+    """
+    config_path = _PROJECT_ROOT / "configs" / f"{strategy_name}.yaml"
+    strategy_file = _PROJECT_ROOT / "strategies" / f"{strategy_name}.py"
+
+    if not config_path.exists() or not strategy_file.exists():
+        return {
+            "job_id": "",
+            "message": (
+                f"Strategy or config not found for '{strategy_name}'. "
+                "Call save_strategy first."
+            ),
+            "total_combinations": 0,
+        }
+
+    # Validate param_ranges
+    if not param_ranges:
+        return {
+            "job_id": "",
+            "message": "param_ranges must not be empty.",
+            "total_combinations": 0,
+        }
+    for k, v in param_ranges.items():
+        if not isinstance(v, list) or len(v) == 0:
+            return {
+                "job_id": "",
+                "message": f"param_ranges['{k}'] must be a non-empty list.",
+                "total_combinations": 0,
+            }
+
+    # Validate optimization metric
+    if optimization_metric not in _VALID_OPTIMIZATION_METRICS:
+        return {
+            "job_id": "",
+            "message": (
+                f"Invalid metric '{optimization_metric}'. "
+                f"Choose from: {sorted(_VALID_OPTIMIZATION_METRICS)}"
+            ),
+            "total_combinations": 0,
+        }
+
+    # Validate date ordering
+    try:
+        from datetime import date as _date
+
+        ts = _date.fromisoformat(train_start)
+        te = _date.fromisoformat(train_end)
+        vs = _date.fromisoformat(test_start)
+        ve = _date.fromisoformat(test_end)
+    except ValueError as exc:
+        return {
+            "job_id": "",
+            "message": f"Invalid date format: {exc}",
+            "total_combinations": 0,
+        }
+
+    if not (ts < te <= vs < ve):
+        return {
+            "job_id": "",
+            "message": (
+                "Dates must satisfy: train_start < train_end <= test_start < test_end. "
+                f"Got: {train_start} < {train_end} <= {test_start} < {test_end}"
+            ),
+            "total_combinations": 0,
+        }
+
+    # Calculate total combinations
+    total_combos = 1
+    for v in param_ranges.values():
+        total_combos *= len(v)
+
+    job_id = uuid4().hex[:12]
+    job_store.create_job(
+        job_id=job_id,
+        strategy_name=strategy_name,
+        symbol=symbol,
+        timeframe=timeframe,
+        start_date=train_start,
+        end_date=test_end,
+        config_path=str(config_path.relative_to(_PROJECT_ROOT)),
+    )
+    # Store optimization-specific fields
+    job_store.update_job(
+        job_id,
+        job_type="optimization",
+        param_ranges=param_ranges,
+        optimization_metric=optimization_metric,
+        train_start=train_start,
+        train_end=train_end,
+        test_start=test_start,
+        test_end=test_end,
+        total_combinations=total_combos,
+    )
+
+    worker_script = Path(__file__).parent / "optimization_worker.py"
+    proc = subprocess.Popen(  # noqa: S603
+        [sys.executable, str(worker_script), job_id],
+        cwd=str(_PROJECT_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    job_store.update_job(job_id, pid=proc.pid)
+    logger.info("Spawned optimization worker PID=%d for job %s", proc.pid, job_id)
+
+    return {
+        "job_id": job_id,
+        "message": (
+            f"Optimization started. {total_combos} parameter combinations. "
+            "A trial run will estimate total time — use get_job_status() to check."
+        ),
+        "total_combinations": total_combos,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 5c: confirm_optimization
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def confirm_optimization(job_id: str) -> dict[str, Any]:
+    """Confirm an optimization job after reviewing the time estimate.
+
+    Call this after get_job_status() shows status "pending_confirmation".
+    The worker will then proceed to run all parameter combinations.
+
+    Args:
+        job_id: The ID returned by start_optimization.
+    """
+    job = job_store.get_job(job_id)
+    if job is None:
+        return {"success": False, "error": f"No job with ID: {job_id}"}
+
+    status: str = job["status"]
+    if status == "estimation_timeout":
+        return {
+            "success": False,
+            "error": "Trial run timed out. This strategy is too slow for optimization.",
+        }
+    if status != "pending_confirmation":
+        return {
+            "success": False,
+            "error": f"Job status is '{status}', expected 'pending_confirmation'.",
+        }
+
+    job_store.update_job(job_id, confirmed=True)
+
+    total = job.get("total_combinations", "?")
+    workers = job.get("n_parallel_workers", "?")
+    return {
+        "success": True,
+        "message": (
+            f"Optimization confirmed. Running {total} combinations "
+            f"with {workers} parallel workers."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tool 6: get_job_status
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def get_job_status(job_id: str) -> dict[str, Any]:
-    """Return the current status of a backtest job.
+    """Return the current status of a backtest or optimization job.
 
-    When done, includes the full metrics dict.
-    When still running, includes elapsed_seconds and data_downloaded flag.
+    When done, includes the full metrics dict (or optimization results).
+    When still running, includes elapsed_seconds and progress info.
     When failed, includes the error message.
 
     Args:
-        job_id: The ID returned by start_backtest.
+        job_id: The ID returned by start_backtest or start_optimization.
     """
     job = job_store.get_job(job_id)
     if job is None:
         return {"status": "not_found", "error": f"No job with ID: {job_id}"}
 
     status: str = job["status"]
+    job_type: str = job.get("job_type", "backtest")
 
     # Auto-recover orphaned worker processes
-    if status in ("downloading_data", "running_backtest") and not _is_pid_alive(
-        job.get("pid")
-    ):
+    _running_statuses = (
+        "downloading_data",
+        "running_backtest",
+        "estimating",
+        "optimizing",
+        "testing_oos",
+    )
+    if status in _running_statuses and not _is_pid_alive(job.get("pid")):
         status = "failed"
         job_store.update_job(
             job_id,
@@ -796,6 +1040,7 @@ def get_job_status(job_id: str) -> dict[str, Any]:
 
     response: dict[str, Any] = {
         "status": status,
+        "job_type": job_type,
         "strategy_name": job["strategy_name"],
         "symbol": job["symbol"],
         "timeframe": job["timeframe"],
@@ -805,10 +1050,41 @@ def get_job_status(job_id: str) -> dict[str, Any]:
     }
 
     if status == "done":
-        response["metrics"] = job_store.load_result(job["result_path"])
+        result = job_store.load_result(job["result_path"])
         response["end_time"] = job.get("end_time")
+        if job_type == "optimization":
+            response["best_params"] = (result or {}).get("best_params")
+            response["train_metrics"] = (result or {}).get("train_metrics")
+            response["test_metrics"] = (result or {}).get("test_metrics")
+            response["optimization_metric"] = (result or {}).get("optimization_metric")
+            response["total_combinations"] = (result or {}).get("total_combinations")
+        else:
+            response["metrics"] = result
     elif status == "failed":
         response["error"] = job.get("error", "Unknown error")
+    elif status == "estimating":
+        response["total_combinations"] = job.get("total_combinations")
+        response["message"] = "Running trial combination to estimate total time..."
+    elif status == "pending_confirmation":
+        response["time_per_combo"] = job.get("time_per_combo")
+        response["total_combinations"] = job.get("total_combinations")
+        response["estimated_total_seconds"] = job.get("estimated_total_seconds")
+        response["n_parallel_workers"] = job.get("n_parallel_workers")
+        response["message"] = (
+            f"Trial run took {job.get('time_per_combo')}s per combo. "
+            f"Estimated total: {job.get('estimated_total_seconds')}s for "
+            f"{job.get('total_combinations')} combinations using "
+            f"{job.get('n_parallel_workers')} workers. "
+            "Call confirm_optimization(job_id) to proceed."
+        )
+    elif status == "estimation_timeout":
+        response["error"] = job.get("error", "Trial run exceeded timeout")
+    elif status == "optimizing":
+        response["completed"] = job.get("completed", 0)
+        response["total_combinations"] = job.get("total_combinations")
+        response["estimated_remaining_seconds"] = job.get("estimated_remaining_seconds")
+    elif status == "testing_oos":
+        response["message"] = "Running out-of-sample test with best parameters..."
     else:
         response["data_downloaded"] = job.get("data_downloaded", False)
 
@@ -820,7 +1096,7 @@ def get_job_status(job_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def list_jobs() -> list[dict[str, Any]]:
-    """List all backtest jobs sorted by start time (newest first).
+    """List all backtest and optimization jobs sorted by start time (newest first).
 
     Useful for tracking multiple runs or retrieving a forgotten job_id.
     """
@@ -830,19 +1106,22 @@ def list_jobs() -> list[dict[str, Any]]:
     for job in jobs:
         start_time = datetime.fromisoformat(job["start_time"])
         elapsed = round((now - start_time).total_seconds(), 1)
-        summaries.append(
-            {
-                "job_id": job["job_id"],
-                "status": job["status"],
-                "strategy_name": job["strategy_name"],
-                "symbol": job["symbol"],
-                "timeframe": job["timeframe"],
-                "start_date": job["start_date"],
-                "end_date": job["end_date"],
-                "elapsed_seconds": elapsed,
-                "data_downloaded": job.get("data_downloaded", False),
-            }
-        )
+        summary: dict[str, Any] = {
+            "job_id": job["job_id"],
+            "job_type": job.get("job_type", "backtest"),
+            "status": job["status"],
+            "strategy_name": job["strategy_name"],
+            "symbol": job["symbol"],
+            "timeframe": job["timeframe"],
+            "start_date": job["start_date"],
+            "end_date": job["end_date"],
+            "elapsed_seconds": elapsed,
+            "data_downloaded": job.get("data_downloaded", False),
+        }
+        if job.get("job_type") == "optimization":
+            summary["total_combinations"] = job.get("total_combinations")
+            summary["completed"] = job.get("completed", 0)
+        summaries.append(summary)
     return summaries
 
 
