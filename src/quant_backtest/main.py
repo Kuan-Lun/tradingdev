@@ -165,6 +165,11 @@ def _load_data(
         loader = DataLoader()
         df = _merge_dvol(df, params, bt_cfg, loader)
 
+    # Merge funding rate data when path is set
+    fr_path = params.get("funding_rate_path", "")
+    if fr_path:
+        df = _merge_funding_rate(df, str(fr_path))
+
     return df, processed_path
 
 
@@ -226,6 +231,34 @@ def _merge_dvol(
         logger.warning("Forward-filling %d missing DVOL values", n_missing)
         df["dvol"] = df["dvol"].ffill().bfill()
 
+    return df
+
+
+def _merge_funding_rate(
+    df: pd.DataFrame,
+    fr_path: str,
+) -> pd.DataFrame:
+    """Merge funding rate data into the OHLCV DataFrame.
+
+    Funding rate updates every 8 hours; values are forward-filled
+    to 1-min resolution so each bar carries the most recent rate.
+    """
+    from pathlib import Path
+
+    path = Path(fr_path)
+    if not path.exists():
+        logger.warning("Funding rate file not found: %s", fr_path)
+        return df
+
+    loader = DataLoader()
+    fr_df = loader.load_parquet(path)
+    fr_df = fr_df[["timestamp", "funding_rate"]]
+
+    df = df.merge(fr_df, on="timestamp", how="left")
+    df["funding_rate"] = df["funding_rate"].ffill().bfill()
+
+    n_filled = int(df["funding_rate"].notna().sum())
+    logger.info("Merged funding rate: %d values", n_filled)
     return df
 
 

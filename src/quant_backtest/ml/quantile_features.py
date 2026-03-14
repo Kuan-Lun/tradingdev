@@ -39,6 +39,7 @@ _EXCLUDE_COLS = frozenset(
         "target_long",
         "target_short",
         "target_regime",
+        "funding_rate_raw",
     }
 )
 
@@ -149,6 +150,15 @@ class QuantileFeatureEngineer:
             dvol = df["dvol"].astype(float)
             features["dvol_level"] = dvol
             features["dvol_change"] = dvol.pct_change(5)
+
+        # --- Funding rate features (optional) ---
+        if "funding_rate" in df.columns:
+            fr = df["funding_rate"].astype(float)
+            features["funding_rate"] = fr
+            # Cumulative rate over recent periods (sentiment pressure)
+            features["funding_rate_ma3"] = fr.rolling(3).mean()
+            # Extreme positive = longs crowded, negative = shorts crowded
+            features["funding_rate_abs"] = fr.abs()
 
         # --- Time features (cyclical encoding) ---
         if "timestamp" in df.columns:

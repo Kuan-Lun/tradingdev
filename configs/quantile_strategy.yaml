@@ -64,6 +64,9 @@ strategy:
     dvol_raw_path: "data/raw/btc_dvol_1m_2024_2025.csv"
     dvol_processed_path: "data/processed/btc_dvol_1m_2024_2025.parquet"
 
+    # Funding rate
+    funding_rate_path: "data/processed/btc_funding_rate_2025.parquet"
+
 parallel:
   reserve_cores: 2
   safety_factor: 0.6
