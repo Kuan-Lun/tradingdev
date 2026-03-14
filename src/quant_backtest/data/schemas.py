@@ -445,6 +445,9 @@ class QuantileStrategyConfig(BaseModel):
     dvol_raw_path: str = ""
     dvol_processed_path: str = ""
 
+    # Funding rate (optional)
+    funding_rate_path: str = ""
+
     @field_validator("min_entry_edge")
     @classmethod
     def min_entry_edge_positive(cls, v: float) -> float:
