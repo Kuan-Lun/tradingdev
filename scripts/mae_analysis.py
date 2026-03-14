@@ -174,7 +174,7 @@ def plot_monthly_mae(mae_df: pd.DataFrame) -> go.Figure:
     monthly = mae_df.set_index("timestamp").resample("ME")
 
     fig = go.Figure()
-    for col, name, color in [
+    for col, name, _color in [
         ("mae_long", "Long P95", "#EF553B"),
         ("mae_short", "Short P95", "#636EFA"),
         ("mae_worst", "Worst P95", "#AB63FA"),
@@ -284,7 +284,10 @@ def main() -> None:
     st.metric(
         label=f"SL Trigger Rate @ {sl_level:.1%}",
         value=f"{trigger_rate:.2f}%",
-        help=f"Percentage of entries where worst MAE >= {sl_level:.1%} within {holding_bars} min",
+        help=(
+            f"Percentage of entries where worst MAE"
+            f" >= {sl_level:.1%} within {holding_bars} min"
+        ),
     )
 
     # --- 3. SL trigger curve ---

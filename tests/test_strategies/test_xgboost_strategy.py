@@ -2,12 +2,12 @@
 
 import pandas as pd
 import pytest
+from strategies.xgboost_strategy import XGBoostStrategy
 
 from quant_backtest.data.schemas import (
     XGBoostModelConfig,
     XGBoostStrategyConfig,
 )
-from strategies.xgboost_strategy import XGBoostStrategy
 
 
 class TestXGBoostStrategy:

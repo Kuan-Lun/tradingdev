@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from strategies.glft_strategy import GLFTStrategy
 
 from quant_backtest.backtest.volume_engine import VolumeBacktestEngine
 from quant_backtest.data.schemas import GLFTStrategyConfig
-from strategies.glft_strategy import GLFTStrategy
 
 if TYPE_CHECKING:
     import pandas as pd

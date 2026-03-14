@@ -5,6 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from strategies.safety_volume_strategy import (
+    SafetyVolumeStrategy,
+)
 
 from quant_backtest.backtest.volume_engine import VolumeBacktestEngine
 from quant_backtest.data.schemas import (
@@ -12,9 +15,6 @@ from quant_backtest.data.schemas import (
     XGBoostModelConfig,
 )
 from quant_backtest.ml.risk_features import RiskFeatureEngineer
-from strategies.safety_volume_strategy import (
-    SafetyVolumeStrategy,
-)
 
 # ── Helpers ──────────────────────────────────────────────────
 
