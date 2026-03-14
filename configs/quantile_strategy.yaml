@@ -3,8 +3,8 @@ strategy:
   description: "XGBoost regime-detection volume strategy"
   parameters:
     # Prediction horizon (bars)
-    horizon: 10
-    horizon_candidates: [5, 10]
+    horizon: 30
+    horizon_candidates: [15, 30]
 
     # XGBoost hyperparameters
     n_estimators: 50
@@ -15,13 +15,21 @@ strategy:
     # Holding management
     min_holding_bars: 2
 
-    # Strategy-level stop-loss (tighter than engine's 1%)
-    strategy_sl: 0.002
+    # Profit target for label: what counts as "opportunity" (0.3%)
+    # Must be > fee cost (0.1%) so winning trades actually profit
+    profit_target: 0.003
+
+    # Strategy-level stop-loss: match profit_target for ~1:1 risk/reward
+    strategy_sl: 0.003
+
+    # Regime filters: skip when P(both) or P(neither) too high
+    max_p_both: 0.15      # avoid coin-flip regimes
+    max_p_neither: 0.20   # avoid dead markets
 
     # Entry: minimum P(long_only) or P(short_only) to enter
     # P(signal) - P(both) must also be > 0
-    min_entry_edge: 0.45
-    min_entry_edge_candidates: [0.35, 0.40, 0.45, 0.50, 0.55]
+    min_entry_edge: 0.35
+    min_entry_edge_candidates: [0.25, 0.30, 0.35, 0.40]
 
     # Dynamic sizing by edge = P(signal) - P(both)
     dynamic_sizing: true
@@ -61,25 +69,25 @@ parallel:
   safety_factor: 0.6
   overhead_multiplier: 3.0
 
-# Test interval with DVOL data
+# Long test: 1 month train + 3 months OOS
 validation:
   train_start: "2025-09-01"
-  train_end: "2025-09-15"
-  test_start: "2025-09-16"
-  test_end: "2025-09-22"
+  train_end: "2025-09-30"
+  test_start: "2025-10-01"
+  test_end: "2025-12-30"
   target_metric: "total_return"
 
 backtest:
   symbol: "BTC/USDT"
   timeframe: "1m"
   start_date: "2025-09-01"
-  end_date: "2025-09-22"
+  end_date: "2025-12-30"
   fees: 0.0005
   slippage: 0
   monthly_max_loss: 1500.0
   position_size: 50000.0
   stop_loss: 0.01
-  take_profit: 0.001
+  take_profit: null
   signal_as_position: true
   re_entry_after_sl: false
   mode: "volume"

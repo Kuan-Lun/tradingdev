@@ -395,8 +395,15 @@ class QuantileStrategyConfig(BaseModel):
     # Holding management (max_holding = horizon)
     min_holding_bars: int = 5
 
+    # Profit target for label definition (what counts as "opportunity")
+    profit_target: float = 0.003
+
     # Strategy-level stop-loss (tighter than engine hard SL)
-    strategy_sl: float = 0.002
+    strategy_sl: float = 0.003
+
+    # Regime filters: skip entry when P(both) or P(neither) too high
+    max_p_both: float = 0.15
+    max_p_neither: float = 0.20
 
     # Risk/reward entry: minimum P(win)/P(lose) ratio
     min_ratio: float = 1.5

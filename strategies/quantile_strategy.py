@@ -92,6 +92,8 @@ def _run_regime_state_machine(
     horizon: int,
     min_holding_bars: int,
     min_confidence: float,
+    max_p_both: float,
+    max_p_neither: float,
     strategy_sl: float,
     dynamic_sizing: bool,
     min_weight: float,
@@ -99,8 +101,9 @@ def _run_regime_state_machine(
 ) -> tuple[np.ndarray, np.ndarray]:
     """State machine using regime classification probabilities.
 
-    Entry: P(long_only) or P(short_only) > min_confidence.
-    Skip: when P(both) is too high relative to the signal.
+    Entry: P(long_only) or P(short_only) > min_confidence,
+    AND P(both) < max_p_both (avoid coin-flip regimes),
+    AND P(neither) < max_p_neither (avoid dead markets).
     Size: proportional to P(signal) - P(both).
 
     Returns:
@@ -119,10 +122,14 @@ def _run_regime_state_machine(
         p_lo = proba[i, _LONG_ONLY]
         p_so = proba[i, _SHORT_ONLY]
         p_both = proba[i, _BOTH]
+        p_neither = proba[i, _NEITHER]
 
         if state == 0:
-            # Only enter when one direction is clearly dominant
-            # and P(both) is low (not a coin-flip situation)
+            # Filter: skip dangerous or dead regimes
+            if p_both > max_p_both or p_neither > max_p_neither:
+                signals[i] = 0.0
+                continue
+
             long_edge = p_lo - p_both
             short_edge = p_so - p_both
 
@@ -203,6 +210,8 @@ def _evaluate_regime_combo(
         horizon=horizon,
         min_holding_bars=config.min_holding_bars,
         min_confidence=min_confidence,
+        max_p_both=config.max_p_both,
+        max_p_neither=config.max_p_neither,
         strategy_sl=config.strategy_sl,
         dynamic_sizing=dyn,
         min_weight=min_weight,
@@ -283,7 +292,7 @@ class QuantileStrategy(BaseStrategy):
         for h in horizons:
             logger.info("Training regime classifier for horizon=%d", h)
             fe = QuantileFeatureEngineer(
-                horizon=h, profit_target=cfg.fee_rate * 2,
+                horizon=h, profit_target=cfg.profit_target,
             )
             feat_df = fe.transform(
                 df, include_target=True, target_type="regime",
@@ -438,7 +447,7 @@ class QuantileStrategy(BaseStrategy):
                 )
                 fe = QuantileFeatureEngineer(
                     horizon=horizon,
-                    profit_target=cfg.fee_rate * 2,
+                    profit_target=cfg.profit_target,
                 )
                 train_feat = fe.transform(
                     train_slice,
@@ -482,9 +491,18 @@ class QuantileStrategy(BaseStrategy):
                 p_lo = proba[j, _LONG_ONLY]
                 p_so = proba[j, _SHORT_ONLY]
                 p_both = proba[j, _BOTH]
+                p_neither = proba[j, _NEITHER]
                 c = chunk_close[j]
 
                 if sm_state == 0:
+                    # Filter: skip dangerous or dead regimes
+                    if (
+                        p_both > cfg.max_p_both
+                        or p_neither > cfg.max_p_neither
+                    ):
+                        all_signals[out_idx] = 0.0
+                        continue
+
                     long_edge = p_lo - p_both
                     short_edge = p_so - p_both
                     mc = self._best_min_confidence
@@ -568,7 +586,7 @@ class QuantileStrategy(BaseStrategy):
         horizon = self._best_horizon
 
         self._feature_eng = QuantileFeatureEngineer(
-            horizon=horizon, profit_target=cfg.fee_rate * 2,
+            horizon=horizon, profit_target=cfg.profit_target,
         )
         feat_df = self._feature_eng.transform(
             df, include_target=True, target_type="regime",
@@ -611,6 +629,8 @@ class QuantileStrategy(BaseStrategy):
             horizon=self._best_horizon,
             min_holding_bars=cfg.min_holding_bars,
             min_confidence=self._best_min_confidence,
+            max_p_both=cfg.max_p_both,
+            max_p_neither=cfg.max_p_neither,
             strategy_sl=cfg.strategy_sl,
             dynamic_sizing=dyn,
             min_weight=min_weight,
