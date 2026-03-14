@@ -1,10 +1,10 @@
 strategy:
   name: "quantile_volume"
-  description: "XGBoost path-opportunity volume strategy"
+  description: "XGBoost regime-detection volume strategy"
   parameters:
-    # Prediction horizon (bars) — how far ahead to look for opportunity
-    horizon: 15
-    horizon_candidates: [10, 15, 30]
+    # Prediction horizon (bars)
+    horizon: 10
+    horizon_candidates: [5, 10]
 
     # XGBoost hyperparameters
     n_estimators: 50
@@ -12,22 +12,18 @@ strategy:
     learning_rate: 0.1
     subsample: 0.7
 
-    # Holding management (max_holding_bars = horizon)
+    # Holding management
     min_holding_bars: 2
 
-    # Strategy-level stop-loss: 0.3% (3x the take-profit)
-    # Tighter than engine's 1% hard SL, limits per-trade loss
+    # Strategy-level stop-loss (tighter than engine's 1%)
     strategy_sl: 0.002
 
-    # Risk/reward: minimum P(win)/P(lose) ratio to enter
-    min_ratio: 1.5
-    min_ratio_candidates: [1.3, 1.5, 2.0]
+    # Entry: minimum P(long_only) or P(short_only) to enter
+    # P(signal) - P(both) must also be > 0
+    min_entry_edge: 0.45
+    min_entry_edge_candidates: [0.35, 0.40, 0.45, 0.50, 0.55]
 
-    # Entry: minimum P(opportunity) to consider
-    min_entry_edge: 0.4
-    min_entry_edge_candidates: [0.35, 0.4, 0.5]
-
-    # Dynamic sizing by confidence difference |P(long) - P(short)|
+    # Dynamic sizing by edge = P(signal) - P(both)
     dynamic_sizing: true
     min_position_size: 10000.0
     edge_for_full_size: 0.3
@@ -45,6 +41,8 @@ strategy:
     validator_n_estimators: 100
     validator_max_depth: 4
     train_subsample_step: 1
+    min_ratio: 1.5
+    min_ratio_candidates: []
 
     # Rolling retrain
     retrain_interval: 720    # every 12 hours
@@ -81,7 +79,7 @@ backtest:
   monthly_max_loss: 1500.0
   position_size: 50000.0
   stop_loss: 0.01
-  take_profit: 0.001          # 0.1% — matches fee cost, engine exits here
+  take_profit: 0.001
   signal_as_position: true
   re_entry_after_sl: false
   mode: "volume"

@@ -38,6 +38,7 @@ _EXCLUDE_COLS = frozenset(
         "target",
         "target_long",
         "target_short",
+        "target_regime",
     }
 )
 
@@ -176,7 +177,11 @@ class QuantileFeatureEngineer:
 
         # --- Targets ---
         if include_target:
-            if target_type == "path":
+            if target_type == "regime":
+                features["target_regime"] = self._compute_regime_target(
+                    close, high, low,
+                )
+            elif target_type == "path":
                 tl, ts_ = self._compute_path_targets(
                     close, high, low,
                 )
@@ -235,6 +240,50 @@ class QuantileFeatureEngineer:
             pd.Series(target_long, index=close.index),
             pd.Series(target_short, index=close.index),
         )
+
+    def _compute_regime_target(
+        self,
+        close: pd.Series[float],
+        high: pd.Series[float],
+        low: pd.Series[float],
+    ) -> pd.Series[float]:
+        """Compute 4-class regime target.
+
+        Classes:
+        - 0: long_only — only upside opportunity exists
+        - 1: short_only — only downside opportunity exists
+        - 2: both — both directions reach profit target (dangerous)
+        - 3: neither — no opportunity in either direction
+
+        Returns:
+            Series with values 0/1/2/3 (NaN for insufficient future data).
+        """
+        h = self._horizon
+        pt = self._profit_target
+        n = len(close)
+
+        close_arr = close.values.astype(float)
+        high_arr = high.values.astype(float)
+        low_arr = low.values.astype(float)
+
+        target = np.full(n, np.nan)
+        for i in range(n - h):
+            c = close_arr[i]
+            future_high = np.max(high_arr[i + 1 : i + h + 1])
+            future_low = np.min(low_arr[i + 1 : i + h + 1])
+            can_long = future_high >= c * (1 + pt)
+            can_short = future_low <= c * (1 - pt)
+
+            if can_long and not can_short:
+                target[i] = 0.0
+            elif can_short and not can_long:
+                target[i] = 1.0
+            elif can_long and can_short:
+                target[i] = 2.0
+            else:
+                target[i] = 3.0
+
+        return pd.Series(target, index=close.index)
 
     def get_feature_names(self) -> list[str]:
         """Return the list of feature column names."""
