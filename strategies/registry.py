@@ -10,12 +10,14 @@ from quant_backtest.data.schemas import (
     KDFitConfig,
     KDStrategyConfig,
     ParallelConfig,
+    QuantileStrategyConfig,
     SafetyVolumeStrategyConfig,
     XGBoostStrategyConfig,
 )
 from strategies.glft_ml_strategy import GLFTMLStrategy
 from strategies.glft_strategy import GLFTStrategy
 from strategies.kd_strategy import KDStrategy
+from strategies.quantile_strategy import QuantileStrategy
 from strategies.safety_volume_strategy import (
     SafetyVolumeStrategy,
 )
@@ -80,6 +82,14 @@ def create_strategy(
         glft_config = GLFTStrategyConfig(**params)
         return GLFTStrategy(
             config=glft_config,
+            backtest_engine=engine,
+            parallel_config=p_cfg,
+        )
+
+    if name == "quantile_volume":
+        quantile_config = QuantileStrategyConfig(**params)
+        return QuantileStrategy(
+            config=quantile_config,
             backtest_engine=engine,
             parallel_config=p_cfg,
         )
