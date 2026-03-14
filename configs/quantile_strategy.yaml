@@ -1,0 +1,87 @@
+strategy:
+  name: "quantile_volume"
+  description: "XGBoost path-opportunity volume strategy"
+  parameters:
+    # Prediction horizon (bars) — how far ahead to look for opportunity
+    horizon: 15
+    horizon_candidates: [10, 15, 30]
+
+    # XGBoost hyperparameters
+    n_estimators: 50
+    max_depth: 3
+    learning_rate: 0.1
+    subsample: 0.7
+
+    # Holding management (max_holding_bars = horizon)
+    min_holding_bars: 2
+
+    # Strategy-level stop-loss: 0.3% (3x the take-profit)
+    # Tighter than engine's 1% hard SL, limits per-trade loss
+    strategy_sl: 0.001
+
+    # Entry: minimum P(opportunity) to enter
+    # (reuses min_entry_edge field as min_confidence)
+    min_entry_edge: 0.55
+    min_entry_edge_candidates: [0.5, 0.55, 0.6, 0.65]
+
+    # Dynamic sizing by confidence difference |P(long) - P(short)|
+    dynamic_sizing: true
+    min_position_size: 10000.0
+    edge_for_full_size: 0.3
+    edge_for_full_size_candidates: [0.2, 0.3, 0.5]
+
+    # Position & volume
+    position_size: 50000.0
+    monthly_volume_target: 12500000
+    fee_rate: 0.0005
+
+    # Unused (kept for config compat)
+    quantiles: [0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95]
+    exit_threshold: 0.0
+    exit_threshold_candidates: [0.0]
+    validator_n_estimators: 100
+    validator_max_depth: 4
+    train_subsample_step: 1
+
+    # Rolling retrain
+    retrain_interval: 720    # every 12 hours
+    train_window: 2880       # 2 days of recent history
+
+    # fit() objective
+    target_metric: "total_volume"
+    min_monthly_pnl: -5000
+
+    # DVOL
+    dvol_raw_path: "data/raw/btc_dvol_1m_2024_2025.csv"
+    dvol_processed_path: "data/processed/btc_dvol_1m_2024_2025.parquet"
+
+parallel:
+  reserve_cores: 2
+  safety_factor: 0.6
+  overhead_multiplier: 3.0
+
+# Test interval with DVOL data
+validation:
+  train_start: "2025-09-01"
+  train_end: "2025-09-15"
+  test_start: "2025-09-16"
+  test_end: "2025-09-22"
+  target_metric: "total_return"
+
+backtest:
+  symbol: "BTC/USDT"
+  timeframe: "1m"
+  start_date: "2025-09-01"
+  end_date: "2025-09-22"
+  fees: 0.0005
+  slippage: 0
+  monthly_max_loss: 1500.0
+  position_size: 50000.0
+  stop_loss: 0.01
+  take_profit: 0.001          # 0.1% — matches fee cost, engine exits here
+  signal_as_position: true
+  re_entry_after_sl: false
+  mode: "volume"
+
+data:
+  source: "binance_api"

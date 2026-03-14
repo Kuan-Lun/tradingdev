@@ -155,9 +155,13 @@ def _load_data(
     df, processed_path = manager.load()
 
     # Merge DVOL data when strategy uses implied volatility
+    # or when dvol_processed_path is explicitly set
     strategy_cfg = raw_config["strategy"]
     params = strategy_cfg["parameters"]  # type: ignore[index]
-    if params.get("vol_type") == "implied":
+    needs_dvol = params.get("vol_type") == "implied" or (
+        params.get("dvol_processed_path") and params["dvol_processed_path"] != ""
+    )
+    if needs_dvol:
         loader = DataLoader()
         df = _merge_dvol(df, params, bt_cfg, loader)
 
