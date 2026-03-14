@@ -8,8 +8,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from strategies.registry import create_strategy
 
 from quant_backtest.backtest.pipeline_result import (
     PipelineResult,
@@ -31,7 +34,6 @@ from quant_backtest.data.schemas import (
     ParallelConfig,
     WalkForwardConfig,
 )
-from strategies.registry import create_strategy
 from quant_backtest.utils.cache import save_cached_result
 from quant_backtest.utils.config import load_config
 from quant_backtest.utils.logger import setup_logger
@@ -64,6 +66,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    t_start = time.monotonic()
+
     raw_config = load_config(args.config)
     bt_cfg = BacktestConfig(**raw_config["backtest"])
     parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
@@ -95,6 +99,14 @@ def main() -> None:
             backtest_result=result,
             config_snapshot=raw_config,
         )
+
+    elapsed = time.monotonic() - t_start
+    minutes, seconds = divmod(elapsed, 60)
+    if minutes >= 1:
+        elapsed_str = f"{int(minutes)}m {seconds:.1f}s"
+    else:
+        elapsed_str = f"{seconds:.1f}s"
+    logger.info("Elapsed time: %s", elapsed_str)
 
     cache_file = save_cached_result(pipeline, args.config, processed_path)
     logger.info("Result cached → %s", cache_file)
