@@ -2,6 +2,7 @@
 
 import pandas as pd
 import pytest
+from strategies.kd_strategy import KDStrategy
 
 from quant_backtest.backtest.signal_engine import (
     SignalBacktestEngine,
@@ -10,7 +11,6 @@ from quant_backtest.data.schemas import (
     KDFitConfig,
     KDStrategyConfig,
 )
-from strategies.kd_strategy import KDStrategy
 
 
 class TestKDStrategy:
