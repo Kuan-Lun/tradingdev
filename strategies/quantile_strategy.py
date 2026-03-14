@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger(__name__)
 
-# Grid search tuple: (horizon, min_confidence, edge_for_full_size)
-_ParamTuple = tuple[int, float, float]
+# Grid search tuple: (horizon, min_confidence, min_ratio, edge_for_full_size)
+_ParamTuple = tuple[int, float, float, float]
 
 
 def _train_path_classifiers(
@@ -96,6 +96,8 @@ def _run_path_state_machine(
     horizon: int,
     min_holding_bars: int,
     min_confidence: float,
+    min_ratio: float,
+    take_profit: float,
     strategy_sl: float,
     dynamic_sizing: bool,
     min_weight: float,
@@ -103,17 +105,13 @@ def _run_path_state_machine(
 ) -> tuple[np.ndarray, np.ndarray]:
     """State machine for path-opportunity signals.
 
-    Entry logic:
-    - Long if P(long) > min_confidence AND P(long) > P(short)
-    - Short if P(short) > min_confidence AND P(short) > P(long)
+    Entry uses risk/reward logic:
+    - Compute expected edge = P(win) * TP - P(lose) * SL
+    - Only enter when edge > 0 AND P(win)/P(lose) > min_ratio
+    - Size position proportional to edge
 
     Exit: strategy stop-loss, or horizon reached.
     Take-profit is handled by the engine.
-
-    Args:
-        close: Close price array for strategy-level stop-loss.
-        strategy_sl: Strategy-level stop-loss (e.g. 0.002 = 0.2%).
-            Tighter than the engine's hard SL.
 
     Returns:
         Tuple of (signals, size_weights).
@@ -132,25 +130,41 @@ def _run_path_state_machine(
         ps = p_short[i]
 
         if state == 0:
-            # --- FLAT: evaluate entry ---
-            if pl > min_confidence and pl > ps:
+            # --- FLAT: evaluate entry via risk/reward ---
+            # Long: reward if TP hit, risk if SL hit
+            long_edge = pl * take_profit - ps * strategy_sl
+            short_edge = ps * take_profit - pl * strategy_sl
+            # Ratio: how much more likely is our direction vs opposite
+            long_ratio = pl / max(ps, 0.01)
+            short_ratio = ps / max(pl, 0.01)
+
+            want_long = (
+                long_edge > 0
+                and long_ratio > min_ratio
+                and pl > min_confidence
+            )
+            want_short = (
+                short_edge > 0
+                and short_ratio > min_ratio
+                and ps > min_confidence
+            )
+
+            if want_long and (not want_short or long_edge >= short_edge):
                 state = 1
                 bars_in_pos = 0
                 entry_price = close[i]
                 if dynamic_sizing and edge_for_full_size > 0:
-                    confidence = pl - ps
-                    raw_w = confidence / edge_for_full_size
+                    raw_w = long_edge / edge_for_full_size
                     current_weight = min(max(raw_w, min_weight), 1.0)
                 else:
                     current_weight = 1.0
                 size_weights[i] = current_weight
-            elif ps > min_confidence and ps > pl:
+            elif want_short:
                 state = -1
                 bars_in_pos = 0
                 entry_price = close[i]
                 if dynamic_sizing and edge_for_full_size > 0:
-                    confidence = ps - pl
-                    raw_w = confidence / edge_for_full_size
+                    raw_w = short_edge / edge_for_full_size
                     current_weight = min(max(raw_w, min_weight), 1.0)
                 else:
                     current_weight = 1.0
@@ -194,7 +208,8 @@ def _evaluate_path_combo(
     target: str,
 ) -> tuple[_ParamTuple, dict[str, Any]]:
     """Evaluate a parameter combination for grid search."""
-    horizon, min_confidence, edge_for_full_size = params
+    horizon, min_confidence, min_ratio, edge_for_full_size = params
+    tp = config.fee_rate * 2  # take profit = round-trip fee
 
     p_long, p_short = _predict_opportunities(
         df, feature_names, long_model, short_model,
@@ -214,6 +229,8 @@ def _evaluate_path_combo(
         horizon=horizon,
         min_holding_bars=config.min_holding_bars,
         min_confidence=min_confidence,
+        min_ratio=min_ratio,
+        take_profit=tp,
         strategy_sl=config.strategy_sl,
         dynamic_sizing=dyn,
         min_weight=min_weight,
@@ -256,6 +273,7 @@ class QuantileStrategy(BaseStrategy):
         # Best params from fit()
         self._best_horizon: int = config.horizon
         self._best_min_confidence: float = config.min_entry_edge
+        self._best_min_ratio: float = config.min_ratio
         self._best_edge_for_full_size: float = config.edge_for_full_size
 
         # Train data for rolling retrain
@@ -274,6 +292,9 @@ class QuantileStrategy(BaseStrategy):
         confidence_candidates = (
             cfg.min_entry_edge_candidates or [cfg.min_entry_edge]
         )
+        ratio_candidates = (
+            cfg.min_ratio_candidates or [cfg.min_ratio]
+        )
         efs_candidates: list[float] = (
             cfg.edge_for_full_size_candidates
             if cfg.dynamic_sizing
@@ -283,6 +304,7 @@ class QuantileStrategy(BaseStrategy):
         best_value = -math.inf
         best_horizon = cfg.horizon
         best_confidence = cfg.min_entry_edge
+        best_ratio = cfg.min_ratio
         best_efs = cfg.edge_for_full_size
         target = cfg.target_metric
         min_mp = cfg.min_monthly_pnl
@@ -319,7 +341,8 @@ class QuantileStrategy(BaseStrategy):
             )
 
             grid: list[_ParamTuple] = list(itertools.product(
-                [h], confidence_candidates, efs_candidates,
+                [h], confidence_candidates, ratio_candidates,
+                efs_candidates,
             ))
 
             p_cfg = self._parallel_config
@@ -364,7 +387,8 @@ class QuantileStrategy(BaseStrategy):
                     best_value = float(value)
                     best_horizon = params[0]
                     best_confidence = params[1]
-                    best_efs = params[2]
+                    best_ratio = params[2]
+                    best_efs = params[3]
                     best_long = long_m
                     best_short = short_m
                     best_fe = fe
@@ -378,6 +402,7 @@ class QuantileStrategy(BaseStrategy):
 
         self._best_horizon = best_horizon
         self._best_min_confidence = best_confidence
+        self._best_min_ratio = best_ratio
         self._best_edge_for_full_size = best_efs
         self._long_model = best_long
         self._short_model = best_short
@@ -499,26 +524,45 @@ class QuantileStrategy(BaseStrategy):
                 c = chunk_close[j]
 
                 if sm_state == 0:
-                    if pl > self._best_min_confidence and pl > ps:
+                    tp = cfg.fee_rate * 2
+                    sl = cfg.strategy_sl
+                    mr = self._best_min_ratio
+                    mc = self._best_min_confidence
+                    long_edge = pl * tp - ps * sl
+                    short_edge = ps * tp - pl * sl
+                    long_ratio = pl / max(ps, 0.01)
+                    short_ratio = ps / max(pl, 0.01)
+                    want_long = (
+                        long_edge > 0 and long_ratio > mr and pl > mc
+                    )
+                    want_short = (
+                        short_edge > 0 and short_ratio > mr and ps > mc
+                    )
+
+                    if want_long and (
+                        not want_short or long_edge >= short_edge
+                    ):
                         sm_state = 1
                         sm_bars_in_pos = 0
                         sm_entry_price = c
                         if dyn and self._best_edge_for_full_size > 0:
-                            conf = pl - ps
-                            raw_w = conf / self._best_edge_for_full_size
+                            raw_w = (
+                                long_edge / self._best_edge_for_full_size
+                            )
                             sm_current_weight = min(
                                 max(raw_w, min_weight), 1.0,
                             )
                         else:
                             sm_current_weight = 1.0
                         all_weights[out_idx] = sm_current_weight
-                    elif ps > self._best_min_confidence and ps > pl:
+                    elif want_short:
                         sm_state = -1
                         sm_bars_in_pos = 0
                         sm_entry_price = c
                         if dyn and self._best_edge_for_full_size > 0:
-                            conf = ps - pl
-                            raw_w = conf / self._best_edge_for_full_size
+                            raw_w = (
+                                short_edge / self._best_edge_for_full_size
+                            )
                             sm_current_weight = min(
                                 max(raw_w, min_weight), 1.0,
                             )
@@ -608,6 +652,8 @@ class QuantileStrategy(BaseStrategy):
 
         close_arr = feat_df["close"].astype(float).values
 
+        tp = cfg.fee_rate * 2
+
         signals, size_weights = _run_path_state_machine(
             close=close_arr,
             p_long=p_long,
@@ -615,6 +661,8 @@ class QuantileStrategy(BaseStrategy):
             horizon=self._best_horizon,
             min_holding_bars=cfg.min_holding_bars,
             min_confidence=self._best_min_confidence,
+            min_ratio=self._best_min_ratio,
+            take_profit=tp,
             strategy_sl=cfg.strategy_sl,
             dynamic_sizing=dyn,
             min_weight=min_weight,
@@ -631,5 +679,6 @@ class QuantileStrategy(BaseStrategy):
         params = self._config.model_dump()
         params["best_horizon"] = self._best_horizon
         params["best_min_confidence"] = self._best_min_confidence
+        params["best_min_ratio"] = self._best_min_ratio
         params["best_edge_for_full_size"] = self._best_edge_for_full_size
         return params

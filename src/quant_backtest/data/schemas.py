@@ -398,7 +398,11 @@ class QuantileStrategyConfig(BaseModel):
     # Strategy-level stop-loss (tighter than engine hard SL)
     strategy_sl: float = 0.002
 
-    # Entry threshold
+    # Risk/reward entry: minimum P(win)/P(lose) ratio
+    min_ratio: float = 1.5
+    min_ratio_candidates: list[float] = []
+
+    # Entry threshold (minimum P(opportunity) to consider)
     min_entry_edge: float = 0.0015
     min_entry_edge_candidates: list[float] = []
 
