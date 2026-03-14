@@ -1,10 +1,14 @@
-"""XGBoost path-opportunity volume strategy.
+"""XGBoost regime-detection volume strategy.
 
-Predicts whether a profitable price move (exceeding fee cost) will
-occur within a configurable horizon window, then enters in the
-predicted direction with a take-profit exit.
+Classifies the current market regime into four states:
+- long_only: only upside opportunity (enter long)
+- short_only: only downside opportunity (enter short)
+- both: both directions possible (skip — direction is random)
+- neither: no opportunity (skip)
 
-Uses chunked rolling retrain to adapt to changing market conditions.
+Only enters when the model is confident that exactly one direction
+has a profit opportunity, avoiding the dangerous "both" regime
+where direction is a coin flip.
 """
 
 from __future__ import annotations
@@ -32,91 +36,77 @@ if TYPE_CHECKING:
 
 logger = setup_logger(__name__)
 
-# Grid search tuple: (horizon, min_confidence, min_ratio, edge_for_full_size)
-_ParamTuple = tuple[int, float, float, float]
+# Grid search: (horizon, min_confidence, edge_for_full_size)
+_ParamTuple = tuple[int, float, float]
+
+# Regime class labels
+_LONG_ONLY = 0
+_SHORT_ONLY = 1
+_BOTH = 2
+_NEITHER = 3
 
 
-def _train_path_classifiers(
+def _train_regime_classifier(
     feat_df: pd.DataFrame,
     feature_names: list[str],
     n_estimators: int = 50,
     max_depth: int = 3,
     learning_rate: float = 0.1,
     subsample: float = 0.7,
-) -> tuple[xgb.XGBClassifier, xgb.XGBClassifier]:
-    """Train long and short opportunity classifiers.
+) -> xgb.XGBClassifier:
+    """Train a 4-class regime classifier.
 
-    Returns:
-        Tuple of (long_model, short_model).
+    Ensures all 4 classes are present by adding a tiny synthetic
+    sample for any missing class (prevents XGBoost ValueError).
     """
     x = feat_df[feature_names].values
-    y_long = feat_df["target_long"].values.astype(int)
-    y_short = feat_df["target_short"].values.astype(int)
+    y = feat_df["target_regime"].values.astype(int)
 
-    params = {
-        "n_estimators": n_estimators,
-        "max_depth": max_depth,
-        "learning_rate": learning_rate,
-        "subsample": subsample,
-        "eval_metric": "logloss",
-        "verbosity": 0,
-        "random_state": 42,
-    }
+    # Ensure all 4 classes exist in training data
+    present = set(np.unique(y))
+    if present != {0, 1, 2, 3}:
+        missing = {0, 1, 2, 3} - present
+        x_pad = np.tile(x[:1], (len(missing), 1))
+        y_pad = np.array(sorted(missing), dtype=int)
+        x = np.concatenate([x, x_pad])
+        y = np.concatenate([y, y_pad])
 
-    long_model = xgb.XGBClassifier(**params)
-    long_model.fit(x, y_long, verbose=False)
-
-    short_model = xgb.XGBClassifier(**params)
-    short_model.fit(x, y_short, verbose=False)
-
-    return long_model, short_model
-
-
-def _predict_opportunities(
-    feat_df: pd.DataFrame,
-    feature_names: list[str],
-    long_model: xgb.XGBClassifier,
-    short_model: xgb.XGBClassifier,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Predict P(long opportunity) and P(short opportunity).
-
-    Returns:
-        Tuple of (p_long, p_short) arrays.
-    """
-    x = feat_df[feature_names].values
-    p_long = long_model.predict_proba(x)[:, 1]
-    p_short = short_model.predict_proba(x)[:, 1]
-    return p_long, p_short
+    model = xgb.XGBClassifier(
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        learning_rate=learning_rate,
+        subsample=subsample,
+        num_class=4,
+        objective="multi:softprob",
+        eval_metric="mlogloss",
+        verbosity=0,
+        random_state=42,
+    )
+    model.fit(x, y, verbose=False)
+    return model
 
 
-def _run_path_state_machine(
+def _run_regime_state_machine(
     close: np.ndarray,
-    p_long: np.ndarray,
-    p_short: np.ndarray,
+    proba: np.ndarray,
     horizon: int,
     min_holding_bars: int,
     min_confidence: float,
-    min_ratio: float,
-    take_profit: float,
     strategy_sl: float,
     dynamic_sizing: bool,
     min_weight: float,
     edge_for_full_size: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """State machine for path-opportunity signals.
+    """State machine using regime classification probabilities.
 
-    Entry uses risk/reward logic:
-    - Compute expected edge = P(win) * TP - P(lose) * SL
-    - Only enter when edge > 0 AND P(win)/P(lose) > min_ratio
-    - Size position proportional to edge
-
-    Exit: strategy stop-loss, or horizon reached.
-    Take-profit is handled by the engine.
+    Entry: P(long_only) or P(short_only) > min_confidence.
+    Skip: when P(both) is too high relative to the signal.
+    Size: proportional to P(signal) - P(both).
 
     Returns:
         Tuple of (signals, size_weights).
     """
-    n = len(p_long)
+    n = len(close)
     signals = np.zeros(n, dtype=np.float64)
     size_weights = np.ones(n, dtype=np.float64)
 
@@ -126,30 +116,20 @@ def _run_path_state_machine(
     current_weight = 1.0
 
     for i in range(n):
-        pl = p_long[i]
-        ps = p_short[i]
+        p_lo = proba[i, _LONG_ONLY]
+        p_so = proba[i, _SHORT_ONLY]
+        p_both = proba[i, _BOTH]
 
         if state == 0:
-            # --- FLAT: evaluate entry via risk/reward ---
-            # Long: reward if TP hit, risk if SL hit
-            long_edge = pl * take_profit - ps * strategy_sl
-            short_edge = ps * take_profit - pl * strategy_sl
-            # Ratio: how much more likely is our direction vs opposite
-            long_ratio = pl / max(ps, 0.01)
-            short_ratio = ps / max(pl, 0.01)
+            # Only enter when one direction is clearly dominant
+            # and P(both) is low (not a coin-flip situation)
+            long_edge = p_lo - p_both
+            short_edge = p_so - p_both
 
-            want_long = (
-                long_edge > 0
-                and long_ratio > min_ratio
-                and pl > min_confidence
-            )
-            want_short = (
-                short_edge > 0
-                and short_ratio > min_ratio
-                and ps > min_confidence
-            )
+            want_long = p_lo > min_confidence and long_edge > 0
+            want_short = p_so > min_confidence and short_edge > 0
 
-            if want_long and (not want_short or long_edge >= short_edge):
+            if want_long and (not want_short or long_edge > short_edge):
                 state = 1
                 bars_in_pos = 0
                 entry_price = close[i]
@@ -170,7 +150,6 @@ def _run_path_state_machine(
                     current_weight = 1.0
                 size_weights[i] = current_weight
         else:
-            # --- IN POSITION ---
             bars_in_pos += 1
             size_weights[i] = current_weight
 
@@ -178,7 +157,7 @@ def _run_path_state_machine(
                 signals[i] = float(state)
                 continue
 
-            # Strategy-level stop-loss (tighter than engine SL)
+            # Strategy stop-loss
             if entry_price > 0 and strategy_sl > 0:
                 pnl_pct = state * (close[i] - entry_price) / entry_price
                 if pnl_pct < -strategy_sl:
@@ -186,7 +165,7 @@ def _run_path_state_machine(
                     signals[i] = 0.0
                     continue
 
-            # Horizon exit (TP is handled by the engine)
+            # Horizon exit
             if bars_in_pos >= horizon:
                 state = 0
                 signals[i] = 0.0
@@ -197,40 +176,33 @@ def _run_path_state_machine(
     return signals, size_weights
 
 
-def _evaluate_path_combo(
+def _evaluate_regime_combo(
     df: pd.DataFrame,
     feature_names: list[str],
-    long_model: xgb.XGBClassifier,
-    short_model: xgb.XGBClassifier,
+    model: xgb.XGBClassifier,
     config: QuantileStrategyConfig,
     params: _ParamTuple,
     engine: BaseBacktestEngine,
     target: str,
 ) -> tuple[_ParamTuple, dict[str, Any]]:
     """Evaluate a parameter combination for grid search."""
-    horizon, min_confidence, min_ratio, edge_for_full_size = params
-    tp = config.fee_rate * 2  # take profit = round-trip fee
+    horizon, min_confidence, edge_for_full_size = params
 
-    p_long, p_short = _predict_opportunities(
-        df, feature_names, long_model, short_model,
-    )
+    x = df[feature_names].values
+    proba = model.predict_proba(x)
+    close_arr = df["close"].astype(float).values
 
     dyn = config.dynamic_sizing
     min_weight = (
         config.min_position_size / config.position_size if dyn else 0.0
     )
 
-    close_arr = df["close"].astype(float).values
-
-    signals, size_weights = _run_path_state_machine(
+    signals, size_weights = _run_regime_state_machine(
         close=close_arr,
-        p_long=p_long,
-        p_short=p_short,
+        proba=proba,
         horizon=horizon,
         min_holding_bars=config.min_holding_bars,
         min_confidence=min_confidence,
-        min_ratio=min_ratio,
-        take_profit=tp,
         strategy_sl=config.strategy_sl,
         dynamic_sizing=dyn,
         min_weight=min_weight,
@@ -246,11 +218,12 @@ def _evaluate_path_combo(
 
 
 class QuantileStrategy(BaseStrategy):
-    """Path-opportunity strategy for volume trading.
+    """Regime-detection strategy for volume trading.
 
-    Predicts whether price will move enough to cover fees within
-    a horizon window, enters in the predicted direction, and
-    relies on the engine's take-profit to capture the move.
+    Classifies the market into four regimes (long_only, short_only,
+    both, neither) and only enters when exactly one direction has
+    a profitable opportunity.  Avoids the dangerous "both" regime
+    where direction is essentially random.
 
     Supports chunked rolling retrain.
     """
@@ -266,21 +239,19 @@ class QuantileStrategy(BaseStrategy):
         self._parallel_config = parallel_config
 
         self._feature_eng: QuantileFeatureEngineer | None = None
-        self._long_model: xgb.XGBClassifier | None = None
-        self._short_model: xgb.XGBClassifier | None = None
+        self._regime_model: xgb.XGBClassifier | None = None
         self._feature_names: list[str] = []
 
         # Best params from fit()
         self._best_horizon: int = config.horizon
         self._best_min_confidence: float = config.min_entry_edge
-        self._best_min_ratio: float = config.min_ratio
         self._best_edge_for_full_size: float = config.edge_for_full_size
 
         # Train data for rolling retrain
         self._train_df: pd.DataFrame | None = None
 
     def fit(self, df: pd.DataFrame) -> None:
-        """Train classifiers and grid-search strategy parameters."""
+        """Train regime classifier and grid-search parameters."""
         if self._backtest_engine is None:
             logger.warning("No backtest engine; skipping fit()")
             return
@@ -292,9 +263,6 @@ class QuantileStrategy(BaseStrategy):
         confidence_candidates = (
             cfg.min_entry_edge_candidates or [cfg.min_entry_edge]
         )
-        ratio_candidates = (
-            cfg.min_ratio_candidates or [cfg.min_ratio]
-        )
         efs_candidates: list[float] = (
             cfg.edge_for_full_size_candidates
             if cfg.dynamic_sizing
@@ -304,28 +272,29 @@ class QuantileStrategy(BaseStrategy):
         best_value = -math.inf
         best_horizon = cfg.horizon
         best_confidence = cfg.min_entry_edge
-        best_ratio = cfg.min_ratio
         best_efs = cfg.edge_for_full_size
         target = cfg.target_metric
         min_mp = cfg.min_monthly_pnl
 
-        best_long: xgb.XGBClassifier | None = None
-        best_short: xgb.XGBClassifier | None = None
+        best_model: xgb.XGBClassifier | None = None
         best_fe: QuantileFeatureEngineer | None = None
         best_fnames: list[str] = []
 
         for h in horizons:
-            logger.info("Training path classifiers for horizon=%d", h)
+            logger.info("Training regime classifier for horizon=%d", h)
             fe = QuantileFeatureEngineer(
                 horizon=h, profit_target=cfg.fee_rate * 2,
             )
-            feat_df = fe.transform(df, include_target=True, target_type="path")
+            feat_df = fe.transform(
+                df, include_target=True, target_type="regime",
+            )
             fnames = [
                 f for f in fe.get_feature_names()
-                if f not in ("target_long", "target_short", "target")
+                if f not in ("target_regime", "target_long",
+                             "target_short", "target")
             ]
 
-            long_m, short_m = _train_path_classifiers(
+            regime_model = _train_regime_classifier(
                 feat_df, fnames,
                 n_estimators=cfg.n_estimators,
                 max_depth=cfg.max_depth,
@@ -333,16 +302,18 @@ class QuantileStrategy(BaseStrategy):
                 subsample=cfg.subsample,
             )
 
-            pos_long = feat_df["target_long"].mean()
-            pos_short = feat_df["target_short"].mean()
-            logger.info(
-                "horizon=%d: long_rate=%.1f%%, short_rate=%.1f%%",
-                h, pos_long * 100, pos_short * 100,
-            )
+            # Log class distribution
+            y = feat_df["target_regime"].values.astype(int)
+            for cls, name in [
+                (0, "long_only"), (1, "short_only"),
+                (2, "both"), (3, "neither"),
+            ]:
+                logger.info(
+                    "  %s: %.1f%%", name, (y == cls).mean() * 100,
+                )
 
             grid: list[_ParamTuple] = list(itertools.product(
-                [h], confidence_candidates, ratio_candidates,
-                efs_candidates,
+                [h], confidence_candidates, efs_candidates,
             ))
 
             p_cfg = self._parallel_config
@@ -362,8 +333,8 @@ class QuantileStrategy(BaseStrategy):
             results: list[tuple[_ParamTuple, dict[str, Any]]] = Parallel(
                 n_jobs=n_jobs,
             )(
-                delayed(_evaluate_path_combo)(
-                    feat_df, fnames, long_m, short_m,
+                delayed(_evaluate_regime_combo)(
+                    feat_df, fnames, regime_model,
                     cfg, combo, self._backtest_engine, target,
                 )
                 for combo in grid
@@ -387,10 +358,8 @@ class QuantileStrategy(BaseStrategy):
                     best_value = float(value)
                     best_horizon = params[0]
                     best_confidence = params[1]
-                    best_ratio = params[2]
-                    best_efs = params[3]
-                    best_long = long_m
-                    best_short = short_m
+                    best_efs = params[2]
+                    best_model = regime_model
                     best_fe = fe
                     best_fnames = fnames
 
@@ -402,15 +371,13 @@ class QuantileStrategy(BaseStrategy):
 
         self._best_horizon = best_horizon
         self._best_min_confidence = best_confidence
-        self._best_min_ratio = best_ratio
         self._best_edge_for_full_size = best_efs
-        self._long_model = best_long
-        self._short_model = best_short
+        self._regime_model = best_model
         self._feature_eng = best_fe
         self._feature_names = best_fnames
 
         logger.info(
-            "Fit complete: horizon=%d, confidence=%.4f, "
+            "Fit complete: horizon=%d, confidence=%.2f, "
             "efs=%.4f (%s=%.4f)",
             best_horizon, best_confidence, best_efs,
             target, best_value,
@@ -420,7 +387,7 @@ class QuantileStrategy(BaseStrategy):
         """Generate signals with chunked rolling retrain."""
         cfg = self._config
 
-        if self._long_model is None or self._feature_eng is None:
+        if self._regime_model is None or self._feature_eng is None:
             return self._generate_signals_fixed(df)
 
         if self._train_df is None:
@@ -457,17 +424,11 @@ class QuantileStrategy(BaseStrategy):
             abs_start = test_offset + chunk_start
             abs_end = test_offset + chunk_end
 
-            # Training window
             train_begin = max(0, abs_start - train_window)
             train_slice = combined.iloc[train_begin:abs_start].copy()
 
             if len(train_slice) < 200:
-                logger.warning(
-                    "Chunk %d: train too small (%d), using fallback",
-                    ci, len(train_slice),
-                )
-                long_m = self._long_model
-                short_m = self._short_model
+                regime_model = self._regime_model
                 fnames = self._feature_names
                 fe = self._feature_eng
             else:
@@ -480,13 +441,16 @@ class QuantileStrategy(BaseStrategy):
                     profit_target=cfg.fee_rate * 2,
                 )
                 train_feat = fe.transform(
-                    train_slice, include_target=True, target_type="path",
+                    train_slice,
+                    include_target=True,
+                    target_type="regime",
                 )
                 fnames = self._feature_names or [
                     f for f in fe.get_feature_names()
-                    if f not in ("target_long", "target_short", "target")
+                    if f not in ("target_regime", "target_long",
+                                 "target_short", "target")
                 ]
-                long_m, short_m = _train_path_classifiers(
+                regime_model = _train_regime_classifier(
                     train_feat, fnames,
                     n_estimators=cfg.n_estimators,
                     max_depth=cfg.max_depth,
@@ -494,60 +458,50 @@ class QuantileStrategy(BaseStrategy):
                     subsample=cfg.subsample,
                 )
 
-            # Predict on chunk with context for features
+            # Predict on chunk with context
             context_start = max(0, abs_start - 60)
             predict_ctx = combined.iloc[context_start:abs_end].copy()
-            predict_feat = fe.transform(
-                predict_ctx, include_target=False,
-            )
+            predict_feat = fe.transform(predict_ctx, include_target=False)
 
-            # Align to chunk bars only
             if "timestamp" in predict_feat.columns:
                 chunk_ts = combined.iloc[abs_start]["timestamp"]
                 mask = predict_feat["timestamp"] >= chunk_ts
                 predict_feat = predict_feat[mask].reset_index(drop=True)
 
-            p_long, p_short = _predict_opportunities(
-                predict_feat, fnames, long_m, short_m,
-            )
+            x = predict_feat[fnames].values
+            proba = regime_model.predict_proba(x)
             chunk_close = predict_feat["close"].astype(float).values
 
             # Run state machine for this chunk
-            chunk_len = len(p_long)
+            chunk_len = len(proba)
             for j in range(chunk_len):
                 out_idx = chunk_start + j
                 if out_idx >= test_len:
                     break
 
-                pl = p_long[j]
-                ps = p_short[j]
+                p_lo = proba[j, _LONG_ONLY]
+                p_so = proba[j, _SHORT_ONLY]
+                p_both = proba[j, _BOTH]
                 c = chunk_close[j]
 
                 if sm_state == 0:
-                    tp = cfg.fee_rate * 2
-                    sl = cfg.strategy_sl
-                    mr = self._best_min_ratio
+                    long_edge = p_lo - p_both
+                    short_edge = p_so - p_both
                     mc = self._best_min_confidence
-                    long_edge = pl * tp - ps * sl
-                    short_edge = ps * tp - pl * sl
-                    long_ratio = pl / max(ps, 0.01)
-                    short_ratio = ps / max(pl, 0.01)
-                    want_long = (
-                        long_edge > 0 and long_ratio > mr and pl > mc
-                    )
-                    want_short = (
-                        short_edge > 0 and short_ratio > mr and ps > mc
-                    )
+
+                    want_long = p_lo > mc and long_edge > 0
+                    want_short = p_so > mc and short_edge > 0
 
                     if want_long and (
-                        not want_short or long_edge >= short_edge
+                        not want_short or long_edge > short_edge
                     ):
                         sm_state = 1
                         sm_bars_in_pos = 0
                         sm_entry_price = c
                         if dyn and self._best_edge_for_full_size > 0:
                             raw_w = (
-                                long_edge / self._best_edge_for_full_size
+                                long_edge
+                                / self._best_edge_for_full_size
                             )
                             sm_current_weight = min(
                                 max(raw_w, min_weight), 1.0,
@@ -561,7 +515,8 @@ class QuantileStrategy(BaseStrategy):
                         sm_entry_price = c
                         if dyn and self._best_edge_for_full_size > 0:
                             raw_w = (
-                                short_edge / self._best_edge_for_full_size
+                                short_edge
+                                / self._best_edge_for_full_size
                             )
                             sm_current_weight = min(
                                 max(raw_w, min_weight), 1.0,
@@ -577,10 +532,11 @@ class QuantileStrategy(BaseStrategy):
                         all_signals[out_idx] = float(sm_state)
                         continue
 
-                    # Strategy-level stop-loss
                     if sm_entry_price > 0 and cfg.strategy_sl > 0:
                         pnl_pct = (
-                            sm_state * (c - sm_entry_price) / sm_entry_price
+                            sm_state
+                            * (c - sm_entry_price)
+                            / sm_entry_price
                         )
                         if pnl_pct < -cfg.strategy_sl:
                             sm_state = 0
@@ -607,7 +563,7 @@ class QuantileStrategy(BaseStrategy):
     def _generate_signals_fixed(
         self, df: pd.DataFrame,
     ) -> pd.DataFrame:
-        """Fallback: train once on df and generate signals."""
+        """Fallback: train once on df."""
         cfg = self._config
         horizon = self._best_horizon
 
@@ -615,13 +571,14 @@ class QuantileStrategy(BaseStrategy):
             horizon=horizon, profit_target=cfg.fee_rate * 2,
         )
         feat_df = self._feature_eng.transform(
-            df, include_target=True, target_type="path",
+            df, include_target=True, target_type="regime",
         )
         self._feature_names = [
             f for f in self._feature_eng.get_feature_names()
-            if f not in ("target_long", "target_short", "target")
+            if f not in ("target_regime", "target_long",
+                         "target_short", "target")
         ]
-        self._long_model, self._short_model = _train_path_classifiers(
+        self._regime_model = _train_regime_classifier(
             feat_df, self._feature_names,
             n_estimators=cfg.n_estimators,
             max_depth=cfg.max_depth,
@@ -636,33 +593,24 @@ class QuantileStrategy(BaseStrategy):
         """Generate signals using the current fixed model."""
         cfg = self._config
         assert self._feature_eng is not None  # noqa: S101
-        assert self._long_model is not None  # noqa: S101
-        assert self._short_model is not None  # noqa: S101
+        assert self._regime_model is not None  # noqa: S101
 
         feat_df = self._feature_eng.transform(df, include_target=False)
-        p_long, p_short = _predict_opportunities(
-            feat_df, self._feature_names,
-            self._long_model, self._short_model,
-        )
+        x = feat_df[self._feature_names].values
+        proba = self._regime_model.predict_proba(x)
+        close_arr = feat_df["close"].astype(float).values
 
         dyn = cfg.dynamic_sizing
         min_weight = (
             cfg.min_position_size / cfg.position_size if dyn else 0.0
         )
 
-        close_arr = feat_df["close"].astype(float).values
-
-        tp = cfg.fee_rate * 2
-
-        signals, size_weights = _run_path_state_machine(
+        signals, size_weights = _run_regime_state_machine(
             close=close_arr,
-            p_long=p_long,
-            p_short=p_short,
+            proba=proba,
             horizon=self._best_horizon,
             min_holding_bars=cfg.min_holding_bars,
             min_confidence=self._best_min_confidence,
-            min_ratio=self._best_min_ratio,
-            take_profit=tp,
             strategy_sl=cfg.strategy_sl,
             dynamic_sizing=dyn,
             min_weight=min_weight,
@@ -679,6 +627,5 @@ class QuantileStrategy(BaseStrategy):
         params = self._config.model_dump()
         params["best_horizon"] = self._best_horizon
         params["best_min_confidence"] = self._best_min_confidence
-        params["best_min_ratio"] = self._best_min_ratio
         params["best_edge_for_full_size"] = self._best_edge_for_full_size
         return params
