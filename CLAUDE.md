@@ -118,6 +118,7 @@ quant-backtest/
 ### 策略介面
 
 所有策略必須繼承 `BaseStrategy`，實作以下方法：
+
 - `generate_signals()`: 產生進出場信號
 - `get_parameters()`: 回傳策略參數定義
 
@@ -174,6 +175,7 @@ quant-backtest/
 ### Commit 訊息格式
 
 分支上的 commit 使用以下前綴：
+
 - `feat:` 新功能
 - `fix:` 修復
 - `refactor:` 重構
