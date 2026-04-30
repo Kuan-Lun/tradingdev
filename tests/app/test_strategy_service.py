@@ -137,6 +137,22 @@ def test_strategy_service_rejects_banned_import(tmp_path: Path) -> None:
     assert "banned_import" in codes
 
 
+def test_validate_rejects_runnable_strategy(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+
+    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+    assert service.validate("fixture_strategy")["success"] is True
+    assert service.dry_run("fixture_strategy")["status"] == "runnable"
+
+    validated = service.validate("fixture_strategy")
+
+    assert validated["success"] is False
+    assert validated["status"] == "runnable"
+    assert "only accepts draft or validated" in validated["error"]
+
+
 def test_strategy_service_validate_reports_syntax_errors(tmp_path: Path) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)

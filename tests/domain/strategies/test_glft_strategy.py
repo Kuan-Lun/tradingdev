@@ -9,8 +9,10 @@ import pytest
 from pydantic import ValidationError
 
 from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
+from tradingdev.domain.strategies.bundled.glft_strategy.config import (
+    GLFTStrategyConfig,
+)
 from tradingdev.domain.strategies.bundled.glft_strategy.strategy import GLFTStrategy
-from tradingdev.domain.strategies.schemas import GLFTStrategyConfig
 
 if TYPE_CHECKING:
     import pandas as pd

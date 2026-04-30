@@ -31,6 +31,7 @@ src/tradingdev/
     data/
     indicators/
     ml/
+    optimization/
     validation/
   adapters/
     cli/
@@ -62,7 +63,8 @@ flowchart TB
     loader --> generated[workspace generated strategies]
     data --> manager[domain.data.DataManager]
     data --> requirements[DataRequirement]
-    backtest --> engines[domain.backtest engines]
+    backtest --> engines[domain.backtest.engines facade]
+    app --> optimization[domain.optimization grid search]
     jobs --> workers[mcp.workers subprocesses]
     jobs --> sqlite[(workspace/tradingdev.sqlite)]
     runs --> sqlite
@@ -88,9 +90,11 @@ stateDiagram-v2
     running --> failed
 ```
 
-Generated strategies must live in `workspace/generated_strategies/`. Bundled
-strategies live next to their git-versioned configs under
-`src/tradingdev/domain/strategies/bundled/`.
+Generated strategies must live in `workspace/generated_strategies/`.
+`StrategyService` persists generated strategy metadata as typed
+`StrategyMetadata` / `ValidationResult` models. Bundled strategies live next to
+their git-versioned configs and parameter config models under
+`src/tradingdev/domain/strategies/bundled/<strategy>/`.
 
 ## Storage
 
@@ -137,8 +141,11 @@ SQLite stores metadata. Filesystem stores generated code/config, feature
 requests, data caches, and run artifacts. Each completed run records result,
 config snapshot, optional strategy source snapshot, dataset fingerprint, and
 dashboard `pipeline_result` artifacts under `workspace/runs/<run_id>/`; that
-directory is linked from the `runs.artifact_dir` column. The dashboard reads
-run metadata and pipeline artifacts through `RunService` / `ArtifactService`.
+directory is linked from the `runs.artifact_dir` column. CLI pipeline-result
+cache files are stored under `workspace/data/processed/cache` (or
+`$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through
+`ArtifactService`. The dashboard reads run metadata and pipeline artifacts
+through `RunService` / `ArtifactService`.
 
 ## Domain Contracts
 
@@ -147,8 +154,11 @@ run metadata and pipeline artifacts through `RunService` / `ArtifactService`.
 - Data requirements live in YAML `data.requirements`.
 - `inspect_dataset(config_path)` reports market cache availability and feature
   source missing-value status from the same data root used by backtests.
-- `start_backtest` rejects configs with `validation:`; use `start_walk_forward`.
+- `start_backtest` / `start_walk_forward` use the typed `BacktestRunConfig`
+  schema to choose simple vs walk-forward execution.
 - Generated strategies must pass static policy checks before execution.
+  `validate_strategy` and `dry_run_strategy` currently execute generated Python
+  code during contract checks; sandbox isolation is future work.
 - `cancel_job` marks active jobs as `cancelled` and terminates the worker process
   when a live PID is known.
 - Runtime cache defaults to `workspace/data/`; `TRADINGDEV_DATA_ROOT` can override

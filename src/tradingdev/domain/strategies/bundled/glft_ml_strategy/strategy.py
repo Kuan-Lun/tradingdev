@@ -10,15 +10,15 @@ Designed for limit-order execution (maker fees).
 
 from __future__ import annotations
 
-import itertools
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
 
 from tradingdev.domain.ml.features.direction_features import DirectionFeatureEngineer
 from tradingdev.domain.ml.models.autogluon_model import AutoGluonDirectionModel
+from tradingdev.domain.optimization.grid_search import tuple_grid
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -27,7 +27,9 @@ if TYPE_CHECKING:
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
     from tradingdev.domain.backtest.schemas import ParallelConfig
-    from tradingdev.domain.strategies.schemas import GLFTMLStrategyConfig
+    from tradingdev.domain.strategies.bundled.glft_ml_strategy.config import (
+        GLFTMLStrategyConfig,
+    )
 
 logger = setup_logger(__name__)
 
@@ -248,16 +250,17 @@ class GLFTMLStrategy(BaseStrategy):
         if cfg.vol_type == "implied" and "dvol" in feat_df.columns:
             dvol = np.asarray(feat_df["dvol"].astype(float).values)
 
-        grid: list[_GLFTParamTuple] = list(
-            itertools.product(
+        grid: list[_GLFTParamTuple] = [
+            cast("_GLFTParamTuple", combo)
+            for combo in tuple_grid(
                 cfg.gamma_candidates,
                 cfg.kappa_candidates,
                 cfg.ema_window_candidates,
                 cfg.max_holding_bars_candidates,
                 cfg.min_entry_edge_candidates,
                 cfg.profit_target_ratio_candidates,
-            ),
-        )
+            )
+        ]
 
         # Also search confidence threshold
         conf_candidates = cfg.confidence_threshold_candidates

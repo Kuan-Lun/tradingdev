@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 
 
 class RunService:
@@ -19,7 +19,7 @@ class RunService:
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._workspace.ensure()
-        self._store = store or SQLiteStore(self._workspace)
+        self._store = store or get_sqlite_store(self._workspace)
 
     def list_runs(self) -> list[dict[str, Any]]:
         """List completed runs."""

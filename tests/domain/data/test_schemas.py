@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.schemas import OHLCVBar
-from tradingdev.domain.strategies.schemas import KDStrategyConfig
+from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 
 
 class TestOHLCVBar:

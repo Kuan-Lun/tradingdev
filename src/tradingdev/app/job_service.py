@@ -13,6 +13,7 @@ from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.app import job_store
 from tradingdev.app.data_service import DataService
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.shared.utils.config import load_config
 
 
@@ -58,7 +59,8 @@ class JobService:
         if config_path is None:
             return {"job_id": "", "message": error, "data_available": False}
         raw_config = load_config(config_path)
-        if "validation" in raw_config:
+        run_config = BacktestRunConfig.model_validate(raw_config)
+        if run_config.is_walk_forward:
             return {
                 "job_id": "",
                 "message": (
@@ -90,7 +92,8 @@ class JobService:
         if config_path is None:
             return {"job_id": "", "message": error, "data_available": False}
         raw_config = load_config(config_path)
-        if "validation" not in raw_config:
+        run_config = BacktestRunConfig.model_validate(raw_config)
+        if not run_config.is_walk_forward:
             return {
                 "job_id": "",
                 "message": "Config has no validation section for walk-forward.",

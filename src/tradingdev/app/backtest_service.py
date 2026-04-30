@@ -6,14 +6,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.app.data_service import DataService
+from tradingdev.domain.backtest.engines import create_backtest_engine
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.backtest.schemas import (
     BacktestConfig,
+    BacktestRunConfig,
     ParallelConfig,
     WalkForwardConfig,
 )
-from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
-from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
@@ -71,11 +71,11 @@ class BacktestService:
     ) -> BacktestRun:
         """Run a YAML config as simple backtest or walk-forward validation."""
         raw_config: dict[str, Any] = load_config(config_path)
-        has_walk_forward = "validation" in raw_config
-        if has_walk_forward and not walk_forward:
+        run_config = BacktestRunConfig.model_validate(raw_config)
+        if run_config.is_walk_forward and not walk_forward:
             msg = "Config contains validation settings; use start_walk_forward."
             raise ValueError(msg)
-        if walk_forward and not has_walk_forward:
+        if walk_forward and not run_config.is_walk_forward:
             msg = "Config has no validation section for walk-forward."
             raise ValueError(msg)
         return self.run_raw_config(raw_config, walk_forward=walk_forward)
@@ -129,29 +129,7 @@ class BacktestService:
 
     def create_engine(self, config: BacktestConfig) -> BaseBacktestEngine:
         """Create a backtest engine from config."""
-        if config.mode == "volume":
-            return VolumeBacktestEngine(
-                fees=config.fees,
-                slippage=config.slippage,
-                freq=config.timeframe,
-                position_size=config.position_size,
-                stop_loss=config.stop_loss,
-                take_profit=config.take_profit,
-                signal_as_position=config.signal_as_position,
-                re_entry_after_sl=config.re_entry_after_sl,
-                monthly_max_loss=config.monthly_max_loss,
-            )
-        return SignalBacktestEngine(
-            init_cash=config.init_cash,
-            fees=config.fees,
-            slippage=config.slippage,
-            freq=config.timeframe,
-            position_size=config.position_size,
-            stop_loss=config.stop_loss,
-            take_profit=config.take_profit,
-            signal_as_position=config.signal_as_position,
-            re_entry_after_sl=config.re_entry_after_sl,
-        )
+        return create_backtest_engine(config)
 
     def serialize_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
         """Return the JSON-relevant metrics subset."""

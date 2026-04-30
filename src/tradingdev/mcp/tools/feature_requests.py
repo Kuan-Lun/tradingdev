@@ -7,10 +7,15 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+    from tradingdev.app.capability_service import CapabilityService
     from tradingdev.app.feature_request_service import FeatureRequestService
 
 
-def register(mcp: FastMCP, service: FeatureRequestService) -> None:
+def register(
+    mcp: FastMCP,
+    service: FeatureRequestService,
+    capability_service: CapabilityService,
+) -> None:
     """Register feature-request tools."""
 
     @mcp.tool()
@@ -18,12 +23,13 @@ def register(mcp: FastMCP, service: FeatureRequestService) -> None:
         title: str,
         description: str,
         source_tool: str = "",
-    ) -> dict[str, str | bool]:
+    ) -> dict[str, object]:
         """Record an unsupported feature request artifact."""
-        return service.record(
-            title=title,
-            description=description,
-            source_tool=source_tool,
+        return capability_service.unsupported(
+            tool=source_tool or "record_feature_request",
+            reason="Requested capability is not currently supported.",
+            feature_title=title,
+            feature_description=description,
         )
 
     @mcp.tool()

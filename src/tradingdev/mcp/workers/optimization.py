@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import inspect
-import itertools
 import json
 import logging
 import os
@@ -35,6 +34,11 @@ from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.optimization.grid_search import (
+    GridSearchResult,
+    best_result,
+    parameter_grid,
+)
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 from tradingdev.shared.utils.logger import setup_logger
@@ -264,13 +268,8 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         )
         return
 
-    # Build all combinations
-    param_names = list(param_ranges.keys())
-    param_values = list(param_ranges.values())
-    all_combos = [
-        dict(zip(param_names, combo, strict=True))
-        for combo in itertools.product(*param_values)
-    ]
+    # Build all combinations through the domain grid-search helper.
+    all_combos = parameter_grid(param_ranges)
     total_combinations = len(all_combos)
     logger.info("Total combinations: %d", total_combinations)
 
@@ -433,9 +432,13 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     logger.info("All %d combos evaluated", total_combinations)
 
     # --- Phase 8: select best params ---
-    best_params, best_metric_value, best_train_metrics = max(
-        all_results, key=lambda x: x[1]
+    best = best_result(
+        GridSearchResult(params=params, metric_value=value, metrics=metrics)
+        for params, value, metrics in all_results
     )
+    best_params = best.params
+    best_metric_value = best.metric_value
+    best_train_metrics = best.metrics
     logger.info(
         "Best params: %s (%s=%.4f)",
         json.dumps(best_params),

@@ -11,6 +11,8 @@ from tradingdev.adapters.storage.filesystem import WorkspacePaths, now_iso
 if TYPE_CHECKING:
     from pathlib import Path
 
+_STORE_CACHE: dict[str, SQLiteStore] = {}
+
 
 class SQLiteStore:
     """Small SQLite adapter with automatic schema initialization."""
@@ -328,3 +330,14 @@ class SQLiteStore:
         }
         if column not in columns:
             conn.execute(f"alter table {table} add column {column} {column_type}")
+
+
+def get_sqlite_store(workspace: WorkspacePaths | None = None) -> SQLiteStore:
+    """Return the process-local SQLiteStore for a workspace."""
+    resolved_workspace = workspace or WorkspacePaths()
+    db_path = str((resolved_workspace.root / "tradingdev.sqlite").resolve())
+    store = _STORE_CACHE.get(db_path)
+    if store is None:
+        store = SQLiteStore(resolved_workspace)
+        _STORE_CACHE[db_path] = store
+    return store

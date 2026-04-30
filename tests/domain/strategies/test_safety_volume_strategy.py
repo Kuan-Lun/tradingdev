@@ -9,10 +9,12 @@ import pytest
 from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
+from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
+    SafetyVolumeStrategyConfig,
+)
 from tradingdev.domain.strategies.bundled.safety_volume_strategy.strategy import (
     SafetyVolumeStrategy,
 )
-from tradingdev.domain.strategies.schemas import SafetyVolumeStrategyConfig
 
 # ── Helpers ──────────────────────────────────────────────────
 

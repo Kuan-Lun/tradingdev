@@ -13,9 +13,8 @@ where direction is a coin flip.
 
 from __future__ import annotations
 
-import itertools
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
@@ -23,6 +22,7 @@ import xgboost as xgb
 from joblib import Parallel, delayed
 
 from tradingdev.domain.ml.features.quantile_features import QuantileFeatureEngineer
+from tradingdev.domain.optimization.grid_search import tuple_grid
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
@@ -32,7 +32,9 @@ if TYPE_CHECKING:
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
     from tradingdev.domain.backtest.schemas import ParallelConfig
-    from tradingdev.domain.strategies.schemas import QuantileStrategyConfig
+    from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
+        QuantileStrategyConfig,
+    )
 
 logger = setup_logger(__name__)
 
@@ -325,13 +327,14 @@ class QuantileStrategy(BaseStrategy):
                     float(np.mean(y == cls)) * 100,
                 )
 
-            grid: list[_ParamTuple] = list(
-                itertools.product(
+            grid: list[_ParamTuple] = [
+                cast("_ParamTuple", combo)
+                for combo in tuple_grid(
                     [h],
                     confidence_candidates,
                     efs_candidates,
                 )
-            )
+            ]
 
             p_cfg = self._parallel_config
             n_jobs = estimate_n_jobs(

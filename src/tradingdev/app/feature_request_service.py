@@ -10,7 +10,7 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_file,
     write_json,
 )
-from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 
 
 class FeatureRequestService:
@@ -24,7 +24,7 @@ class FeatureRequestService:
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._workspace.ensure()
-        self._store = store or SQLiteStore(self._workspace)
+        self._store = store or get_sqlite_store(self._workspace)
 
     def record(
         self,

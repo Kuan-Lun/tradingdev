@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 
 from tradingdev.adapters.cli.report import format_metrics_report
+from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.domain.validation.report import format_walk_forward_report
-from tradingdev.shared.utils.cache import save_cached_result
 from tradingdev.shared.utils.config import load_config
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -52,7 +52,13 @@ def main() -> None:
     )
     logger.info("Elapsed time: %s", elapsed_str)
 
-    cache_file = save_cached_result(run.pipeline, args.config, run.processed_path)
+    cache_file = ArtifactService().cache_pipeline_result(
+        pipeline=run.pipeline,
+        config_path=args.config,
+        processed_path=run.processed_path,
+        metrics=run.metrics,
+        strategy_id=str(strategy_cfg.get("id", "")),
+    )
     logger.info("Result cached -> %s", cache_file)
 
 

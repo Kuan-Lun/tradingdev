@@ -4,10 +4,12 @@ import pandas as pd
 import pytest
 
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
+from tradingdev.domain.strategies.bundled.xgboost_strategy.config import (
+    XGBoostStrategyConfig,
+)
 from tradingdev.domain.strategies.bundled.xgboost_strategy.strategy import (
     XGBoostStrategy,
 )
-from tradingdev.domain.strategies.schemas import XGBoostStrategyConfig
 
 
 class TestXGBoostStrategy:

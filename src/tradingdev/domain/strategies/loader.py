@@ -8,15 +8,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import yaml
+
 from tradingdev.domain.backtest.schemas import ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
-from tradingdev.domain.strategies.schemas import (
+from tradingdev.domain.strategies.bundled.glft_ml_strategy.config import (
     GLFTMLStrategyConfig,
+)
+from tradingdev.domain.strategies.bundled.glft_strategy.config import (
     GLFTStrategyConfig,
+)
+from tradingdev.domain.strategies.bundled.kd_strategy.config import (
     KDFitConfig,
     KDStrategyConfig,
+)
+from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
     QuantileStrategyConfig,
+)
+from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
     SafetyVolumeStrategyConfig,
+)
+from tradingdev.domain.strategies.bundled.xgboost_strategy.config import (
     XGBoostStrategyConfig,
 )
 
@@ -38,57 +50,6 @@ class StrategyModuleSpec:
 
 class StrategyLoader:
     """Load bundled or workspace-generated strategies through one contract."""
-
-    _BUNDLED_CLASS_BY_ID = {
-        "kd_strategy": (
-            "tradingdev.domain.strategies.bundled.kd_strategy.strategy",
-            "KDStrategy",
-        ),
-        "kd_crossover": (
-            "tradingdev.domain.strategies.bundled.kd_strategy.strategy",
-            "KDStrategy",
-        ),
-        "xgboost_strategy": (
-            "tradingdev.domain.strategies.bundled.xgboost_strategy.strategy",
-            "XGBoostStrategy",
-        ),
-        "xgboost_direction": (
-            "tradingdev.domain.strategies.bundled.xgboost_strategy.strategy",
-            "XGBoostStrategy",
-        ),
-        "safety_volume_strategy": (
-            "tradingdev.domain.strategies.bundled.safety_volume_strategy.strategy",
-            "SafetyVolumeStrategy",
-        ),
-        "safety_first_volume": (
-            "tradingdev.domain.strategies.bundled.safety_volume_strategy.strategy",
-            "SafetyVolumeStrategy",
-        ),
-        "glft_strategy": (
-            "tradingdev.domain.strategies.bundled.glft_strategy.strategy",
-            "GLFTStrategy",
-        ),
-        "glft_market_making": (
-            "tradingdev.domain.strategies.bundled.glft_strategy.strategy",
-            "GLFTStrategy",
-        ),
-        "quantile_strategy": (
-            "tradingdev.domain.strategies.bundled.quantile_strategy.strategy",
-            "QuantileStrategy",
-        ),
-        "quantile_volume": (
-            "tradingdev.domain.strategies.bundled.quantile_strategy.strategy",
-            "QuantileStrategy",
-        ),
-        "glft_ml_strategy": (
-            "tradingdev.domain.strategies.bundled.glft_ml_strategy.strategy",
-            "GLFTMLStrategy",
-        ),
-        "glft_ml": (
-            "tradingdev.domain.strategies.bundled.glft_ml_strategy.strategy",
-            "GLFTMLStrategy",
-        ),
-    }
 
     def __init__(self, *, workspace_root: Path | None = None) -> None:
         self._workspace_root = workspace_root or Path("workspace").resolve()
@@ -187,7 +148,7 @@ class StrategyLoader:
     def load_class(self, strategy_cfg: dict[str, Any]) -> type[BaseStrategy]:
         """Resolve a strategy class from bundled metadata or generated source."""
         strategy_id = str(strategy_cfg.get("id") or strategy_cfg.get("name") or "")
-        bundled = self._BUNDLED_CLASS_BY_ID.get(strategy_id)
+        bundled = self._bundled_class_by_id().get(strategy_id)
         if bundled is not None:
             module_name, class_name = bundled
             module = importlib.import_module(module_name)
@@ -213,6 +174,28 @@ class StrategyLoader:
             msg = f"{class_name} must inherit from BaseStrategy"
             raise TypeError(msg)
         return cast("type[BaseStrategy]", cls)
+
+    def _bundled_class_by_id(self) -> dict[str, tuple[str, str]]:
+        """Discover bundled strategy classes from bundled config files."""
+        bundled_root = Path(__file__).resolve().parent / "bundled"
+        result: dict[str, tuple[str, str]] = {}
+        for config_path in sorted(bundled_root.glob("*/config.yaml")):
+            module_name = (
+                "tradingdev.domain.strategies.bundled."
+                f"{config_path.parent.name}.strategy"
+            )
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
+            if not isinstance(strategy, dict):
+                continue
+            class_name = strategy.get("class_name") or strategy.get("class")
+            if not isinstance(class_name, str) or not class_name:
+                continue
+            result[config_path.parent.name] = (module_name, class_name)
+            strategy_id = strategy.get("id") or strategy.get("name")
+            if isinstance(strategy_id, str) and strategy_id:
+                result[strategy_id] = (module_name, class_name)
+        return result
 
     def _create_generated(
         self,

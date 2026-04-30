@@ -11,6 +11,7 @@ from mcp.server.fastmcp.server import (  # type: ignore[attr-defined]
 )
 
 from tradingdev.app.artifact_service import ArtifactService
+from tradingdev.app.capability_service import CapabilityService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.feature_request_service import FeatureRequestService
 from tradingdev.app.job_service import JobService
@@ -52,6 +53,7 @@ def _register_tools() -> None:
     run_service = RunService()
     artifact_service = ArtifactService(strategy_service=strategy_service)
     feature_request_service = FeatureRequestService()
+    capability_service = CapabilityService(feature_request_service)
 
     strategy.register(mcp, strategy_service, _PACKAGE_ROOT)
     data.register(mcp, data_service)
@@ -60,7 +62,7 @@ def _register_tools() -> None:
     jobs.register(mcp, job_service)
     runs.register(mcp, run_service)
     artifacts.register(mcp, artifact_service)
-    feature_requests.register(mcp, feature_request_service)
+    feature_requests.register(mcp, feature_request_service, capability_service)
 
 
 _register_tools()

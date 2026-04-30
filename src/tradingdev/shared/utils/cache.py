@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import pickle
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
+
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
 
 if TYPE_CHECKING:
     from tradingdev.domain.backtest.pipeline_result import (
@@ -27,7 +30,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path("data/cache")
+CACHE_DIR: Path | None = None
+
+
+def cache_dir() -> Path:
+    """Return the workspace-aligned pipeline result cache directory."""
+    if CACHE_DIR is not None:
+        return CACHE_DIR
+    data_root = os.environ.get("TRADINGDEV_DATA_ROOT")
+    if data_root:
+        return Path(data_root).expanduser().resolve() / "processed" / "cache"
+    return WorkspacePaths().processed_data / "cache"
 
 
 def _run_git(*args: str, cwd: Path) -> str | None:
@@ -116,7 +129,7 @@ def load_cached_result(
 ) -> PipelineResult | None:
     """Load a cached PipelineResult if one exists for this key."""
     key = compute_cache_key(config_path, processed_path)
-    cache_file = CACHE_DIR / f"{key}.pkl"
+    cache_file = cache_dir() / f"{key}.pkl"
     if not cache_file.exists():
         return None
     try:
@@ -138,9 +151,10 @@ def save_cached_result(
     processed_path: Path,
 ) -> Path:
     """Persist a PipelineResult to disk. Returns the cache file path."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    directory = cache_dir()
+    directory.mkdir(parents=True, exist_ok=True)
     key = compute_cache_key(config_path, processed_path)
-    cache_file = CACHE_DIR / f"{key}.pkl"
+    cache_file = directory / f"{key}.pkl"
     with open(cache_file, "wb") as f:
         pickle.dump(result, f)
     logger.info("Saved result cache to %s", cache_file.name)
@@ -149,10 +163,11 @@ def save_cached_result(
 
 def clear_cache() -> int:
     """Remove all cached results. Returns number of files removed."""
-    if not CACHE_DIR.exists():
+    directory = cache_dir()
+    if not directory.exists():
         return 0
     count = 0
-    for f in CACHE_DIR.glob("*.pkl"):
+    for f in directory.glob("*.pkl"):
         f.unlink()
         count += 1
     return count

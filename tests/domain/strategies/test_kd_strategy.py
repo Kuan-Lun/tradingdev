@@ -6,8 +6,11 @@ import pytest
 from tradingdev.domain.backtest.signal_engine import (
     SignalBacktestEngine,
 )
+from tradingdev.domain.strategies.bundled.kd_strategy.config import (
+    KDFitConfig,
+    KDStrategyConfig,
+)
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
-from tradingdev.domain.strategies.schemas import KDFitConfig, KDStrategyConfig
 
 
 class TestKDStrategy:

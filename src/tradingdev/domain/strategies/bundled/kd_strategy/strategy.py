@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import itertools
 from typing import TYPE_CHECKING, Any
 
 from joblib import Parallel, delayed
 
 from tradingdev.domain.indicators.kd import KDIndicator
+from tradingdev.domain.optimization.grid_search import tuple_grid
 from tradingdev.domain.strategies.base import BaseStrategy
-from tradingdev.domain.strategies.schemas import KDStrategyConfig
+from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         BaseBacktestEngine,
     )
     from tradingdev.domain.backtest.schemas import ParallelConfig
-    from tradingdev.domain.strategies.schemas import KDFitConfig
+    from tradingdev.domain.strategies.bundled.kd_strategy.config import KDFitConfig
 
 logger = setup_logger(__name__)
 
@@ -75,14 +75,12 @@ class KDStrategy(BaseStrategy):
         engine = self._backtest_engine
         target = self._fit_config.target_metric
 
-        grid = list(
-            itertools.product(
-                self._fit_config.k_period_range,
-                self._fit_config.d_period_range,
-                self._fit_config.smooth_k_range,
-                self._fit_config.overbought_range,
-                self._fit_config.oversold_range,
-            )
+        grid = tuple_grid(
+            self._fit_config.k_period_range,
+            self._fit_config.d_period_range,
+            self._fit_config.smooth_k_range,
+            self._fit_config.overbought_range,
+            self._fit_config.oversold_range,
         )
 
         p_cfg = self._parallel_config

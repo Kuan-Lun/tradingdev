@@ -20,55 +20,22 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_text,
     write_json,
 )
-from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.strategies.schemas import (
+    StrategyDiagnostic,
+    StrategyMetadata,
+    StrategyStatus,
+    ValidationResult,
+)
+from tradingdev.domain.strategies.validator import (
+    StrategyValidator,
+    diagnostic,
+    has_error,
+)
 
 _VALID_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
-_BANNED_IMPORTS = {
-    "os",
-    "sys",
-    "subprocess",
-    "socket",
-    "requests",
-    "httpx",
-    "ccxt",
-    "shutil",
-    "pathlib",
-}
-_ALLOWED_IMPORT_ROOTS = {
-    "__future__",
-    "collections",
-    "dataclasses",
-    "datetime",
-    "enum",
-    "math",
-    "statistics",
-    "typing",
-    "typing_extensions",
-    "numpy",
-    "pandas",
-    "tradingdev",
-}
-_BANNED_CALLS = {
-    "open",
-    "eval",
-    "exec",
-    "__import__",
-}
-_BANNED_ATTR_CALLS = {
-    "chmod",
-    "chown",
-    "mkdir",
-    "remove",
-    "rename",
-    "replace",
-    "rmdir",
-    "rmtree",
-    "unlink",
-    "write_bytes",
-    "write_text",
-}
 
 
 @dataclass(frozen=True)
@@ -93,8 +60,9 @@ class StrategyService:
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._loader = StrategyLoader(workspace_root=self._workspace.root)
+        self._validator = StrategyValidator()
         self._workspace.ensure()
-        self._store = store or SQLiteStore(self._workspace)
+        self._store = store or get_sqlite_store(self._workspace)
 
     def save_draft(
         self,
@@ -176,21 +144,20 @@ class StrategyService:
 
         source_path.write_text(code, encoding="utf-8")
         config_path.write_text(normalized_yaml, encoding="utf-8")
-        metadata = {
-            "strategy_id": strategy_id,
-            "class_name": class_name,
-            "artifact_type": "generated_strategy",
-            "status": "draft",
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-            "request_summary": request_summary,
-            "source_path": str(source_path),
-            "config_path": str(config_path),
-            "source_hash": sha256_text(code),
-            "config_hash": sha256_text(normalized_yaml),
-            "validation": None,
-        }
-        write_json(metadata_path, metadata)
+        created_at = now_iso()
+        metadata = StrategyMetadata(
+            strategy_id=strategy_id,
+            class_name=class_name,
+            status=StrategyStatus.DRAFT,
+            created_at=created_at,
+            updated_at=created_at,
+            request_summary=request_summary,
+            source_path=str(source_path),
+            config_path=str(config_path),
+            source_hash=sha256_text(code),
+            config_hash=sha256_text(normalized_yaml),
+        )
+        self._write_metadata(metadata_path, metadata)
         return StrategySaveResult(
             success=True,
             strategy_id=strategy_id,
@@ -204,30 +171,41 @@ class StrategyService:
         metadata = self._load_metadata(strategy_id)
         if metadata is None:
             return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
-        source_path = Path(str(metadata["source_path"]))
-        diagnostics: list[dict[str, Any]] = []
-        diagnostics.extend(self._syntax_diagnostics(source_path))
+        if metadata.status not in {StrategyStatus.DRAFT, StrategyStatus.VALIDATED}:
+            return {
+                "success": False,
+                "strategy_id": strategy_id,
+                "status": metadata.status.value,
+                "error": (
+                    "validate_strategy only accepts draft or validated strategies. "
+                    "Use save_strategy to create a new draft before revalidating "
+                    f"{metadata.status.value} strategies."
+                ),
+            }
+        source_path = Path(metadata.source_path)
+        diagnostics: list[StrategyDiagnostic] = []
+        diagnostics.extend(self._validator.syntax_diagnostics(source_path))
         contract: dict[str, Any] = {"diagnostics": [], "signal_analysis": {}}
         if not self._has_error(diagnostics):
-            diagnostics.extend(self._static_policy_scan(source_path))
+            diagnostics.extend(self._validator.static_policy_scan(source_path))
             diagnostics.extend(self._quality_gate_diagnostics(source_path))
             contract = self._run_signal_contract(metadata)
             diagnostics.extend(contract["diagnostics"])
         success = not self._has_error(diagnostics)
-        metadata["validation"] = {
-            "checked_at": now_iso(),
-            "success": success,
-            "diagnostics": diagnostics,
-            "signal_analysis": contract.get("signal_analysis", {}),
-        }
-        metadata["status"] = "validated" if success else "draft"
-        metadata["updated_at"] = now_iso()
-        write_json(self._metadata_path(strategy_id), metadata)
+        metadata.validation = ValidationResult(
+            checked_at=now_iso(),
+            success=success,
+            diagnostics=diagnostics,
+            signal_analysis=contract.get("signal_analysis", {}),
+        )
+        metadata.status = StrategyStatus.VALIDATED if success else StrategyStatus.DRAFT
+        metadata.updated_at = now_iso()
+        self._write_metadata(self._metadata_path(strategy_id), metadata)
         return {
             "success": success,
             "strategy_id": strategy_id,
-            "status": metadata["status"],
-            "diagnostics": diagnostics,
+            "status": metadata.status.value,
+            "diagnostics": [item.model_dump(mode="json") for item in diagnostics],
             "signal_analysis": contract.get("signal_analysis", {}),
         }
 
@@ -236,27 +214,33 @@ class StrategyService:
         metadata = self._load_metadata(strategy_id)
         if metadata is None:
             return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
-        if metadata.get("status") not in {"validated", "runnable", "promoted"}:
+        if metadata.status not in {
+            StrategyStatus.VALIDATED,
+            StrategyStatus.RUNNABLE,
+            StrategyStatus.PROMOTED,
+        }:
             return {
                 "success": False,
                 "error": "dry_run_strategy requires validated strategy status",
             }
         contract = self._run_signal_contract(metadata)
         valid = not self._has_error(contract["diagnostics"])
-        metadata["status"] = "runnable" if valid else metadata["status"]
-        metadata["dry_run"] = {
-            "checked_at": now_iso(),
-            "success": valid,
-            "diagnostics": contract["diagnostics"],
-            "signal_analysis": contract.get("signal_analysis", {}),
-        }
-        metadata["updated_at"] = now_iso()
-        write_json(self._metadata_path(strategy_id), metadata)
+        metadata.status = StrategyStatus.RUNNABLE if valid else metadata.status
+        metadata.dry_run = ValidationResult(
+            checked_at=now_iso(),
+            success=valid,
+            diagnostics=contract["diagnostics"],
+            signal_analysis=contract.get("signal_analysis", {}),
+        )
+        metadata.updated_at = now_iso()
+        self._write_metadata(self._metadata_path(strategy_id), metadata)
         return {
             "success": valid,
             "strategy_id": strategy_id,
-            "status": metadata["status"],
-            "diagnostics": contract["diagnostics"],
+            "status": metadata.status.value,
+            "diagnostics": [
+                item.model_dump(mode="json") for item in contract["diagnostics"]
+            ],
             "signal_analysis": contract.get("signal_analysis", {}),
         }
 
@@ -265,14 +249,14 @@ class StrategyService:
         metadata = self._load_metadata(strategy_id)
         if metadata is None:
             return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
-        if metadata.get("status") != "runnable":
+        if metadata.status != StrategyStatus.RUNNABLE:
             return {
                 "success": False,
                 "error": "Only runnable strategies can be promoted",
             }
-        metadata["status"] = "promoted"
-        metadata["updated_at"] = now_iso()
-        write_json(self._metadata_path(strategy_id), metadata)
+        metadata.status = StrategyStatus.PROMOTED
+        metadata.updated_at = now_iso()
+        self._write_metadata(self._metadata_path(strategy_id), metadata)
         return {"success": True, "strategy_id": strategy_id, "status": "promoted"}
 
     def list_strategies(self) -> list[dict[str, Any]]:
@@ -306,10 +290,15 @@ class StrategyService:
         for metadata_path in sorted(
             self._workspace.generated_strategies.glob("*.json")
         ):
-            metadata = read_json(metadata_path)
+            raw_metadata = read_json(metadata_path)
+            metadata = (
+                StrategyMetadata.model_validate(raw_metadata)
+                if raw_metadata is not None
+                else None
+            )
             if metadata is not None:
-                strategy_id = str(metadata.get("strategy_id", ""))
-                config_path = Path(str(metadata.get("config_path", "")))
+                strategy_id = metadata.strategy_id
+                config_path = Path(metadata.config_path)
                 raw = (
                     yaml.safe_load(config_path.read_text(encoding="utf-8"))
                     if config_path.exists()
@@ -318,12 +307,12 @@ class StrategyService:
                 items.append(
                     {
                         "strategy_id": strategy_id,
-                        "class_name": metadata.get("class_name"),
+                        "class_name": metadata.class_name,
                         "kind": "generated",
-                        "status": metadata.get("status", "draft"),
-                        "source_path": metadata.get("source_path"),
-                        "config_path": metadata.get("config_path"),
-                        "metadata": metadata,
+                        "status": metadata.status.value,
+                        "source_path": metadata.source_path,
+                        "config_path": metadata.config_path,
+                        "metadata": metadata.model_dump(mode="json"),
                         "data_requirements": self._data_requirements(raw),
                         "recent_runs": self._recent_runs(strategy_id),
                     }
@@ -334,15 +323,15 @@ class StrategyService:
         """Read bundled or generated strategy source and config."""
         metadata = self._load_metadata(strategy_id)
         if metadata is not None:
-            source_path = Path(str(metadata["source_path"]))
-            config_path = Path(str(metadata["config_path"]))
+            source_path = Path(metadata.source_path)
+            config_path = Path(metadata.config_path)
             return {
                 "success": True,
                 "strategy_id": strategy_id,
                 "kind": "generated",
                 "source_code": source_path.read_text(encoding="utf-8"),
                 "yaml_config": config_path.read_text(encoding="utf-8"),
-                "metadata": metadata,
+                "metadata": metadata.model_dump(mode="json"),
             }
         bundled = (
             Path(__file__).resolve().parents[1] / "domain" / "strategies" / "bundled"
@@ -369,8 +358,12 @@ class StrategyService:
     def _metadata_path(self, strategy_id: str) -> Path:
         return self._workspace.generated_strategies / f"{strategy_id}.json"
 
-    def _load_metadata(self, strategy_id: str) -> dict[str, Any] | None:
-        return read_json(self._metadata_path(strategy_id))
+    def _load_metadata(self, strategy_id: str) -> StrategyMetadata | None:
+        raw = read_json(self._metadata_path(strategy_id))
+        return StrategyMetadata.model_validate(raw) if raw is not None else None
+
+    def _write_metadata(self, path: Path, metadata: StrategyMetadata) -> None:
+        write_json(path, metadata.model_dump(mode="json"))
 
     def _data_requirements(self, raw_config: object) -> dict[str, Any] | None:
         if not isinstance(raw_config, dict):
@@ -401,125 +394,8 @@ class StrategyService:
                 break
         return recent
 
-    def _syntax_diagnostics(self, source_path: Path) -> list[dict[str, Any]]:
-        source = source_path.read_text(encoding="utf-8")
-        try:
-            ast.parse(source)
-        except SyntaxError as exc:
-            return [
-                self._diagnostic(
-                    code="syntax_error",
-                    phase="syntax",
-                    message=str(exc),
-                    line=exc.lineno,
-                    fix=(
-                        "Fix Python syntax before validation can run static "
-                        "policy checks."
-                    ),
-                )
-            ]
-        return []
-
-    def _static_policy_scan(self, source_path: Path) -> list[dict[str, Any]]:
-        source = source_path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        diagnostics: list[dict[str, Any]] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    root = alias.name.split(".", maxsplit=1)[0]
-                    if root in _BANNED_IMPORTS:
-                        diagnostics.append(
-                            self._diagnostic(
-                                code="banned_import",
-                                phase="static_policy",
-                                message=f"banned import: {root}",
-                                line=node.lineno,
-                                fix=(
-                                    "Remove the import; generated strategies may not "
-                                    "use network, subprocess, or filesystem modules."
-                                ),
-                            )
-                        )
-                    elif root not in _ALLOWED_IMPORT_ROOTS:
-                        diagnostics.append(
-                            self._diagnostic(
-                                code="import_not_allowed",
-                                phase="static_policy",
-                                message=f"import not allowed: {root}",
-                                line=node.lineno,
-                                fix=(
-                                    "Use pandas, numpy, typing, math, datetime, or "
-                                    "tradingdev strategy APIs only."
-                                ),
-                            )
-                        )
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                root = node.module.split(".", maxsplit=1)[0]
-                if root in _BANNED_IMPORTS:
-                    diagnostics.append(
-                        self._diagnostic(
-                            code="banned_import",
-                            phase="static_policy",
-                            message=f"banned import: {root}",
-                            line=node.lineno,
-                            fix=(
-                                "Remove the import; generated strategies may not use "
-                                "network, subprocess, or filesystem modules."
-                            ),
-                        )
-                    )
-                elif root not in _ALLOWED_IMPORT_ROOTS:
-                    diagnostics.append(
-                        self._diagnostic(
-                            code="import_not_allowed",
-                            phase="static_policy",
-                            message=f"import not allowed: {root}",
-                            line=node.lineno,
-                            fix=(
-                                "Use pandas, numpy, typing, math, datetime, or "
-                                "tradingdev strategy APIs only."
-                            ),
-                        )
-                    )
-            elif (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id in _BANNED_CALLS
-            ):
-                diagnostics.append(
-                    self._diagnostic(
-                        code="banned_call",
-                        phase="static_policy",
-                        message=f"banned call: {node.func.id}",
-                        line=node.lineno,
-                        fix=(
-                            "Remove dynamic execution or raw file access from "
-                            "strategy code."
-                        ),
-                    )
-                )
-            elif (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in _BANNED_ATTR_CALLS
-            ):
-                diagnostics.append(
-                    self._diagnostic(
-                        code="banned_attribute_call",
-                        phase="static_policy",
-                        message=f"banned call: {node.func.attr}",
-                        line=node.lineno,
-                        fix=(
-                            "Generated strategies must not create, modify, or "
-                            "delete files."
-                        ),
-                    )
-                )
-        return diagnostics
-
-    def _quality_gate_diagnostics(self, source_path: Path) -> list[dict[str, Any]]:
-        diagnostics: list[dict[str, Any]] = []
+    def _quality_gate_diagnostics(self, source_path: Path) -> list[StrategyDiagnostic]:
+        diagnostics: list[StrategyDiagnostic] = []
         for command, label, timeout in (
             (["uv", "run", "ruff", "check", str(source_path)], "ruff", 30),
             (["uv", "run", "mypy", str(source_path)], "mypy", 60),
@@ -554,13 +430,13 @@ class StrategyService:
                 )
         return diagnostics
 
-    def _run_signal_contract(self, metadata: dict[str, Any]) -> dict[str, Any]:
-        diagnostics: list[dict[str, Any]] = []
+    def _run_signal_contract(self, metadata: StrategyMetadata) -> dict[str, Any]:
+        diagnostics: list[StrategyDiagnostic] = []
         try:
             strategy_cfg = {
-                "id": metadata["strategy_id"],
-                "source_path": metadata["source_path"],
-                "class_name": metadata["class_name"],
+                "id": metadata.strategy_id,
+                "source_path": metadata.source_path,
+                "class_name": metadata.class_name,
             }
             cls = self._loader.load_class(strategy_cfg)
             strategy = self._instantiate_generated(cls, metadata)
@@ -638,9 +514,9 @@ class StrategyService:
     def _instantiate_generated(
         self,
         cls: type[BaseStrategy],
-        metadata: dict[str, Any],
+        metadata: StrategyMetadata,
     ) -> BaseStrategy:
-        config_path = Path(str(metadata["config_path"]))
+        config_path = Path(metadata.config_path)
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         strategy_cfg = raw.get("strategy", {}) if isinstance(raw, dict) else {}
         params = (
@@ -709,18 +585,15 @@ class StrategyService:
         level: str = "error",
         line: int | None = None,
         fix: str | None = None,
-    ) -> dict[str, Any]:
-        diagnostic: dict[str, Any] = {
-            "level": level,
-            "code": code,
-            "phase": phase,
-            "message": message,
-        }
-        if line is not None:
-            diagnostic["line"] = line
-        if fix is not None:
-            diagnostic["fix"] = fix
-        return diagnostic
+    ) -> StrategyDiagnostic:
+        return diagnostic(
+            code=code,
+            phase=phase,
+            message=message,
+            level=level,
+            line=line,
+            fix=fix,
+        )
 
-    def _has_error(self, diagnostics: list[dict[str, Any]]) -> bool:
-        return any(item.get("level", "error") == "error" for item in diagnostics)
+    def _has_error(self, diagnostics: list[StrategyDiagnostic]) -> bool:
+        return has_error(diagnostics)
