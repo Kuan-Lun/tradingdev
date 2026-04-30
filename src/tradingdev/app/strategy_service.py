@@ -214,11 +214,7 @@ class StrategyService:
         metadata = self._load_metadata(strategy_id)
         if metadata is None:
             return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
-        if metadata.status not in {
-            StrategyStatus.VALIDATED,
-            StrategyStatus.RUNNABLE,
-            StrategyStatus.PROMOTED,
-        }:
+        if metadata.status != StrategyStatus.VALIDATED:
             return {
                 "success": False,
                 "error": "dry_run_strategy requires validated strategy status",

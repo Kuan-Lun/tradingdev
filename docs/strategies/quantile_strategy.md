@@ -6,6 +6,21 @@ Source:
 Config:
 `src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml`
 
+## Config Schema
+
+```yaml
+strategy:
+  id: "quantile_volume"
+  class_name: "QuantileStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/quantile_strategy/strategy.py"
+  parameters:
+    horizon: 30
+    horizon_candidates: [15, 30]
+    min_entry_edge_candidates: [0.25, 0.30, 0.35, 0.40]
+    dvol_processed_path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
+    funding_rate_path: "workspace/data/processed/btc_funding_rate_2025.parquet"
+```
+
 ## Intent
 
 This bundled strategy trains an XGBoost regime classifier. It classifies each

@@ -11,14 +11,8 @@ build/
 .venv/
 venv/
 
-# Data files
-data/raw/*
-data/processed/*
-data/cache/
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-data/**/*.csv
-data/**/*.parquet
+# Legacy root-level runtime data path removed from app defaults
+data/
 
 # IDE
 .idea/
@@ -44,5 +38,7 @@ Thumbs.db
 #Claude Code
 .claude/
 
-# TradingDev runtime workspace
+# TradingDev runtime workspace: generated strategies, configs, data, runs, SQLite
 workspace/
+workspace/tradingdev.sqlite
+workspace/data/
