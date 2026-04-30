@@ -25,3 +25,8 @@ def register(mcp: FastMCP, service: ArtifactService) -> None:
     ) -> dict[str, Any]:
         """Return artifact metadata and optional text content."""
         return service.get_artifact(artifact_id, include_content=include_content)
+
+    @mcp.tool()
+    def promote_strategy(strategy_id: str) -> dict[str, Any]:
+        """Promote a runnable generated strategy artifact."""
+        return service.promote_strategy(strategy_id)

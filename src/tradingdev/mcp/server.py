@@ -17,6 +17,7 @@ from tradingdev.app.job_service import JobService
 from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.mcp.prompts import SERVER_INSTRUCTIONS
 from tradingdev.mcp.tools import (
     artifacts,
     backtest,
@@ -36,25 +37,7 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
     ),
-    instructions="""
-You are a quantitative strategy development assistant backed by the local
-TradingDev MCP-first server.
-
-Core workflow
--------------
-1. Call list_strategies before writing new strategy code.
-2. Call get_strategy_contract before writing generated strategy code.
-3. Call save_strategy to store a draft under workspace/generated_strategies/.
-4. Call validate_strategy, then dry_run_strategy.
-5. Call start_backtest for simple configs or start_walk_forward for configs
-   with validation sections.
-6. Poll get_job_status, then inspect list_runs/get_run/list_artifacts as needed.
-
-Generated strategies must remain in workspace/, pass the strategy lifecycle
-checks, and reach runnable or promoted status before execution.
-
-Always reply in the user's language.
-""",
+    instructions=SERVER_INSTRUCTIONS,
 )
 
 
@@ -67,7 +50,7 @@ def _register_tools() -> None:
     )
     optimization_service = OptimizationService(strategy_service=strategy_service)
     run_service = RunService()
-    artifact_service = ArtifactService()
+    artifact_service = ArtifactService(strategy_service=strategy_service)
     feature_request_service = FeatureRequestService()
 
     strategy.register(mcp, strategy_service, _PACKAGE_ROOT)

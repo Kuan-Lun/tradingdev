@@ -10,6 +10,7 @@ adapters 層負責 FastMCP、CLI、dashboard、SQLite、filesystem 與 subproces
 src/tradingdev/
   mcp/
     server.py
+    prompts.py
     schemas.py
     tools/
     workers/
@@ -67,6 +68,8 @@ flowchart TB
     runs --> sqlite
     artifacts --> sqlite
     artifacts --> files[workspace/runs and workspace artifacts]
+    dashboard --> runs
+    dashboard --> artifacts
 ```
 
 ## Strategy Lifecycle
@@ -132,9 +135,10 @@ classDiagram
 
 SQLite stores metadata. Filesystem stores generated code/config, feature
 requests, data caches, and run artifacts. Each completed run records result,
-config snapshot, optional strategy source snapshot, and dataset fingerprint
-artifacts under `workspace/runs/<run_id>/`; that directory is linked from the
-`runs.artifact_dir` column.
+config snapshot, optional strategy source snapshot, dataset fingerprint, and
+dashboard `pipeline_result` artifacts under `workspace/runs/<run_id>/`; that
+directory is linked from the `runs.artifact_dir` column. The dashboard reads
+run metadata and pipeline artifacts through `RunService` / `ArtifactService`.
 
 ## Domain Contracts
 
@@ -145,5 +149,7 @@ artifacts under `workspace/runs/<run_id>/`; that directory is linked from the
   source missing-value status from the same data root used by backtests.
 - `start_backtest` rejects configs with `validation:`; use `start_walk_forward`.
 - Generated strategies must pass static policy checks before execution.
+- `cancel_job` marks active jobs as `cancelled` and terminates the worker process
+  when a live PID is known.
 - Runtime cache defaults to `workspace/data/`; `TRADINGDEV_DATA_ROOT` can override
   raw/processed data root.

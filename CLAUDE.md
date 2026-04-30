@@ -46,7 +46,7 @@ Always use `uv run python`, never bare `python`.
 
 ```text
 src/tradingdev/
-  mcp/                 FastMCP server, schemas, thin tool wrappers, workers
+  mcp/                 FastMCP server, prompts, schemas, thin tool wrappers, workers
   app/                 application services and typed job store facade
   domain/              backtest, data, indicators, strategies, ML, validation
   adapters/            CLI, dashboard, storage, process execution
@@ -77,7 +77,10 @@ tests/                 app/domain/mcp/adapters/integration/shared layered tests
   data root.
 - **Job/run/artifact storage**: metadata lives in `workspace/tradingdev.sqlite`;
   run result, config snapshot, strategy source snapshot, and dataset fingerprint
-  files live under `workspace/runs/<run_id>/`.
+  files live under `workspace/runs/<run_id>/`. Backtest runs also store a
+  `pipeline_result` artifact for the dashboard.
+- **Dashboard data source**: dashboard reads `RunService` / `ArtifactService`,
+  never old cache files directly.
 - **Logging**: use logging helpers, not `print()`.
 
 ## Document Maintenance

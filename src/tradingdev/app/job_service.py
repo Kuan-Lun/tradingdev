@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,16 @@ class JobService:
     """Create and query background jobs."""
 
     _RUNNABLE_STATUSES = {"runnable", "promoted"}
+    _ACTIVE_STATUSES = {
+        "queued",
+        "downloading_data",
+        "running_backtest",
+        "estimating",
+        "pending_confirmation",
+        "optimizing",
+        "testing_oos",
+    }
+    _TERMINAL_STATUSES = {"done", "failed", "cancelled", "estimation_timeout"}
 
     def __init__(
         self,
@@ -228,6 +239,51 @@ class JobService:
             ),
         }
 
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        """Cancel a queued or running background job."""
+        job = job_store.get_job(job_id)
+        if job is None:
+            return {"success": False, "error": f"No job with ID: {job_id}"}
+
+        status = str(job["status"])
+        if status in self._TERMINAL_STATUSES:
+            return {
+                "success": False,
+                "error": f"Job is already terminal: {status}",
+                "status": status,
+            }
+        if status not in self._ACTIVE_STATUSES:
+            return {
+                "success": False,
+                "error": f"Job status is not cancellable: {status}",
+                "status": status,
+            }
+
+        process_terminated = False
+        pid = job.get("pid")
+        if isinstance(pid, int) and self._is_pid_alive(pid):
+            process_terminated, error = self._terminate_pid(pid)
+            if error is not None:
+                return {
+                    "success": False,
+                    "error": error,
+                    "status": status,
+                    "pid": pid,
+                }
+
+        job_store.update_job(
+            job_id,
+            status="cancelled",
+            error="Cancelled by user.",
+            ended_at=datetime.now(UTC).isoformat(),
+        )
+        return {
+            "success": True,
+            "job_id": job_id,
+            "status": "cancelled",
+            "process_terminated": process_terminated,
+        }
+
     def _start_worker(
         self,
         *,
@@ -305,6 +361,23 @@ class JobService:
             return True
         except (ProcessLookupError, PermissionError):
             return False
+
+    def _terminate_pid(self, pid: int) -> tuple[bool, str | None]:
+        try:
+            os.killpg(pid, signal.SIGTERM)
+            return True, None
+        except ProcessLookupError:
+            return False, None
+        except PermissionError:
+            return False, f"Permission denied when terminating process group {pid}"
+        except OSError:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                return True, None
+            except ProcessLookupError:
+                return False, None
+            except PermissionError:
+                return False, f"Permission denied when terminating process {pid}"
 
     def _default_project_root(self) -> Path:
         configured = os.environ.get("TRADINGDEV_PROJECT_ROOT")

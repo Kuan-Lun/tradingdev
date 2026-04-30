@@ -20,6 +20,7 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_text,
     write_json,
 )
+from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.loader import StrategyLoader
 
@@ -85,10 +86,15 @@ class StrategySaveResult:
 class StrategyService:
     """Own strategy draft storage, validation, and listing."""
 
-    def __init__(self, workspace: WorkspacePaths | None = None) -> None:
+    def __init__(
+        self,
+        workspace: WorkspacePaths | None = None,
+        store: SQLiteStore | None = None,
+    ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._loader = StrategyLoader(workspace_root=self._workspace.root)
         self._workspace.ensure()
+        self._store = store or SQLiteStore(self._workspace)
 
     def save_draft(
         self,
@@ -279,14 +285,22 @@ class StrategyService:
             raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
             strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
             if isinstance(strategy, dict):
+                strategy_id = str(strategy.get("id", ""))
                 items.append(
                     {
-                        "strategy_id": strategy.get("id"),
+                        "strategy_id": strategy_id,
                         "class_name": strategy.get("class_name"),
                         "description": strategy.get("description", ""),
                         "kind": "bundled",
                         "status": "promoted",
                         "config_path": str(config_path),
+                        "metadata": {
+                            "version": strategy.get("version"),
+                            "source_path": strategy.get("source_path"),
+                            "parameters": strategy.get("parameters", {}),
+                        },
+                        "data_requirements": self._data_requirements(raw),
+                        "recent_runs": self._recent_runs(strategy_id),
                     }
                 )
         for metadata_path in sorted(
@@ -294,14 +308,24 @@ class StrategyService:
         ):
             metadata = read_json(metadata_path)
             if metadata is not None:
+                strategy_id = str(metadata.get("strategy_id", ""))
+                config_path = Path(str(metadata.get("config_path", "")))
+                raw = (
+                    yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                    if config_path.exists()
+                    else {}
+                )
                 items.append(
                     {
-                        "strategy_id": metadata.get("strategy_id"),
+                        "strategy_id": strategy_id,
                         "class_name": metadata.get("class_name"),
                         "kind": "generated",
                         "status": metadata.get("status", "draft"),
                         "source_path": metadata.get("source_path"),
                         "config_path": metadata.get("config_path"),
+                        "metadata": metadata,
+                        "data_requirements": self._data_requirements(raw),
+                        "recent_runs": self._recent_runs(strategy_id),
                     }
                 )
         return items
@@ -347,6 +371,35 @@ class StrategyService:
 
     def _load_metadata(self, strategy_id: str) -> dict[str, Any] | None:
         return read_json(self._metadata_path(strategy_id))
+
+    def _data_requirements(self, raw_config: object) -> dict[str, Any] | None:
+        if not isinstance(raw_config, dict):
+            return None
+        data = raw_config.get("data", {})
+        if not isinstance(data, dict):
+            return None
+        requirements = data.get("requirements")
+        return requirements if isinstance(requirements, dict) else None
+
+    def _recent_runs(self, strategy_id: str) -> list[dict[str, Any]]:
+        if not strategy_id:
+            return []
+        recent: list[dict[str, Any]] = []
+        for run in self._store.list_runs():
+            if run.get("strategy_id") != strategy_id:
+                continue
+            recent.append(
+                {
+                    "run_id": run["run_id"],
+                    "job_id": run["job_id"],
+                    "created_at": run["created_at"],
+                    "dataset_id": run.get("dataset_id"),
+                    "metrics": run.get("metrics", {}),
+                }
+            )
+            if len(recent) >= 5:
+                break
+        return recent
 
     def _syntax_diagnostics(self, source_path: Path) -> list[dict[str, Any]]:
         source = source_path.read_text(encoding="utf-8")

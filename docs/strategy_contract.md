@@ -92,7 +92,8 @@ data:
    `fix`.
 3. `dry_run_strategy`: performs a lightweight signal dry run, returns
    `signal_analysis`, and marks the strategy runnable when it passes.
-4. `promote_strategy`: marks a runnable generated strategy as promoted.
+4. `promote_strategy`: artifact tool that marks a runnable generated strategy as
+   promoted.
 5. `start_backtest` / `start_walk_forward`: execute only runnable or promoted
    generated strategies, and promoted bundled strategies.
 

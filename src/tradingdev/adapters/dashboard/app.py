@@ -3,21 +3,17 @@
 Launch::
 
     streamlit run src/tradingdev/adapters/dashboard/app.py \
-        -- --config \
-        src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml
+        -- --run-id <run_id>
 
-Requires a cached PipelineResult produced by::
+Requires a completed MCP backtest or walk-forward run with a pipeline_result
+artifact under workspace/runs/<run_id>/.
 
-    uv run python -m tradingdev --config \
-        src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml \
-        --walk-forward
 """
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -39,11 +35,9 @@ from tradingdev.adapters.dashboard.analysis import (
     monthly_volume,
     rolling_mdd_absolute,
 )
+from tradingdev.app.artifact_service import ArtifactService
+from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.schemas import BacktestConfig
-from tradingdev.domain.data.data_manager import DataManager
-from tradingdev.domain.data.schemas import DataConfig
-from tradingdev.shared.utils.cache import load_cached_result
-from tradingdev.shared.utils.config import load_config
 
 # ---------------------------------------------------------------------------
 # Streamlit page config
@@ -67,6 +61,7 @@ TIMEFRAME_MINUTES: dict[str, int] = {
 }
 
 _PIPELINE_KEY = "_pipeline_result"
+_RUN_ID_KEY = "_run_id"
 
 
 def _bars_in_30_days(timeframe: str) -> int:
@@ -74,34 +69,59 @@ def _bars_in_30_days(timeframe: str) -> int:
     return 30 * 24 * 60 // mins
 
 
-def _parse_args() -> Path:
-    """Parse ``--config`` from sys.argv."""
+def _parse_args() -> str | None:
+    """Parse optional ``--run-id`` from sys.argv."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--run-id")
     known, _ = parser.parse_known_args()
-    return Path(known.config)
+    return str(known.run_id) if known.run_id else None
 
 
 # ---------------------------------------------------------------------------
-# Data loading (cache only)
+# Data loading from run/artifact services
 # ---------------------------------------------------------------------------
-def _load_pipeline(config_path: Path) -> PipelineResult:
-    """Load PipelineResult from disk cache. Stops app if not found."""
-    raw_config = load_config(config_path)
-    data_cfg = DataConfig(**raw_config.get("data", {}))
-    bt_cfg = BacktestConfig(**raw_config["backtest"])
-    manager = DataManager(data_config=data_cfg, backtest_config=bt_cfg)
-    processed = manager.effective_processed_path
-    cached = load_cached_result(config_path, processed)
-    if cached is None:
-        st.error(
-            "No cached result found. Run the pipeline first:\n\n"
-            f"```\nuv run python -m tradingdev --config {config_path}\n```"
-        )
+def _resolve_run(
+    run_service: RunService, requested_run_id: str | None
+) -> dict[str, Any]:
+    """Resolve the run selected by CLI argument or Streamlit sidebar."""
+    if requested_run_id:
+        response = run_service.get_run(requested_run_id)
+        if not response.get("success"):
+            st.error(str(response.get("error", "Run not found.")))
+            st.stop()
+            return {}
+        return cast("dict[str, Any]", response["run"])
+
+    runs = run_service.list_runs()
+    if not runs:
+        st.error("No completed runs found in workspace/tradingdev.sqlite.")
+        st.stop()
+        return {}
+
+    with st.sidebar:
+        labels = [
+            (
+                f"{run['run_id']} | {run['strategy_id']} | "
+                f"{run.get('created_at', '')}"
+            )
+            for run in runs
+        ]
+        selected = st.selectbox("Run", labels)
+    return runs[labels.index(selected)]
+
+
+def _load_pipeline(
+    artifact_service: ArtifactService,
+    run_id: str,
+) -> PipelineResult:
+    """Load PipelineResult from the run artifact store. Stops app if missing."""
+    response = artifact_service.load_pipeline_result(run_id)
+    if not response.get("success"):
+        st.error(str(response.get("error", "Pipeline artifact not found.")))
         st.stop()
         return None  # unreachable; st.stop() raises
-    st.toast("Loaded from cache")
-    return cached
+    st.toast("Loaded from run artifacts")
+    return cast("PipelineResult", response["pipeline"])
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +328,7 @@ def _render_charts(  # noqa: PLR0915
 # ---------------------------------------------------------------------------
 def _render_simple(
     pipeline: PipelineResult,
-    config_path: Path,
+    run: dict[str, Any],
 ) -> None:
     """Render dashboard for a simple (non-walk-forward) backtest."""
     raw_config = pipeline.config_snapshot
@@ -319,12 +339,16 @@ def _render_simple(
         return
 
     bt_cfg = BacktestConfig(**raw_config["backtest"])
-    strategy_name = raw_config["strategy"]["name"]
+    strategy_name = (
+        raw_config["strategy"].get("id")
+        or raw_config["strategy"].get("name")
+        or run["strategy_id"]
+    )
     is_volume_mode = result.mode == "volume"
 
     # --- Header
     st.title(f"Backtest Dashboard — {strategy_name}")
-    st.caption(f"Mode: **simple** | Config: `{config_path}`")
+    st.caption(f"Mode: **simple** | Run: `{run['run_id']}`")
 
     # --- Sidebar controls
     with st.sidebar:
@@ -350,17 +374,21 @@ def _render_simple(
 
 def _render_walk_forward(
     pipeline: PipelineResult,
-    config_path: Path,
+    run: dict[str, Any],
 ) -> None:
     """Render dashboard for walk-forward validation results."""
     raw_config = pipeline.config_snapshot
     folds = pipeline.fold_results
     bt_cfg = BacktestConfig(**raw_config["backtest"])
-    strategy_name = raw_config["strategy"]["name"]
+    strategy_name = (
+        raw_config["strategy"].get("id")
+        or raw_config["strategy"].get("name")
+        or run["strategy_id"]
+    )
 
     # --- Header
     st.title(f"Backtest Dashboard — {strategy_name}")
-    st.caption(f"Mode: **walk-forward** | Config: `{config_path}`")
+    st.caption(f"Mode: **walk-forward** | Run: `{run['run_id']}`")
 
     # --- Sidebar controls
     with st.sidebar:
@@ -419,17 +447,25 @@ def _render_walk_forward(
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
-    config_path = _parse_args()
+    requested_run_id = _parse_args()
+    run_service = RunService()
+    artifact_service = ArtifactService()
+    run = _resolve_run(run_service, requested_run_id)
+    run_id = str(run["run_id"])
 
-    if _PIPELINE_KEY not in st.session_state:
-        st.session_state[_PIPELINE_KEY] = _load_pipeline(config_path)
+    if (
+        _PIPELINE_KEY not in st.session_state
+        or st.session_state.get(_RUN_ID_KEY) != run_id
+    ):
+        st.session_state[_RUN_ID_KEY] = run_id
+        st.session_state[_PIPELINE_KEY] = _load_pipeline(artifact_service, run_id)
 
     pipeline: PipelineResult = st.session_state[_PIPELINE_KEY]
 
     if pipeline.mode == "walk_forward":
-        _render_walk_forward(pipeline, config_path)
+        _render_walk_forward(pipeline, run)
     else:
-        _render_simple(pipeline, config_path)
+        _render_simple(pipeline, run)
 
 
 if __name__ == "__main__":
