@@ -52,6 +52,9 @@ Claude Desktop 範例：
 6. `start_backtest` 或 `start_walk_forward`：只接受 runnable/promoted strategy。
 7. `get_job_status`、`list_runs`、`compare_runs`、`list_artifacts` 查詢結果。
 
+`inspect_dataset(config_path)` can be used before a run to inspect declared
+market and feature requirements, feature paths, and missing-value status.
+
 ## MCP Tools
 
 | 類別 | Tools |
@@ -79,7 +82,8 @@ Claude Desktop 範例：
 - Job/run/artifact metadata:
   `workspace/tradingdev.sqlite`
 - Run files:
-  `workspace/runs/<run_id>/`
+  `workspace/runs/<run_id>/` with result, config snapshot, strategy source
+  snapshot, and dataset fingerprint artifacts.
 
 `workspace/` 是 runtime 工作區，不進 wheel。MCP 只能寫入 workspace；git 版控的
 bundled strategy/config 由工程師維護。

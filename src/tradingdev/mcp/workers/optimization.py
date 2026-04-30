@@ -67,7 +67,7 @@ def _fail(job_id: str, error: str) -> None:
         job_id,
         status="failed",
         error=error,
-        end_time=_now_iso(),
+        ended_at=_now_iso(),
     )
 
 
@@ -313,7 +313,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
                 f"Trial run exceeded {_TRIAL_TIMEOUT_SECONDS}s timeout. "
                 "This strategy is too slow for parameter optimization."
             ),
-            end_time=_now_iso(),
+            ended_at=_now_iso(),
         )
         logger.warning("Job %s: trial run timed out", job_id)
         return
@@ -369,7 +369,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             job_id,
             status="failed",
             error="No confirmation received within 30 minutes. Job cancelled.",
-            end_time=_now_iso(),
+            ended_at=_now_iso(),
         )
         logger.warning("Job %s: confirmation timeout", job_id)
         return
@@ -482,7 +482,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         job_store.update_job(
             job_id,
             status="done",
-            end_time=_now_iso(),
+            ended_at=_now_iso(),
             result_path=str(result_path),
             best_params=best_params,
         )

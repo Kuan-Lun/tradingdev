@@ -40,7 +40,7 @@ def _run_backtest(
         job_store.update_job(
             job_id,
             status="done",
-            end_time=_now_iso(),
+            ended_at=_now_iso(),
             result_path=str(result_path),
         )
         logger.info("Job %s done -> %s", job_id, result_path)
@@ -50,7 +50,7 @@ def _run_backtest(
             job_id,
             status="failed",
             error=str(exc),
-            end_time=_now_iso(),
+            ended_at=_now_iso(),
         )
 
 

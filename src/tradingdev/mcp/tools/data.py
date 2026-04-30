@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.domain.backtest.schemas import BacktestConfig
@@ -21,9 +22,10 @@ def register(mcp: FastMCP, service: DataService) -> None:
         return service.list_available_data()
 
     @mcp.tool()
-    def inspect_dataset() -> dict[str, Any]:
+    def inspect_dataset(config_path: str | None = None) -> dict[str, Any]:
         """Inspect the workspace data cache."""
-        return service.inspect_dataset()
+        path = Path(config_path) if config_path else None
+        return service.inspect_dataset(path)
 
     @mcp.tool()
     def ensure_data(

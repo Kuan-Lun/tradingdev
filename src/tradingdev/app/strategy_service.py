@@ -26,6 +26,7 @@ from tradingdev.domain.strategies.loader import StrategyLoader
 _VALID_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _BANNED_IMPORTS = {
     "os",
+    "sys",
     "subprocess",
     "socket",
     "requests",
@@ -34,11 +35,38 @@ _BANNED_IMPORTS = {
     "shutil",
     "pathlib",
 }
+_ALLOWED_IMPORT_ROOTS = {
+    "__future__",
+    "collections",
+    "dataclasses",
+    "datetime",
+    "enum",
+    "math",
+    "statistics",
+    "typing",
+    "typing_extensions",
+    "numpy",
+    "pandas",
+    "tradingdev",
+}
 _BANNED_CALLS = {
     "open",
     "eval",
     "exec",
     "__import__",
+}
+_BANNED_ATTR_CALLS = {
+    "chmod",
+    "chown",
+    "mkdir",
+    "remove",
+    "rename",
+    "replace",
+    "rmdir",
+    "rmtree",
+    "unlink",
+    "write_bytes",
+    "write_text",
 }
 
 
@@ -171,16 +199,20 @@ class StrategyService:
         if metadata is None:
             return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
         source_path = Path(str(metadata["source_path"]))
-        diagnostics = []
-        diagnostics.extend(self._static_policy_scan(source_path))
-        diagnostics.extend(self._quality_gate_diagnostics(source_path))
-        contract = self._run_signal_contract(metadata)
-        diagnostics.extend(contract["diagnostics"])
-        success = len(diagnostics) == 0
+        diagnostics: list[dict[str, Any]] = []
+        diagnostics.extend(self._syntax_diagnostics(source_path))
+        contract: dict[str, Any] = {"diagnostics": [], "signal_analysis": {}}
+        if not self._has_error(diagnostics):
+            diagnostics.extend(self._static_policy_scan(source_path))
+            diagnostics.extend(self._quality_gate_diagnostics(source_path))
+            contract = self._run_signal_contract(metadata)
+            diagnostics.extend(contract["diagnostics"])
+        success = not self._has_error(diagnostics)
         metadata["validation"] = {
             "checked_at": now_iso(),
             "success": success,
             "diagnostics": diagnostics,
+            "signal_analysis": contract.get("signal_analysis", {}),
         }
         metadata["status"] = "validated" if success else "draft"
         metadata["updated_at"] = now_iso()
@@ -190,7 +222,7 @@ class StrategyService:
             "strategy_id": strategy_id,
             "status": metadata["status"],
             "diagnostics": diagnostics,
-            "signal_distribution": contract.get("signal_distribution", {}),
+            "signal_analysis": contract.get("signal_analysis", {}),
         }
 
     def dry_run(self, strategy_id: str) -> dict[str, Any]:
@@ -204,8 +236,14 @@ class StrategyService:
                 "error": "dry_run_strategy requires validated strategy status",
             }
         contract = self._run_signal_contract(metadata)
-        valid = len(contract["diagnostics"]) == 0
+        valid = not self._has_error(contract["diagnostics"])
         metadata["status"] = "runnable" if valid else metadata["status"]
+        metadata["dry_run"] = {
+            "checked_at": now_iso(),
+            "success": valid,
+            "diagnostics": contract["diagnostics"],
+            "signal_analysis": contract.get("signal_analysis", {}),
+        }
         metadata["updated_at"] = now_iso()
         write_json(self._metadata_path(strategy_id), metadata)
         return {
@@ -213,8 +251,7 @@ class StrategyService:
             "strategy_id": strategy_id,
             "status": metadata["status"],
             "diagnostics": contract["diagnostics"],
-            "signal_distribution": contract.get("signal_distribution", {}),
-            "nan_count": contract.get("nan_count", 0),
+            "signal_analysis": contract.get("signal_analysis", {}),
         }
 
     def promote(self, strategy_id: str) -> dict[str, Any]:
@@ -311,23 +348,86 @@ class StrategyService:
     def _load_metadata(self, strategy_id: str) -> dict[str, Any] | None:
         return read_json(self._metadata_path(strategy_id))
 
-    def _static_policy_scan(self, source_path: Path) -> list[dict[str, str]]:
+    def _syntax_diagnostics(self, source_path: Path) -> list[dict[str, Any]]:
+        source = source_path.read_text(encoding="utf-8")
+        try:
+            ast.parse(source)
+        except SyntaxError as exc:
+            return [
+                self._diagnostic(
+                    code="syntax_error",
+                    phase="syntax",
+                    message=str(exc),
+                    line=exc.lineno,
+                    fix=(
+                        "Fix Python syntax before validation can run static "
+                        "policy checks."
+                    ),
+                )
+            ]
+        return []
+
+    def _static_policy_scan(self, source_path: Path) -> list[dict[str, Any]]:
         source = source_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
-        diagnostics: list[dict[str, str]] = []
+        diagnostics: list[dict[str, Any]] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     root = alias.name.split(".", maxsplit=1)[0]
                     if root in _BANNED_IMPORTS:
                         diagnostics.append(
-                            {"level": "error", "message": f"banned import: {root}"}
+                            self._diagnostic(
+                                code="banned_import",
+                                phase="static_policy",
+                                message=f"banned import: {root}",
+                                line=node.lineno,
+                                fix=(
+                                    "Remove the import; generated strategies may not "
+                                    "use network, subprocess, or filesystem modules."
+                                ),
+                            )
+                        )
+                    elif root not in _ALLOWED_IMPORT_ROOTS:
+                        diagnostics.append(
+                            self._diagnostic(
+                                code="import_not_allowed",
+                                phase="static_policy",
+                                message=f"import not allowed: {root}",
+                                line=node.lineno,
+                                fix=(
+                                    "Use pandas, numpy, typing, math, datetime, or "
+                                    "tradingdev strategy APIs only."
+                                ),
+                            )
                         )
             elif isinstance(node, ast.ImportFrom) and node.module:
                 root = node.module.split(".", maxsplit=1)[0]
                 if root in _BANNED_IMPORTS:
                     diagnostics.append(
-                        {"level": "error", "message": f"banned import: {root}"}
+                        self._diagnostic(
+                            code="banned_import",
+                            phase="static_policy",
+                            message=f"banned import: {root}",
+                            line=node.lineno,
+                            fix=(
+                                "Remove the import; generated strategies may not use "
+                                "network, subprocess, or filesystem modules."
+                            ),
+                        )
+                    )
+                elif root not in _ALLOWED_IMPORT_ROOTS:
+                    diagnostics.append(
+                        self._diagnostic(
+                            code="import_not_allowed",
+                            phase="static_policy",
+                            message=f"import not allowed: {root}",
+                            line=node.lineno,
+                            fix=(
+                                "Use pandas, numpy, typing, math, datetime, or "
+                                "tradingdev strategy APIs only."
+                            ),
+                        )
                     )
             elif (
                 isinstance(node, ast.Call)
@@ -335,12 +435,38 @@ class StrategyService:
                 and node.func.id in _BANNED_CALLS
             ):
                 diagnostics.append(
-                    {"level": "error", "message": f"banned call: {node.func.id}"}
+                    self._diagnostic(
+                        code="banned_call",
+                        phase="static_policy",
+                        message=f"banned call: {node.func.id}",
+                        line=node.lineno,
+                        fix=(
+                            "Remove dynamic execution or raw file access from "
+                            "strategy code."
+                        ),
+                    )
+                )
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _BANNED_ATTR_CALLS
+            ):
+                diagnostics.append(
+                    self._diagnostic(
+                        code="banned_attribute_call",
+                        phase="static_policy",
+                        message=f"banned call: {node.func.attr}",
+                        line=node.lineno,
+                        fix=(
+                            "Generated strategies must not create, modify, or "
+                            "delete files."
+                        ),
+                    )
                 )
         return diagnostics
 
-    def _quality_gate_diagnostics(self, source_path: Path) -> list[dict[str, str]]:
-        diagnostics: list[dict[str, str]] = []
+    def _quality_gate_diagnostics(self, source_path: Path) -> list[dict[str, Any]]:
+        diagnostics: list[dict[str, Any]] = []
         for command, label, timeout in (
             (["uv", "run", "ruff", "check", str(source_path)], "ruff", 30),
             (["uv", "run", "mypy", str(source_path)], "mypy", 60),
@@ -355,18 +481,28 @@ class StrategyService:
                 )
             except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
                 diagnostics.append(
-                    {"level": "warning", "message": f"{label} skipped: {exc}"}
+                    self._diagnostic(
+                        code=f"{label}_skipped",
+                        phase="quality_gate",
+                        message=f"{label} skipped: {exc}",
+                        level="warning",
+                    )
                 )
                 continue
             if result.returncode != 0:
                 output = (result.stdout or result.stderr).strip()
                 diagnostics.append(
-                    {"level": "error", "message": f"{label} failed: {output}"}
+                    self._diagnostic(
+                        code=f"{label}_failed",
+                        phase="quality_gate",
+                        message=f"{label} failed: {output}",
+                        fix=f"Fix the {label} diagnostics and save the strategy again.",
+                    )
                 )
         return diagnostics
 
     def _run_signal_contract(self, metadata: dict[str, Any]) -> dict[str, Any]:
-        diagnostics: list[dict[str, str]] = []
+        diagnostics: list[dict[str, Any]] = []
         try:
             strategy_cfg = {
                 "id": metadata["strategy_id"],
@@ -377,7 +513,12 @@ class StrategyService:
             strategy = self._instantiate_generated(cls, metadata)
             if not isinstance(strategy, BaseStrategy):
                 diagnostics.append(
-                    {"level": "error", "message": "strategy must inherit BaseStrategy"}
+                    self._diagnostic(
+                        code="base_strategy_inheritance",
+                        phase="contract",
+                        message="strategy must inherit BaseStrategy",
+                        fix="Make the generated class inherit from BaseStrategy.",
+                    )
                 )
                 return {"diagnostics": diagnostics}
             df = self._fixture_df()
@@ -385,44 +526,60 @@ class StrategyService:
             result = strategy.generate_signals(df)
             if not isinstance(result, pd.DataFrame):
                 diagnostics.append(
-                    {
-                        "level": "error",
-                        "message": "generate_signals must return DataFrame",
-                    }
+                    self._diagnostic(
+                        code="signals_not_dataframe",
+                        phase="contract",
+                        message="generate_signals must return DataFrame",
+                        fix="Return the copied DataFrame with a signal column.",
+                    )
                 )
                 return {"diagnostics": diagnostics}
             if not df.equals(before):
                 diagnostics.append(
-                    {
-                        "level": "error",
-                        "message": "generate_signals must not mutate input",
-                    }
+                    self._diagnostic(
+                        code="input_mutated",
+                        phase="contract",
+                        message="generate_signals must not mutate input",
+                        fix="Start with result = df.copy() and mutate result only.",
+                    )
                 )
             if "signal" not in result.columns:
                 diagnostics.append(
-                    {"level": "error", "message": "result must include signal column"}
+                    self._diagnostic(
+                        code="missing_signal_column",
+                        phase="contract",
+                        message="result must include signal column",
+                        fix="Add result['signal'] with values -1, 0, or 1.",
+                    )
                 )
                 return {"diagnostics": diagnostics}
             signals = result["signal"]
             values = set(signals.dropna().unique())
             if not values.issubset({-1, 0, 1}):
                 diagnostics.append(
-                    {
-                        "level": "error",
-                        "message": "signal values must be limited to -1, 0, and 1",
-                    }
+                    self._diagnostic(
+                        code="invalid_signal_values",
+                        phase="contract",
+                        message="signal values must be limited to -1, 0, and 1",
+                        fix=(
+                            "Map all generated signals to the project convention: "
+                            "-1, 0, 1."
+                        ),
+                    )
                 )
-            distribution = {
-                str(key): int(value)
-                for key, value in signals.value_counts(dropna=False).to_dict().items()
-            }
             return {
                 "diagnostics": diagnostics,
-                "signal_distribution": distribution,
-                "nan_count": int(signals.isna().sum()),
+                "signal_analysis": self._signal_analysis(result),
             }
         except Exception as exc:  # noqa: BLE001
-            diagnostics.append({"level": "error", "message": str(exc)})
+            diagnostics.append(
+                self._diagnostic(
+                    code="contract_execution_error",
+                    phase="contract",
+                    message=str(exc),
+                    fix="Fix the class name, constructor, imports, or signal logic.",
+                )
+            )
             return {"diagnostics": diagnostics}
 
     def _instantiate_generated(
@@ -463,3 +620,54 @@ class StrategyService:
                 "volume": [1000.0 for _ in range(80)],
             }
         )
+
+    def _signal_analysis(self, result: pd.DataFrame) -> dict[str, Any]:
+        signals = result["signal"]
+        distribution = {
+            str(key): int(value)
+            for key, value in signals.value_counts(dropna=False).to_dict().items()
+        }
+        transitions = int(signals.fillna(0).ne(signals.fillna(0).shift()).sum() - 1)
+        active = int(signals.isin([-1, 1]).sum())
+        return {
+            "rows": int(len(result)),
+            "signal_distribution": distribution,
+            "nan_count": int(signals.isna().sum()),
+            "transition_count": max(transitions, 0),
+            "active_signal_ratio": active / max(len(result), 1),
+            "first_timestamp": (
+                str(result["timestamp"].iloc[0])
+                if "timestamp" in result.columns and not result.empty
+                else None
+            ),
+            "last_timestamp": (
+                str(result["timestamp"].iloc[-1])
+                if "timestamp" in result.columns and not result.empty
+                else None
+            ),
+        }
+
+    def _diagnostic(
+        self,
+        *,
+        code: str,
+        phase: str,
+        message: str,
+        level: str = "error",
+        line: int | None = None,
+        fix: str | None = None,
+    ) -> dict[str, Any]:
+        diagnostic: dict[str, Any] = {
+            "level": level,
+            "code": code,
+            "phase": phase,
+            "message": message,
+        }
+        if line is not None:
+            diagnostic["line"] = line
+        if fix is not None:
+            diagnostic["fix"] = fix
+        return diagnostic
+
+    def _has_error(self, diagnostics: list[dict[str, Any]]) -> bool:
+        return any(item.get("level", "error") == "error" for item in diagnostics)

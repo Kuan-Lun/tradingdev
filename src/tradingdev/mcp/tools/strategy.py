@@ -106,12 +106,16 @@ data:
                 "Generated strategies must inherit BaseStrategy, return a DataFrame "
                 "with signal values limited to -1, 0, and 1, and avoid mutating the "
                 "input DataFrame. Use tradingdev.domain.indicators for built-in "
-                "indicators and tradingdev.shared.utils.logger for logging."
+                "indicators and tradingdev.shared.utils.logger for logging. Allowed "
+                "imports are restricted to a small Python/pandas/numpy/tradingdev "
+                "allowlist."
             ),
             "lifecycle": (
                 "save_strategy stores a draft; validate_strategy runs static checks, "
-                "ruff, mypy, inheritance checks, and a smoke signal contract; "
-                "dry_run_strategy promotes validated code to runnable; "
+                "restricted import checks, ruff, mypy, inheritance checks, and a "
+                "smoke signal contract with structured diagnostics; "
+                "dry_run_strategy returns signal_analysis and promotes validated "
+                "code to runnable; "
                 "start_backtest/start_walk_forward accept only runnable or promoted "
                 "generated strategies and promoted bundled strategies."
             ),

@@ -114,11 +114,11 @@ class JobService:
                 job_id,
                 status=status,
                 error="Worker process terminated unexpectedly.",
-                end_time=datetime.now(UTC).isoformat(),
+                ended_at=datetime.now(UTC).isoformat(),
             )
 
-        start_time = datetime.fromisoformat(str(job["start_time"]))
-        elapsed = round((datetime.now(UTC) - start_time).total_seconds(), 1)
+        created_at = datetime.fromisoformat(str(job["created_at"]))
+        elapsed = round((datetime.now(UTC) - created_at).total_seconds(), 1)
         response: dict[str, Any] = {
             "status": status,
             "job_type": job.get("job_type", "backtest"),
@@ -132,7 +132,7 @@ class JobService:
 
         if status == "done":
             result = job_store.load_result(str(job["result_path"]))
-            response["end_time"] = job.get("end_time")
+            response["ended_at"] = job.get("ended_at")
             if job.get("job_type") == "optimization":
                 response.update(
                     {
@@ -187,7 +187,7 @@ class JobService:
         now = datetime.now(UTC)
         summaries = []
         for job in jobs:
-            start_time = datetime.fromisoformat(str(job["start_time"]))
+            created_at = datetime.fromisoformat(str(job["created_at"]))
             summary: dict[str, Any] = {
                 "job_id": job["job_id"],
                 "job_type": job.get("job_type", "backtest"),
@@ -197,7 +197,7 @@ class JobService:
                 "timeframe": job["timeframe"],
                 "start_date": job["start_date"],
                 "end_date": job["end_date"],
-                "elapsed_seconds": round((now - start_time).total_seconds(), 1),
+                "elapsed_seconds": round((now - created_at).total_seconds(), 1),
                 "data_downloaded": job.get("data_downloaded", False),
             }
             if job.get("job_type") == "optimization":

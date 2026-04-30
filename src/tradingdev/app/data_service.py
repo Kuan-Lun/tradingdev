@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
 from tradingdev.domain.data.data_manager import DataManager
 from tradingdev.domain.data.loader import DataLoader
@@ -18,11 +19,10 @@ from tradingdev.domain.data.requirements import (
     MarketDataSpec,
 )
 from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
     import pandas as pd
-
-    from tradingdev.domain.backtest.schemas import BacktestConfig
 
 
 @dataclass(frozen=True)
@@ -48,11 +48,9 @@ class DataService:
         """Build DataConfig with workspace defaults."""
         raw = raw_config.get("data", {})
         data = dict(raw) if isinstance(raw, dict) else {}
-        data_root = os.environ.get("TRADINGDEV_DATA_ROOT")
-        if data_root and "raw_dir" not in data and "processed_dir" not in data:
-            root = Path(data_root).expanduser()
-            data["raw_dir"] = str(root / "raw")
-            data["processed_dir"] = str(root / "processed")
+        raw_dir, processed_dir = self._data_dirs()
+        data.setdefault("raw_dir", str(raw_dir))
+        data.setdefault("processed_dir", str(processed_dir))
         return DataConfig(**data)
 
     def requirements(
@@ -96,7 +94,7 @@ class DataService:
 
     def list_available_data(self) -> list[dict[str, Any]]:
         """List cached OHLCV parquet files from the workspace data root."""
-        processed_dir = self._workspace.processed_data
+        processed_dir = self._processed_data_dir()
         if not processed_dir.exists():
             return []
 
@@ -124,7 +122,7 @@ class DataService:
         end_date: str,
     ) -> bool:
         """Return whether yearly processed parquet files are already cached."""
-        processed_dir = self._workspace.processed_data
+        processed_dir = self._processed_data_dir()
         if not processed_dir.exists():
             return False
         normalized = symbol.replace("/", "").lower()
@@ -140,16 +138,36 @@ class DataService:
                 return False
         return True
 
-    def inspect_dataset(self) -> dict[str, Any]:
-        """Return a lightweight snapshot of cached datasets."""
-        files = []
-        for item in self.list_available_data():
-            files.append(item)
-        return {
-            "data_root": str(self._workspace.root / "data"),
-            "processed_dir": str(self._workspace.processed_data),
-            "datasets": files,
+    def inspect_dataset(self, config_path: Path | None = None) -> dict[str, Any]:
+        """Return cached data plus feature-source status for an optional config."""
+        raw_dir, processed_dir = self._data_dirs()
+        response: dict[str, Any] = {
+            "data_root": str(raw_dir.parent),
+            "raw_dir": str(raw_dir),
+            "processed_dir": str(processed_dir),
+            "datasets": self.list_available_data(),
+            "requirements": None,
+            "market_available": None,
+            "features": [],
         }
+        if config_path is None:
+            return response
+
+        raw_config = load_config(config_path)
+        backtest_config = BacktestConfig(**raw_config["backtest"])
+        requirements = self.requirements(raw_config, backtest_config)
+        response["requirements"] = requirements.model_dump(mode="json")
+        response["market_available"] = self.data_available(
+            backtest_config.symbol,
+            backtest_config.timeframe,
+            backtest_config.start_date.date().isoformat(),
+            backtest_config.end_date.date().isoformat(),
+        )
+        response["features"] = [
+            self._inspect_feature(feature, backtest_config)
+            for feature in requirements.features
+        ]
+        return response
 
     def _merge_feature(
         self,
@@ -172,13 +190,17 @@ class DataService:
             if not feature.path:
                 msg = "funding_rate feature requires data.requirements.features[].path"
                 raise ValueError(msg)
-            feature_df = self._loader.load_parquet(Path(feature.path))
+            feature_df = self._loader.load_parquet(
+                self._resolve_data_path(feature.path)
+            )
             merged = feature_df[["timestamp", feature.column]]
         else:
             if not feature.path:
                 msg = "custom feature requires data.requirements.features[].path"
                 raise ValueError(msg)
-            feature_df = self._loader.load_parquet(Path(feature.path))
+            feature_df = self._loader.load_parquet(
+                self._resolve_data_path(feature.path)
+            )
             merged = feature_df[["timestamp", feature.column]]
 
         result = frame.merge(merged, on="timestamp", how="left")
@@ -191,7 +213,7 @@ class DataService:
         backtest_config: BacktestConfig,
     ) -> pd.DataFrame:
         processed_path = (
-            Path(feature.path)
+            self._resolve_data_path(feature.path)
             if feature.path
             else self._default_dvol_path(backtest_config)
         )
@@ -207,7 +229,7 @@ class DataService:
             end=backtest_config.end_date,
         )
         raw_path = (
-            Path(feature.raw_path)
+            self._resolve_data_path(feature.raw_path)
             if feature.raw_path
             else processed_path.with_suffix(".csv")
         )
@@ -222,10 +244,62 @@ class DataService:
         symbol = backtest_config.symbol.split("/")[0].lower()
         start_year = backtest_config.start_date.year
         end_year = backtest_config.end_date.year
-        return self._workspace.processed_data / (
+        return self._processed_data_dir() / (
             f"{symbol}_dvol_{backtest_config.timeframe}_"
             f"{start_year}_{end_year}.parquet"
         )
+
+    def _data_dirs(self) -> tuple[Path, Path]:
+        data_root = os.environ.get("TRADINGDEV_DATA_ROOT")
+        if data_root:
+            root = Path(data_root).expanduser().resolve()
+            return root / "raw", root / "processed"
+        return self._workspace.raw_data, self._workspace.processed_data
+
+    def _processed_data_dir(self) -> Path:
+        return self._data_dirs()[1]
+
+    def _resolve_data_path(self, value: str | None) -> Path:
+        if not value:
+            msg = "data path is required"
+            raise ValueError(msg)
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path
+        return (Path.cwd() / path).resolve()
+
+    def _inspect_feature(
+        self,
+        feature: FeatureSpec,
+        backtest_config: BacktestConfig,
+    ) -> dict[str, Any]:
+        path = (
+            self._default_dvol_path(backtest_config)
+            if feature.type == "dvol" and not feature.path
+            else self._resolve_data_path(feature.path) if feature.path else None
+        )
+        exists = bool(path and path.exists())
+        missing_values: int | None = None
+        rows: int | None = None
+        if exists and path is not None:
+            try:
+                frame = self._loader.load_parquet(path)
+                rows = len(frame)
+                if feature.column in frame.columns:
+                    missing_values = int(frame[feature.column].isna().sum())
+                elif feature.type == "dvol" and "dvol_close" in frame.columns:
+                    missing_values = int(frame["dvol_close"].isna().sum())
+            except Exception:  # noqa: BLE001
+                missing_values = None
+        return {
+            "type": feature.type,
+            "source": feature.source,
+            "column": feature.column,
+            "path": str(path) if path is not None else None,
+            "exists": exists,
+            "rows": rows,
+            "missing_values": missing_values,
+        }
 
     def _dataset_id(
         self,

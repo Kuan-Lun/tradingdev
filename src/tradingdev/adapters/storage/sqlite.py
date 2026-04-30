@@ -45,8 +45,9 @@ class SQLiteStore:
                     end_date text not null,
                     config_path text not null,
                     pid integer,
-                    start_time text not null,
-                    end_time text,
+                    created_at text not null,
+                    started_at text,
+                    ended_at text,
                     error text,
                     payload text not null
                 );
@@ -84,6 +85,9 @@ class SQLiteStore:
                     foreign key(job_id) references jobs(job_id)
                 );
                 """)
+            self._ensure_column(conn, "jobs", "created_at", "text")
+            self._ensure_column(conn, "jobs", "started_at", "text")
+            self._ensure_column(conn, "jobs", "ended_at", "text")
 
     def upsert_job(self, record: dict[str, Any]) -> None:
         """Insert or replace a job record."""
@@ -93,9 +97,10 @@ class SQLiteStore:
                 """
                 insert into jobs (
                     job_id, job_type, status, strategy_name, symbol, timeframe,
-                    start_date, end_date, config_path, pid, start_time, end_time,
+                    start_date, end_date, config_path, pid, created_at, started_at,
+                    ended_at,
                     error, payload
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(job_id) do update set
                     job_type=excluded.job_type,
                     status=excluded.status,
@@ -106,8 +111,9 @@ class SQLiteStore:
                     end_date=excluded.end_date,
                     config_path=excluded.config_path,
                     pid=excluded.pid,
-                    start_time=excluded.start_time,
-                    end_time=excluded.end_time,
+                    created_at=excluded.created_at,
+                    started_at=excluded.started_at,
+                    ended_at=excluded.ended_at,
                     error=excluded.error,
                     payload=excluded.payload
                 """,
@@ -122,8 +128,9 @@ class SQLiteStore:
                     record["end_date"],
                     record["config_path"],
                     record.get("pid"),
-                    record["start_time"],
-                    record.get("end_time"),
+                    record["created_at"],
+                    record.get("started_at"),
+                    record.get("ended_at"),
                     record.get("error"),
                     payload,
                 ),
@@ -145,7 +152,7 @@ class SQLiteStore:
         """Return all job payloads newest-first."""
         with self.connect() as conn:
             rows = conn.execute(
-                "select payload from jobs order by start_time desc",
+                "select payload from jobs order by created_at desc",
             ).fetchall()
         result: list[dict[str, Any]] = []
         for row in rows:
@@ -174,6 +181,10 @@ class SQLiteStore:
                     metrics, artifact_dir, created_at
                 ) values (?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(run_id) do update set
+                    job_id=excluded.job_id,
+                    strategy_id=excluded.strategy_id,
+                    config_hash=excluded.config_hash,
+                    dataset_id=excluded.dataset_id,
                     metrics=excluded.metrics,
                     artifact_dir=excluded.artifact_dir
                 """,
@@ -303,3 +314,17 @@ class SQLiteStore:
             if isinstance(value, str):
                 result[key] = json.loads(value)
         return result
+
+    def _ensure_column(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        column_type: str,
+    ) -> None:
+        columns = {
+            str(row["name"])
+            for row in conn.execute(f"pragma table_info({table})").fetchall()
+        }
+        if column not in columns:
+            conn.execute(f"alter table {table} add column {column} {column_type}")
