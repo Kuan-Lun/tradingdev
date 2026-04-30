@@ -1,7 +1,7 @@
 [project]
-name = "quant-backtest"
+name = "tradingdev"
 version = "0.1.0"
-description = "Quantitative trading strategy backtesting framework"
+description = "MCP-first quantitative strategy development server"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "vectorbt>=0.28.0",
@@ -14,6 +14,8 @@ dependencies = [
     "pyyaml>=6.0",
     "pyarrow>=15.0",
     "scikit-learn>=1.4",
+    # Checkpoint 1 keeps dashboard and heavy ML as runtime capabilities because
+    # existing MCP and CLI paths can inspect and execute bundled ML strategies.
     "xgboost>=2.0",
     "streamlit>=1.30",
     "plotly>=5.18",
@@ -22,30 +24,27 @@ dependencies = [
     "mcp[cli]>=1.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "ruff>=0.8",
-    "mypy>=1.13",
-    "pandas-stubs",
-    "types-PyYAML",
-]
+[project.scripts]
+tradingdev = "tradingdev.adapters.cli.main:main"
+tradingdev-mcp = "tradingdev.mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/quant_backtest"]
+packages = ["src/tradingdev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "."]
+pythonpath = ["src"]
 
 [dependency-groups]
 dev = [
+    "black>=25.0",
     "mypy>=1.19.1",
     "pandas-stubs>=3.0.0.260204",
+    "pymarkdownlnt>=0.9.31",
     "pytest>=9.0.2",
     "ruff>=0.15.0",
     "types-pyyaml>=6.0.12.20250915",

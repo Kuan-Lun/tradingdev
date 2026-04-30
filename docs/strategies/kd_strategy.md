@@ -73,7 +73,7 @@
 | `overbought` | 80.0 | 超買門檻 |
 | `oversold` | 20.0 | 超賣門檻 |
 
-所有參數定義於 `configs/kd_strategy.yaml`，禁止寫死在程式碼中。
+所有參數定義於 `src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml`，禁止寫死在程式碼中。
 
 ## 已知限制
 
@@ -85,12 +85,12 @@
 ## 執行方式
 
 ```bash
-uv run python -m quant_backtest.main --config configs/kd_strategy.yaml
+uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml
 ```
 
 ## 相關檔案
 
-- 策略實作：`src/quant_backtest/strategies/kd_strategy.py`
-- KD 指標：`src/quant_backtest/indicators/kd.py`
-- 策略配置：`configs/kd_strategy.yaml`
-- Pydantic 模型：`src/quant_backtest/data/schemas.py`（`KDStrategyConfig`）
+- 策略實作：`src/tradingdev/domain/strategies/bundled/kd_strategy/strategy.py`
+- KD 指標：`src/tradingdev/indicators/kd.py`
+- 策略配置：`src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml`
+- Pydantic 模型：`src/tradingdev/data/schemas.py`（`KDStrategyConfig`）

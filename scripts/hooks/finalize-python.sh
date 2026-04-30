@@ -23,7 +23,7 @@
 set -eu
 trap 'exit 2' ERR
 
-PATHS=(src app cli tests scripts)
+PATHS=(src tests scripts)
 
 uv run black "${PATHS[@]}" >&2
 uv run ruff check --fix "${PATHS[@]}" >&2

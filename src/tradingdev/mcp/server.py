@@ -1,0 +1,116 @@
+"""TradingDev FastMCP server."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import (  # type: ignore[attr-defined]
+    TransportSecuritySettings,
+)
+
+from tradingdev.app.artifact_service import ArtifactService
+from tradingdev.app.data_service import DataService
+from tradingdev.app.feature_request_service import FeatureRequestService
+from tradingdev.app.job_service import JobService
+from tradingdev.app.optimization_service import OptimizationService
+from tradingdev.app.run_service import RunService
+from tradingdev.app.strategy_service import StrategyService
+from tradingdev.mcp.tools import (
+    artifacts,
+    backtest,
+    data,
+    feature_requests,
+    jobs,
+    optimization,
+    runs,
+    strategy,
+)
+
+_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+mcp = FastMCP(
+    name="tradingdev",
+    json_response=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
+    instructions="""
+You are a quantitative strategy development assistant backed by the local
+TradingDev MCP-first server.
+
+Core workflow
+-------------
+1. Call list_strategies before writing new strategy code.
+2. Call get_strategy_contract before writing generated strategy code.
+3. Call save_strategy to store a draft under workspace/generated_strategies/.
+4. Call validate_strategy, then dry_run_strategy.
+5. Call start_backtest for simple configs or start_walk_forward for configs
+   with validation sections.
+6. Poll get_job_status, then inspect list_runs/get_run/list_artifacts as needed.
+
+Generated strategies must remain in workspace/, pass the strategy lifecycle
+checks, and reach runnable or promoted status before execution.
+
+Always reply in the user's language.
+""",
+)
+
+
+def _register_tools() -> None:
+    strategy_service = StrategyService()
+    data_service = DataService()
+    job_service = JobService(
+        strategy_service=strategy_service,
+        data_service=data_service,
+    )
+    optimization_service = OptimizationService(strategy_service=strategy_service)
+    run_service = RunService()
+    artifact_service = ArtifactService()
+    feature_request_service = FeatureRequestService()
+
+    strategy.register(mcp, strategy_service, _PACKAGE_ROOT)
+    data.register(mcp, data_service)
+    backtest.register(mcp, job_service)
+    optimization.register(mcp, optimization_service, job_service)
+    jobs.register(mcp, job_service)
+    runs.register(mcp, run_service)
+    artifacts.register(mcp, artifact_service)
+    feature_requests.register(mcp, feature_request_service)
+
+
+_register_tools()
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the TradingDev MCP server."""
+    parser = argparse.ArgumentParser(description="TradingDev MCP Server")
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Run as HTTP server. Default: stdio.",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["sse", "streamable-http"],
+        default="streamable-http",
+        help="HTTP transport when --web is set.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="HTTP port when --web is set.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.web:
+        mcp.settings.port = args.port
+        mcp.run(transport=args.transport)
+    else:
+        mcp.run()
+
+
+if __name__ == "__main__":
+    main()

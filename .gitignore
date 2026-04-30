@@ -44,5 +44,5 @@ Thumbs.db
 #Claude Code
 .claude/
 
-# MCP Server job state (runtime data, not source code)
-.backtest_jobs/
+# TradingDev runtime workspace
+workspace/

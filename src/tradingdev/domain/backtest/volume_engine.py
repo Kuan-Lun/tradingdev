@@ -1,0 +1,345 @@
+"""Volume-mode backtest engine with bar-by-bar simulation."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
+from tradingdev.domain.backtest.metrics import (
+    calculate_metrics_from_simulation,
+)
+from tradingdev.domain.backtest.result import BacktestResult
+from tradingdev.shared.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
+
+class VolumeBacktestEngine(BaseBacktestEngine):
+    """Bar-by-bar simulation for volume-oriented strategies.
+
+    Equity is tracked as **cumulative P&L from zero** (no init_cash).
+    Each trade independently uses a fixed notional ``position_size``.
+
+    An optional **monthly circuit breaker** (``monthly_max_loss``)
+    force-closes any open position and halts trading for the remainder
+    of the calendar month once the monthly cumulative loss exceeds the
+    threshold.  Trading resumes at the start of the next month.
+
+    Behaviour flags (inherited from ``BaseBacktestEngine``):
+
+    * ``re_entry_after_sl`` (default ``True``): After every SL/TP
+      exit the simulator immediately re-enters in the direction
+      indicated by the current signal.  Set to ``False`` to go flat
+      after a stop-out and wait for the next signal change.
+    * ``signal_as_position`` (default ``False``): When ``True``,
+      ``signal=0`` is interpreted as "go flat" (close any open
+      position).  When ``False`` (legacy), ``signal=0`` means
+      "do nothing / keep the current position".
+    """
+
+    def __init__(
+        self,
+        fees: float = 0.0006,
+        slippage: float = 0.0005,
+        freq: str = "1h",
+        position_size: float | None = None,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        signal_as_position: bool = False,
+        re_entry_after_sl: bool = True,
+        monthly_max_loss: float = 1500.0,
+    ) -> None:
+        super().__init__(
+            init_cash=None,
+            fees=fees,
+            slippage=slippage,
+            freq=freq,
+            position_size=position_size,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            signal_as_position=signal_as_position,
+            re_entry_after_sl=re_entry_after_sl,
+        )
+        self._monthly_max_loss = monthly_max_loss
+
+    def run(self, df: pd.DataFrame) -> BacktestResult:
+        """Run volume-mode backtest.
+
+        Execution model:
+        - Signal from bar *t* is acted upon at bar *t+1* (``shift(1)``).
+        - Entry / signal-driven exit prices use bar *t+1*'s **open**.
+        - SL / TP checks use bar *t+1*'s **high** and **low**.
+        - Equity mark-to-market uses bar *t+1*'s **close**.
+        """
+        close_s = df["close"].astype(float)
+        open_s = df["open"].astype(float) if "open" in df.columns else close_s
+        high_s = df["high"].astype(float) if "high" in df.columns else close_s
+        low_s = df["low"].astype(float) if "low" in df.columns else close_s
+        signal_s = df["signal"].shift(1).fillna(0).astype(int)
+
+        close = close_s.to_numpy()
+        open_ = open_s.to_numpy()
+        high = high_s.to_numpy()
+        low = low_s.to_numpy()
+        signal = signal_s.to_numpy()
+
+        n = len(close)
+        size_quote = self._position_size or 200.0
+
+        # Dynamic position sizing: per-bar weight if available
+        if "size_weight" in df.columns:
+            weight_s = df["size_weight"].shift(1).fillna(1.0)
+            weights = weight_s.astype(float).to_numpy()
+        else:
+            weights = np.ones(n, dtype=np.float64)
+        sl = self._stop_loss
+        tp = self._take_profit
+        fee_rate = self._fees + self._slippage
+
+        cash = 0.0
+        equity = np.empty(n, dtype=np.float64)
+        trades: list[dict[str, Any]] = []
+
+        pos_dir = 0
+        entry_price = 0.0
+        pos_qty = 0.0
+
+        # Monthly circuit breaker state
+        monthly_pnl = 0.0
+        current_month: tuple[int, int] | None = None
+        circuit_breaker_active = False
+
+        # Extract timestamps for monthly tracking
+        has_timestamps = "timestamp" in df.columns
+        timestamps_arr = df["timestamp"].to_numpy() if has_timestamps else None
+
+        logger.info(
+            "Running backtest (volume mode): size=%.0f, sl=%s, tp=%s, "
+            "monthly_max_loss=%.0f",
+            size_quote,
+            sl,
+            tp,
+            self._monthly_max_loss,
+        )
+
+        sig_as_pos = self._signal_as_position
+        re_entry = self._re_entry_after_sl
+
+        for i in range(n):
+            sig = int(signal[i])
+            o = float(open_[i])
+            c = float(close[i])
+            h = float(high[i])
+            lo = float(low[i])
+
+            # --- Month boundary check ---
+            if has_timestamps:
+                ts = pd.Timestamp(timestamps_arr[i])  # type: ignore[index]
+                bar_month = (ts.year, ts.month)
+                if current_month is not None and bar_month != current_month:
+                    monthly_pnl = 0.0
+                    circuit_breaker_active = False
+                current_month = bar_month
+
+            # --- Circuit breaker: skip all trading, mark-to-market only ---
+            if circuit_breaker_active:
+                equity[i] = cash  # no open position
+                continue
+
+            # --- SL / TP check (uses high/low for intra-bar) ---
+            if pos_dir != 0:
+                exit_price = _check_sl_tp(
+                    pos_dir,
+                    entry_price,
+                    h,
+                    lo,
+                    sl,
+                    tp,
+                )
+                if exit_price is not None:
+                    trade = _close_position(
+                        pos_dir,
+                        pos_qty,
+                        entry_price,
+                        exit_price,
+                        fee_rate,
+                    )
+                    trades.append(trade)
+                    cash += trade["net_pnl"]
+                    monthly_pnl += trade["net_pnl"]
+                    pos_dir = 0
+                    pos_qty = 0.0
+
+                    # Check circuit breaker before re-entry
+                    if has_timestamps and monthly_pnl <= -self._monthly_max_loss:
+                        circuit_breaker_active = True
+                    elif re_entry and sig != 0:
+                        # Re-entry after SL happens intra-bar; use
+                        # close as best estimate of the re-entry fill.
+                        eff = size_quote * weights[i]
+                        entry_price = c
+                        pos_qty = eff / c
+                        cash -= eff * fee_rate
+                        monthly_pnl -= eff * fee_rate
+                        pos_dir = sig
+
+            # --- signal_as_position: signal=0 → close at open ---
+            if sig_as_pos and pos_dir != 0 and sig == 0:
+                trade = _close_position(
+                    pos_dir,
+                    pos_qty,
+                    entry_price,
+                    o,
+                    fee_rate,
+                )
+                trades.append(trade)
+                cash += trade["net_pnl"]
+                monthly_pnl += trade["net_pnl"]
+                pos_dir = 0
+                pos_qty = 0.0
+
+            # --- reversal at open ---
+            if pos_dir != 0 and sig != 0 and sig != pos_dir:
+                trade = _close_position(
+                    pos_dir,
+                    pos_qty,
+                    entry_price,
+                    o,
+                    fee_rate,
+                )
+                trades.append(trade)
+                cash += trade["net_pnl"]
+                monthly_pnl += trade["net_pnl"]
+                eff = size_quote * weights[i]
+                entry_price = o
+                pos_qty = eff / o
+                cash -= eff * fee_rate
+                monthly_pnl -= eff * fee_rate
+                pos_dir = sig
+
+            # --- new entry from flat at open ---
+            elif pos_dir == 0 and sig != 0:
+                eff = size_quote * weights[i]
+                entry_price = o
+                pos_qty = eff / o
+                cash -= eff * fee_rate
+                monthly_pnl -= eff * fee_rate
+                pos_dir = sig
+
+            # --- mark-to-market at close ---
+            if pos_dir != 0:
+                unrealised = pos_dir * pos_qty * (c - entry_price)
+                equity[i] = cash + unrealised
+            else:
+                equity[i] = cash
+
+            # --- Circuit breaker check after trading ---
+            # Include unrealised P&L so open losing positions
+            # also trigger the breaker.
+            effective_monthly = monthly_pnl
+            if pos_dir != 0:
+                effective_monthly += pos_dir * pos_qty * (c - entry_price)
+            if (
+                has_timestamps
+                and not circuit_breaker_active
+                and effective_monthly <= -self._monthly_max_loss
+            ):
+                circuit_breaker_active = True
+                if pos_dir != 0:
+                    trade = _close_position(
+                        pos_dir,
+                        pos_qty,
+                        entry_price,
+                        c,
+                        fee_rate,
+                    )
+                    trades.append(trade)
+                    cash += trade["net_pnl"]
+                    monthly_pnl += trade["net_pnl"]
+                    pos_dir = 0
+                    pos_qty = 0.0
+                    equity[i] = cash
+
+        if pos_dir != 0:
+            trade = _close_position(
+                pos_dir,
+                pos_qty,
+                entry_price,
+                float(close[-1]),
+                fee_rate,
+            )
+            trades.append(trade)
+            cash += trade["net_pnl"]
+            equity[-1] = cash
+
+        timestamps = None
+        if "timestamp" in df.columns:
+            timestamps = df["timestamp"].to_numpy()
+
+        metrics = calculate_metrics_from_simulation(
+            equity_curve=equity,
+            trades=trades,
+            init_cash=None,
+            timestamps=timestamps,
+        )
+        logger.info(
+            "Backtest complete (volume): %d trades, volume=%.0f",
+            metrics["total_trades"],
+            metrics["total_volume"],
+        )
+        return BacktestResult(
+            metrics=metrics,
+            equity_curve=equity,
+            trades=trades,
+            timestamps=timestamps,
+            init_cash=None,
+            mode="volume",
+        )
+
+
+def _check_sl_tp(
+    pos_dir: int,
+    entry_price: float,
+    high: float,
+    low: float,
+    sl: float | None,
+    tp: float | None,
+) -> float | None:
+    """Return exit price if SL or TP was hit, else None."""
+    if pos_dir == 1:
+        if sl and low <= entry_price * (1 - sl):
+            return entry_price * (1 - sl)
+        if tp and high >= entry_price * (1 + tp):
+            return entry_price * (1 + tp)
+    elif pos_dir == -1:
+        if sl and high >= entry_price * (1 + sl):
+            return entry_price * (1 + sl)
+        if tp and low <= entry_price * (1 - tp):
+            return entry_price * (1 - tp)
+    return None
+
+
+def _close_position(
+    pos_dir: int,
+    pos_qty: float,
+    entry_price: float,
+    exit_price: float,
+    fee_rate: float,
+) -> dict[str, Any]:
+    """Build a trade record for a closed position."""
+    gross_pnl = pos_dir * pos_qty * (exit_price - entry_price)
+    exit_value = pos_qty * exit_price
+    exit_fee = exit_value * fee_rate
+    net_pnl = gross_pnl - exit_fee
+    return {
+        "direction": pos_dir,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "size_quote": pos_qty * entry_price,
+        "gross_pnl": gross_pnl,
+        "fee": exit_fee,
+        "net_pnl": net_pnl,
+    }

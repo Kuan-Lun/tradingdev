@@ -1,10 +1,14 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file guides Claude Code when working in this repository.
 
 ## Project Overview
 
-Quantitative trading strategy backtesting framework for crypto futures (e.g. BTC/USDT perpetual). Scope is historical backtesting only — no live trading. Development follows vibe coding mode: Claude writes the code, human reviews.
+TradingDev is an MCP-first quantitative strategy development server for crypto
+futures research. MCP tools are the primary product entry point. CLI and
+dashboard are adapters over the same `tradingdev.app` services. Scope is
+historical backtesting, strategy research, optimization, and artifact tracking;
+there is no live trading, credential handling, or order placement.
 
 ## Commands
 
@@ -12,67 +16,82 @@ Quantitative trading strategy backtesting framework for crypto futures (e.g. BTC
 # Install dependencies
 uv sync
 
-# Run scripts / tests / ad-hoc snippets
-uv run python <script>
+# Tests
 uv run pytest tests/
 uv run pytest tests/ -v
 
 # Code quality
-uv run ruff check .
-uv run ruff format .
-uv run mypy src/
+./scripts/hooks/finalize-python.sh
+./scripts/hooks/finalize-markdown.sh
+uv run black src tests scripts
+uv run ruff check --fix src tests scripts
+uv run mypy src tests scripts
 
-# Add a package
-uv add <package>
+# MCP entry points
+uv run tradingdev-mcp
+uv run tradingdev-mcp --web --transport streamable-http --port 8000
+uv run python -m tradingdev.mcp.server --help
 
-# Rebuild venv from scratch — use when the venv is corrupted, e.g. after a
-# Python version upgrade and tools like mypy fail with
-# `ModuleNotFoundError: No module named '..._mypyc'`. Destructive: wipes
-# .venv, uv.lock, and all caches before recreating.
-./scripts/rebuild-env.sh
+# CLI adapter
+uv run python -m tradingdev --config \
+  src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml
+uv run python -m tradingdev --config \
+  src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml \
+  --walk-forward
 ```
 
-Always use `uv run python` to run scripts, never the bare `python` command.
+Always use `uv run python`, never bare `python`.
 
 ## Project Structure
 
-When you need to understand the directory layout, run:
-
-```bash
-tree -I '__pycache__|*.egg-info|.venv|data' -L 4
+```text
+src/tradingdev/
+  mcp/                 FastMCP server, schemas, thin tool wrappers, workers
+  app/                 application services and typed job store facade
+  domain/              backtest, data, indicators, strategies, ML, validation
+  adapters/            CLI, dashboard, storage, process execution
+  shared/utils/        shared logger/config/cache/parallel helpers
+workspace/             runtime generated strategies, configs, data, runs, SQLite
+tests/                 app/domain/mcp/shared layered tests
 ```
 
 ## Key Design Decisions
 
-- **Signal convention**: `1` = long, `-1` = short, `0` = no signal. All strategies must produce signals in this format.
-- **No look-ahead bias**: signal computation must only use data at index `t` and earlier. This is strictly enforced — no future data may leak into indicators or signals.
-- **Strategy parameters in YAML only**: all tunable parameters live in `configs/`. Hardcoding any parameter value in source code is forbidden.
-- **No `print()` for debugging**: use Python's standard `logging` module throughout.
-- **Data flow**: raw CSVs/ZIPs land in `data/raw/`, cleaned output is Parquet in `data/processed/`. Strategy code only reads from `data/processed/`.
-- **Vectorized backtesting**: vectorbt runs the backtest in a vectorized (not event-driven) loop. Signals are precomputed as Series/arrays before being passed to the engine.
-- **ML strategies require train/val/test split**: parameter optimization must be validated with walk-forward or cross-validation; no in-sample overfitting.
-- **Backtest reproducibility**: fix random seeds, record dataset version and time range in every backtest run.
-
-## Design Principles
-
-- Follow SOLID principles: single responsibility, open/closed, Liskov substitution, interface segregation, dependency inversion.
-
-## Code Style
-
-- Python version range: see `requires-python` in [pyproject.toml](pyproject.toml)
-- Type hints everywhere; must pass `mypy` in strict mode (see [mypy.ini](mypy.ini))
-- Linting and formatting rules: [ruff.toml](ruff.toml)
-- **Tooling config sync**: if you change lint/format/type-check settings, update all of [pyproject.toml](pyproject.toml), [mypy.ini](mypy.ini), and [ruff.toml](ruff.toml) in the same change.
+- **Signal convention**: `1` = long, `-1` = short, `0` = flat.
+- **No look-ahead bias**: signals may only use data at index `t` and earlier.
+- **Strategy parameters in YAML only**: tunable values live in
+  `strategy.parameters`.
+- **Strategy lifecycle**: `save_strategy` creates draft; `validate_strategy`
+  creates validated; `dry_run_strategy` creates runnable; execution accepts only
+  runnable or promoted strategies.
+- **Bundled vs generated**: bundled strategy code/config is git-versioned under
+  `src/tradingdev/domain/strategies/bundled/`; generated strategy code/config is
+  runtime state under `workspace/generated_strategies/` and `workspace/configs/`.
+- **Data requirements**: runtime feature inputs are declared in
+  `data.requirements`, not inferred from strategy parameter names.
+- **Runtime data cache**: defaults to `workspace/data/raw` and
+  `workspace/data/processed`; `TRADINGDEV_DATA_ROOT` may override raw/processed
+  data root.
+- **Job/run/artifact storage**: metadata lives in `workspace/tradingdev.sqlite`;
+  files live under `workspace/runs/` and related workspace artifact directories.
+- **Logging**: use logging helpers, not `print()`.
 
 ## Document Maintenance
 
-- **Architecture diagram** (`ARCHITECTURE.md`): update Mermaid diagrams when adding, removing, or renaming classes, modules, ABCs, or Pydantic models. Pure implementation changes (logic inside a method) do not require an update.
-- **Strategy docs** (`docs/strategies/`): add a `.md` file for each new strategy (covering principle, parameters, signal logic, YAML config example) and update `docs/strategies/README.md`. Update existing docs when interface, parameters, or signal logic change; skip for internal implementation changes.
+- Update [ARCHITECTURE.md](ARCHITECTURE.md) when module boundaries, services,
+  Pydantic models, Mermaid diagrams, or storage contracts change.
+- Update [docs/strategy_contract.md](docs/strategy_contract.md) when generated
+  strategy requirements change.
+- Update [docs/run_artifacts.md](docs/run_artifacts.md) when job/run/artifact
+  schema or workspace layout changes.
+- Update [docs/strategies/](docs/strategies/) when bundled strategy interface,
+  parameters, or signal logic changes.
 
 ## Git Flow
 
 - **main**: merge-only, no direct commits.
-- **Feature branches**: one branch per vibe coding session (`feature/<name>`). Multiple commits per branch are fine — preserve the development history.
-- **Merging**: `git merge --no-ff` into main (merge commit auto-generated by git). Delete the feature branch after merging: `git branch -d feature/<name>`.
+- **Feature branches**: one branch per vibe coding session (`feature/<name>`).
+- **Merging**: `git merge --no-ff` into main. Delete the feature branch after
+  merging with `git branch -d feature/<name>`.
 - **Tags**: milestones as `v<major>.<minor>.<patch>`.
-- **Commit prefixes**: `feat:` `fix:` `refactor:` `test:` `docs:` `chore:`
+- **Commit prefixes**: `feat:` `fix:` `refactor:` `test:` `docs:` `chore:`.

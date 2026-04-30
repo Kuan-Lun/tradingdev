@@ -1,0 +1,38 @@
+# KD (Stochastic Oscillator) Strategy Configuration
+
+strategy:
+  id: "kd_crossover"
+  version: "1.0.0"
+  class_name: "KDStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/kd_strategy/strategy.py"
+  description: "KD Stochastic Oscillator crossover strategy for BTC/USDT"
+  parameters:
+    k_period: 14
+    d_period: 3
+    smooth_k: 3
+    overbought: 80.0
+    oversold: 20.0
+
+# Parallel execution
+parallel:
+  reserve_cores: 2 # Cores reserved for OS (P-core aware on Apple Silicon)
+  safety_factor: 0.61 # Fraction of available RAM for workers
+  overhead_multiplier: 3.0
+
+backtest:
+  symbol: "BTC/USDT"
+  timeframe: "1h"
+  start_date: "2024-01-01"
+  end_date: "2024-12-31"
+  init_cash: 10000.0
+  fees: 0.0006 # Binance futures taker fee (0.06%)
+  slippage: 0.0005 # 0.05% slippage estimate
+
+data:
+  source: "binance_api"
+  requirements:
+    market:
+      source: "binance_api"
+      symbol: "BTC/USDT"
+      timeframe: "1h"
+    features: []
