@@ -152,7 +152,7 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
 | `profit_target_ratio` | 1.0 | 利潤目標比率 (1.0=完全回歸到 EMA) |
-| `strategy_sl` | 0.003 | 策略級止損閾值（0=停用） |
+| `strategy_sl` | 0.01 | 策略級止損閾值（0=停用） |
 
 ### Holding Management
 
@@ -174,15 +174,13 @@ actual_size = position_size × weight
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
 | `dynamic_sizing` | true | 啟用動態倉位 |
-| `min_position_size` | 500.0 | 最小倉位（USDT） |
+| `min_position_size` | 10000.0 | 最小倉位（USDT） |
 | `edge_for_full_size` | 0.005 | 達到全倉的偏離度門檻 |
 | `edge_for_full_size_candidates` | [0.003, 0.005, 0.008] | Grid search 候選值 |
 
-範例（預設參數）：
-- `|deviation| = 0.001` → weight = 0.2 → clamp 至 min = 0.167 → 倉位 500 USDT
-- `|deviation| = 0.003` → weight = 0.6 → 倉位 1,800 USDT
-- `|deviation| = 0.005` → weight = 1.0 → 倉位 3,000 USDT（全倉）
-- `|deviation| = 0.008` → weight = 1.6 → clamp 至 1.0 → 倉位 3,000 USDT
+目前 bundled config 將 `min_position_size` 與 `position_size` 都設為 10,000 USDT，
+因此實際上維持固定名目倉位；若要讓倉位依偏離度縮放，需把
+`min_position_size` 調低。
 
 ### fit() Grid Search
 
@@ -210,9 +208,9 @@ fit() 使用**約束優化**策略：
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `position_size` | 3000.0 | 每筆最大持倉大小 |
+| `position_size` | 10000.0 | 每筆最大持倉大小 |
 | `monthly_volume_target` | 12,500,000 | 月度單邊交易量目標 |
-| `fee_rate` | 0.0006 | 單邊手續費（taker） |
+| `fee_rate` | 0.0005 | 單邊手續費（taker） |
 
 ## 交易所規則合規
 
@@ -221,7 +219,7 @@ fit() 使用**約束優化**策略：
 **合規機制**:
 - `min_holding_bars >= 5`（@1m timeframe = 5 分鐘）
 - 狀態機強制執行：持倉期間內不可提前退出
-- 較大的 position_size (3000 USDT) 減少所需交易次數
+- 較大的 position_size (10,000 USDT) 減少所需交易次數
 
 ## Walk-Forward 驗證結果
 
@@ -297,7 +295,10 @@ fit() 使用**約束優化**策略：
 
 ```yaml
 strategy:
-  name: "glft_market_making"
+  id: "glft_market_making"
+  version: "1.0.0"
+  class_name: "GLFTStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/glft_strategy/strategy.py"
   parameters:
     # Core GLFT (%-space)
     gamma: 500
@@ -331,20 +332,20 @@ strategy:
     # Exit
     profit_target_ratio: 1.0
     profit_target_ratio_candidates: [0.5, 0.75, 1.0]
-    strategy_sl: 0.003
+    strategy_sl: 0.01
 
     # Multi-timeframe
     signal_agg_minutes: 1
     signal_agg_minutes_candidates: [1]
 
     # Position & volume
-    position_size: 3000.0
+    position_size: 10000.0
     monthly_volume_target: 12500000
-    fee_rate: 0.0006
+    fee_rate: 0.0005
 
     # Dynamic sizing
     dynamic_sizing: true
-    min_position_size: 500.0
+    min_position_size: 10000.0
     edge_for_full_size: 0.005
     edge_for_full_size_candidates: [0.003, 0.005, 0.008]
 
@@ -360,12 +361,24 @@ validation:
 backtest:
   symbol: "BTC/USDT"
   timeframe: "1m"
-  init_cash: 100000.0
-  fees: 0.0006
+  fees: 0.0005
   signal_as_position: true
   re_entry_after_sl: false
-  stop_loss: 0.03
+  stop_loss: 0.01
   mode: "volume"
+
+data:
+  requirements:
+    market:
+      source: "binance_api"
+      symbol: "BTC/USDT"
+      timeframe: "1m"
+    features:
+      - type: "dvol"
+        source: "deribit"
+        column: "dvol"
+        path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
+        raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
 ```
 
 ## 使用方式

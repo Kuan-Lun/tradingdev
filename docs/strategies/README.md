@@ -12,5 +12,7 @@
 | XGBoost Direction | [xgboost_strategy.md](xgboost_strategy.md) | XGBoost 方向預測 + rolling retrain，volume mode 交易量策略 |
 | Quantile Regime Volume | [quantile_strategy.md](quantile_strategy.md) | XGBoost regime classifier + DVOL/funding rate feature requirements |
 
-Generated strategies 不放在此目錄；它們由 MCP lifecycle 管理，位於
-`workspace/generated_strategies/` 與 `workspace/configs/`。
+Bundled config 使用 `strategy.id`、`strategy.class_name`、`strategy.source_path`
+與 `data.requirements` schema。Generated strategies 不放在此目錄；它們由 MCP
+lifecycle 管理，位於 `workspace/generated_strategies/` 與 `workspace/configs/`，
+狀態流程為 `draft → validated → runnable → promoted`。

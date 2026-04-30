@@ -153,6 +153,30 @@ def test_validate_rejects_runnable_strategy(tmp_path: Path) -> None:
     assert "only accepts draft or validated" in validated["error"]
 
 
+def test_dry_run_only_accepts_validated_strategy(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+
+    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+
+    draft_dry_run = service.dry_run("fixture_strategy")
+    assert draft_dry_run["success"] is False
+    assert "requires validated" in draft_dry_run["error"]
+
+    assert service.validate("fixture_strategy")["status"] == "validated"
+    assert service.dry_run("fixture_strategy")["status"] == "runnable"
+
+    runnable_dry_run = service.dry_run("fixture_strategy")
+    assert runnable_dry_run["success"] is False
+    assert "requires validated" in runnable_dry_run["error"]
+
+    assert service.promote("fixture_strategy")["status"] == "promoted"
+    promoted_dry_run = service.dry_run("fixture_strategy")
+    assert promoted_dry_run["success"] is False
+    assert "requires validated" in promoted_dry_run["error"]
+
+
 def test_strategy_service_validate_reports_syntax_errors(tmp_path: Path) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)

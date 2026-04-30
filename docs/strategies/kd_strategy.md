@@ -75,6 +75,31 @@
 
 所有參數定義於 `src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml`，禁止寫死在程式碼中。
 
+## Config Schema
+
+Bundled config 使用 MCP-first schema；策略識別、類別與資料需求都在 YAML 中明確宣告：
+
+```yaml
+strategy:
+  id: "kd_crossover"
+  class_name: "KDStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/kd_strategy/strategy.py"
+  parameters:
+    k_period: 14
+    d_period: 3
+    smooth_k: 3
+    overbought: 80.0
+    oversold: 20.0
+
+data:
+  requirements:
+    market:
+      source: "binance_api"
+      symbol: "BTC/USDT"
+      timeframe: "1h"
+    features: []
+```
+
 ## 已知限制
 
 1. **信號稀少**：要求交叉必須發生在超買/超賣區域，在趨勢行情中可能長時間無信號
@@ -91,6 +116,7 @@ uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/kd
 ## 相關檔案
 
 - 策略實作：`src/tradingdev/domain/strategies/bundled/kd_strategy/strategy.py`
-- KD 指標：`src/tradingdev/indicators/kd.py`
+- KD 指標：`src/tradingdev/domain/indicators/kd.py`
 - 策略配置：`src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml`
-- Pydantic 模型：`src/tradingdev/data/schemas.py`（`KDStrategyConfig`）
+- 策略 config 模型：`src/tradingdev/domain/strategies/bundled/kd_strategy/config.py`（`KDStrategyConfig`）
+- 資料需求模型：`src/tradingdev/domain/data/requirements.py`（`DataRequirement`）

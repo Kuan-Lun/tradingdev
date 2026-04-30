@@ -50,10 +50,10 @@ FLAT ──(safe + direction)──► LONG/SHORT
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
 | `risk_model` | (see YAML) | XGBoost 超參數 |
-| `risk_threshold` | 0.5 | P(safe) 需超過此值才允許進場 |
-| `risk_threshold_candidates` | [0.3..0.7] | fit() 時自動搜尋最佳 threshold |
+| `risk_threshold` | 0.15 | P(safe) 需超過此值才允許進場 |
+| `risk_threshold_candidates` | [0.05..0.25] | fit() 時自動搜尋最佳 threshold |
 | `target_holding_bars` | 7 | 計算 safe target 時的假設持倉期 |
-| `max_acceptable_loss_pct` | 0.003 | 超過 0.3% 虧損 → 標記為 unsafe |
+| `max_acceptable_loss_pct` | 0.0 | 不接受淨虧損；費後無法打平即標記為 unsafe |
 | `fee_rate` | 0.0011 | 單邊手續費 + 滑點 |
 
 ### Direction
@@ -99,16 +99,19 @@ FLAT ──(safe + direction)──► LONG/SHORT
 
 ```yaml
 strategy:
-  name: "safety_first_volume"
+  id: "safety_first_volume"
+  version: "1.0.0"
+  class_name: "SafetyVolumeStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/safety_volume_strategy/strategy.py"
   parameters:
     risk_model:
       n_estimators: 300
       max_depth: 4
       learning_rate: 0.05
-    risk_threshold: 0.5
-    risk_threshold_candidates: [0.3, 0.4, 0.5, 0.6, 0.7]
+    risk_threshold: 0.15
+    risk_threshold_candidates: [0.05, 0.10, 0.15, 0.20, 0.25]
     target_holding_bars: 7
-    max_acceptable_loss_pct: 0.003
+    max_acceptable_loss_pct: 0.0
     fee_rate: 0.0011
     use_ml_direction: false
     sma_fast: 5
@@ -125,6 +128,14 @@ backtest:
   signal_as_position: true    # signal=0 → 平倉
   re_entry_after_sl: false    # SL 後不自動重入場
   stop_loss: 0.03             # 3% 緊急 SL
+
+data:
+  requirements:
+    market:
+      source: "binance_api"
+      symbol: "BTC/USDT"
+      timeframe: "1m"
+    features: []
 ```
 
 ## 使用方式

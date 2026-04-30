@@ -48,7 +48,7 @@ Claude Desktop 範例：
 3. `save_strategy`：只把 generated strategy 存成 draft。
 4. `validate_strategy`：跑 syntax、static policy、ruff、mypy、繼承與 signal
    contract 檢查。
-5. `dry_run_strategy`：validated 通過後升為 runnable。
+5. `dry_run_strategy`：只接受 validated strategy，通過後升為 runnable。
 6. `start_backtest` 或 `start_walk_forward`：只接受 runnable/promoted strategy。
 7. `get_job_status`、`list_runs`、`compare_runs`、`list_artifacts` 查詢結果。
 

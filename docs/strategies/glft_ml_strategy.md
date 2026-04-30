@@ -81,7 +81,10 @@
 
 ```yaml
 strategy:
-  name: "glft_ml"
+  id: "glft_ml"
+  version: "1.0.0"
+  class_name: "GLFTMLStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/glft_ml_strategy/strategy.py"
   parameters:
     prediction_horizon: 5
     feature_lookback: 60
@@ -101,6 +104,19 @@ strategy:
     strategy_sl: 0.003
     position_size: 3000.0
     fee_rate: 0.0002
+
+data:
+  requirements:
+    market:
+      source: "binance_api"
+      symbol: "BTC/USDT"
+      timeframe: "1m"
+    features:
+      - type: "dvol"
+        source: "deribit"
+        column: "dvol"
+        path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
+        raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
 ```
 
 ## 使用方式
