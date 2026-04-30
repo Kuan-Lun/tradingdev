@@ -52,7 +52,7 @@ src/tradingdev/
   adapters/            CLI, dashboard, storage, process execution
   shared/utils/        shared logger/config/cache/parallel helpers
 workspace/             runtime generated strategies, configs, data, runs, SQLite
-tests/                 app/domain/mcp/shared layered tests
+tests/                 app/domain/mcp/adapters/integration/shared layered tests
 ```
 
 ## Key Design Decisions
@@ -69,11 +69,15 @@ tests/                 app/domain/mcp/shared layered tests
   runtime state under `workspace/generated_strategies/` and `workspace/configs/`.
 - **Data requirements**: runtime feature inputs are declared in
   `data.requirements`, not inferred from strategy parameter names.
+- **Dataset inspection**: `inspect_dataset(config_path)` reports market cache
+  availability and declared feature source health from the same data root used
+  by backtests.
 - **Runtime data cache**: defaults to `workspace/data/raw` and
   `workspace/data/processed`; `TRADINGDEV_DATA_ROOT` may override raw/processed
   data root.
 - **Job/run/artifact storage**: metadata lives in `workspace/tradingdev.sqlite`;
-  files live under `workspace/runs/` and related workspace artifact directories.
+  run result, config snapshot, strategy source snapshot, and dataset fingerprint
+  files live under `workspace/runs/<run_id>/`.
 - **Logging**: use logging helpers, not `print()`.
 
 ## Document Maintenance

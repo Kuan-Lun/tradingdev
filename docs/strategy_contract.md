@@ -18,6 +18,13 @@ Generated code must:
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
 
+Allowed import roots for generated strategies are intentionally small:
+
+- Python standard library: `__future__`, `collections`, `dataclasses`,
+  `datetime`, `enum`, `math`, `statistics`, `typing`, `typing_extensions`.
+- Runtime libraries: `numpy`, `pandas`.
+- Project APIs: `tradingdev`.
+
 Recommended imports:
 
 ```python
@@ -79,13 +86,30 @@ data:
 ## Lifecycle
 
 1. `save_strategy`: writes draft source, config, and metadata.
-2. `validate_strategy`: runs syntax, static policy, ruff, mypy, inheritance, and
-   signal-contract checks.
-3. `dry_run_strategy`: performs a lightweight signal dry run and marks the
-   strategy runnable when it passes.
+2. `validate_strategy`: runs syntax, static policy, restricted import checks,
+   ruff, mypy, inheritance, constructor, and signal-contract checks. It returns
+   structured diagnostics with `level`, `code`, `phase`, `message`, and optional
+   `fix`.
+3. `dry_run_strategy`: performs a lightweight signal dry run, returns
+   `signal_analysis`, and marks the strategy runnable when it passes.
 4. `promote_strategy`: marks a runnable generated strategy as promoted.
 5. `start_backtest` / `start_walk_forward`: execute only runnable or promoted
    generated strategies, and promoted bundled strategies.
 
-Validation still executes generated Python for class loading and signal checks.
-Static policy checks are a first layer, not a full sandbox.
+## Security Model
+
+Validation currently uses static policy checks plus restricted imports as a
+first layer. It rejects known unsafe imports (`os`, `sys`, `subprocess`,
+`socket`, `requests`, `httpx`, `ccxt`, `shutil`, `pathlib`), dynamic execution
+calls (`eval`, `exec`, `__import__`), raw `open`, and common destructive file
+operations such as `unlink`, `remove`, `rmtree`, and `write_text`.
+
+This is not a full process sandbox. `validate_strategy` and `dry_run_strategy`
+still import and execute generated Python to check class loading, constructor
+behavior, BaseStrategy inheritance, input immutability, signal values, and smoke
+dataframe output. Generated strategies must therefore be reviewed as runtime
+code until a dedicated sandboxed execution layer is added.
+
+`signal_analysis` includes row count, signal distribution, missing-signal count,
+transition count, active-signal ratio, and timestamp bounds. Use it to debug
+strategies that technically pass static checks but produce unusable signals.

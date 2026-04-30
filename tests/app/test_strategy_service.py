@@ -77,9 +77,11 @@ def test_strategy_service_lifecycle(tmp_path: Path) -> None:
     validated = service.validate("fixture_strategy")
     assert validated["success"] is True
     assert validated["status"] == "validated"
+    assert validated["signal_analysis"]["rows"] == 80
     dry_run = service.dry_run("fixture_strategy")
     assert dry_run["success"] is True
     assert dry_run["status"] == "runnable"
+    assert dry_run["signal_analysis"]["transition_count"] >= 1
     promoted = service.promote("fixture_strategy")
     assert promoted == {
         "success": True,
@@ -102,4 +104,84 @@ def test_strategy_service_rejects_banned_import(tmp_path: Path) -> None:
 
     assert validated["success"] is False
     messages = [item["message"] for item in validated["diagnostics"]]
+    codes = [item["code"] for item in validated["diagnostics"]]
     assert "banned import: os" in messages
+    assert "banned_import" in codes
+
+
+def test_strategy_service_validate_reports_syntax_errors(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    saved = service.save_draft("syntax_strategy", _STRATEGY_CODE, _YAML)
+    assert saved.success is True
+    source_path = workspace.generated_strategies / "syntax_strategy.py"
+    source_path.write_text("def broken(:\n", encoding="utf-8")
+
+    validated = service.validate("syntax_strategy")
+
+    assert validated["success"] is False
+    assert [item["code"] for item in validated["diagnostics"]] == ["syntax_error"]
+
+
+def test_strategy_service_rejects_non_allowlisted_import(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+
+    code = _STRATEGY_CODE.replace(
+        "import pandas as pd",
+        "import talib\n\nimport pandas as pd",
+    )
+    assert service.save_draft(
+        "bad_import_strategy",
+        code,
+        _YAML.replace("fixture_strategy", "bad_import_strategy"),
+    ).success
+
+    validated = service.validate("bad_import_strategy")
+
+    assert validated["success"] is False
+    codes = [item["code"] for item in validated["diagnostics"]]
+    assert "import_not_allowed" in codes
+
+
+def test_strategy_service_rejects_invalid_signal_values(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+
+    code = _STRATEGY_CODE.replace(
+        'result.loc[moves > self._threshold, "signal"] = 1',
+        'result.loc[moves > self._threshold, "signal"] = 2',
+    )
+    assert service.save_draft(
+        "bad_signal_strategy",
+        code,
+        _YAML.replace("fixture_strategy", "bad_signal_strategy"),
+    ).success
+
+    validated = service.validate("bad_signal_strategy")
+
+    assert validated["success"] is False
+    codes = [item["code"] for item in validated["diagnostics"]]
+    assert "invalid_signal_values" in codes
+    assert validated["signal_analysis"]["rows"] == 80
+
+
+def test_strategy_service_rejects_input_mutation(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+
+    code = _STRATEGY_CODE.replace("result = df.copy()", "result = df")
+    assert service.save_draft(
+        "mutating_strategy",
+        code,
+        _YAML.replace("fixture_strategy", "mutating_strategy"),
+    ).success
+
+    validated = service.validate("mutating_strategy")
+
+    assert validated["success"] is False
+    codes = [item["code"] for item in validated["diagnostics"]]
+    assert "input_mutated" in codes

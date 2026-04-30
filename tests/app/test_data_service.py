@@ -1,0 +1,131 @@
+"""Data service tests."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pandas as pd
+
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.data_service import DataService
+from tradingdev.domain.backtest.schemas import BacktestConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pytest import MonkeyPatch
+
+
+def test_data_service_uses_shared_data_root(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "shared_data"
+    processed = data_root / "processed"
+    processed.mkdir(parents=True)
+    (processed / "btcusdt_1h_2024.parquet").write_text("", encoding="utf-8")
+    monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(data_root))
+
+    service = DataService(WorkspacePaths(tmp_path / "workspace"))
+    config = service.data_config(
+        {
+            "data": {
+                "requirements": {
+                    "market": {
+                        "source": "binance_api",
+                        "symbol": "BTC/USDT",
+                        "timeframe": "1h",
+                    },
+                    "features": [],
+                }
+            }
+        }
+    )
+
+    assert config.raw_dir == str(data_root.resolve() / "raw")
+    assert config.processed_dir == str(processed.resolve())
+    assert service.list_available_data() == [
+        {"symbol": "BTCUSDT", "timeframe": "1h", "years_available": [2024]}
+    ]
+    assert service.data_available("BTC/USDT", "1h", "2024-01-01", "2024-01-31")
+
+
+def test_inspect_dataset_reports_feature_sources_and_missing_values(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    workspace.processed_data.mkdir(parents=True, exist_ok=True)
+    (workspace.processed_data / "btcusdt_1h_2024.parquet").write_text(
+        "",
+        encoding="utf-8",
+    )
+    feature_path = tmp_path / "funding_rate.parquet"
+    pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=3, freq="h", tz="UTC"),
+            "funding_rate": [0.01, None, 0.02],
+        }
+    ).to_parquet(feature_path, index=False)
+    config_path = tmp_path / "strategy.yaml"
+    config_path.write_text(
+        f"""\
+strategy:
+  id: fixture
+  class_name: FixtureStrategy
+backtest:
+  symbol: BTC/USDT
+  timeframe: 1h
+  start_date: "2024-01-01"
+  end_date: "2024-01-31"
+  init_cash: 10000.0
+data:
+  requirements:
+    market:
+      source: binance_api
+      symbol: BTC/USDT
+      timeframe: 1h
+    features:
+      - type: funding_rate
+        source: local
+        column: funding_rate
+        path: "{feature_path}"
+""",
+        encoding="utf-8",
+    )
+
+    report = DataService(workspace).inspect_dataset(config_path)
+
+    assert report["market_available"] is True
+    assert report["requirements"]["market"]["symbol"] == "BTC/USDT"
+    assert report["features"] == [
+        {
+            "type": "funding_rate",
+            "source": "local",
+            "column": "funding_rate",
+            "path": str(feature_path),
+            "exists": True,
+            "rows": 3,
+            "missing_values": 1,
+        }
+    ]
+
+
+def test_requirements_default_to_market_data_only(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = DataService(workspace)
+    backtest_config = BacktestConfig(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        init_cash=10000.0,
+    )
+
+    requirements = service.requirements(
+        {"data": {"source": "binance_api"}},
+        backtest_config,
+    )
+
+    assert requirements.market.symbol == "BTC/USDT"
+    assert requirements.market.timeframe == "1h"
+    assert requirements.features == []

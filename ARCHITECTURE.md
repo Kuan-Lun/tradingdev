@@ -120,6 +120,9 @@ classDiagram
         +job_type
         +strategy_name
         +config_path
+        +created_at
+        +started_at
+        +ended_at
         +result_path
     }
 
@@ -127,8 +130,10 @@ classDiagram
     SQLiteStore --> WorkspacePaths
 ```
 
-SQLite stores metadata. Filesystem stores generated code/config, result JSON,
-feature requests and data caches. `workspace/runs/<run_id>/` is linked from the
+SQLite stores metadata. Filesystem stores generated code/config, feature
+requests, data caches, and run artifacts. Each completed run records result,
+config snapshot, optional strategy source snapshot, and dataset fingerprint
+artifacts under `workspace/runs/<run_id>/`; that directory is linked from the
 `runs.artifact_dir` column.
 
 ## Domain Contracts
@@ -136,6 +141,8 @@ feature requests and data caches. `workspace/runs/<run_id>/` is linked from the
 - Strategy signal convention: `1` long, `-1` short, `0` flat.
 - Strategy parameters live in YAML `strategy.parameters`.
 - Data requirements live in YAML `data.requirements`.
+- `inspect_dataset(config_path)` reports market cache availability and feature
+  source missing-value status from the same data root used by backtests.
 - `start_backtest` rejects configs with `validation:`; use `start_walk_forward`.
 - Generated strategies must pass static policy checks before execution.
 - Runtime cache defaults to `workspace/data/`; `TRADINGDEV_DATA_ROOT` can override
