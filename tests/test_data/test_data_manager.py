@@ -9,13 +9,13 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from quant_backtest.data.data_manager import (
+from tradingdev.data.data_manager import (
     DataManager,
     _is_year_complete,
     _normalize_symbol,
     _year_range,
 )
-from quant_backtest.data.schemas import BacktestConfig, DataConfig
+from tradingdev.data.schemas import BacktestConfig, DataConfig
 
 # ------------------------------------------------------------------ #
 # Utility function tests                                              #

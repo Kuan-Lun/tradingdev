@@ -4,10 +4,10 @@ import pandas as pd
 import pytest
 from strategies.kd_strategy import KDStrategy
 
-from quant_backtest.backtest.signal_engine import (
+from tradingdev.backtest.signal_engine import (
     SignalBacktestEngine,
 )
-from quant_backtest.data.schemas import (
+from tradingdev.data.schemas import (
     KDFitConfig,
     KDStrategyConfig,
 )

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from quant_backtest.data.schemas import BacktestConfig, KDStrategyConfig, OHLCVBar
+from tradingdev.data.schemas import BacktestConfig, KDStrategyConfig, OHLCVBar
 
 
 class TestOHLCVBar:

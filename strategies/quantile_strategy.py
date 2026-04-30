@@ -22,14 +22,16 @@ import pandas as pd
 import xgboost as xgb
 from joblib import Parallel, delayed
 
-from quant_backtest.ml.quantile_features import QuantileFeatureEngineer
-from quant_backtest.strategies.base import BaseStrategy
-from quant_backtest.utils.logger import setup_logger
-from quant_backtest.utils.parallel import estimate_n_jobs
+from tradingdev.domain.ml.features.quantile_features import QuantileFeatureEngineer
+from tradingdev.strategies.base import BaseStrategy
+from tradingdev.utils.logger import setup_logger
+from tradingdev.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
-    from quant_backtest.backtest.base_engine import BaseBacktestEngine
-    from quant_backtest.data.schemas import (
+    from numpy.typing import NDArray
+
+    from tradingdev.backtest.base_engine import BaseBacktestEngine
+    from tradingdev.data.schemas import (
         ParallelConfig,
         QuantileStrategyConfig,
     )
@@ -59,8 +61,8 @@ def _train_regime_classifier(
     Ensures all 4 classes are present by adding a tiny synthetic
     sample for any missing class (prevents XGBoost ValueError).
     """
-    x = feat_df[feature_names].values
-    y = feat_df["target_regime"].values.astype(int)
+    x: NDArray[np.float64] = feat_df[feature_names].to_numpy(dtype=np.float64)
+    y: NDArray[np.int_] = feat_df["target_regime"].to_numpy(dtype=np.int_)
 
     # Ensure all 4 classes exist in training data
     present = set(np.unique(y))
@@ -87,8 +89,8 @@ def _train_regime_classifier(
 
 
 def _run_regime_state_machine(
-    close: np.ndarray,
-    proba: np.ndarray,
+    close: NDArray[np.float64],
+    proba: NDArray[np.float64],
     horizon: int,
     min_holding_bars: int,
     min_confidence: float,
@@ -98,7 +100,7 @@ def _run_regime_state_machine(
     dynamic_sizing: bool,
     min_weight: float,
     edge_for_full_size: float,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """State machine using regime classification probabilities.
 
     Entry: P(long_only) or P(short_only) > min_confidence,
@@ -195,9 +197,9 @@ def _evaluate_regime_combo(
     """Evaluate a parameter combination for grid search."""
     horizon, min_confidence, edge_for_full_size = params
 
-    x = df[feature_names].values
+    x: NDArray[np.float64] = df[feature_names].to_numpy(dtype=np.float64)
     proba = model.predict_proba(x)
-    close_arr = df["close"].astype(float).values
+    close_arr: NDArray[np.float64] = df["close"].to_numpy(dtype=np.float64)
 
     dyn = config.dynamic_sizing
     min_weight = (
@@ -312,13 +314,13 @@ class QuantileStrategy(BaseStrategy):
             )
 
             # Log class distribution
-            y = feat_df["target_regime"].values.astype(int)
+            y: NDArray[np.int_] = feat_df["target_regime"].to_numpy(dtype=np.int_)
             for cls, name in [
                 (0, "long_only"), (1, "short_only"),
                 (2, "both"), (3, "neither"),
             ]:
                 logger.info(
-                    "  %s: %.1f%%", name, (y == cls).mean() * 100,
+                    "  %s: %.1f%%", name, float(np.mean(y == cls)) * 100,
                 )
 
             grid: list[_ParamTuple] = list(itertools.product(
@@ -414,8 +416,8 @@ class QuantileStrategy(BaseStrategy):
         test_len = len(df)
 
         chunk_starts = list(range(0, test_len, retrain_interval))
-        all_signals = np.zeros(test_len, dtype=np.float64)
-        all_weights = np.ones(test_len, dtype=np.float64)
+        all_signals: NDArray[np.float64] = np.zeros(test_len, dtype=np.float64)
+        all_weights: NDArray[np.float64] = np.ones(test_len, dtype=np.float64)
 
         dyn = cfg.dynamic_sizing
         min_weight = (
@@ -477,9 +479,11 @@ class QuantileStrategy(BaseStrategy):
                 mask = predict_feat["timestamp"] >= chunk_ts
                 predict_feat = predict_feat[mask].reset_index(drop=True)
 
-            x = predict_feat[fnames].values
+            x: NDArray[np.float64] = predict_feat[fnames].to_numpy(dtype=np.float64)
             proba = regime_model.predict_proba(x)
-            chunk_close = predict_feat["close"].astype(float).values
+            chunk_close: NDArray[np.float64] = predict_feat["close"].to_numpy(
+                dtype=np.float64,
+            )
 
             # Run state machine for this chunk
             chunk_len = len(proba)
@@ -614,9 +618,11 @@ class QuantileStrategy(BaseStrategy):
         assert self._regime_model is not None  # noqa: S101
 
         feat_df = self._feature_eng.transform(df, include_target=False)
-        x = feat_df[self._feature_names].values
+        x: NDArray[np.float64] = feat_df[self._feature_names].to_numpy(
+            dtype=np.float64,
+        )
         proba = self._regime_model.predict_proba(x)
-        close_arr = feat_df["close"].astype(float).values
+        close_arr: NDArray[np.float64] = feat_df["close"].to_numpy(dtype=np.float64)
 
         dyn = cfg.dynamic_sizing
         min_weight = (

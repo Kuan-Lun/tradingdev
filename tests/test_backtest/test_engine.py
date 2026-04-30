@@ -5,11 +5,11 @@ from datetime import UTC
 import numpy as np
 import pandas as pd
 
-from quant_backtest.backtest.result import BacktestResult
-from quant_backtest.backtest.signal_engine import (
+from tradingdev.backtest.result import BacktestResult
+from tradingdev.backtest.signal_engine import (
     SignalBacktestEngine,
 )
-from quant_backtest.backtest.volume_engine import (
+from tradingdev.backtest.volume_engine import (
     VolumeBacktestEngine,
 )
 

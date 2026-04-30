@@ -85,12 +85,12 @@
 ## 執行方式
 
 ```bash
-uv run python -m quant_backtest.main --config configs/kd_strategy.yaml
+uv run python -m tradingdev.main --config configs/kd_strategy.yaml
 ```
 
 ## 相關檔案
 
-- 策略實作：`src/quant_backtest/strategies/kd_strategy.py`
-- KD 指標：`src/quant_backtest/indicators/kd.py`
+- 策略實作：`strategies/kd_strategy.py`
+- KD 指標：`src/tradingdev/indicators/kd.py`
 - 策略配置：`configs/kd_strategy.yaml`
-- Pydantic 模型：`src/quant_backtest/data/schemas.py`（`KDStrategyConfig`）
+- Pydantic 模型：`src/tradingdev/data/schemas.py`（`KDStrategyConfig`）

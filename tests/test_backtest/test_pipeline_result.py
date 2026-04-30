@@ -8,9 +8,9 @@ from typing import Any
 
 import numpy as np
 
-from quant_backtest.backtest.pipeline_result import PipelineResult
-from quant_backtest.backtest.result import BacktestResult
-from quant_backtest.validation.walk_forward import WalkForwardResult
+from tradingdev.backtest.pipeline_result import PipelineResult
+from tradingdev.backtest.result import BacktestResult
+from tradingdev.validation.walk_forward import WalkForwardResult
 
 
 def _make_backtest_result(**overrides: Any) -> BacktestResult:

@@ -16,17 +16,17 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from quant_backtest.strategies.base import BaseStrategy
-from quant_backtest.utils.logger import setup_logger
-from quant_backtest.utils.parallel import estimate_n_jobs
+from tradingdev.strategies.base import BaseStrategy
+from tradingdev.utils.logger import setup_logger
+from tradingdev.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    from quant_backtest.backtest.base_engine import (
+    from tradingdev.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from quant_backtest.data.schemas import (
+    from tradingdev.data.schemas import (
         GLFTStrategyConfig,
         ParallelConfig,
     )

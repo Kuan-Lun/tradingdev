@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd  # noqa: TC002
 from sklearn.metrics import accuracy_score
 
-from quant_backtest.ml.features import FeatureEngineer
-from quant_backtest.ml.xgboost_model import XGBoostDirectionModel
-from quant_backtest.strategies.base import BaseStrategy
-from quant_backtest.utils.logger import setup_logger
+from tradingdev.domain.ml.features.features import FeatureEngineer
+from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.strategies.base import BaseStrategy
+from tradingdev.utils.logger import setup_logger
 from strategies.rolling_retrainer import (
     RollingRetrainer,
 )
@@ -19,10 +19,10 @@ from strategies.threshold_optimizer import (
 )
 
 if TYPE_CHECKING:
-    from quant_backtest.backtest.base_engine import (
+    from tradingdev.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from quant_backtest.data.schemas import (
+    from tradingdev.data.schemas import (
         XGBoostStrategyConfig,
     )
 

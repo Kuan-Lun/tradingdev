@@ -9,18 +9,18 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-from quant_backtest.ml.risk_features import RiskFeatureEngineer
-from quant_backtest.ml.xgboost_model import XGBoostDirectionModel
-from quant_backtest.strategies.base import BaseStrategy
-from quant_backtest.utils.logger import setup_logger
+from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
+from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.strategies.base import BaseStrategy
+from tradingdev.utils.logger import setup_logger
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    from quant_backtest.backtest.base_engine import (
+    from tradingdev.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from quant_backtest.data.schemas import (
+    from tradingdev.data.schemas import (
         SafetyVolumeStrategyConfig,
     )
 
@@ -439,7 +439,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         df: pd.DataFrame,
     ) -> None:
         """Train the optional ML direction model."""
-        from quant_backtest.ml.features import FeatureEngineer
+        from tradingdev.domain.ml.features.features import FeatureEngineer
 
         best_lb = self._best_lookback or 720
         self._dir_fe = FeatureEngineer(

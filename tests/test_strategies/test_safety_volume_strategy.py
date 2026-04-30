@@ -9,12 +9,12 @@ from strategies.safety_volume_strategy import (
     SafetyVolumeStrategy,
 )
 
-from quant_backtest.backtest.volume_engine import VolumeBacktestEngine
-from quant_backtest.data.schemas import (
+from tradingdev.backtest.volume_engine import VolumeBacktestEngine
+from tradingdev.data.schemas import (
     SafetyVolumeStrategyConfig,
     XGBoostModelConfig,
 )
-from quant_backtest.ml.risk_features import RiskFeatureEngineer
+from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 
 # ── Helpers ──────────────────────────────────────────────────
 

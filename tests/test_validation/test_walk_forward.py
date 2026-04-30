@@ -3,18 +3,18 @@
 import pandas as pd
 from strategies.kd_strategy import KDStrategy
 
-from quant_backtest.backtest.signal_engine import (
+from tradingdev.backtest.signal_engine import (
     SignalBacktestEngine,
 )
-from quant_backtest.data.schemas import (
+from tradingdev.data.schemas import (
     KDStrategyConfig,
     WalkForwardConfig,
 )
-from quant_backtest.validation.report import (
+from tradingdev.validation.report import (
     format_walk_forward_report,
     summarize_results,
 )
-from quant_backtest.validation.walk_forward import (
+from tradingdev.validation.walk_forward import (
     WalkForwardValidator,
 )
 

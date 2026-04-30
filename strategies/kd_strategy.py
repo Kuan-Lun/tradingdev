@@ -7,19 +7,19 @@ from typing import TYPE_CHECKING, Any
 
 from joblib import Parallel, delayed
 
-from quant_backtest.data.schemas import KDStrategyConfig
-from quant_backtest.indicators.kd import KDIndicator
-from quant_backtest.strategies.base import BaseStrategy
-from quant_backtest.utils.logger import setup_logger
-from quant_backtest.utils.parallel import estimate_n_jobs
+from tradingdev.data.schemas import KDStrategyConfig
+from tradingdev.indicators.kd import KDIndicator
+from tradingdev.strategies.base import BaseStrategy
+from tradingdev.utils.logger import setup_logger
+from tradingdev.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
     import pandas as pd
 
-    from quant_backtest.backtest.base_engine import (
+    from tradingdev.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from quant_backtest.data.schemas import KDFitConfig, ParallelConfig
+    from tradingdev.data.schemas import KDFitConfig, ParallelConfig
 
 logger = setup_logger(__name__)
 

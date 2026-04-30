@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from quant_backtest.data.loader import DataLoader
+from tradingdev.data.loader import DataLoader
 
 
 class TestDataLoader:

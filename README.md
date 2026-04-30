@@ -1,8 +1,15 @@
-# 量化交易回測 MCP Server
+# TradingDev MCP Server
 
-本專案是一個 **MCP (Model Context Protocol) Server**，讓使用者可以在任何支援 MCP 的聊天視窗（Claude Desktop、claude.ai 等）中，用自然語言描述策略想法，**由 LLM 直接撰寫全新的策略程式碼與配置、存檔、並觸發回測**。策略不受限於任何預設清單——LLM 會根據使用者描述，用 pandas 自行實作指標與信號邏輯，產生的 Python 檔與 YAML 配置會寫入專案內，隨後可立即回測、迭代優化。
+本專案正在重構為 **MCP-first quantitative strategy development server**。
+MCP tools 是主要產品入口；CLI 與 dashboard 只是次要 adapter。使用者可以在支援
+MCP 的聊天視窗（Claude Desktop、claude.ai 等）中，用自然語言描述策略想法，由
+LLM 產生策略程式碼與配置、觸發歷史回測、查詢 job 狀態並迭代研究結果。
 
-底層為基於 `vectorbt` 的向量化回測框架，支援多種標的（如 BTC/USDT 永續合約等）。
+底層仍使用 `vectorbt` 做向量化歷史回測；範圍不包含 live trading、交易憑證或下單。
+Checkpoint 1 已把正式 package 改為 `tradingdev`，並把 MCP server 納入
+`src/tradingdev/mcp/`。`strategies/`、`configs/` 與 `.backtest_jobs/` 仍是暫時
+runtime 入口，後續 checkpoint 會收斂到 `workspace/`、strategy lifecycle 與
+SQLite run/artifact store。
 
 ## Demo
 
@@ -50,7 +57,7 @@ cd tradingdev.clone
 uv sync
 
 # 3. 驗證安裝
-uv run python -c "import quant_backtest; print('OK')"
+uv run python -c "import tradingdev; print('OK')"
 ```
 
 ## 啟動 MCP Server
@@ -62,9 +69,9 @@ uv run python -c "import quant_backtest; print('OK')"
 ```json
 {
   "mcpServers": {
-    "quant-backtest": {
+    "tradingdev": {
       "command": "uv",
-      "args": ["run", "python", "mcp_server/server.py"],
+      "args": ["run", "tradingdev-mcp"],
       "cwd": "/absolute/path/to/tradingdev.clone"
     }
   }
@@ -77,7 +84,7 @@ uv run python -c "import quant_backtest; print('OK')"
 
 ```bash
 # Terminal 1：啟動 HTTP MCP Server
-uv run python mcp_server/server.py --web --port 8000
+uv run tradingdev-mcp --web --transport streamable-http --port 8000
 
 # Terminal 2：開啟公開 tunnel，取得 https://xxx.trycloudflare.com
 cloudflared tunnel --url http://localhost:8000
@@ -87,7 +94,8 @@ cloudflared tunnel --url http://localhost:8000
 
 ## MCP 工具一覽
 
-Server 透過 FastMCP 暴露以下工具（詳見 [mcp_server/server.py](mcp_server/server.py)）：
+Server 透過 FastMCP 暴露以下工具（詳見
+[server.py](src/tradingdev/mcp/server.py)）：
 
 ### 策略開發
 
@@ -136,13 +144,13 @@ Server 透過 FastMCP 暴露以下工具（詳見 [mcp_server/server.py](mcp_ser
 若不透過 LLM，也可直接用 CLI 執行回測：
 
 ```bash
-uv run python -m quant_backtest.main --config configs/<strategy>.yaml
+uv run python -m tradingdev.main --config configs/<strategy>.yaml
 ```
 
 回測結果會快取至 `data/cache/`，可用 Streamlit Dashboard 檢視：
 
 ```bash
-uv run streamlit run src/quant_backtest/dashboard/app.py -- --config configs/<strategy>.yaml
+uv run streamlit run src/tradingdev/dashboard/app.py -- --config configs/<strategy>.yaml
 ```
 
 ## 相關文件

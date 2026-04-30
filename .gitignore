@@ -46,3 +46,6 @@ Thumbs.db
 
 # MCP Server job state (runtime data, not source code)
 .backtest_jobs/
+
+# TradingDev runtime workspace
+workspace/

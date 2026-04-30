@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
-from quant_backtest.ml.features import FeatureEngineer
-from quant_backtest.utils.logger import setup_logger
+from tradingdev.domain.ml.features.features import FeatureEngineer
+from tradingdev.utils.logger import setup_logger
 
 if TYPE_CHECKING:
-    from quant_backtest.backtest.base_engine import (
+    from tradingdev.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from quant_backtest.ml.xgboost_model import (
+    from tradingdev.domain.ml.models.xgboost_model import (
         XGBoostDirectionModel,
     )
 

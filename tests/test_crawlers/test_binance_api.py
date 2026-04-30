@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from quant_backtest.crawlers.binance_api import BinanceAPICrawler
+from tradingdev.domain.data.crawlers.binance_api import BinanceAPICrawler
 
 
 class TestBinanceAPICrawler:
@@ -20,7 +20,7 @@ class TestBinanceAPICrawler:
             candles.append([ts, 40000.0, 40100.0, 39900.0, 40050.0, 500.0])
         return candles
 
-    @patch("quant_backtest.crawlers.binance_api.ccxt.binance")
+    @patch("tradingdev.domain.data.crawlers.binance_api.ccxt.binance")
     def test_fetch_returns_dataframe(self, mock_binance_cls: MagicMock) -> None:
         mock_exchange = MagicMock()
         mock_exchange.rateLimit = 100
@@ -46,7 +46,7 @@ class TestBinanceAPICrawler:
             "volume",
         ]
 
-    @patch("quant_backtest.crawlers.binance_api.ccxt.binance")
+    @patch("tradingdev.domain.data.crawlers.binance_api.ccxt.binance")
     def test_fetch_timestamps_are_utc(self, mock_binance_cls: MagicMock) -> None:
         mock_exchange = MagicMock()
         mock_exchange.rateLimit = 100
@@ -63,7 +63,7 @@ class TestBinanceAPICrawler:
 
         assert df["timestamp"].dt.tz is not None
 
-    @patch("quant_backtest.crawlers.binance_api.ccxt.binance")
+    @patch("tradingdev.domain.data.crawlers.binance_api.ccxt.binance")
     def test_save_raw_creates_csv(
         self, mock_binance_cls: MagicMock, tmp_path: Path
     ) -> None:

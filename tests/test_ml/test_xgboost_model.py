@@ -3,9 +3,9 @@
 import pandas as pd
 import pytest
 
-from quant_backtest.data.schemas import XGBoostModelConfig
-from quant_backtest.ml.features import FeatureEngineer
-from quant_backtest.ml.xgboost_model import XGBoostDirectionModel
+from tradingdev.data.schemas import XGBoostModelConfig
+from tradingdev.domain.ml.features.features import FeatureEngineer
+from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 
 
 class TestXGBoostDirectionModel:

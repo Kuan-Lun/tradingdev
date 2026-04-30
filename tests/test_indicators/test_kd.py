@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from quant_backtest.indicators.kd import KDIndicator
+from tradingdev.indicators.kd import KDIndicator
 
 
 class TestKDIndicator:

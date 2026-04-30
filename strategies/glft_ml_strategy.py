@@ -17,16 +17,16 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
-from quant_backtest.ml.autogluon_model import AutoGluonDirectionModel
-from quant_backtest.ml.direction_features import DirectionFeatureEngineer
-from quant_backtest.strategies.base import BaseStrategy
-from quant_backtest.utils.logger import setup_logger
+from tradingdev.domain.ml.models.autogluon_model import AutoGluonDirectionModel
+from tradingdev.domain.ml.features.direction_features import DirectionFeatureEngineer
+from tradingdev.strategies.base import BaseStrategy
+from tradingdev.utils.logger import setup_logger
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    from quant_backtest.backtest.base_engine import BaseBacktestEngine
-    from quant_backtest.data.schemas import (
+    from tradingdev.backtest.base_engine import BaseBacktestEngine
+    from tradingdev.data.schemas import (
         GLFTMLStrategyConfig,
         ParallelConfig,
     )
@@ -88,7 +88,7 @@ class GLFTMLStrategy(BaseStrategy):
         """Derive ``num_cpus`` for AutoGluon from parallel config."""
         if self._parallel_config is None:
             return None
-        from quant_backtest.utils.parallel import _get_performance_core_count
+        from tradingdev.utils.parallel import _get_performance_core_count
 
         perf = _get_performance_core_count()
         return max(1, perf - self._parallel_config.reserve_cores)

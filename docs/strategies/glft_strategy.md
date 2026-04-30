@@ -371,7 +371,7 @@ backtest:
 ## 使用方式
 
 ```bash
-uv run python -m quant_backtest.main --config configs/glft_strategy.yaml
+uv run python -m tradingdev.main --config configs/glft_strategy.yaml
 ```
 
 ## 與其他策略的比較

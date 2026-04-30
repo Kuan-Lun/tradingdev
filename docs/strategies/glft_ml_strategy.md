@@ -106,7 +106,7 @@ strategy:
 ## 使用方式
 
 ```bash
-uv run python -m quant_backtest.main configs/glft_ml_strategy.yaml
+uv run python -m tradingdev.main --config configs/glft_ml_strategy.yaml
 ```
 
 ## Walk-Forward 結果（2024 train / 2025 test）

@@ -7,14 +7,14 @@ from unittest.mock import patch
 
 import numpy as np
 
-from quant_backtest.backtest.pipeline_result import PipelineResult
-from quant_backtest.backtest.result import BacktestResult
+from tradingdev.backtest.pipeline_result import PipelineResult
+from tradingdev.backtest.result import BacktestResult
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
-from quant_backtest.utils.cache import (
+from tradingdev.utils.cache import (
     _code_fingerprint,
     clear_cache,
     compute_cache_key,
@@ -54,7 +54,7 @@ class TestCodeFingerprint:
     def test_fallback_on_git_failure(self) -> None:
         """When git is unavailable, returns random (non-deterministic) value."""
         with patch(
-            "quant_backtest.utils.cache._run_git",
+            "tradingdev.utils.cache._run_git",
             return_value=None,
         ):
             fp1 = _code_fingerprint()
@@ -103,7 +103,7 @@ class TestSaveLoadRoundtrip:
 
     def test_roundtrip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "quant_backtest.utils.cache.CACHE_DIR",
+            "tradingdev.utils.cache.CACHE_DIR",
             tmp_path / "cache",
         )
         config = tmp_path / "cfg.yaml"
@@ -124,7 +124,7 @@ class TestSaveLoadRoundtrip:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "quant_backtest.utils.cache.CACHE_DIR",
+            "tradingdev.utils.cache.CACHE_DIR",
             tmp_path / "cache",
         )
         config = tmp_path / "cfg.yaml"
@@ -134,12 +134,10 @@ class TestSaveLoadRoundtrip:
 
         assert load_cached_result(config, data) is None
 
-    def test_clear_cache(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_clear_cache(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cache_dir = tmp_path / "cache"
         monkeypatch.setattr(
-            "quant_backtest.utils.cache.CACHE_DIR",
+            "tradingdev.utils.cache.CACHE_DIR",
             cache_dir,
         )
         config = tmp_path / "cfg.yaml"

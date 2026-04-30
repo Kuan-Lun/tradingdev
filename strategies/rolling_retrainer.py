@@ -9,12 +9,12 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from quant_backtest.ml.xgboost_model import XGBoostDirectionModel
-from quant_backtest.utils.logger import setup_logger
+from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.utils.logger import setup_logger
 
 if TYPE_CHECKING:
-    from quant_backtest.data.schemas import XGBoostModelConfig
-    from quant_backtest.ml.features import FeatureEngineer
+    from tradingdev.data.schemas import XGBoostModelConfig
+    from tradingdev.domain.ml.features.features import FeatureEngineer
 
 logger = setup_logger(__name__)
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Quantitative trading strategy backtesting framework for crypto futures (e.g. BTC/USDT perpetual). Scope is historical backtesting only — no live trading. Development follows vibe coding mode: Claude writes the code, human reviews.
+TradingDev is being refactored into an MCP-first quantitative strategy development server for crypto futures research (e.g. BTC/USDT perpetual). MCP tools are the primary product entry point; CLI and dashboard are secondary adapters. Scope is historical backtesting and strategy research only — no live trading, credentials, or order placement. Development follows vibe coding mode: Claude writes the code, human reviews.
 
 ## Commands
 
@@ -18,9 +18,16 @@ uv run pytest tests/
 uv run pytest tests/ -v
 
 # Code quality
-uv run ruff check .
-uv run ruff format .
-uv run mypy src/
+./scripts/hooks/finalize-python.sh
+./scripts/hooks/finalize-markdown.sh
+uv run black src tests scripts
+uv run ruff check --fix src tests scripts
+uv run mypy src tests scripts
+
+# MCP / CLI entry points
+uv run tradingdev-mcp
+uv run tradingdev-mcp --web --transport streamable-http --port 8000
+uv run python -m tradingdev.main --config configs/<strategy>.yaml
 
 # Add a package
 uv add <package>
@@ -46,9 +53,9 @@ tree -I '__pycache__|*.egg-info|.venv|data' -L 4
 
 - **Signal convention**: `1` = long, `-1` = short, `0` = no signal. All strategies must produce signals in this format.
 - **No look-ahead bias**: signal computation must only use data at index `t` and earlier. This is strictly enforced — no future data may leak into indicators or signals.
-- **Strategy parameters in YAML only**: all tunable parameters live in `configs/`. Hardcoding any parameter value in source code is forbidden.
+- **Strategy parameters in YAML only**: all tunable parameters live in YAML config. Checkpoint 1 still uses root-level `configs/`; later checkpoints will split bundled configs from generated `workspace/configs/`. Hardcoding tunable parameter values in source code is forbidden.
 - **No `print()` for debugging**: use Python's standard `logging` module throughout.
-- **Data flow**: raw CSVs/ZIPs land in `data/raw/`, cleaned output is Parquet in `data/processed/`. Strategy code only reads from `data/processed/`.
+- **Data flow**: Checkpoint 1 still uses `data/raw/` and `data/processed/`; later checkpoints will move runtime data cache under `workspace/data/`. Strategy code only reads processed data.
 - **Vectorized backtesting**: vectorbt runs the backtest in a vectorized (not event-driven) loop. Signals are precomputed as Series/arrays before being passed to the engine.
 - **ML strategies require train/val/test split**: parameter optimization must be validated with walk-forward or cross-validation; no in-sample overfitting.
 - **Backtest reproducibility**: fix random seeds, record dataset version and time range in every backtest run.

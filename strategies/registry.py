@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from quant_backtest.data.schemas import (
+from tradingdev.data.schemas import (
     GLFTMLStrategyConfig,
     GLFTStrategyConfig,
     KDFitConfig,
@@ -26,10 +26,10 @@ from strategies.xgboost_strategy import (
 )
 
 if TYPE_CHECKING:
-    from quant_backtest.backtest.base_engine import (
+    from tradingdev.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from quant_backtest.strategies.base import BaseStrategy
+    from tradingdev.strategies.base import BaseStrategy
 
 
 def create_strategy(

@@ -130,7 +130,7 @@ backtest:
 ## 使用方式
 
 ```bash
-uv run python -m quant_backtest.main --config configs/safety_volume_strategy.yaml
+uv run python -m tradingdev.main --config configs/safety_volume_strategy.yaml
 ```
 
 ## 與 XGBoost Direction Strategy 的比較

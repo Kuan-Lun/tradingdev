@@ -9,8 +9,8 @@ import pytest
 from pydantic import ValidationError
 from strategies.glft_strategy import GLFTStrategy
 
-from quant_backtest.backtest.volume_engine import VolumeBacktestEngine
-from quant_backtest.data.schemas import GLFTStrategyConfig
+from tradingdev.backtest.volume_engine import VolumeBacktestEngine
+from tradingdev.data.schemas import GLFTStrategyConfig
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -34,7 +34,7 @@ def _make_config(**overrides: object) -> GLFTStrategyConfig:
         "vol_window_candidates": [10, 20],
     }
     defaults.update(overrides)
-    return GLFTStrategyConfig(**defaults)  # type: ignore[arg-type]
+    return GLFTStrategyConfig(**defaults)
 
 
 # ── Config validation tests ──────────────────────────────────
@@ -393,7 +393,7 @@ def _make_implied_config(
         "vol_window_candidates": [10, 20],
     }
     defaults.update(overrides)
-    return GLFTStrategyConfig(**defaults)  # type: ignore[arg-type]
+    return GLFTStrategyConfig(**defaults)
 
 
 class TestGLFTImpliedVolatility:
