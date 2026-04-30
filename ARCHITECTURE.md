@@ -1,180 +1,142 @@
 # Architecture Overview
 
-TradingDev is being refactored into an MCP-first quantitative strategy
-development server. MCP tools are the main product API. CLI and dashboard
-entry points are adapters over the same package, not separate products.
+TradingDev 的主要產品邊界是 MCP tools。MCP、CLI 與 dashboard 不各自組回測流程，
+而是呼叫 `tradingdev.app` services；domain 層保存交易、資料、策略與模型邏輯；
+adapters 層負責 FastMCP、CLI、dashboard、SQLite、filesystem 與 subprocess。
 
-Checkpoint 1 establishes the package boundary:
+## Module Layout
 
 ```text
 src/tradingdev/
   mcp/
     server.py
-    job_store.py
-    workers/
-      backtest.py
-      optimization.py
-  data/
-    data_manager.py
-    loader.py
-    processor.py
     schemas.py
+    tools/
+    workers/
+  app/
+    strategy_service.py
+    data_service.py
+    backtest_service.py
+    optimization_service.py
+    job_service.py
+    run_service.py
+    artifact_service.py
+    feature_request_service.py
+    capability_service.py
+    job_store.py
   domain/
-    data/crawlers/
+    strategies/
+    backtest/
+    data/
+    indicators/
     ml/
-      base.py
-      models/
-      features/
-      thesis_validator.py
-  backtest/
-  dashboard/
-  indicators/
-  strategies/
-  validation/
-  utils/
+    validation/
+  adapters/
+    cli/
+    dashboard/
+    execution/
+    storage/
+  shared/
+    utils/
 ```
 
-Root-level `strategies/`, `configs/`, `data/`, and `.backtest_jobs/` are
-temporary runtime locations kept for Checkpoint 1 compatibility. Later
-checkpoints will move generated artifacts and runtime state under
-`workspace/`, split bundled strategy configs from generated configs, and
-replace `.backtest_jobs/jobs.json` with SQLite job/run/artifact metadata.
-
-## Package Flow
+## Runtime Flow
 
 ```mermaid
 flowchart TB
-    user[LLM or user] --> mcp[tradingdev.mcp.server]
-    mcp --> jobs[tradingdev.mcp.job_store]
-    mcp --> workers[tradingdev.mcp.workers]
-    workers --> data[tradingdev.data.DataManager]
-    workers --> strategy[root strategies]
-    workers --> engine[tradingdev.backtest engines]
-    data --> crawlers[tradingdev.domain.data.crawlers]
-    strategy --> ml[tradingdev.domain.ml]
-    engine --> result[BacktestResult and metrics]
-    workers --> jobs
+    user[LLM or user] --> mcp[FastMCP server]
+    mcp --> tools[mcp.tools thin wrappers]
+    tools --> app[application services]
+    cli[CLI adapter] --> app
+    dashboard[Dashboard adapter] --> app
 
-    cli[uv run tradingdev] --> data
-    cli --> strategy
-    cli --> engine
-    dashboard[Streamlit dashboard] --> cache[data/cache PipelineResult]
+    app --> loader[StrategyLoader]
+    app --> data[DataService]
+    app --> backtest[BacktestService]
+    app --> jobs[JobService]
+    app --> runs[RunService]
+    app --> artifacts[ArtifactService]
+
+    loader --> bundled[bundled strategies]
+    loader --> generated[workspace generated strategies]
+    data --> manager[domain.data.DataManager]
+    data --> requirements[DataRequirement]
+    backtest --> engines[domain.backtest engines]
+    jobs --> workers[mcp.workers subprocesses]
+    jobs --> sqlite[(workspace/tradingdev.sqlite)]
+    runs --> sqlite
+    artifacts --> sqlite
+    artifacts --> files[workspace/runs and workspace artifacts]
 ```
 
-## Runtime Entrypoints
+## Strategy Lifecycle
 
-- MCP stdio: `uv run tradingdev-mcp`
-- MCP HTTP: `uv run tradingdev-mcp --web --transport streamable-http --port 8000`
-- CLI backtest: `uv run python -m tradingdev.main --config configs/<strategy>.yaml`
-- Module MCP launch: `uv run python -m tradingdev.mcp.server`
-
-The MCP server launches background workers with module execution:
-
-```text
-python -m tradingdev.mcp.workers.backtest <job_id> <config_path>
-python -m tradingdev.mcp.workers.optimization <job_id>
+```mermaid
+stateDiagram-v2
+    [*] --> draft: save_strategy
+    draft --> validated: validate_strategy
+    draft --> draft: validation failed
+    validated --> runnable: dry_run_strategy
+    runnable --> promoted: promote_strategy
+    promoted --> promoted: bundled strategies start here
+    runnable --> running: start_backtest/start_walk_forward
+    promoted --> running: start_backtest/start_walk_forward
+    running --> done
+    running --> failed
 ```
 
-The server no longer mutates `sys.path` to import package code. Project-root
-runtime paths are resolved from `TRADINGDEV_PROJECT_ROOT` when set, otherwise
-from the current working directory.
+Generated strategies must live in `workspace/generated_strategies/`. Bundled
+strategies live next to their git-versioned configs under
+`src/tradingdev/domain/strategies/bundled/`.
 
-## Current Domain Components
+## Storage
 
 ```mermaid
 classDiagram
-    direction TB
-
-    class FastMCPServer {
-        +list_strategies()
-        +get_strategy()
-        +get_strategy_template()
-        +save_strategy()
-        +start_backtest()
-        +start_optimization()
-        +confirm_optimization()
-        +get_job_status()
+    class SQLiteStore {
+        +upsert_job(record)
+        +get_job(job_id)
         +list_jobs()
+        +create_run(...)
+        +list_runs()
+        +get_run(run_id)
+        +create_artifact(...)
+        +list_artifacts(run_id)
+    }
+
+    class WorkspacePaths {
+        +generated_strategies
+        +configs
+        +runs
+        +feature_requests
+        +raw_data
+        +processed_data
     }
 
     class JobRecord {
         <<pydantic>>
-        +job_id: str
-        +job_type: str
-        +status: str
-        +strategy_name: str
-        +symbol: str
-        +timeframe: str
-        +config_path: str
-        +pid: int | None
-        +result_path: str
+        +job_id
+        +status
+        +job_type
+        +strategy_name
+        +config_path
+        +result_path
     }
 
-    class DataManager {
-        +load() tuple
-        +effective_processed_path: Path
-    }
-
-    class BaseCrawler {
-        <<abstract>>
-        +fetch(symbol, timeframe, start, end) DataFrame
-        +save_raw(df, output_path) None
-    }
-
-    class BinanceAPICrawler
-    class BinanceVisionCrawler
-    class BinanceDerivativesCrawler
-    class DeribitDVOLCrawler
-
-    class BaseBacktestEngine {
-        <<abstract>>
-        +run(df) BacktestResult
-    }
-
-    class SignalBacktestEngine
-    class VolumeBacktestEngine
-    class BacktestResult
-
-    class BaseStrategy {
-        <<abstract>>
-        +fit(df) None
-        +generate_signals(df) DataFrame
-        +get_parameters() dict
-    }
-
-    class BaseModel {
-        <<abstract>>
-        +train(df, eval_df) None
-        +predict(df) Series
-        +predict_proba(df) DataFrame
-    }
-
-    FastMCPServer --> JobRecord
-    FastMCPServer --> DataManager
-    FastMCPServer --> BaseBacktestEngine
-    DataManager --> BaseCrawler
-    BaseCrawler <|-- BinanceAPICrawler
-    BaseCrawler <|-- BinanceVisionCrawler
-    BaseCrawler <|-- BinanceDerivativesCrawler
-    BaseCrawler <|-- DeribitDVOLCrawler
-    BaseBacktestEngine <|-- SignalBacktestEngine
-    BaseBacktestEngine <|-- VolumeBacktestEngine
-    SignalBacktestEngine --> BacktestResult
-    VolumeBacktestEngine --> BacktestResult
-    BaseStrategy --> BaseBacktestEngine
-    BaseModel <|-- XGBoostDirectionModel
-    BaseModel <|-- AutoGluonDirectionModel
+    SQLiteStore --> JobRecord
+    SQLiteStore --> WorkspacePaths
 ```
 
-## Checkpoint Notes
+SQLite stores metadata. Filesystem stores generated code/config, result JSON,
+feature requests and data caches. `workspace/runs/<run_id>/` is linked from the
+`runs.artifact_dir` column.
 
-- `tradingdev.domain.data.crawlers` owns external data crawlers.
-- `tradingdev.domain.ml.models` owns model wrappers.
-- `tradingdev.domain.ml.features` owns feature engineering.
-- `tradingdev.mcp.job_store.JobRecord` gives the temporary JSON job store a
-  typed schema while keeping filesystem storage until the SQLite checkpoint.
-- `src/tradingdev/data/schemas.py` is still an aggregate schema module. Schema
-  split happens in the next checkpoint.
-- Root-level `strategies/registry.py` is still used by the CLI path. Unified
-  strategy loading and workspace-generated strategies happen in the next
-  checkpoint.
+## Domain Contracts
+
+- Strategy signal convention: `1` long, `-1` short, `0` flat.
+- Strategy parameters live in YAML `strategy.parameters`.
+- Data requirements live in YAML `data.requirements`.
+- `start_backtest` rejects configs with `validation:`; use `start_walk_forward`.
+- Generated strategies must pass static policy checks before execution.
+- Runtime cache defaults to `workspace/data/`; `TRADINGDEV_DATA_ROOT` can override
+  raw/processed data root.

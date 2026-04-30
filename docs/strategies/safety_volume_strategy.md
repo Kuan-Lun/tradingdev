@@ -121,7 +121,7 @@ strategy:
     monthly_volume_target: 12500000
 
 backtest:
-  # ... (see configs/safety_volume_strategy.yaml)
+  # ... (see src/tradingdev/domain/strategies/bundled/safety_volume_strategy/config.yaml)
   signal_as_position: true    # signal=0 → 平倉
   re_entry_after_sl: false    # SL 後不自動重入場
   stop_loss: 0.03             # 3% 緊急 SL
@@ -130,7 +130,7 @@ backtest:
 ## 使用方式
 
 ```bash
-uv run python -m tradingdev.main --config configs/safety_volume_strategy.yaml
+uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/safety_volume_strategy/config.yaml --walk-forward
 ```
 
 ## 與 XGBoost Direction Strategy 的比較

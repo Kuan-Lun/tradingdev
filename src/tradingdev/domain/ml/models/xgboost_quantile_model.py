@@ -12,7 +12,7 @@ import pandas as pd
 import xgboost as xgb
 
 from tradingdev.domain.ml.base import BaseModel
-from tradingdev.utils.logger import setup_logger
+from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
     import numpy as np

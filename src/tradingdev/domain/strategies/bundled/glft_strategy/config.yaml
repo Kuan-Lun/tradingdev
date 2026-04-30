@@ -1,0 +1,118 @@
+strategy:
+  id: "glft_market_making"
+  version: "1.0.0"
+  class_name: "GLFTStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/glft_strategy/strategy.py"
+  description: "GLFT market-making strategy — analytical spread-based entry/exit"
+  parameters:
+    # Core GLFT parameters (dimensionless %-space)
+    gamma: 500 # Risk aversion in %-space
+    kappa: 1000 # Order arrival intensity in %-space
+    ema_window: 21 # EMA window for fair value
+
+    # Volatility estimation
+    vol_window: 30 # Rolling window for sigma (unused when vol_type: "implied")
+    vol_type: "implied" # "realized", "parkinson", or "implied"
+    # DVOL paths (required when vol_type: "implied"):
+    dvol_raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
+    dvol_processed_path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
+
+    # Holding management (exchange compliance)
+    min_holding_bars: 5 # 5 min @1m — exchange rule compliance
+    max_holding_bars: 30 # 30 min @1m — natural tau horizon
+
+    # fit() grid search candidates
+    # gamma controls vol-adaptive threshold (corrected formula)
+    # gamma=0.01 → ~0.07% at median vol; gamma=0.05 → ~0.35%
+    gamma_candidates: [0, 0.1, 1]
+    kappa_candidates: [250, 500, 750]
+    ema_window_candidates: [5, 15, 30]
+    max_holding_bars_candidates: [6, 8, 13]
+    # vol_window_candidates: [13, 21]
+    target_metric: "total_volume"
+
+    # Entry threshold (independent of fee_rate)
+    # Must be >= fee_rate * 2; higher = more selective, fewer trades
+    min_entry_edge: 0.0015
+    min_entry_edge_candidates: [0.0012, 0.0015, 0.002, 0.003]
+
+    # Trend filter: slow EMA window; 0 = disabled
+    trend_ema_window: 0
+    trend_ema_candidates: [0, 200]
+
+    # Exit: profit target — fraction of entry deviation to capture
+    # 1.0 = full mean-reversion to EMA; >1 = overshoot
+    profit_target_ratio: 1.0
+    profit_target_ratio_candidates: [0.5, 0.75, 1.0]
+
+    # Exit: strategy-level stop-loss — max adverse deviation beyond entry
+    # 0.005 = cut loss if price moves 0.5% further against you
+    strategy_sl: 0.01
+
+    # Entry: momentum guard — only enter when deviation is narrowing
+    momentum_guard: false
+
+    # Multi-timeframe: aggregate N 1-min bars for EMA computation
+    # 1 = no aggregation; 5 = 5-min EMA with 1-min execution
+    signal_agg_minutes: 1
+    signal_agg_minutes_candidates: [1]
+
+    # Position & volume
+    position_size: 10000.0
+    monthly_volume_target: 12500000
+    fee_rate: 0.0005
+
+    # Dynamic position sizing — scale by |deviation| / edge_for_full_size
+    dynamic_sizing: true
+    min_position_size: 10000.0
+    edge_for_full_size: 0.005
+    edge_for_full_size_candidates: [0.003, 0.005, 0.008]
+
+    # Constrained optimization: estimated monthly PnL >= this threshold,
+    # then maximize target_metric (total_volume)
+    min_monthly_pnl: -1500
+
+# Parallel execution
+parallel:
+  reserve_cores: 2 # Cores reserved for OS (P-core aware on Apple Silicon)
+  safety_factor: 0.6 # Fraction of available RAM for workers
+  overhead_multiplier: 3.0
+
+# Walk-forward validation
+validation:
+  train_start: "2024-01-01"
+  train_end: "2024-12-31"
+  test_start: "2025-01-01"
+  test_end: "2025-12-31"
+  target_metric: "total_return"
+
+# Backtest engine config
+backtest:
+  symbol: "BTC/USDT"
+  timeframe: "1m"
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
+  fees: 0.0005
+  slippage: 0
+  monthly_max_loss: 1500.0
+  position_size: 10000.0
+  stop_loss: 0.01 # 1% emergency SL
+  take_profit: null
+  signal_as_position: true # signal=0 → close position
+  re_entry_after_sl: false
+  mode: "volume"
+
+# Data paths
+data:
+  source: "binance_api"
+  requirements:
+    market:
+      source: "binance_api"
+      symbol: "BTC/USDT"
+      timeframe: "1m"
+    features:
+      - type: "dvol"
+        source: "deribit"
+        column: "dvol"
+        path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
+        raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"

@@ -10,7 +10,7 @@ from tradingdev.domain.ml.features.technical_features import (
     compute_ta_indicators,
     compute_volume_features,
 )
-from tradingdev.utils.logger import setup_logger
+from tradingdev.shared.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

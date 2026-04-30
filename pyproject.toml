@@ -25,6 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
+tradingdev = "tradingdev.adapters.cli.main:main"
 tradingdev-mcp = "tradingdev.mcp.server:main"
 
 [build-system]

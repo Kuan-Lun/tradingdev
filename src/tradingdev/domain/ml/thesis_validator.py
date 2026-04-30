@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
-from tradingdev.utils.logger import setup_logger
+from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
     import numpy.typing as npt

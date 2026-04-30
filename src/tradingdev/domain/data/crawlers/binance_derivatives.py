@@ -15,7 +15,7 @@ from pathlib import Path
 import ccxt
 import pandas as pd
 
-from tradingdev.utils.logger import setup_logger
+from tradingdev.shared.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

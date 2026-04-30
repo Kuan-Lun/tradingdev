@@ -1,0 +1,1 @@
+"""Bundled safety volume strategy."""

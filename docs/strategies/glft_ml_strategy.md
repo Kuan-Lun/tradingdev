@@ -92,8 +92,8 @@ strategy:
     kappa: 1000.0
     ema_window: 15
     vol_type: "implied"
-    dvol_raw_path: "data/raw/btc_dvol_1m_2024_2025.csv"
-    dvol_processed_path: "data/processed/btc_dvol_1m_2024_2025.parquet"
+    dvol_raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
+    dvol_processed_path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
     min_holding_bars: 5
     max_holding_bars: 13
     min_entry_edge: 0.0012
@@ -106,7 +106,7 @@ strategy:
 ## 使用方式
 
 ```bash
-uv run python -m tradingdev.main --config configs/glft_ml_strategy.yaml
+uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/glft_ml_strategy/config.yaml --walk-forward
 ```
 
 ## Walk-Forward 結果（2024 train / 2025 test）

@@ -111,8 +111,8 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 |------|--------|------|
 | `vol_window` | 30 | 滾動波動率估計窗口（`implied` 時不使用） |
 | `vol_type` | "implied" | `"realized"` / `"parkinson"` / `"implied"` |
-| `dvol_raw_path` | "data/raw/btc_dvol_1m_2024_2025.csv" | DVOL 原始 CSV 路徑（`implied` 時必填） |
-| `dvol_processed_path` | "data/processed/btc_dvol_1m_2024_2025.parquet" | DVOL 處理後 Parquet 路徑（`implied` 時必填） |
+| `dvol_raw_path` | "workspace/data/raw/btc_dvol_1m_2024_2025.csv" | DVOL 原始 CSV 路徑（`implied` 時必填） |
+| `dvol_processed_path` | "workspace/data/processed/btc_dvol_1m_2024_2025.parquet" | DVOL 處理後 Parquet 路徑（`implied` 時必填） |
 
 ### Implied Volatility (DVOL)
 
@@ -307,8 +307,8 @@ strategy:
     # Volatility
     vol_window: 30
     vol_type: "implied"
-    dvol_raw_path: "data/raw/btc_dvol_1m_2024_2025.csv"
-    dvol_processed_path: "data/processed/btc_dvol_1m_2024_2025.parquet"
+    dvol_raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
+    dvol_processed_path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
 
     # Holding management
     min_holding_bars: 5
@@ -371,7 +371,7 @@ backtest:
 ## 使用方式
 
 ```bash
-uv run python -m tradingdev.main --config configs/glft_strategy.yaml
+uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/glft_strategy/config.yaml --walk-forward
 ```
 
 ## 與其他策略的比較

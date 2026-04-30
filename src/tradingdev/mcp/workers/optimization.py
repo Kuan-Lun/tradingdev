@@ -31,29 +31,17 @@ from typing import Any
 
 from joblib import Parallel, delayed
 
-from tradingdev.data.data_manager import DataManager
-from tradingdev.data.schemas import BacktestConfig, DataConfig
-from tradingdev.mcp import job_store
-from tradingdev.mcp.workers.backtest import (
-    _create_engine,
-    _load_strategy_class,
-    _serialize_metrics,
-)
-from tradingdev.utils.config import load_config
-from tradingdev.utils.logger import setup_logger
-from tradingdev.utils.parallel import estimate_n_jobs
+from tradingdev.app import job_store
+from tradingdev.app.backtest_service import BacktestService
+from tradingdev.app.data_service import DataService
+from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.shared.utils.config import load_config
+from tradingdev.shared.utils.logger import setup_logger
+from tradingdev.shared.utils.parallel import estimate_n_jobs
 
 logger = setup_logger(__name__)
 
-
-def _default_project_root() -> Path:
-    configured = os.environ.get("TRADINGDEV_PROJECT_ROOT")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return Path.cwd().resolve()
-
-
-_PROJECT_ROOT = _default_project_root()
 
 # Trial run timeout in seconds
 _TRIAL_TIMEOUT_SECONDS = 300
@@ -95,8 +83,7 @@ def _trial_timeout_handler(signum: int, frame: Any) -> None:
 # Module-level evaluation function (must be picklable for joblib)
 # ---------------------------------------------------------------------------
 def _evaluate_combo(
-    strategy_file: str,
-    strategy_class_name: str,
+    strategy_cfg: dict[str, Any],
     bt_cfg_dict: dict[str, Any],
     df_json: str,
     param_dict: dict[str, Any],
@@ -108,8 +95,7 @@ def _evaluate_combo(
     class from source to avoid pickle issues with dynamically loaded modules.
 
     Args:
-        strategy_file: Absolute path to the strategy .py file.
-        strategy_class_name: Name of the strategy class.
+        strategy_cfg: Strategy config section.
         bt_cfg_dict: BacktestConfig fields as a plain dict.
         df_json: Training DataFrame serialised as JSON string.
         param_dict: Parameter combination to evaluate.
@@ -120,23 +106,17 @@ def _evaluate_combo(
     """
     import pandas as pd
 
-    from tradingdev.data.schemas import BacktestConfig
-    from tradingdev.mcp.workers.backtest import (
-        _create_engine,
-        _load_strategy_class,
-        _serialize_metrics,
-    )
+    from tradingdev.app.backtest_service import BacktestService
+    from tradingdev.domain.backtest.schemas import BacktestConfig
+    from tradingdev.domain.strategies.loader import StrategyLoader
 
     # Reconstruct DataFrame
     df = pd.read_json(df_json, orient="split")
 
-    # Load strategy class
-    strategy_cfg = {"file": strategy_file, "class": strategy_class_name}
-    cls = _load_strategy_class(strategy_cfg)
-
-    # Create engine
     bt_cfg = BacktestConfig(**bt_cfg_dict)
-    engine = _create_engine(bt_cfg)
+    service = BacktestService()
+    engine = service.create_engine(bt_cfg)
+    cls = StrategyLoader().load_class(strategy_cfg)
 
     # Instantiate strategy with params
     sig = inspect.signature(cls)
@@ -153,23 +133,22 @@ def _evaluate_combo(
     result = engine.run(signals_df)
 
     target_val = result.metrics.get(metric_name, float("-inf"))
-    serialized = _serialize_metrics(result.metrics)
+    serialized = service.serialize_metrics(result.metrics)
 
     return param_dict, float(target_val), serialized
 
 
 def _run_single_combo(
-    strategy_file: str,
-    strategy_class_name: str,
+    strategy_cfg: dict[str, Any],
     bt_cfg: BacktestConfig,
     df: Any,
     param_dict: dict[str, Any],
     metric_name: str,
 ) -> tuple[dict[str, Any], float, dict[str, Any]]:
     """Run a single combo in the main process (for trial run)."""
-    engine = _create_engine(bt_cfg)
-
-    cls = _load_strategy_class({"file": strategy_file, "class": strategy_class_name})
+    service = BacktestService()
+    engine = service.create_engine(bt_cfg)
+    cls = StrategyLoader().load_class(strategy_cfg)
 
     sig = inspect.signature(cls)
     kwargs: dict[str, Any] = {}
@@ -184,7 +163,7 @@ def _run_single_combo(
     result = engine.run(signals_df)
 
     target_val = result.metrics.get(metric_name, float("-inf"))
-    serialized = _serialize_metrics(result.metrics)
+    serialized = service.serialize_metrics(result.metrics)
 
     return param_dict, float(target_val), serialized
 
@@ -220,16 +199,17 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         bt_raw["start_date"] = train_start
         bt_raw["end_date"] = test_end
         bt_cfg = BacktestConfig(**bt_raw)
-        data_cfg = DataConfig(**raw_config.get("data", {}))
     except Exception as exc:
         _fail(job_id, f"Config error: {exc}")
         return
 
     # --- Phase 3: load / download data ---
     try:
-        manager = DataManager(data_config=data_cfg, backtest_config=bt_cfg)
-        full_df, _ = manager.load()
-        job_store.update_job(job_id, data_downloaded=True)
+        dataset = DataService().load(raw_config, bt_cfg)
+        full_df = dataset.frame
+        job_store.update_job(
+            job_id, data_downloaded=True, dataset_id=dataset.dataset_id
+        )
         logger.info("Data loaded: %d rows", len(full_df))
     except Exception as exc:
         _fail(job_id, f"Data error: {exc}")
@@ -265,9 +245,10 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     # --- Phase 4: load strategy class & validate params ---
     try:
         strategy_cfg: dict[str, Any] = raw_config["strategy"]
-        strategy_file = str((_PROJECT_ROOT / strategy_cfg["file"]).resolve())
-        strategy_class_name = strategy_cfg["class"]
-        cls = _load_strategy_class(strategy_cfg)
+        strategy_class_name = str(
+            strategy_cfg.get("class_name") or strategy_cfg.get("class")
+        )
+        cls = StrategyLoader().load_class(strategy_cfg)
     except Exception as exc:
         _fail(job_id, f"Strategy load error: {exc}")
         return
@@ -315,8 +296,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     try:
         t0 = time.monotonic()
         trial_result = _run_single_combo(
-            strategy_file,
-            strategy_class_name,
+            strategy_cfg,
             train_bt_cfg,
             train_df,
             first_combo,
@@ -424,8 +404,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
                 tuple[dict[str, Any], float, dict[str, Any]]
             ] = Parallel(n_jobs=n_jobs)(
                 delayed(_evaluate_combo)(
-                    strategy_file,
-                    strategy_class_name,
+                    strategy_cfg,
                     train_bt_cfg.model_dump(),
                     train_df_json,
                     combo,
@@ -474,8 +453,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
 
     try:
         _, oos_metric_value, oos_metrics = _run_single_combo(
-            strategy_file,
-            strategy_class_name,
+            strategy_cfg,
             test_bt_cfg,
             test_df,
             best_params,

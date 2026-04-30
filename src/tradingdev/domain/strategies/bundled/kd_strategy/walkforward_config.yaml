@@ -1,0 +1,46 @@
+# KD Strategy with Walk-Forward Parameter Optimization
+
+strategy:
+  id: "kd_crossover"
+  version: "1.0.0"
+  class_name: "KDStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/kd_strategy/strategy.py"
+  description: "KD Stochastic Oscillator crossover with grid-search optimization"
+  parameters:
+    k_period: 14
+    d_period: 3
+    smooth_k: 3
+    overbought: 80.0
+    oversold: 20.0
+  fit:
+    k_period_range: [9, 14, 21]
+    d_period_range: [3, 5]
+    smooth_k_range: [3, 5]
+    overbought_range: [70.0, 80.0, 90.0]
+    oversold_range: [10.0, 20.0, 30.0]
+    target_metric: "sharpe_ratio"
+
+validation:
+  train_start: "2024-01-01"
+  train_end: "2024-12-31"
+  test_start: "2025-01-01"
+  test_end: "2025-12-31"
+  target_metric: "sharpe_ratio"
+
+backtest:
+  symbol: "BTC/USDT"
+  timeframe: "1h"
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
+  init_cash: 10000.0
+  fees: 0.0006
+  slippage: 0.0005
+
+data:
+  source: "binance_api"
+  requirements:
+    market:
+      source: "binance_api"
+      symbol: "BTC/USDT"
+      timeframe: "1h"
+    features: []

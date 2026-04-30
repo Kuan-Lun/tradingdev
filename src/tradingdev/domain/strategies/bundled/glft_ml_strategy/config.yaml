@@ -1,0 +1,95 @@
+strategy:
+  id: "glft_ml"
+  version: "1.0.0"
+  class_name: "GLFTMLStrategy"
+  source_path: "src/tradingdev/domain/strategies/bundled/glft_ml_strategy/strategy.py"
+  description: "GLFT + AutoGluon ML direction prediction — limit-order market making"
+  parameters:
+    # --- ML parameters ---
+    prediction_horizon: 5  # Predict direction N minutes ahead
+    feature_lookback: 60   # Feature lookback window (bars)
+    ml_time_limit: 300     # AutoGluon training time limit (seconds)
+    ml_presets: "medium_quality"
+    confidence_threshold: 0.55
+    confidence_threshold_candidates: [0.52, 0.55, 0.60]
+
+    # --- GLFT core parameters (%-space) ---
+    gamma: 0.0
+    kappa: 1000.0
+    ema_window: 15
+
+    # --- Volatility estimation ---
+    vol_type: "implied"
+    dvol_raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
+    dvol_processed_path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
+
+    # --- Holding management ---
+    min_holding_bars: 5
+    max_holding_bars: 13
+
+    # --- Grid search candidates ---
+    gamma_candidates: [0, 200, 500]
+    kappa_candidates: [500, 1000]
+    ema_window_candidates: [5, 15, 30, 75]
+    max_holding_bars_candidates: [8, 13, 30]
+    min_entry_edge_candidates: [0.0008, 0.0012, 0.002]
+    profit_target_ratio_candidates: [0.5, 0.75, 1.0]
+    target_metric: "total_volume"
+
+    # --- Entry/Exit ---
+    min_entry_edge: 0.0012
+    profit_target_ratio: 0.75
+    strategy_sl: 0.003
+
+    # --- Position & volume ---
+    position_size: 3000.0
+    monthly_volume_target: 12500000
+    fee_rate: 0.0002  # Maker fee (limit orders)
+
+    # --- Constrained optimisation ---
+    min_monthly_pnl: -1500
+
+# Parallel execution
+parallel:
+  reserve_cores: 2        # Cores reserved for OS (P-core aware on Apple Silicon)
+  safety_factor: 0.6      # Fraction of available RAM for workers
+  overhead_multiplier: 3.0
+
+# Walk-forward validation
+validation:
+  train_start: "2024-01-01"
+  train_end: "2024-12-31"
+  test_start: "2025-01-01"
+  test_end: "2025-12-31"
+  target_metric: "total_return"
+
+# Backtest engine config
+backtest:
+  symbol: "BTC/USDT"
+  timeframe: "1m"
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
+  fees: 0.0002      # Maker fee
+  monthly_max_loss: 1500.0
+  slippage: 0
+  position_size: 3000.0
+  stop_loss: 0.03
+  take_profit: null
+  signal_as_position: true
+  re_entry_after_sl: false
+  mode: "volume"
+
+# Data paths
+data:
+  source: "binance_api"
+  requirements:
+    market:
+      source: "binance_api"
+      symbol: "BTC/USDT"
+      timeframe: "1m"
+    features:
+      - type: "dvol"
+        source: "deribit"
+        column: "dvol"
+        path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
+        raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
