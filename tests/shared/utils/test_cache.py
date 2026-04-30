@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     import pytest
 from tradingdev.shared.utils.cache import (
     _code_fingerprint,
+    cache_dir,
     clear_cache,
     compute_cache_key,
     load_cached_result,
@@ -100,6 +101,24 @@ class TestComputeCacheKey:
 
 class TestSaveLoadRoundtrip:
     """Tests for save/load/clear cache functions."""
+
+    def test_default_cache_dir_uses_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("TRADINGDEV_DATA_ROOT", raising=False)
+        monkeypatch.setattr("tradingdev.shared.utils.cache.CACHE_DIR", None)
+
+        assert cache_dir() == tmp_path / "workspace" / "data" / "processed" / "cache"
+
+    def test_data_root_overrides_cache_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data_root = tmp_path / "runtime_data"
+        monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(data_root))
+        monkeypatch.setattr("tradingdev.shared.utils.cache.CACHE_DIR", None)
+
+        assert cache_dir() == data_root / "processed" / "cache"
 
     def test_roundtrip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(

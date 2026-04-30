@@ -6,8 +6,8 @@ from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.backtest.signal_engine import (
     SignalBacktestEngine,
 )
+from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
-from tradingdev.domain.strategies.schemas import KDStrategyConfig
 from tradingdev.domain.validation.report import (
     format_walk_forward_report,
     summarize_results,

@@ -8,14 +8,14 @@ that adjust dynamically based on inventory risk and volatility.
 
 from __future__ import annotations
 
-import itertools
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+from tradingdev.domain.optimization.grid_search import tuple_grid
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
@@ -27,7 +27,9 @@ if TYPE_CHECKING:
         BaseBacktestEngine,
     )
     from tradingdev.domain.backtest.schemas import ParallelConfig
-    from tradingdev.domain.strategies.schemas import GLFTStrategyConfig
+    from tradingdev.domain.strategies.bundled.glft_strategy.config import (
+        GLFTStrategyConfig,
+    )
 
 logger = setup_logger(__name__)
 
@@ -158,8 +160,9 @@ class GLFTStrategy(BaseStrategy):
             else [self._config.edge_for_full_size]
         )
 
-        grid: list[_ParamTuple] = list(
-            itertools.product(
+        grid: list[_ParamTuple] = [
+            cast("_ParamTuple", combo)
+            for combo in tuple_grid(
                 self._config.gamma_candidates,
                 self._config.kappa_candidates,
                 self._config.ema_window_candidates,
@@ -170,8 +173,8 @@ class GLFTStrategy(BaseStrategy):
                 self._config.profit_target_ratio_candidates,
                 self._config.signal_agg_minutes_candidates,
                 efs_candidates,
-            ),
-        )
+            )
+        ]
 
         p_cfg = self._parallel_config
         n_jobs = estimate_n_jobs(

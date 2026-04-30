@@ -17,12 +17,12 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_file,
     sha256_text,
 )
-from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.adapters.storage.sqlite import get_sqlite_store
 
 logger = logging.getLogger(__name__)
 
 _WORKSPACE = WorkspacePaths()
-_STORE = SQLiteStore(_WORKSPACE)
+_STORE = get_sqlite_store(_WORKSPACE)
 
 
 class JobRecord(BaseModel):

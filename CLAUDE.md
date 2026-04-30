@@ -64,6 +64,10 @@ tests/                 app/domain/mcp/adapters/integration/shared layered tests
 - **Strategy lifecycle**: `save_strategy` creates draft; `validate_strategy`
   creates validated; `dry_run_strategy` creates runnable; execution accepts only
   runnable or promoted strategies.
+- **Generated strategy execution safety**: `validate_strategy` and
+  `dry_run_strategy` currently execute generated Python code during contract
+  checks. Sandboxed execution isolation is future work and must be addressed
+  before treating untrusted code as isolated.
 - **Bundled vs generated**: bundled strategy code/config is git-versioned under
   `src/tradingdev/domain/strategies/bundled/`; generated strategy code/config is
   runtime state under `workspace/generated_strategies/` and `workspace/configs/`.

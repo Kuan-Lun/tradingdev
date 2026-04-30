@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     from tradingdev.domain.backtest.base_engine import (
         BaseBacktestEngine,
     )
-    from tradingdev.domain.strategies.schemas import SafetyVolumeStrategyConfig
+    from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
+        SafetyVolumeStrategyConfig,
+    )
 
 logger = setup_logger(__name__)
 

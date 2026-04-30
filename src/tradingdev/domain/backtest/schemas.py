@@ -1,9 +1,11 @@
 """Domain schemas for backtest execution."""
 
-from datetime import datetime
-from typing import Self
+from __future__ import annotations
 
-from pydantic import BaseModel, field_validator, model_validator
+import datetime as dt  # noqa: TC003
+from typing import Any, Self
+
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class BacktestConfig(BaseModel):
@@ -11,8 +13,8 @@ class BacktestConfig(BaseModel):
 
     symbol: str
     timeframe: str
-    start_date: datetime
-    end_date: datetime
+    start_date: dt.datetime
+    end_date: dt.datetime
     init_cash: float | None = None
     fees: float = 0.0006
     slippage: float = 0.0005
@@ -26,7 +28,7 @@ class BacktestConfig(BaseModel):
 
     @field_validator("end_date")
     @classmethod
-    def end_after_start(cls, v: datetime, info: object) -> datetime:
+    def end_after_start(cls, v: dt.datetime, info: object) -> dt.datetime:
         """Validate that end_date is after start_date."""
         return v
 
@@ -37,6 +39,34 @@ class BacktestConfig(BaseModel):
             msg = "init_cash is required when mode is 'signal'"
             raise ValueError(msg)
         return self
+
+
+class WalkForwardConfig(BaseModel):
+    """Walk-forward validation configuration."""
+
+    train_start: dt.datetime | None = None
+    train_end: dt.datetime | None = None
+    test_start: dt.datetime | None = None
+    test_end: dt.datetime | None = None
+    n_splits: int = 1
+    train_ratio: float = 0.8
+    expanding: bool = False
+    target_metric: str = "sharpe_ratio"
+
+
+class BacktestRunConfig(BaseModel):
+    """Top-level YAML schema relevant to run-mode selection."""
+
+    model_config = ConfigDict(extra="allow")
+
+    strategy: dict[str, Any]
+    backtest: BacktestConfig
+    validation: WalkForwardConfig | None = None
+
+    @property
+    def is_walk_forward(self) -> bool:
+        """Return whether the config requests walk-forward validation."""
+        return self.validation is not None
 
 
 class ParallelConfig(BaseModel):
@@ -63,16 +93,3 @@ class ParallelConfig(BaseModel):
             msg = "safety_factor must be between 0 (exclusive) and 1 (inclusive)"
             raise ValueError(msg)
         return v
-
-
-class WalkForwardConfig(BaseModel):
-    """Walk-forward validation configuration."""
-
-    train_start: datetime | None = None
-    train_end: datetime | None = None
-    test_start: datetime | None = None
-    test_end: datetime | None = None
-    n_splits: int = 1
-    train_ratio: float = 0.8
-    expanding: bool = False
-    target_metric: str = "sharpe_ratio"

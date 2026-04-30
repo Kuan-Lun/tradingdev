@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from tradingdev.mcp.schemas import OptimizationInput
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
@@ -20,7 +22,7 @@ def register(
 
     @mcp.tool()
     def start_optimization(
-        strategy_name: str,
+        strategy_id: str,
         symbol: str,
         timeframe: str,
         param_ranges: dict[str, list[Any]],
@@ -31,8 +33,8 @@ def register(
         test_end: str,
     ) -> dict[str, Any]:
         """Launch a parameter optimization job."""
-        return optimization_service.start_optimization(
-            strategy_id=strategy_name,
+        payload = OptimizationInput(
+            strategy_id=strategy_id,
             symbol=symbol,
             timeframe=timeframe,
             param_ranges=param_ranges,
@@ -41,6 +43,17 @@ def register(
             train_end=train_end,
             test_start=test_start,
             test_end=test_end,
+        )
+        return optimization_service.start_optimization(
+            strategy_id=payload.strategy_id,
+            symbol=payload.symbol,
+            timeframe=payload.timeframe,
+            param_ranges=payload.param_ranges,
+            optimization_metric=payload.optimization_metric,
+            train_start=payload.train_start,
+            train_end=payload.train_end,
+            test_start=payload.test_start,
+            test_end=payload.test_end,
         )
 
     @mcp.tool()
