@@ -19,6 +19,7 @@ workspace/
       config.yaml
       strategy.py
       dataset_fingerprint.json
+      pipeline_result.pkl
   feature_requests/
 ```
 
@@ -37,10 +38,12 @@ done.
 
 ## MCP Lookup
 
-- `list_jobs` / `get_job_status`: operational progress.
+- `list_jobs` / `get_job_status` / `cancel_job`: operational progress and
+  cancellation.
 - `list_runs` / `get_run`: completed research results.
 - `compare_runs`: side-by-side numeric metric comparison.
 - `list_artifacts` / `get_artifact`: result JSON and other artifact lookup.
+- `promote_strategy`: generated strategy artifact promotion.
 - `record_feature_request`: structured unsupported feature requests.
 
 Each completed run writes files under `workspace/runs/<run_id>/` and records
@@ -54,7 +57,10 @@ matching SQLite metadata:
   source hash metadata.
 - `dataset_fingerprint.json`: dataset id, symbol, timeframe, date range, and a
   fingerprint hash, stored as `dataset_fingerprint`.
+- `pipeline_result.pkl`: full `PipelineResult` for dashboard rendering, stored
+  as `pipeline_result` for completed backtest and walk-forward jobs.
 
 The SQLite `runs.artifact_dir` value must match the corresponding
-`workspace/runs/<run_id>/` directory. Run comparison and artifact lookup always
-read through SQLite first, then resolve files from the recorded artifact paths.
+`workspace/runs/<run_id>/` directory. Run comparison, dashboard rendering, and
+artifact lookup always read through SQLite first, then resolve files from the
+recorded artifact paths.

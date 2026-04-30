@@ -153,8 +153,3 @@ data:
     def dry_run_strategy(strategy_id: str) -> dict[str, Any]:
         """Run a signal-generation dry run for a validated strategy."""
         return service.dry_run(strategy_id)
-
-    @mcp.tool()
-    def promote_strategy(strategy_id: str) -> dict[str, Any]:
-        """Promote a runnable generated strategy."""
-        return service.promote(strategy_id)

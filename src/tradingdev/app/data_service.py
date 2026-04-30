@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from tradingdev.adapters.storage.filesystem import WorkspacePaths
+import pandas as pd
+
+from tradingdev.adapters.storage.filesystem import (
+    WorkspacePaths,
+    sha256_file,
+    sha256_text,
+)
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
 from tradingdev.domain.data.data_manager import DataManager
@@ -20,9 +27,6 @@ from tradingdev.domain.data.requirements import (
 )
 from tradingdev.domain.data.schemas import DataConfig
 from tradingdev.shared.utils.config import load_config
-
-if TYPE_CHECKING:
-    import pandas as pd
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,8 @@ class DataService:
             "datasets": self.list_available_data(),
             "requirements": None,
             "market_available": None,
+            "market": None,
+            "dataset_fingerprint": None,
             "features": [],
         }
         if config_path is None:
@@ -162,6 +168,12 @@ class DataService:
             backtest_config.timeframe,
             backtest_config.start_date.date().isoformat(),
             backtest_config.end_date.date().isoformat(),
+        )
+        response["market"] = self._inspect_market(backtest_config)
+        response["dataset_fingerprint"] = self._dataset_fingerprint_report(
+            backtest_config,
+            requirements,
+            response["market"],
         )
         response["features"] = [
             self._inspect_feature(feature, backtest_config)
@@ -259,6 +271,17 @@ class DataService:
     def _processed_data_dir(self) -> Path:
         return self._data_dirs()[1]
 
+    def _market_paths(self, backtest_config: BacktestConfig) -> list[Path]:
+        normalized = backtest_config.symbol.replace("/", "").lower()
+        return [
+            self._processed_data_dir()
+            / f"{normalized}_{backtest_config.timeframe}_{year}.parquet"
+            for year in range(
+                backtest_config.start_date.year,
+                backtest_config.end_date.year + 1,
+            )
+        ]
+
     def _resolve_data_path(self, value: str | None) -> Path:
         if not value:
             msg = "data path is required"
@@ -267,6 +290,47 @@ class DataService:
         if path.is_absolute():
             return path
         return (Path.cwd() / path).resolve()
+
+    def _inspect_market(self, backtest_config: BacktestConfig) -> dict[str, Any]:
+        paths = self._market_paths(backtest_config)
+        report: dict[str, Any] = {
+            "symbol": backtest_config.symbol,
+            "timeframe": backtest_config.timeframe,
+            "paths": [str(path) for path in paths],
+            "exists": all(path.exists() for path in paths),
+            "rows": 0,
+            "columns": [],
+            "start_timestamp": None,
+            "end_timestamp": None,
+            "timezone": None,
+            "missing_values": {},
+            "errors": [],
+        }
+        frames: list[pd.DataFrame] = []
+        for path in paths:
+            if not path.exists():
+                continue
+            try:
+                frames.append(self._loader.load_parquet(path))
+            except Exception as exc:  # noqa: BLE001
+                report["errors"].append(f"{path}: {exc}")
+        if not frames:
+            return report
+
+        frame = pd.concat(frames, ignore_index=True)
+        report["rows"] = int(len(frame))
+        report["columns"] = [str(column) for column in frame.columns]
+        report["missing_values"] = {
+            str(column): int(count)
+            for column, count in frame.isna().sum().to_dict().items()
+        }
+        if "timestamp" in frame.columns and not frame.empty:
+            timestamps = frame["timestamp"]
+            report["start_timestamp"] = str(timestamps.min())
+            report["end_timestamp"] = str(timestamps.max())
+            tz = getattr(timestamps.dt, "tz", None)
+            report["timezone"] = str(tz) if tz is not None else None
+        return report
 
     def _inspect_feature(
         self,
@@ -299,6 +363,29 @@ class DataService:
             "exists": exists,
             "rows": rows,
             "missing_values": missing_values,
+        }
+
+    def _dataset_fingerprint_report(
+        self,
+        backtest_config: BacktestConfig,
+        requirements: DataRequirement,
+        market_report: object,
+    ) -> dict[str, str]:
+        file_hashes = []
+        if isinstance(market_report, dict):
+            for value in market_report.get("paths", []):
+                path = Path(str(value))
+                if path.exists():
+                    file_hashes.append({"path": str(path), "sha256": sha256_file(path)})
+        dataset_id = self._dataset_id(backtest_config, requirements)
+        payload = {
+            "dataset_id": dataset_id,
+            "files": file_hashes,
+            "requirements": requirements.model_dump(mode="json"),
+        }
+        return {
+            "dataset_id": dataset_id,
+            "fingerprint": sha256_text(json.dumps(payload, sort_keys=True)),
         }
 
     def _dataset_id(

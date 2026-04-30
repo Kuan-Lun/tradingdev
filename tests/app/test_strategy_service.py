@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.strategy_service import StrategyService
 
 if TYPE_CHECKING:
@@ -88,6 +89,33 @@ def test_strategy_service_lifecycle(tmp_path: Path) -> None:
         "strategy_id": "fixture_strategy",
         "status": "promoted",
     }
+
+
+def test_list_strategies_includes_requirements_and_recent_runs(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = SQLiteStore(workspace)
+    service = StrategyService(workspace, store=store)
+    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+    store.create_run(
+        run_id="run_a",
+        job_id="job_a",
+        strategy_id="fixture_strategy",
+        artifact_dir=workspace.runs / "run_a",
+        metrics={"total_return": 0.1},
+        dataset_id="dataset-a",
+    )
+
+    item = next(
+        item
+        for item in service.list_strategies()
+        if item["strategy_id"] == "fixture_strategy"
+    )
+
+    assert item["data_requirements"]["market"]["symbol"] == "BTC/USDT"
+    assert item["recent_runs"][0]["run_id"] == "run_a"
+    assert item["recent_runs"][0]["metrics"]["total_return"] == 0.1
 
 
 def test_strategy_service_rejects_banned_import(tmp_path: Path) -> None:

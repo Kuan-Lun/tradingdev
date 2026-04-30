@@ -55,10 +55,16 @@ def test_inspect_dataset_reports_feature_sources_and_missing_values(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     workspace.processed_data.mkdir(parents=True, exist_ok=True)
-    (workspace.processed_data / "btcusdt_1h_2024.parquet").write_text(
-        "",
-        encoding="utf-8",
-    )
+    pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=3, freq="h", tz="UTC"),
+            "open": [100.0, 101.0, 102.0],
+            "high": [101.0, 102.0, 103.0],
+            "low": [99.0, 100.0, 101.0],
+            "close": [100.5, 101.5, 102.5],
+            "volume": [10.0, 11.0, 12.0],
+        }
+    ).to_parquet(workspace.processed_data / "btcusdt_1h_2024.parquet", index=False)
     feature_path = tmp_path / "funding_rate.parquet"
     pd.DataFrame(
         {
@@ -96,6 +102,17 @@ data:
     report = DataService(workspace).inspect_dataset(config_path)
 
     assert report["market_available"] is True
+    assert report["market"]["rows"] == 3
+    assert report["market"]["columns"] == [
+        "timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    ]
+    assert report["market"]["timezone"] == "UTC"
+    assert report["dataset_fingerprint"]["dataset_id"].startswith("BTC/USDT:1h")
     assert report["requirements"]["market"]["symbol"] == "BTC/USDT"
     assert report["features"] == [
         {

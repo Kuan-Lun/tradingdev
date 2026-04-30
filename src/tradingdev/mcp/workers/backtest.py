@@ -36,7 +36,7 @@ def _run_backtest(
         job_store.update_job(job_id, status="running_backtest")
         run = service.run_config(config_path, walk_forward=walk_forward)
         job_store.update_job(job_id, data_downloaded=True, dataset_id=run.dataset_id)
-        result_path = job_store.save_result(job_id, run.metrics)
+        result_path = job_store.save_result(job_id, run.metrics, pipeline=run.pipeline)
         job_store.update_job(
             job_id,
             status="done",

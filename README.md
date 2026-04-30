@@ -59,12 +59,12 @@ market and feature requirements, feature paths, and missing-value status.
 
 | 類別 | Tools |
 | ---- | ----- |
-| Strategy | `get_strategy_contract`, `list_strategies`, `get_strategy`, `save_strategy`, `validate_strategy`, `dry_run_strategy`, `promote_strategy` |
+| Strategy | `get_strategy_contract`, `list_strategies`, `get_strategy`, `save_strategy`, `validate_strategy`, `dry_run_strategy` |
 | Data | `list_available_data`, `inspect_dataset`, `ensure_data` |
 | Backtest | `start_backtest`, `start_walk_forward` |
 | Optimization | `start_optimization`, `confirm_optimization` |
-| Jobs/Runs | `get_job_status`, `list_jobs`, `list_runs`, `get_run`, `compare_runs` |
-| Artifacts | `list_artifacts`, `get_artifact` |
+| Jobs/Runs | `get_job_status`, `list_jobs`, `cancel_job`, `list_runs`, `get_run`, `compare_runs` |
+| Artifacts | `list_artifacts`, `get_artifact`, `promote_strategy` |
 | Requests | `record_feature_request`, `list_feature_requests` |
 
 ## 路徑與資料模型
@@ -83,7 +83,7 @@ market and feature requirements, feature paths, and missing-value status.
   `workspace/tradingdev.sqlite`
 - Run files:
   `workspace/runs/<run_id>/` with result, config snapshot, strategy source
-  snapshot, and dataset fingerprint artifacts.
+  snapshot, dataset fingerprint, and dashboard pipeline artifacts.
 
 `workspace/` 是 runtime 工作區，不進 wheel。MCP 只能寫入 workspace；git 版控的
 bundled strategy/config 由工程師維護。
@@ -104,6 +104,17 @@ uv run python -m tradingdev --config \
   src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml \
   --walk-forward
 ```
+
+## Dashboard
+
+The dashboard reads completed MCP runs through `RunService` and
+`ArtifactService`:
+
+```bash
+uv run streamlit run src/tradingdev/adapters/dashboard/app.py -- --run-id <run_id>
+```
+
+If `--run-id` is omitted, the sidebar lists runs from `workspace/tradingdev.sqlite`.
 
 ## 開發檢查
 

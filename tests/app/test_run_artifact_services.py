@@ -9,6 +9,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app import job_store
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.run_service import RunService
+from tradingdev.domain.backtest.pipeline_result import PipelineResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -104,7 +105,12 @@ backtest:
         dataset_id="dataset-fixture",
     )
 
-    result_path = job_store.save_result("job_lineage", {"total_return": 0.1})
+    pipeline = PipelineResult(mode="simple", config_snapshot={"strategy": {}})
+    result_path = job_store.save_result(
+        "job_lineage",
+        {"total_return": 0.1},
+        pipeline=pipeline,
+    )
 
     assert created["created_at"]
     assert result_path == workspace.runs / "job_lineage" / "result.json"
@@ -112,6 +118,7 @@ backtest:
     assert (workspace.runs / "job_lineage" / "config.yaml").exists()
     assert (workspace.runs / "job_lineage" / "strategy.py").exists()
     assert (workspace.runs / "job_lineage" / "dataset_fingerprint.json").exists()
+    assert (workspace.runs / "job_lineage" / "pipeline_result.pkl").exists()
 
     run = job_store.get_run("job_lineage")
     assert run is not None
@@ -126,6 +133,7 @@ backtest:
     assert set(artifacts) == {
         "config_snapshot",
         "dataset_fingerprint",
+        "pipeline_result",
         "result_json",
         "strategy_source",
     }
@@ -134,3 +142,9 @@ backtest:
         strategy_source
     )
     assert artifacts["dataset_fingerprint"]["metadata"]["fingerprint"]
+
+    loaded = ArtifactService(workspace=workspace, store=store).load_pipeline_result(
+        "job_lineage"
+    )
+    assert loaded["success"] is True
+    assert loaded["pipeline"].mode == "simple"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import pickle
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -104,7 +105,10 @@ def update_job(job_id: str, **fields: Any) -> None:
         and "started_at" not in fields
     ):
         fields["started_at"] = _now_iso()
-    if status in {"done", "failed", "estimation_timeout"} and "ended_at" not in fields:
+    if (
+        status in {"done", "failed", "cancelled", "estimation_timeout"}
+        and "ended_at" not in fields
+    ):
         fields["ended_at"] = _now_iso()
     current.update(fields)
     _STORE.upsert_job(_record_to_dict(JobRecord.model_validate(current)))
@@ -120,7 +124,12 @@ def list_all_jobs() -> list[dict[str, Any]]:
     return _STORE.list_jobs()
 
 
-def save_result(job_id: str, metrics: dict[str, Any]) -> Path:
+def save_result(
+    job_id: str,
+    metrics: dict[str, Any],
+    *,
+    pipeline: Any | None = None,
+) -> Path:
     """Serialize metrics to a run artifact and record run metadata."""
     safe: dict[str, Any] = {}
     for k, v in metrics.items():
@@ -219,6 +228,17 @@ def save_result(job_id: str, metrics: dict[str, Any]) -> Path:
             sha256=sha256_file(fingerprint_path),
             metadata=dataset_fingerprint,
         )
+        if pipeline is not None:
+            pipeline_path = run_dir / "pipeline_result.pkl"
+            pipeline_path.write_bytes(pickle.dumps(pipeline))
+            _STORE.create_artifact(
+                artifact_id=f"{job_id}:pipeline_result",
+                run_id=job_id,
+                artifact_type="pipeline_result",
+                path=pipeline_path,
+                sha256=sha256_file(pipeline_path),
+                metadata={"job_id": job_id, "format": "pickle"},
+            )
     logger.debug("Saved result for job %s -> %s", job_id, result_path)
     return result_path
 
