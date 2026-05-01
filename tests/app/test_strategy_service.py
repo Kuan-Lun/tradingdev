@@ -92,6 +92,47 @@ def test_strategy_service_lifecycle(tmp_path: Path) -> None:
     }
 
 
+def test_strategy_service_loads_generated_and_bundled_specs(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+
+    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+
+    generated = service.load("fixture_strategy")
+    bundled = service.load("kd_crossover")
+
+    assert generated is not None
+    assert generated.strategy_id == "fixture_strategy"
+    assert generated.kind == "generated"
+    assert bundled is not None
+    assert bundled.strategy_id == "kd_crossover"
+    assert bundled.kind == "bundled"
+    assert bundled.status == "promoted"
+
+
+def test_record_validation_status_updates_draft_metadata(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+
+    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+
+    response = service.record_validation_status(
+        "fixture_strategy",
+        {
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "success": True,
+            "diagnostics": [],
+            "signal_analysis": {"rows": 80},
+        },
+    )
+
+    assert response["success"] is True
+    assert response["status"] == "validated"
+    spec = service.load("fixture_strategy")
+    assert spec is not None
+    assert spec.status == "validated"
+
+
 def test_list_strategies_includes_requirements_and_recent_runs(
     tmp_path: Path,
 ) -> None:

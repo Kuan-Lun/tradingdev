@@ -4,33 +4,16 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import yaml
+from pydantic import BaseModel
 
 from tradingdev.domain.backtest.schemas import ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
-from tradingdev.domain.strategies.bundled.glft_ml_strategy.config import (
-    GLFTMLStrategyConfig,
-)
-from tradingdev.domain.strategies.bundled.glft_strategy.config import (
-    GLFTStrategyConfig,
-)
-from tradingdev.domain.strategies.bundled.kd_strategy.config import (
-    KDFitConfig,
-    KDStrategyConfig,
-)
-from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
-    QuantileStrategyConfig,
-)
-from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
-    SafetyVolumeStrategyConfig,
-)
-from tradingdev.domain.strategies.bundled.xgboost_strategy.config import (
-    XGBoostStrategyConfig,
-)
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -73,75 +56,8 @@ class StrategyLoader:
             msg = "strategy.parameters must be a mapping"
             raise ValueError(msg)
 
-        p_cfg = parallel_config or ParallelConfig()
-
-        if strategy_id in {"kd_strategy", "kd_crossover"}:
-            fit_config: KDFitConfig | None = None
-            if "fit" in strategy_cfg:
-                fit_config = KDFitConfig(**strategy_cfg["fit"])
-            from tradingdev.domain.strategies.bundled.kd_strategy.strategy import (
-                KDStrategy,
-            )
-
-            return KDStrategy(
-                config=KDStrategyConfig(**params),
-                fit_config=fit_config,
-                backtest_engine=engine,
-                parallel_config=p_cfg,
-            )
-
-        if strategy_id in {"xgboost_strategy", "xgboost_direction"}:
-            from tradingdev.domain.strategies.bundled.xgboost_strategy.strategy import (
-                XGBoostStrategy,
-            )
-
-            return XGBoostStrategy(
-                config=XGBoostStrategyConfig(**params),
-                backtest_engine=engine,
-            )
-
-        if strategy_id in {"safety_volume_strategy", "safety_first_volume"}:
-            from tradingdev.domain.strategies.bundled.safety_volume_strategy import (
-                strategy as safety_volume_module,
-            )
-
-            return safety_volume_module.SafetyVolumeStrategy(
-                config=SafetyVolumeStrategyConfig(**params),
-                backtest_engine=engine,
-            )
-
-        if strategy_id in {"glft_strategy", "glft_market_making"}:
-            from tradingdev.domain.strategies.bundled.glft_strategy.strategy import (
-                GLFTStrategy,
-            )
-
-            return GLFTStrategy(
-                config=GLFTStrategyConfig(**params),
-                backtest_engine=engine,
-                parallel_config=p_cfg,
-            )
-
-        if strategy_id in {"quantile_strategy", "quantile_volume"}:
-            from tradingdev.domain.strategies.bundled.quantile_strategy import (
-                strategy as quantile_module,
-            )
-
-            return quantile_module.QuantileStrategy(
-                config=QuantileStrategyConfig(**params),
-                backtest_engine=engine,
-                parallel_config=p_cfg,
-            )
-
-        if strategy_id in {"glft_ml_strategy", "glft_ml"}:
-            from tradingdev.domain.strategies.bundled.glft_ml_strategy.strategy import (
-                GLFTMLStrategy,
-            )
-
-            return GLFTMLStrategy(
-                config=GLFTMLStrategyConfig(**params),
-                backtest_engine=engine,
-                parallel_config=p_cfg,
-            )
+        if strategy_id in self._bundled_class_by_id():
+            return self._create_bundled(strategy_cfg, engine, parallel_config)
 
         return self._create_generated(strategy_cfg, engine)
 
@@ -188,11 +104,80 @@ class StrategyLoader:
             class_name = strategy.get("class_name")
             if not isinstance(class_name, str) or not class_name:
                 continue
-            result[config_path.parent.name] = (module_name, class_name)
             strategy_id = strategy.get("id")
             if isinstance(strategy_id, str) and strategy_id:
                 result[strategy_id] = (module_name, class_name)
         return result
+
+    def _create_bundled(
+        self,
+        strategy_cfg: dict[str, Any],
+        engine: BaseBacktestEngine,
+        parallel_config: ParallelConfig | None,
+    ) -> BaseStrategy:
+        cls = self.load_class(strategy_cfg)
+        signature = inspect.signature(cls)
+        kwargs: dict[str, Any] = {}
+
+        if "config" in signature.parameters:
+            params = strategy_cfg.get("parameters", {})
+            if not isinstance(params, dict):
+                msg = "strategy.parameters must be a mapping"
+                raise ValueError(msg)
+            config_model = self._bundled_config_model(cls)
+            kwargs["config"] = config_model(**params)
+
+        if "fit_config" in signature.parameters and "fit" in strategy_cfg:
+            fit = strategy_cfg["fit"]
+            if not isinstance(fit, dict):
+                msg = "strategy.fit must be a mapping"
+                raise ValueError(msg)
+            fit_model = self._bundled_config_model(cls, suffix="FitConfig")
+            kwargs["fit_config"] = fit_model(**fit)
+
+        if "backtest_engine" in signature.parameters:
+            kwargs["backtest_engine"] = engine
+        if "parallel_config" in signature.parameters:
+            kwargs["parallel_config"] = parallel_config or ParallelConfig()
+
+        instance = cls(**kwargs)
+        if not isinstance(instance, BaseStrategy):
+            msg = f"{cls.__name__} must inherit from BaseStrategy"
+            raise TypeError(msg)
+        return instance
+
+    def _bundled_config_model(
+        self,
+        cls: type[BaseStrategy],
+        *,
+        suffix: str = "Config",
+    ) -> type[BaseModel]:
+        module_name = cls.__module__.removesuffix(".strategy") + ".config"
+        module = importlib.import_module(module_name)
+        exact_name = f"{cls.__name__}{suffix}"
+        exact = getattr(module, exact_name, None)
+        if (
+            inspect.isclass(exact)
+            and issubclass(exact, BaseModel)
+            and exact is not BaseModel
+        ):
+            return exact
+
+        candidates = [
+            value
+            for name, value in vars(module).items()
+            if name.endswith(suffix)
+            and inspect.isclass(value)
+            and issubclass(value, BaseModel)
+            and value is not BaseModel
+        ]
+        if len(candidates) != 1:
+            msg = (
+                f"Expected one {suffix} model in {module_name} for {cls.__name__}, "
+                f"found {len(candidates)}"
+            )
+            raise ValueError(msg)
+        return candidates[0]
 
     def _create_generated(
         self,

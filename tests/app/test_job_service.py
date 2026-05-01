@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.data_service import DataService
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 
@@ -19,6 +21,55 @@ class _TerminatesJobService(JobService):
 
     def _terminate_pid(self, pid: int) -> tuple[bool, str | None]:
         return True, None
+
+
+class _FakeRunner(ProcessRunner):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def spawn_module(self, module: str, *args: str) -> int:
+        self.calls.append((module, args))
+        return 4321
+
+
+def test_start_walk_forward_uses_bundled_walkforward_config(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    job_store = JobStore(workspace=workspace, store=SQLiteStore(workspace))
+    runner = _FakeRunner()
+    service = JobService(
+        data_service=DataService(workspace),
+        job_store=job_store,
+        process_runner=runner,
+        project_root=tmp_path,
+    )
+
+    response = service.start_walk_forward(
+        strategy_id="kd_crossover",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        start_date="2024-01-01",
+        end_date="2025-12-31",
+    )
+
+    assert response["job_id"]
+    job = job_store.get_job(str(response["job_id"]))
+    assert job is not None
+    assert job["job_type"] == "walk_forward"
+    assert job["original_config_path"].endswith(
+        "bundled/kd_strategy/walkforward_config.yaml"
+    )
+    assert runner.calls == [
+        (
+            "tradingdev.mcp.workers.backtest",
+            (
+                response["job_id"],
+                str(workspace.runs / response["job_id"] / "config.yaml"),
+                "--walk-forward",
+            ),
+        )
+    ]
 
 
 def test_cancel_job_marks_active_job_cancelled(

@@ -197,6 +197,9 @@ class JobStore:
             )
             random_seed = extract_random_seed(config_payload)
             dataset_fingerprint = self._dataset_fingerprint(job)
+            # Current execution creates one run per job, so run_id is job_id.
+            # Revisit this before supporting multi-run jobs such as fold-level
+            # optimization artifacts.
             self._store.create_run(
                 run_id=job_id,
                 job_id=job_id,
