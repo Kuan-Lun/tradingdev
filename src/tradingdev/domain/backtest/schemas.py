@@ -25,6 +25,7 @@ class BacktestConfig(BaseModel):
     re_entry_after_sl: bool = True
     mode: str = "signal"
     monthly_max_loss: float = 1500.0
+    random_seed: int | None = None
 
     @field_validator("end_date")
     @classmethod
@@ -62,6 +63,7 @@ class BacktestRunConfig(BaseModel):
     strategy: dict[str, Any]
     backtest: BacktestConfig
     validation: WalkForwardConfig | None = None
+    random_seed: int | None = None
 
     @property
     def is_walk_forward(self) -> bool:

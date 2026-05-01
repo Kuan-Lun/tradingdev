@@ -40,9 +40,14 @@ def test_sqlite_store_auto_initializes_metadata_schema(tmp_path: Path) -> None:
             str(row["name"])
             for row in conn.execute("pragma table_info(jobs)").fetchall()
         }
+        run_columns = {
+            str(row["name"])
+            for row in conn.execute("pragma table_info(runs)").fetchall()
+        }
 
     assert {"jobs", "runs", "artifacts", "events"}.issubset(tables)
     assert {"created_at", "started_at", "ended_at"}.issubset(job_columns)
+    assert {"source_hash", "random_seed"}.issubset(run_columns)
 
 
 def test_sqlite_store_persists_job_run_and_artifact_lookup(tmp_path: Path) -> None:
@@ -75,6 +80,8 @@ def test_sqlite_store_persists_job_run_and_artifact_lookup(tmp_path: Path) -> No
         strategy_id="fixture",
         artifact_dir=run_dir,
         metrics={"total_return": 0.1},
+        source_hash="source-a",
+        random_seed=42,
         dataset_id="dataset-a",
     )
     store.create_artifact(
@@ -94,4 +101,6 @@ def test_sqlite_store_persists_job_run_and_artifact_lookup(tmp_path: Path) -> No
     assert artifact is not None
     assert job["ended_at"] == "2024-01-01T00:00:02+00:00"
     assert run["dataset_id"] == "dataset-a"
+    assert run["source_hash"] == "source-a"
+    assert run["random_seed"] == 42
     assert artifact["metadata"]["job_id"] == "job_a"

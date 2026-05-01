@@ -18,6 +18,11 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_text,
 )
 from tradingdev.adapters.storage.sqlite import get_sqlite_store
+from tradingdev.app.run_lineage import (
+    extract_random_seed,
+    load_config_payload,
+    resolve_strategy_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +165,14 @@ def save_result(
         if not config_path.is_absolute():
             config_path = Path.cwd() / config_path
         config_hash = sha256_file(config_path) if config_path.exists() else None
+        config_payload = load_config_payload(config_path)
+        strategy_source = resolve_strategy_source(config_payload)
+        source_hash = (
+            sha256_file(strategy_source)
+            if strategy_source is not None and strategy_source.exists()
+            else None
+        )
+        random_seed = extract_random_seed(config_payload)
         dataset_fingerprint = _dataset_fingerprint(job)
         _STORE.create_run(
             run_id=job_id,
@@ -168,6 +181,8 @@ def save_result(
             artifact_dir=run_dir,
             metrics=safe,
             config_hash=config_hash,
+            source_hash=source_hash,
+            random_seed=random_seed,
             dataset_id=dataset_fingerprint["dataset_id"],
         )
         _STORE.create_artifact(
@@ -196,7 +211,6 @@ def save_result(
                     "config_hash": config_hash,
                 },
             )
-            strategy_source = _resolve_strategy_source(config_path)
             if strategy_source is not None and strategy_source.exists():
                 strategy_snapshot = run_dir / "strategy.py"
                 strategy_snapshot.write_text(
@@ -212,7 +226,7 @@ def save_result(
                     metadata={
                         "job_id": job_id,
                         "source_path": str(strategy_source),
-                        "source_hash": sha256_file(strategy_source),
+                        "source_hash": source_hash,
                     },
                 )
         fingerprint_path = run_dir / "dataset_fingerprint.json"
@@ -241,25 +255,6 @@ def save_result(
             )
     logger.debug("Saved result for job %s -> %s", job_id, result_path)
     return result_path
-
-
-def _resolve_strategy_source(config_path: Path) -> Path | None:
-    try:
-        import yaml
-
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
-    strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
-    if not isinstance(strategy, dict):
-        return None
-    source = strategy.get("source_path")
-    if not source:
-        return None
-    path = Path(str(source))
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path.resolve()
 
 
 def _dataset_fingerprint(job: dict[str, Any]) -> dict[str, str]:

@@ -82,6 +82,7 @@ def test_strategy_service_lifecycle(tmp_path: Path) -> None:
     dry_run = service.dry_run("fixture_strategy")
     assert dry_run["success"] is True
     assert dry_run["status"] == "runnable"
+    assert dry_run["signal_analysis"]["rows"] == 240
     assert dry_run["signal_analysis"]["transition_count"] >= 1
     promoted = service.promote("fixture_strategy")
     assert promoted == {

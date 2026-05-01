@@ -46,12 +46,14 @@ class AutoGluonDirectionModel(BaseModel):
         eval_metric: str = "accuracy",
         verbosity: int = 0,
         num_cpus: int | None = None,
+        random_seed: int | None = 42,
     ) -> None:
         self._time_limit = time_limit
         self._presets = presets
         self._eval_metric = eval_metric
         self._verbosity = verbosity
         self._num_cpus = num_cpus
+        self._random_seed = random_seed
         self._predictor: Any = None  # TabularPredictor
         self._feature_names: list[str] = []
         self._model_path: Path | None = None
@@ -68,6 +70,10 @@ class AutoGluonDirectionModel(BaseModel):
             eval_df: Optional tuning DataFrame (AutoGluon handles
                 internal validation automatically, so this is optional).
         """
+        if self._random_seed is not None:
+            from autogluon.common.utils.utils import seed_everything
+
+            seed_everything(self._random_seed)
         from autogluon.tabular import TabularPredictor
 
         feature_cols = [c for c in df.columns if c not in _EXCLUDE_COLS]
@@ -156,4 +162,6 @@ class AutoGluonDirectionModel(BaseModel):
         }
         if self._num_cpus is not None:
             params["num_cpus"] = self._num_cpus
+        if self._random_seed is not None:
+            params["random_seed"] = self._random_seed
         return params

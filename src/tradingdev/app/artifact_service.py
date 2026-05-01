@@ -12,6 +12,11 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_text,
 )
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.app.run_lineage import (
+    extract_random_seed,
+    load_config_payload,
+    resolve_strategy_source,
+)
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.shared.utils.cache import cache_dir, compute_cache_key
@@ -107,6 +112,13 @@ class ArtifactService:
 
         run_id = f"cli_{key}"
         config_hash = sha256_file(config_path) if config_path.exists() else None
+        config_payload = load_config_payload(config_path)
+        strategy_source = resolve_strategy_source(config_payload)
+        source_hash = (
+            sha256_file(strategy_source)
+            if strategy_source is not None and strategy_source.exists()
+            else None
+        )
         dataset_id = (
             sha256_file(processed_path)
             if processed_path.exists()
@@ -119,6 +131,8 @@ class ArtifactService:
             artifact_dir=directory,
             metrics=metrics,
             config_hash=config_hash,
+            source_hash=source_hash,
+            random_seed=extract_random_seed(config_payload),
             dataset_id=dataset_id,
         )
         self._store.create_artifact(
