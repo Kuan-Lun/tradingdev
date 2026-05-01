@@ -71,6 +71,7 @@ class GLFTMLStrategy(BaseStrategy):
             presets=config.ml_presets,
             verbosity=0,
             num_cpus=num_cpus,
+            random_seed=config.random_seed,
         )
         self._ml_trained = False
         self._confidence_threshold: float = config.confidence_threshold

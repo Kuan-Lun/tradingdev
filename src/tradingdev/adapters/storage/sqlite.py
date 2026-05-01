@@ -59,6 +59,8 @@ class SQLiteStore:
                     job_id text not null,
                     strategy_id text not null,
                     config_hash text,
+                    source_hash text,
+                    random_seed integer,
                     dataset_id text,
                     metrics text,
                     artifact_dir text not null,
@@ -90,6 +92,8 @@ class SQLiteStore:
             self._ensure_column(conn, "jobs", "created_at", "text")
             self._ensure_column(conn, "jobs", "started_at", "text")
             self._ensure_column(conn, "jobs", "ended_at", "text")
+            self._ensure_column(conn, "runs", "source_hash", "text")
+            self._ensure_column(conn, "runs", "random_seed", "integer")
 
     def upsert_job(self, record: dict[str, Any]) -> None:
         """Insert or replace a job record."""
@@ -172,6 +176,8 @@ class SQLiteStore:
         artifact_dir: Path,
         metrics: dict[str, Any],
         config_hash: str | None = None,
+        source_hash: str | None = None,
+        random_seed: int | None = None,
         dataset_id: str | None = None,
     ) -> None:
         """Insert or replace a completed run."""
@@ -179,13 +185,15 @@ class SQLiteStore:
             conn.execute(
                 """
                 insert into runs (
-                    run_id, job_id, strategy_id, config_hash, dataset_id,
-                    metrics, artifact_dir, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    run_id, job_id, strategy_id, config_hash, source_hash,
+                    random_seed, dataset_id, metrics, artifact_dir, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(run_id) do update set
                     job_id=excluded.job_id,
                     strategy_id=excluded.strategy_id,
                     config_hash=excluded.config_hash,
+                    source_hash=excluded.source_hash,
+                    random_seed=excluded.random_seed,
                     dataset_id=excluded.dataset_id,
                     metrics=excluded.metrics,
                     artifact_dir=excluded.artifact_dir
@@ -195,6 +203,8 @@ class SQLiteStore:
                     job_id,
                     strategy_id,
                     config_hash,
+                    source_hash,
+                    random_seed,
                     dataset_id,
                     json.dumps(metrics, ensure_ascii=False, sort_keys=True),
                     str(artifact_dir),

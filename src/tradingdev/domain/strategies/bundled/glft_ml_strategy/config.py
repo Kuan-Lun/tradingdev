@@ -14,6 +14,7 @@ class GLFTMLStrategyConfig(BaseModel):
     feature_lookback: int = 60
     ml_time_limit: int = 300
     ml_presets: str = "medium_quality"
+    random_seed: int = 42
     confidence_threshold: float = 0.55
     confidence_threshold_candidates: list[float] = [0.52, 0.55, 0.60]
     gamma: float = 0.0

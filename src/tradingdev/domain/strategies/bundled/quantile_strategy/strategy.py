@@ -55,6 +55,7 @@ def _train_regime_classifier(
     max_depth: int = 3,
     learning_rate: float = 0.1,
     subsample: float = 0.7,
+    random_seed: int = 42,
 ) -> xgb.XGBClassifier:
     """Train a 4-class regime classifier.
 
@@ -82,7 +83,7 @@ def _train_regime_classifier(
         objective="multi:softprob",
         eval_metric="mlogloss",
         verbosity=0,
-        random_state=42,
+        random_state=random_seed,
     )
     model.fit(x, y, verbose=False)
     return model
@@ -311,6 +312,7 @@ class QuantileStrategy(BaseStrategy):
                 max_depth=cfg.max_depth,
                 learning_rate=cfg.learning_rate,
                 subsample=cfg.subsample,
+                random_seed=cfg.random_seed,
             )
 
             # Log class distribution
@@ -486,6 +488,7 @@ class QuantileStrategy(BaseStrategy):
                     max_depth=cfg.max_depth,
                     learning_rate=cfg.learning_rate,
                     subsample=cfg.subsample,
+                    random_seed=cfg.random_seed,
                 )
 
             # Predict on chunk with context
@@ -617,6 +620,7 @@ class QuantileStrategy(BaseStrategy):
             max_depth=cfg.max_depth,
             learning_rate=cfg.learning_rate,
             subsample=cfg.subsample,
+            random_seed=cfg.random_seed,
         )
         return self._generate_signals_with_model(df)
 

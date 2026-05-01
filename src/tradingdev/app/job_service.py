@@ -147,6 +147,9 @@ class JobService:
         if status == "done":
             result = job_store.load_result(str(job["result_path"]))
             response["ended_at"] = job.get("ended_at")
+            run = job_store.get_run(job_id)
+            if run is not None:
+                response["run_id"] = run["run_id"]
             if job.get("job_type") == "optimization":
                 response.update(
                     {
@@ -161,9 +164,6 @@ class JobService:
                 )
             else:
                 response["metrics"] = result
-                run = job_store.get_run(job_id)
-                if run is not None:
-                    response["run_id"] = run["run_id"]
         elif status == "failed":
             response["error"] = job.get("error", "Unknown error")
         elif status == "estimating":

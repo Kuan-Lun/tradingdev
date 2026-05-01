@@ -17,6 +17,7 @@ class QuantileStrategyConfig(BaseModel):
     max_depth: int = 6
     learning_rate: float = 0.05
     subsample: float = 0.8
+    random_seed: int = 42
     min_holding_bars: int = 5
     profit_target: float = 0.003
     strategy_sl: float = 0.003

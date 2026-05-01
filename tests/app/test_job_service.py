@@ -76,3 +76,44 @@ def test_cancel_job_rejects_terminal_job(
 
     assert response["success"] is False
     assert response["status"] == "done"
+
+
+def test_get_job_status_returns_run_id_for_completed_optimization(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = SQLiteStore(workspace)
+    monkeypatch.setattr(job_store, "_WORKSPACE", workspace)
+    monkeypatch.setattr(job_store, "_STORE", store)
+    job_store.create_job(
+        job_id="job_optimization",
+        strategy_name="fixture",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        start_date="2024-01-01",
+        end_date="2024-01-02",
+        config_path="fixture.yaml",
+    )
+    job_store.save_result(
+        "job_optimization",
+        {
+            "best_params": {"window": 10},
+            "train_metrics": {"sharpe_ratio": 1.0},
+            "test_metrics": {"sharpe_ratio": 0.8},
+            "optimization_metric": "sharpe_ratio",
+            "total_combinations": 3,
+        },
+    )
+    job_store.update_job(
+        "job_optimization",
+        status="done",
+        job_type="optimization",
+    )
+
+    response = JobService().get_job_status("job_optimization")
+
+    assert response["status"] == "done"
+    assert response["job_type"] == "optimization"
+    assert response["run_id"] == "job_optimization"
+    assert response["best_params"] == {"window": 10}

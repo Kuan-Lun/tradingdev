@@ -81,6 +81,8 @@ strategy:
   id: fixture
   class_name: FixtureStrategy
   source_path: "{strategy_source}"
+  parameters:
+    random_state: 7
 backtest:
   symbol: BTC/USDT
   timeframe: 1h
@@ -126,6 +128,8 @@ backtest:
     assert run["strategy_id"] == "fixture"
     assert run["dataset_id"] == "dataset-fixture"
     assert run["artifact_dir"] == str(workspace.runs / "job_lineage")
+    assert run["source_hash"] == sha256_file(strategy_source)
+    assert run["random_seed"] == 7
 
     artifacts = {
         item["artifact_type"]: item for item in job_store.list_artifacts("job_lineage")
@@ -141,6 +145,7 @@ backtest:
     assert artifacts["strategy_source"]["metadata"]["source_path"] == str(
         strategy_source
     )
+    assert artifacts["strategy_source"]["metadata"]["source_hash"] == run["source_hash"]
     assert artifacts["dataset_fingerprint"]["metadata"]["fingerprint"]
 
     loaded = ArtifactService(workspace=workspace, store=store).load_pipeline_result(
@@ -148,3 +153,48 @@ backtest:
     )
     assert loaded["success"] is True
     assert loaded["pipeline"].mode == "simple"
+
+
+def test_artifact_service_cache_pipeline_records_run_lineage(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = SQLiteStore(workspace)
+    monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
+
+    strategy_source = tmp_path / "cli_strategy.py"
+    strategy_source.write_text("class CliStrategy: pass\n", encoding="utf-8")
+    config_path = tmp_path / "cli.yaml"
+    config_path.write_text(
+        f"""\
+strategy:
+  id: cli_fixture
+  source_path: "{strategy_source}"
+  parameters:
+    random_seed: 11
+backtest:
+  symbol: BTC/USDT
+  timeframe: 1h
+  start_date: "2024-01-01"
+  end_date: "2024-01-02"
+""",
+        encoding="utf-8",
+    )
+    processed_path = tmp_path / "processed.parquet"
+    processed_path.write_text("fixture", encoding="utf-8")
+
+    service = ArtifactService(workspace=workspace, store=store)
+    pipeline = PipelineResult(mode="simple", config_snapshot={})
+
+    service.cache_pipeline_result(
+        pipeline=pipeline,
+        config_path=config_path,
+        processed_path=processed_path,
+        metrics={"total_return": 0.2},
+        strategy_id="cli_fixture",
+    )
+
+    run = store.list_runs()[0]
+    assert run["source_hash"] == sha256_file(strategy_source)
+    assert run["random_seed"] == 11

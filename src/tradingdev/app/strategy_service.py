@@ -189,7 +189,7 @@ class StrategyService:
         if not self._has_error(diagnostics):
             diagnostics.extend(self._validator.static_policy_scan(source_path))
             diagnostics.extend(self._quality_gate_diagnostics(source_path))
-            contract = self._run_signal_contract(metadata)
+            contract = self._run_signal_contract(metadata, fixture_rows=80)
             diagnostics.extend(contract["diagnostics"])
         success = not self._has_error(diagnostics)
         metadata.validation = ValidationResult(
@@ -219,7 +219,7 @@ class StrategyService:
                 "success": False,
                 "error": "dry_run_strategy requires validated strategy status",
             }
-        contract = self._run_signal_contract(metadata)
+        contract = self._run_signal_contract(metadata, fixture_rows=240)
         valid = not self._has_error(contract["diagnostics"])
         metadata.status = StrategyStatus.RUNNABLE if valid else metadata.status
         metadata.dry_run = ValidationResult(
@@ -426,7 +426,12 @@ class StrategyService:
                 )
         return diagnostics
 
-    def _run_signal_contract(self, metadata: StrategyMetadata) -> dict[str, Any]:
+    def _run_signal_contract(
+        self,
+        metadata: StrategyMetadata,
+        *,
+        fixture_rows: int,
+    ) -> dict[str, Any]:
         diagnostics: list[StrategyDiagnostic] = []
         try:
             strategy_cfg = {
@@ -446,7 +451,7 @@ class StrategyService:
                     )
                 )
                 return {"diagnostics": diagnostics}
-            df = self._fixture_df()
+            df = self._fixture_df(fixture_rows)
             before = df.copy(deep=True)
             result = strategy.generate_signals(df)
             if not isinstance(result, pd.DataFrame):
@@ -532,17 +537,29 @@ class StrategyService:
                 raise TypeError(msg)
         return cls(**kwargs)
 
-    def _fixture_df(self) -> pd.DataFrame:
+    def _fixture_df(self, rows: int) -> pd.DataFrame:
+        close: list[float] = []
+        price = 100.0
+        for i in range(rows):
+            if rows <= 80:
+                price += 0.1
+            elif i < rows // 3:
+                price += 0.12
+            elif i < (rows * 2) // 3:
+                price -= 0.08
+            else:
+                price += 0.18 if i % 2 == 0 else -0.11
+            close.append(price)
         return pd.DataFrame(
             {
                 "timestamp": pd.date_range(
-                    "2024-01-01", periods=80, freq="h", tz="UTC"
+                    "2024-01-01", periods=rows, freq="h", tz="UTC"
                 ),
-                "open": [100.0 + i * 0.1 for i in range(80)],
-                "high": [101.0 + i * 0.1 for i in range(80)],
-                "low": [99.0 + i * 0.1 for i in range(80)],
-                "close": [100.5 + i * 0.1 for i in range(80)],
-                "volume": [1000.0 for _ in range(80)],
+                "open": [value - 0.05 for value in close],
+                "high": [value + 0.5 for value in close],
+                "low": [value - 0.5 for value in close],
+                "close": close,
+                "volume": [1000.0 + (i % 24) * 10.0 for i in range(rows)],
             }
         )
 

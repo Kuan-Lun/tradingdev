@@ -139,13 +139,13 @@ classDiagram
 
 SQLite stores metadata. Filesystem stores generated code/config, feature
 requests, data caches, and run artifacts. Each completed run records result,
-config snapshot, optional strategy source snapshot, dataset fingerprint, and
-dashboard `pipeline_result` artifacts under `workspace/runs/<run_id>/`; that
-directory is linked from the `runs.artifact_dir` column. CLI pipeline-result
-cache files are stored under `workspace/data/processed/cache` (or
-`$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through
-`ArtifactService`. The dashboard reads run metadata and pipeline artifacts
-through `RunService` / `ArtifactService`.
+config snapshot, strategy source hash, random seed, optional strategy source
+snapshot, dataset fingerprint, and dashboard `pipeline_result` artifacts under
+`workspace/runs/<run_id>/`; that directory is linked from the
+`runs.artifact_dir` column. CLI pipeline-result cache files are stored under
+`workspace/data/processed/cache` (or `$TRADINGDEV_DATA_ROOT/processed/cache`)
+and tracked through `ArtifactService`. The dashboard reads run metadata and
+pipeline artifacts through `RunService` / `ArtifactService`.
 
 ## Domain Contracts
 
