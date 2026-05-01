@@ -43,9 +43,6 @@ class QuantileStrategyConfig(BaseModel):
     train_subsample_step: int = 5
     retrain_interval: int = 1440
     train_window: int = 20160
-    dvol_raw_path: str = ""
-    dvol_processed_path: str = ""
-    funding_rate_path: str = ""
 
     @field_validator("min_entry_edge")
     @classmethod

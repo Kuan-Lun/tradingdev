@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
-from tradingdev.app import job_store
+from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import StrategyService
 
 
@@ -31,10 +31,12 @@ class OptimizationService:
         self,
         *,
         strategy_service: StrategyService | None = None,
+        job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
         project_root: Path | None = None,
     ) -> None:
         self._strategy_service = strategy_service or StrategyService()
+        self._job_store = job_store or get_default_job_store()
         self._project_root = (project_root or Path.cwd()).resolve()
         self._process_runner = process_runner or ProcessRunner(self._project_root)
 
@@ -71,7 +73,7 @@ class OptimizationService:
             total_combinations *= len(values)
 
         job_id = uuid4().hex[:12]
-        job_store.create_job(
+        self._job_store.create_job(
             job_id=job_id,
             strategy_name=strategy_id,
             symbol=symbol,
@@ -80,7 +82,7 @@ class OptimizationService:
             end_date=test_end,
             config_path=str(config_path),
         )
-        job_store.update_job(
+        self._job_store.update_job(
             job_id,
             job_type="optimization",
             param_ranges=param_ranges,
@@ -95,7 +97,7 @@ class OptimizationService:
             "tradingdev.mcp.workers.optimization",
             job_id,
         )
-        job_store.update_job(job_id, pid=pid)
+        self._job_store.update_job(job_id, pid=pid)
         return {
             "job_id": job_id,
             "message": (

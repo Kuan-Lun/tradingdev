@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.sqlite import SQLiteStore
-from tradingdev.app import job_store
 from tradingdev.app.artifact_service import ArtifactService
+from tradingdev.app.job_store import JobStore
 from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 
@@ -60,12 +60,10 @@ def test_run_service_compare_and_artifact_lookup(tmp_path: Path) -> None:
 
 def test_job_store_save_result_records_run_lineage(
     tmp_path: Path,
-    monkeypatch: MonkeyPatch,
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
-    monkeypatch.setattr(job_store, "_WORKSPACE", workspace)
-    monkeypatch.setattr(job_store, "_STORE", store)
+    job_store = JobStore(workspace=workspace, store=store)
 
     strategy_source = tmp_path / "fixture_strategy.py"
     strategy_source.write_text(

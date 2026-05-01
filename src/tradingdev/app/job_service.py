@@ -10,8 +10,8 @@ from typing import Any
 from uuid import uuid4
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
-from tradingdev.app import job_store
 from tradingdev.app.data_service import DataService
+from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.shared.utils.config import load_config
@@ -37,11 +37,13 @@ class JobService:
         *,
         strategy_service: StrategyService | None = None,
         data_service: DataService | None = None,
+        job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
         project_root: Path | None = None,
     ) -> None:
         self._strategy_service = strategy_service or StrategyService()
         self._data_service = data_service or DataService()
+        self._job_store = job_store or get_default_job_store()
         self._project_root = (project_root or self._default_project_root()).resolve()
         self._process_runner = process_runner or ProcessRunner(self._project_root)
 
@@ -111,7 +113,7 @@ class JobService:
 
     def get_job_status(self, job_id: str) -> dict[str, Any]:
         """Return current job status and completed result payload."""
-        job = job_store.get_job(job_id)
+        job = self._job_store.get_job(job_id)
         if job is None:
             return {"status": "not_found", "error": f"No job with ID: {job_id}"}
 
@@ -124,7 +126,7 @@ class JobService:
             "testing_oos",
         } and not self._is_pid_alive(job.get("pid")):
             status = "failed"
-            job_store.update_job(
+            self._job_store.update_job(
                 job_id,
                 status=status,
                 error="Worker process terminated unexpectedly.",
@@ -145,9 +147,9 @@ class JobService:
         }
 
         if status == "done":
-            result = job_store.load_result(str(job["result_path"]))
+            result = self._job_store.load_result(str(job["result_path"]))
             response["ended_at"] = job.get("ended_at")
-            run = job_store.get_run(job_id)
+            run = self._job_store.get_run(job_id)
             if run is not None:
                 response["run_id"] = run["run_id"]
             if job.get("job_type") == "optimization":
@@ -197,7 +199,7 @@ class JobService:
 
     def list_jobs(self) -> list[dict[str, Any]]:
         """List job summaries newest first."""
-        jobs = job_store.list_all_jobs()
+        jobs = self._job_store.list_all_jobs()
         now = datetime.now(UTC)
         summaries = []
         for job in jobs:
@@ -222,7 +224,7 @@ class JobService:
 
     def confirm_optimization(self, job_id: str) -> dict[str, Any]:
         """Mark an optimization job as confirmed."""
-        job = job_store.get_job(job_id)
+        job = self._job_store.get_job(job_id)
         if job is None:
             return {"success": False, "error": f"No job with ID: {job_id}"}
         status = str(job["status"])
@@ -233,7 +235,7 @@ class JobService:
                 "success": False,
                 "error": f"Job status is '{status}', expected 'pending_confirmation'.",
             }
-        job_store.update_job(job_id, confirmed=True)
+        self._job_store.update_job(job_id, confirmed=True)
         return {
             "success": True,
             "message": (
@@ -244,7 +246,7 @@ class JobService:
 
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued or running background job."""
-        job = job_store.get_job(job_id)
+        job = self._job_store.get_job(job_id)
         if job is None:
             return {"success": False, "error": f"No job with ID: {job_id}"}
 
@@ -274,7 +276,7 @@ class JobService:
                     "pid": pid,
                 }
 
-        job_store.update_job(
+        self._job_store.update_job(
             job_id,
             status="cancelled",
             error="Cancelled by user.",
@@ -305,7 +307,7 @@ class JobService:
             end_date,
         )
         job_id = uuid4().hex[:12]
-        job_store.create_job(
+        self._job_store.create_job(
             job_id=job_id,
             strategy_name=strategy_id,
             symbol=symbol,
@@ -314,7 +316,7 @@ class JobService:
             end_date=end_date,
             config_path=str(config_path),
         )
-        job_store.update_job(
+        self._job_store.update_job(
             job_id,
             job_type="walk_forward" if walk_forward else "backtest",
         )
@@ -325,7 +327,7 @@ class JobService:
             "tradingdev.mcp.workers.backtest",
             *args,
         )
-        job_store.update_job(job_id, pid=pid)
+        self._job_store.update_job(job_id, pid=pid)
         data_msg = (
             "Data already cached locally."
             if data_available

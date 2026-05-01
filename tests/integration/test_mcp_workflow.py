@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
-from tradingdev.app import job_store
 from tradingdev.app.data_service import DataService
 from tradingdev.app.job_service import JobService
+from tradingdev.app.job_store import JobStore
 from tradingdev.app.strategy_service import StrategyService
 
 if TYPE_CHECKING:
@@ -82,8 +82,7 @@ def test_generated_strategy_can_start_backtest_job(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
-    monkeypatch.setattr(job_store, "_WORKSPACE", workspace)
-    monkeypatch.setattr(job_store, "_STORE", store)
+    job_store = JobStore(workspace=workspace, store=store)
     workspace.processed_data.mkdir(parents=True, exist_ok=True)
     (workspace.processed_data / "btcusdt_1h_2024.parquet").write_text(
         "",
@@ -107,6 +106,7 @@ def test_generated_strategy_can_start_backtest_job(
     service = JobService(
         strategy_service=strategy_service,
         data_service=DataService(workspace),
+        job_store=job_store,
         process_runner=runner,
         project_root=tmp_path,
     )

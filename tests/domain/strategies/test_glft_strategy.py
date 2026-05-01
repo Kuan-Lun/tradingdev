@@ -79,17 +79,9 @@ class TestGLFTStrategyConfig:
             )
 
     def test_implied_vol_type_accepted(self) -> None:
-        """vol_type='implied' is valid when dvol_processed_path set."""
-        config = GLFTStrategyConfig(
-            vol_type="implied",
-            dvol_processed_path="workspace/data/processed/dvol.parquet",
-        )
+        """vol_type='implied' is valid without strategy path parameters."""
+        config = GLFTStrategyConfig(vol_type="implied")
         assert config.vol_type == "implied"
-
-    def test_implied_requires_dvol_path(self) -> None:
-        """vol_type='implied' without dvol_processed_path raises."""
-        with pytest.raises(ValidationError, match="dvol_processed_path"):
-            GLFTStrategyConfig(vol_type="implied")
 
 
 # ── State machine tests ──────────────────────────────────────
@@ -385,7 +377,6 @@ def _make_implied_config(
         "ema_window": 10,
         "vol_window": 0,
         "vol_type": "implied",
-        "dvol_processed_path": "dummy.parquet",
         "min_holding_bars": 3,
         "max_holding_bars": 15,
         "gamma_candidates": [0.005, 0.01],

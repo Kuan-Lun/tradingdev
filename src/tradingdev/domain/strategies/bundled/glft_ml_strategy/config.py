@@ -22,8 +22,6 @@ class GLFTMLStrategyConfig(BaseModel):
     ema_window: int = 15
     vol_window: int = 30
     vol_type: Literal["realized", "parkinson", "implied"] = "implied"
-    dvol_raw_path: str | None = None
-    dvol_processed_path: str | None = None
     min_holding_bars: int = 5
     max_holding_bars: int = 13
     gamma_candidates: list[float] = [0.0, 200.0, 500.0]
