@@ -96,12 +96,14 @@ class JobService:
         config_path, error = self._resolve_strategy_run_config(strategy_id)
         if config_path is None:
             return {"job_id": "", "message": error, "data_available": False}
-        raw_config = load_config(config_path)
-        run_config = BacktestRunConfig.model_validate(raw_config)
-        if not run_config.is_walk_forward:
+        config_path, error = self._resolve_walk_forward_config(
+            strategy_id=strategy_id,
+            config_path=config_path,
+        )
+        if config_path is None:
             return {
                 "job_id": "",
-                "message": "Config has no validation section for walk-forward.",
+                "message": error,
                 "data_available": False,
             }
         return self._start_worker(
@@ -387,6 +389,31 @@ class JobService:
                     market["symbol"] = symbol
                     market["timeframe"] = timeframe
         return effective_config
+
+    def _resolve_walk_forward_config(
+        self,
+        *,
+        strategy_id: str,
+        config_path: Path,
+    ) -> tuple[Path | None, str]:
+        raw_config = load_config(config_path)
+        run_config = BacktestRunConfig.model_validate(raw_config)
+        if run_config.is_walk_forward:
+            return config_path, ""
+
+        fallback = config_path.with_name("walkforward_config.yaml")
+        if fallback.exists():
+            fallback_raw = load_config(fallback)
+            fallback_run_config = BacktestRunConfig.model_validate(fallback_raw)
+            fallback_strategy = fallback_raw.get("strategy", {})
+            fallback_id = (
+                fallback_strategy.get("id")
+                if isinstance(fallback_strategy, dict)
+                else None
+            )
+            if fallback_id == strategy_id and fallback_run_config.is_walk_forward:
+                return fallback, ""
+        return None, "Config has no validation section for walk-forward."
 
     def _write_job_config(self, job_id: str, config: dict[str, Any]) -> Path:
         run_dir = self._job_store.workspace.runs / job_id

@@ -14,8 +14,11 @@ dependencies = [
     "pyyaml>=6.0",
     "pyarrow>=15.0",
     "scikit-learn>=1.4",
-    # Checkpoint 1 keeps dashboard and heavy ML as runtime capabilities because
-    # existing MCP and CLI paths can inspect and execute bundled ML strategies.
+    # Architecture decision: dashboard and heavy ML packages stay in runtime
+    # dependencies because MCP and CLI paths can inspect and execute bundled ML
+    # strategies without installing extras. If server footprint becomes a
+    # deployment blocker, split these into `tradingdev[dashboard]` and
+    # `tradingdev[ml]` extras and re-check MCP tool behavior before release.
     "xgboost>=2.0",
     "streamlit>=1.30",
     "plotly>=5.18",
@@ -39,6 +42,8 @@ packages = ["src/tradingdev"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+# Dev tools: [dependency-groups].dev is the canonical uv-native source.
+# No [project.optional-dependencies].dev is maintained to avoid duplication.
 [dependency-groups]
 dev = [
     "black>=25.0",

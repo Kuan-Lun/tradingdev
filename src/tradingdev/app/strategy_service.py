@@ -26,6 +26,7 @@ from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import (
     StrategyDiagnostic,
     StrategyMetadata,
+    StrategySpec,
     StrategyStatus,
     ValidationResult,
 )
@@ -165,6 +166,82 @@ class StrategyService:
             config_path=str(config_path),
             status="draft",
         )
+
+    def load(self, strategy_id: str) -> StrategySpec | None:
+        """Load a bundled or generated strategy spec."""
+        metadata = self._load_metadata(strategy_id)
+        if metadata is not None:
+            return StrategySpec(
+                strategy_id=metadata.strategy_id,
+                class_name=metadata.class_name,
+                source_path=metadata.source_path,
+                config_path=metadata.config_path,
+                status=metadata.status,
+                kind="generated",
+                metadata=metadata,
+            )
+
+        bundled = (
+            Path(__file__).resolve().parents[1] / "domain" / "strategies" / "bundled"
+        )
+        for config_path in sorted(bundled.glob("*/config.yaml")):
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
+            if isinstance(strategy, dict) and strategy.get("id") == strategy_id:
+                class_name = strategy.get("class_name")
+                source_path = strategy.get("source_path")
+                if not isinstance(class_name, str) or not isinstance(source_path, str):
+                    return None
+                return StrategySpec(
+                    strategy_id=strategy_id,
+                    class_name=class_name,
+                    source_path=source_path,
+                    config_path=str(config_path),
+                    status=StrategyStatus.PROMOTED,
+                    kind="bundled",
+                    metadata={"version": strategy.get("version")},
+                )
+        return None
+
+    def record_validation_status(
+        self,
+        strategy_id: str,
+        result: ValidationResult | dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist validation status from an external validation worker."""
+        metadata = self._load_metadata(strategy_id)
+        if metadata is None:
+            return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
+        if metadata.status not in {StrategyStatus.DRAFT, StrategyStatus.VALIDATED}:
+            return {
+                "success": False,
+                "strategy_id": strategy_id,
+                "status": metadata.status.value,
+                "error": (
+                    "record_validation_status only accepts draft or validated "
+                    "strategies."
+                ),
+            }
+
+        validation = (
+            result
+            if isinstance(result, ValidationResult)
+            else ValidationResult.model_validate(result)
+        )
+        metadata.validation = validation
+        metadata.status = (
+            StrategyStatus.VALIDATED if validation.success else StrategyStatus.DRAFT
+        )
+        metadata.updated_at = now_iso()
+        self._write_metadata(self._metadata_path(strategy_id), metadata)
+        return {
+            "success": validation.success,
+            "strategy_id": strategy_id,
+            "status": metadata.status.value,
+            "diagnostics": [
+                item.model_dump(mode="json") for item in validation.diagnostics
+            ],
+        }
 
     def validate(self, strategy_id: str) -> dict[str, Any]:
         """Validate a draft strategy with static checks and a smoke dry run."""
