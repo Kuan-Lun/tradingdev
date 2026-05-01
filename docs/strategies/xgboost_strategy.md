@@ -60,6 +60,14 @@ data:
 Use `inspect_dataset(config_path)` before running long validations to verify
 the workspace or `TRADINGDEV_DATA_ROOT` cache.
 
+## Lifecycle
+
+This is a bundled strategy under
+`src/tradingdev/domain/strategies/bundled/xgboost_strategy/`, so it is
+git-versioned and treated as promoted by `StrategyService`. Generated strategy
+states (`draft`, `validated`, `runnable`, `promoted`) apply only to runtime
+artifacts under `workspace/generated_strategies/`.
+
 ## Key Parameters
 
 - `lookback_candidates`: candidate training windows.

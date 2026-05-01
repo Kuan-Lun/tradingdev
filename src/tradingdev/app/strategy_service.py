@@ -481,13 +481,29 @@ class StrategyService:
                     timeout=timeout,
                     check=False,
                 )
-            except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            except FileNotFoundError as exc:
                 diagnostics.append(
                     self._diagnostic(
-                        code=f"{label}_skipped",
+                        code=f"{label}_unavailable",
                         phase="quality_gate",
-                        message=f"{label} skipped: {exc}",
-                        level="warning",
+                        message=f"{label} quality gate could not start: {exc}",
+                        fix=(
+                            "Install uv and project dependencies before running "
+                            "validate_strategy."
+                        ),
+                    )
+                )
+                continue
+            except subprocess.TimeoutExpired as exc:
+                diagnostics.append(
+                    self._diagnostic(
+                        code=f"{label}_timeout",
+                        phase="quality_gate",
+                        message=f"{label} quality gate timed out: {exc}",
+                        fix=(
+                            f"Make the generated strategy analyzable within "
+                            f"{timeout} seconds or investigate the quality gate."
+                        ),
                     )
                 )
                 continue
