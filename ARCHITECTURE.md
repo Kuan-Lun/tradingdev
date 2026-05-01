@@ -25,6 +25,7 @@ src/tradingdev/
     feature_request_service.py
     capability_service.py
     job_store.py
+    run_lineage.py
   domain/
     strategies/
     backtest/
@@ -125,27 +126,31 @@ classDiagram
         +job_id
         +status
         +job_type
-        +strategy_name
-        +config_path
         +created_at
         +started_at
         +ended_at
-        +result_path
+        +pid
+        +error
+        +optional backtest payload fields
     }
 
     SQLiteStore --> JobRecord
     SQLiteStore --> WorkspacePaths
 ```
 
-SQLite stores metadata. Filesystem stores generated code/config, feature
-requests, data caches, and run artifacts. Each completed run records result,
-config snapshot, strategy source hash, random seed, optional strategy source
-snapshot, dataset fingerprint, and dashboard `pipeline_result` artifacts under
-`workspace/runs/<run_id>/`; that directory is linked from the
-`runs.artifact_dir` column. CLI pipeline-result cache files are stored under
-`workspace/data/processed/cache` (or `$TRADINGDEV_DATA_ROOT/processed/cache`)
-and tracked through `ArtifactService`. The dashboard reads run metadata and
-pipeline artifacts through `RunService` / `ArtifactService`.
+SQLite stores metadata. The `jobs` table keeps generic job lifecycle columns;
+backtest-specific values such as strategy, symbol, timeframe, date range, and
+config path are optional payload fields. Filesystem stores generated code/config,
+feature requests, data caches, and run artifacts. Each completed run records
+result, config snapshot, strategy source hash, random seed, optional strategy
+source snapshot, dataset fingerprint, and dashboard `pipeline_result` artifacts
+under `workspace/runs/<run_id>/`; that directory is linked from the
+`runs.artifact_dir` column. `app.run_lineage` centralizes config/source/seed
+lineage extraction for job and artifact services. CLI pipeline-result cache
+files are stored under `workspace/data/processed/cache` (or
+`$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through `ArtifactService`.
+The dashboard reads run metadata and pipeline artifacts through `RunService` /
+`ArtifactService`.
 
 ## Domain Contracts
 
@@ -154,8 +159,9 @@ pipeline artifacts through `RunService` / `ArtifactService`.
 - Data requirements live in YAML `data.requirements`.
 - `inspect_dataset(config_path)` reports market cache availability and feature
   source missing-value status from the same data root used by backtests.
-- `start_backtest` / `start_walk_forward` use the typed `BacktestRunConfig`
-  schema to choose simple vs walk-forward execution.
+- `start_backtest` / `start_walk_forward` write a per-job effective config under
+  `workspace/runs/<job_id>/config.yaml`; MCP tool inputs override the config's
+  symbol, timeframe, and date range before the subprocess worker executes it.
 - Generated strategies must pass static policy checks before execution.
   `validate_strategy` and `dry_run_strategy` currently execute generated Python
   code during contract checks; sandbox isolation is future work.

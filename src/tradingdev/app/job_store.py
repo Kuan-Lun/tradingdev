@@ -34,19 +34,19 @@ class JobRecord(BaseModel):
 
     job_id: str
     status: str
-    strategy_name: str
-    symbol: str
-    timeframe: str
-    start_date: str
-    end_date: str
-    config_path: str
+    strategy_name: str | None = None
+    symbol: str | None = None
+    timeframe: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    config_path: str | None = None
     job_type: str = "backtest"
     pid: int | None = None
     created_at: str
     started_at: str | None = None
     ended_at: str | None = None
     data_downloaded: bool = False
-    result_path: str
+    result_path: str | None = None
     error: str | None = None
 
 
@@ -82,18 +82,21 @@ class JobStore:
         self,
         *,
         job_id: str,
-        strategy_name: str,
-        symbol: str,
-        timeframe: str,
-        start_date: str,
-        end_date: str,
-        config_path: str,
+        strategy_name: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        config_path: str | None = None,
+        job_type: str = "backtest",
+        extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create a new job record and persist it."""
         result_path = self._workspace.runs / job_id / "result.json"
         record = JobRecord(
             job_id=job_id,
             status="queued",
+            job_type=job_type,
             strategy_name=strategy_name,
             symbol=symbol,
             timeframe=timeframe,
@@ -103,10 +106,12 @@ class JobStore:
             created_at=_now_iso(),
             result_path=str(result_path),
         )
-        payload = _record_to_dict(record)
-        self._store.upsert_job(payload)
+        record_payload = _record_to_dict(record)
+        if extra_payload is not None:
+            record_payload.update(extra_payload)
+        self._store.upsert_job(record_payload)
         logger.debug("Created job %s", job_id)
-        return payload
+        return record_payload
 
     def update_job(self, job_id: str, **fields: Any) -> None:
         """Update specific fields of an existing job record."""
@@ -177,11 +182,13 @@ class JobStore:
 
         job = self.get_job(job_id)
         if job is not None:
-            config_path = Path(str(job.get("config_path", "")))
-            if not config_path.is_absolute():
-                config_path = Path.cwd() / config_path
-            config_hash = sha256_file(config_path) if config_path.exists() else None
-            config_payload = load_config_payload(config_path)
+            config_path = _resolve_optional_path(job.get("config_path"))
+            config_hash = (
+                sha256_file(config_path)
+                if config_path is not None and config_path.is_file()
+                else None
+            )
+            config_payload = load_config_payload(config_path) if config_path else None
             strategy_source = resolve_strategy_source(config_payload)
             source_hash = (
                 sha256_file(strategy_source)
@@ -209,7 +216,7 @@ class JobStore:
                 sha256=sha256_file(result_path),
                 metadata={"job_id": job_id},
             )
-            if config_path.exists():
+            if config_path is not None and config_path.is_file():
                 config_snapshot = run_dir / "config.yaml"
                 config_snapshot.write_text(
                     config_path.read_text(encoding="utf-8"),
@@ -300,10 +307,10 @@ class JobStore:
         dataset_id = str(job.get("dataset_id") or "")
         payload = {
             "dataset_id": dataset_id,
-            "symbol": str(job.get("symbol", "")),
-            "timeframe": str(job.get("timeframe", "")),
-            "start_date": str(job.get("start_date", "")),
-            "end_date": str(job.get("end_date", "")),
+            "symbol": str(job.get("symbol") or ""),
+            "timeframe": str(job.get("timeframe") or ""),
+            "start_date": str(job.get("start_date") or ""),
+            "end_date": str(job.get("end_date") or ""),
         }
         if not dataset_id:
             dataset_id = sha256_text(json.dumps(payload, sort_keys=True))
@@ -320,6 +327,15 @@ def _record_to_dict(record: JobRecord) -> dict[str, Any]:
     return record.model_dump(mode="json")
 
 
+def _resolve_optional_path(value: object) -> Path | None:
+    if not value:
+        return None
+    path = Path(str(value))
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
+
+
 def get_default_job_store() -> JobStore:
     """Return a default job store without import-time workspace side effects."""
     return JobStore()
@@ -327,12 +343,14 @@ def get_default_job_store() -> JobStore:
 
 def create_job(
     job_id: str,
-    strategy_name: str,
-    symbol: str,
-    timeframe: str,
-    start_date: str,
-    end_date: str,
-    config_path: str,
+    strategy_name: str | None = None,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    config_path: str | None = None,
+    job_type: str = "backtest",
+    extra_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a new job record in the default store."""
     return get_default_job_store().create_job(
@@ -343,6 +361,8 @@ def create_job(
         start_date=start_date,
         end_date=end_date,
         config_path=config_path,
+        job_type=job_type,
+        extra_payload=extra_payload,
     )
 
 

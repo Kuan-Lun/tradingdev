@@ -44,6 +44,7 @@ dev = [
     "black>=25.0",
     "mypy>=1.19.1",
     "pandas-stubs>=3.0.0.260204",
+    # Provides the `pymarkdown` CLI used by scripts/hooks/finalize-markdown.sh.
     "pymarkdownlnt>=0.9.31",
     "pytest>=9.0.2",
     "ruff>=0.15.0",

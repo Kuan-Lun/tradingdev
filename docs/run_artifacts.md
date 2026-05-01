@@ -25,8 +25,10 @@ workspace/
 
 ## SQLite Tables
 
-- `jobs`: background job status, strategy, config path, pid,
-  `created_at`/`started_at`/`ended_at`, and payload.
+- `jobs`: generic background job status, job type, pid,
+  `created_at`/`started_at`/`ended_at`, error, and payload. Backtest-specific
+  fields such as strategy, symbol, timeframe, date range, and config path are
+  nullable columns mirrored in the JSON payload when present.
 - `runs`: completed run metadata, metrics JSON, config hash, source hash,
   random seed, dataset id, and artifact directory.
 - `artifacts`: run and non-run artifact metadata, path, sha256, and metadata JSON.
@@ -50,8 +52,10 @@ Each completed run writes files under `workspace/runs/<run_id>/` and records
 matching SQLite metadata:
 
 - `result.json`: serialized metrics, stored as `result_json`.
-- `config.yaml`: config snapshot used for the run, stored as `config_snapshot`
-  with `config_hash`.
+- `config.yaml`: effective config snapshot used for the run, stored as
+  `config_snapshot` with `config_hash`. For MCP-launched backtest and
+  walk-forward jobs this snapshot includes the symbol, timeframe, and date range
+  supplied to `start_backtest` / `start_walk_forward`.
 - `strategy.py`: generated or bundled strategy source snapshot when
   `strategy.source_path` is available, stored as `strategy_source` with
   source hash metadata. The same hash is indexed in `runs.source_hash` for

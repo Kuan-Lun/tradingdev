@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 import signal
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+import yaml
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.app.data_service import DataService
@@ -138,16 +141,17 @@ class JobService:
         response: dict[str, Any] = {
             "status": status,
             "job_type": job.get("job_type", "backtest"),
-            "strategy_name": job["strategy_name"],
-            "symbol": job["symbol"],
-            "timeframe": job["timeframe"],
-            "start_date": job["start_date"],
-            "end_date": job["end_date"],
+            "strategy_name": job.get("strategy_name"),
+            "symbol": job.get("symbol"),
+            "timeframe": job.get("timeframe"),
+            "start_date": job.get("start_date"),
+            "end_date": job.get("end_date"),
             "elapsed_seconds": elapsed,
         }
 
         if status == "done":
-            result = self._job_store.load_result(str(job["result_path"]))
+            result_path = str(job.get("result_path") or "")
+            result = self._job_store.load_result(result_path) if result_path else None
             response["ended_at"] = job.get("ended_at")
             run = self._job_store.get_run(job_id)
             if run is not None:
@@ -208,11 +212,11 @@ class JobService:
                 "job_id": job["job_id"],
                 "job_type": job.get("job_type", "backtest"),
                 "status": job["status"],
-                "strategy_name": job["strategy_name"],
-                "symbol": job["symbol"],
-                "timeframe": job["timeframe"],
-                "start_date": job["start_date"],
-                "end_date": job["end_date"],
+                "strategy_name": job.get("strategy_name"),
+                "symbol": job.get("symbol"),
+                "timeframe": job.get("timeframe"),
+                "start_date": job.get("start_date"),
+                "end_date": job.get("end_date"),
                 "elapsed_seconds": round((now - created_at).total_seconds(), 1),
                 "data_downloaded": job.get("data_downloaded", False),
             }
@@ -300,6 +304,16 @@ class JobService:
         config_path: Path,
         walk_forward: bool,
     ) -> dict[str, Any]:
+        raw_config = load_config(config_path)
+        effective_config = self._apply_run_overrides(
+            raw_config,
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        BacktestRunConfig.model_validate(effective_config)
+
         data_available = self._data_service.data_available(
             symbol,
             timeframe,
@@ -307,6 +321,7 @@ class JobService:
             end_date,
         )
         job_id = uuid4().hex[:12]
+        effective_config_path = self._write_job_config(job_id, effective_config)
         self._job_store.create_job(
             job_id=job_id,
             strategy_name=strategy_id,
@@ -314,13 +329,14 @@ class JobService:
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
-            config_path=str(config_path),
+            config_path=str(effective_config_path),
         )
         self._job_store.update_job(
             job_id,
             job_type="walk_forward" if walk_forward else "backtest",
+            original_config_path=str(config_path),
         )
-        args = [job_id, str(config_path)]
+        args = [job_id, str(effective_config_path)]
         if walk_forward:
             args.append("--walk-forward")
         pid = self._process_runner.spawn_module(
@@ -338,6 +354,49 @@ class JobService:
             "message": f"Job started. Job ID: {job_id}. {data_msg}",
             "data_available": data_available,
         }
+
+    def _apply_run_overrides(
+        self,
+        raw_config: dict[str, Any],
+        *,
+        symbol: str,
+        timeframe: str,
+        start_date: str,
+        end_date: str,
+    ) -> dict[str, Any]:
+        effective_config = deepcopy(raw_config)
+        backtest = effective_config.get("backtest")
+        if not isinstance(backtest, dict):
+            msg = "backtest config must be a mapping"
+            raise ValueError(msg)
+        backtest.update(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+        )
+
+        data = effective_config.get("data")
+        if isinstance(data, dict):
+            requirements = data.get("requirements")
+            if isinstance(requirements, dict):
+                market = requirements.get("market")
+                if isinstance(market, dict):
+                    market["symbol"] = symbol
+                    market["timeframe"] = timeframe
+        return effective_config
+
+    def _write_job_config(self, job_id: str, config: dict[str, Any]) -> Path:
+        run_dir = self._job_store.workspace.runs / job_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        path = run_dir / "config.yaml"
+        path.write_text(
+            yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+        return path
 
     def _resolve_strategy_run_config(self, strategy_id: str) -> tuple[Path | None, str]:
         strategy = self._strategy_service.get_strategy(strategy_id)

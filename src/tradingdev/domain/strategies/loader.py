@@ -67,7 +67,7 @@ class StrategyLoader:
             msg = "strategy config must be a mapping"
             raise ValueError(msg)
 
-        strategy_id = str(strategy_cfg.get("id") or strategy_cfg.get("name"))
+        strategy_id = self._required_strategy_string(strategy_cfg, "id")
         params = strategy_cfg.get("parameters", {})
         if not isinstance(params, dict):
             msg = "strategy.parameters must be a mapping"
@@ -147,7 +147,7 @@ class StrategyLoader:
 
     def load_class(self, strategy_cfg: dict[str, Any]) -> type[BaseStrategy]:
         """Resolve a strategy class from bundled metadata or generated source."""
-        strategy_id = str(strategy_cfg.get("id") or strategy_cfg.get("name") or "")
+        strategy_id = self._required_strategy_string(strategy_cfg, "id")
         bundled = self._bundled_class_by_id().get(strategy_id)
         if bundled is not None:
             module_name, class_name = bundled
@@ -158,11 +158,8 @@ class StrategyLoader:
                 raise TypeError(msg)
             return cast("type[BaseStrategy]", cls)
 
-        class_name = str(strategy_cfg.get("class_name") or strategy_cfg.get("class"))
-        source_value = strategy_cfg.get("source_path") or strategy_cfg.get("file")
-        if not source_value:
-            msg = "strategy.source_path is required for generated strategies"
-            raise ValueError(msg)
+        class_name = self._required_strategy_string(strategy_cfg, "class_name")
+        source_value = self._required_strategy_string(strategy_cfg, "source_path")
         module = self._load_module(
             self._resolve_generated_source(Path(str(source_value)))
         )
@@ -188,11 +185,11 @@ class StrategyLoader:
             strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
             if not isinstance(strategy, dict):
                 continue
-            class_name = strategy.get("class_name") or strategy.get("class")
+            class_name = strategy.get("class_name")
             if not isinstance(class_name, str) or not class_name:
                 continue
             result[config_path.parent.name] = (module_name, class_name)
-            strategy_id = strategy.get("id") or strategy.get("name")
+            strategy_id = strategy.get("id")
             if isinstance(strategy_id, str) and strategy_id:
                 result[strategy_id] = (module_name, class_name)
         return result
@@ -202,11 +199,8 @@ class StrategyLoader:
         strategy_cfg: dict[str, Any],
         engine: BaseBacktestEngine,
     ) -> BaseStrategy:
-        class_name = str(strategy_cfg.get("class_name") or strategy_cfg.get("class"))
-        source_value = strategy_cfg.get("source_path") or strategy_cfg.get("file")
-        if not source_value:
-            msg = "generated strategies require strategy.source_path"
-            raise ValueError(msg)
+        class_name = self._required_strategy_string(strategy_cfg, "class_name")
+        source_value = self._required_strategy_string(strategy_cfg, "source_path")
 
         source_path = self._resolve_generated_source(Path(str(source_value)))
         module = self._load_module(source_path)
@@ -220,6 +214,17 @@ class StrategyLoader:
             msg = f"{class_name} must inherit from BaseStrategy"
             raise TypeError(msg)
         return instance
+
+    def _required_strategy_string(
+        self,
+        strategy_cfg: dict[str, Any],
+        field: str,
+    ) -> str:
+        value = strategy_cfg.get(field)
+        if not isinstance(value, str) or not value:
+            msg = f"strategy.{field} is required"
+            raise ValueError(msg)
+        return value
 
     def _resolve_generated_source(self, source_path: Path) -> Path:
         candidate = source_path

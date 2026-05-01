@@ -249,9 +249,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     # --- Phase 4: load strategy class & validate params ---
     try:
         strategy_cfg: dict[str, Any] = raw_config["strategy"]
-        strategy_class_name = str(
-            strategy_cfg.get("class_name") or strategy_cfg.get("class")
-        )
+        strategy_class_name = str(strategy_cfg.get("class_name") or "")
         cls = StrategyLoader().load_class(strategy_cfg)
     except Exception as exc:
         _fail(job_id, f"Strategy load error: {exc}")

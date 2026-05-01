@@ -13,6 +13,53 @@ if TYPE_CHECKING:
 
 _STORE_CACHE: dict[str, SQLiteStore] = {}
 
+_JOB_COLUMNS = [
+    "job_id",
+    "job_type",
+    "status",
+    "strategy_name",
+    "symbol",
+    "timeframe",
+    "start_date",
+    "end_date",
+    "config_path",
+    "pid",
+    "created_at",
+    "started_at",
+    "ended_at",
+    "error",
+    "payload",
+]
+
+_BACKTEST_JOB_COLUMNS = {
+    "strategy_name",
+    "symbol",
+    "timeframe",
+    "start_date",
+    "end_date",
+    "config_path",
+}
+
+_CREATE_JOBS_TABLE_SQL = """
+create table if not exists jobs (
+    job_id text primary key,
+    job_type text not null,
+    status text not null,
+    strategy_name text,
+    symbol text,
+    timeframe text,
+    start_date text,
+    end_date text,
+    config_path text,
+    pid integer,
+    created_at text not null,
+    started_at text,
+    ended_at text,
+    error text,
+    payload text not null
+);
+"""
+
 
 class SQLiteStore:
     """Small SQLite adapter with automatic schema initialization."""
@@ -35,24 +82,7 @@ class SQLiteStore:
     def initialize(self) -> None:
         """Create metadata tables if they do not exist."""
         with self.connect() as conn:
-            conn.executescript("""
-                create table if not exists jobs (
-                    job_id text primary key,
-                    job_type text not null,
-                    status text not null,
-                    strategy_name text not null,
-                    symbol text not null,
-                    timeframe text not null,
-                    start_date text not null,
-                    end_date text not null,
-                    config_path text not null,
-                    pid integer,
-                    created_at text not null,
-                    started_at text,
-                    ended_at text,
-                    error text,
-                    payload text not null
-                );
+            conn.executescript(_CREATE_JOBS_TABLE_SQL + """
 
                 create table if not exists runs (
                     run_id text primary key,
@@ -89,6 +119,7 @@ class SQLiteStore:
                     foreign key(job_id) references jobs(job_id)
                 );
                 """)
+            self._relax_job_backtest_columns(conn)
             self._ensure_column(conn, "jobs", "created_at", "text")
             self._ensure_column(conn, "jobs", "started_at", "text")
             self._ensure_column(conn, "jobs", "ended_at", "text")
@@ -127,12 +158,12 @@ class SQLiteStore:
                     record["job_id"],
                     record.get("job_type", "backtest"),
                     record["status"],
-                    record["strategy_name"],
-                    record["symbol"],
-                    record["timeframe"],
-                    record["start_date"],
-                    record["end_date"],
-                    record["config_path"],
+                    record.get("strategy_name"),
+                    record.get("symbol"),
+                    record.get("timeframe"),
+                    record.get("start_date"),
+                    record.get("end_date"),
+                    record.get("config_path"),
                     record.get("pid"),
                     record["created_at"],
                     record.get("started_at"),
@@ -340,6 +371,31 @@ class SQLiteStore:
         }
         if column not in columns:
             conn.execute(f"alter table {table} add column {column} {column_type}")
+
+    def _relax_job_backtest_columns(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("pragma table_info(jobs)").fetchall()
+        if not any(
+            str(row["name"]) in _BACKTEST_JOB_COLUMNS and int(row["notnull"]) == 1
+            for row in rows
+        ):
+            return
+
+        new_table = "jobs_nullable_backtest_columns"
+        conn.execute(f"drop table if exists {new_table}")
+        conn.executescript(
+            _CREATE_JOBS_TABLE_SQL.replace("if not exists jobs", new_table)
+        )
+        legacy_columns = {
+            str(row["name"])
+            for row in conn.execute("pragma table_info(jobs)").fetchall()
+        }
+        copy_columns = [column for column in _JOB_COLUMNS if column in legacy_columns]
+        joined = ", ".join(copy_columns)
+        conn.execute(
+            f"insert into {new_table} ({joined}) select {joined} from jobs",
+        )
+        conn.execute("drop table jobs")
+        conn.execute(f"alter table {new_table} rename to jobs")
 
 
 def get_sqlite_store(workspace: WorkspacePaths | None = None) -> SQLiteStore:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -40,6 +41,10 @@ def test_sqlite_store_auto_initializes_metadata_schema(tmp_path: Path) -> None:
             str(row["name"])
             for row in conn.execute("pragma table_info(jobs)").fetchall()
         }
+        job_column_info = {
+            str(row["name"]): row
+            for row in conn.execute("pragma table_info(jobs)").fetchall()
+        }
         run_columns = {
             str(row["name"])
             for row in conn.execute("pragma table_info(runs)").fetchall()
@@ -47,7 +52,85 @@ def test_sqlite_store_auto_initializes_metadata_schema(tmp_path: Path) -> None:
 
     assert {"jobs", "runs", "artifacts", "events"}.issubset(tables)
     assert {"created_at", "started_at", "ended_at"}.issubset(job_columns)
+    for column in (
+        "strategy_name",
+        "symbol",
+        "timeframe",
+        "start_date",
+        "end_date",
+        "config_path",
+    ):
+        assert int(job_column_info[column]["notnull"]) == 0
     assert {"source_hash", "random_seed"}.issubset(run_columns)
+
+
+def test_sqlite_store_accepts_generic_job_payload(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = SQLiteStore(workspace)
+
+    store.upsert_job(
+        {
+            "job_id": "job_generic",
+            "job_type": "feature_request",
+            "status": "queued",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "result_path": "workspace/runs/job_generic/result.json",
+            "request_id": "feature-1",
+        }
+    )
+
+    job = store.get_job("job_generic")
+
+    assert job is not None
+    assert job["job_type"] == "feature_request"
+    assert job["request_id"] == "feature-1"
+    assert job.get("strategy_name") is None
+
+
+def test_sqlite_store_relaxes_existing_backtest_job_columns(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    workspace.ensure()
+    db_path = workspace.root / "tradingdev.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript("""
+            create table jobs (
+                job_id text primary key,
+                job_type text not null,
+                status text not null,
+                strategy_name text not null,
+                symbol text not null,
+                timeframe text not null,
+                start_date text not null,
+                end_date text not null,
+                config_path text not null,
+                pid integer,
+                created_at text not null,
+                started_at text,
+                ended_at text,
+                error text,
+                payload text not null
+            );
+            insert into jobs (
+                job_id, job_type, status, strategy_name, symbol, timeframe,
+                start_date, end_date, config_path, created_at, payload
+            ) values (
+                'job_old', 'backtest', 'queued', 'fixture', 'BTC/USDT', '1h',
+                '2024-01-01', '2024-01-02', 'fixture.yaml',
+                '2024-01-01T00:00:00+00:00', '{"job_id": "job_old"}'
+            );
+        """)
+
+    store = SQLiteStore(workspace)
+
+    with store.connect() as conn:
+        info = {
+            str(row["name"]): row
+            for row in conn.execute("pragma table_info(jobs)").fetchall()
+        }
+    assert int(info["strategy_name"]["notnull"]) == 0
+    assert store.get_job("job_old") == {"job_id": "job_old"}
 
 
 def test_sqlite_store_persists_job_run_and_artifact_lookup(tmp_path: Path) -> None:
