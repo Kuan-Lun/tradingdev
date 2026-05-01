@@ -339,11 +339,7 @@ def _render_simple(
         return
 
     bt_cfg = BacktestConfig(**raw_config["backtest"])
-    strategy_name = (
-        raw_config["strategy"].get("id")
-        or raw_config["strategy"].get("name")
-        or run["strategy_id"]
-    )
+    strategy_name = raw_config["strategy"].get("id") or run["strategy_id"]
     is_volume_mode = result.mode == "volume"
 
     # --- Header
@@ -380,11 +376,7 @@ def _render_walk_forward(
     raw_config = pipeline.config_snapshot
     folds = pipeline.fold_results
     bt_cfg = BacktestConfig(**raw_config["backtest"])
-    strategy_name = (
-        raw_config["strategy"].get("id")
-        or raw_config["strategy"].get("name")
-        or run["strategy_id"]
-    )
+    strategy_name = raw_config["strategy"].get("id") or run["strategy_id"]
 
     # --- Header
     st.title(f"Backtest Dashboard — {strategy_name}")

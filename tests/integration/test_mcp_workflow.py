@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import yaml
+
 from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -61,16 +63,16 @@ strategy:
   source_path: "workspace/generated_strategies/integration_strategy.py"
   parameters: {}
 backtest:
-  symbol: "BTC/USDT"
+  symbol: "ETH/USDT"
   timeframe: "1h"
-  start_date: "2024-01-01"
-  end_date: "2024-01-31"
+  start_date: "2023-01-01"
+  end_date: "2023-01-31"
   init_cash: 10000.0
 data:
   requirements:
     market:
       source: "binance_api"
-      symbol: "BTC/USDT"
+      symbol: "ETH/USDT"
       timeframe: "1h"
     features: []
 """
@@ -126,7 +128,7 @@ def test_generated_strategy_can_start_backtest_job(
             "tradingdev.mcp.workers.backtest",
             (
                 response["job_id"],
-                str(workspace.configs / "integration_strategy.yaml"),
+                str(workspace.runs / response["job_id"] / "config.yaml"),
             ),
         )
     ]
@@ -135,3 +137,19 @@ def test_generated_strategy_can_start_backtest_job(
     assert job["status"] == "queued"
     assert job["pid"] == 4321
     assert job["job_type"] == "backtest"
+    assert job["original_config_path"] == str(
+        workspace.configs / "integration_strategy.yaml"
+    )
+    assert job["config_path"] == str(
+        workspace.runs / response["job_id"] / "config.yaml"
+    )
+
+    effective_config = yaml.safe_load(
+        (workspace.runs / response["job_id"] / "config.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert effective_config["backtest"]["symbol"] == "BTC/USDT"
+    assert effective_config["backtest"]["start_date"] == "2024-01-01"
+    assert effective_config["backtest"]["end_date"] == "2024-01-31"
+    assert effective_config["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
