@@ -17,8 +17,6 @@ strategy:
     horizon: 30
     horizon_candidates: [15, 30]
     min_entry_edge_candidates: [0.25, 0.30, 0.35, 0.40]
-    dvol_processed_path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
-    funding_rate_path: "workspace/data/processed/btc_funding_rate_2025.parquet"
 ```
 
 ## Intent
@@ -58,9 +56,10 @@ data:
         path: "workspace/data/processed/btc_funding_rate_2025.parquet"
 ```
 
-`DataService.inspect_dataset(config_path)` reports whether each feature path
-exists, how many rows it has, and how many missing values are present in the
-declared column.
+Feature paths are declared only in `data.requirements`, not in
+`strategy.parameters`. `DataService.inspect_dataset(config_path)` reports
+whether each feature path exists, how many rows it has, and how many missing
+values are present in the declared column.
 
 ## Key Parameters
 

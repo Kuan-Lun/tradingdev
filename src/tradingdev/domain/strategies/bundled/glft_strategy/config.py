@@ -15,8 +15,6 @@ class GLFTStrategyConfig(BaseModel):
     ema_window: int = 21
     vol_window: int = 30
     vol_type: Literal["realized", "parkinson", "implied"] = "realized"
-    dvol_raw_path: str | None = None
-    dvol_processed_path: str | None = None
     min_holding_bars: int = 5
     max_holding_bars: int = 30
     gamma_candidates: list[float] = [0.0, 200.0, 500.0, 1000.0]
@@ -67,14 +65,6 @@ class GLFTStrategyConfig(BaseModel):
         """Validate max_holding_bars > min_holding_bars."""
         if self.max_holding_bars <= self.min_holding_bars:
             msg = "max_holding_bars must be greater than min_holding_bars"
-            raise ValueError(msg)
-        return self
-
-    @model_validator(mode="after")
-    def implied_requires_dvol_path(self) -> Self:
-        """Validate dvol_processed_path is set when vol_type is 'implied'."""
-        if self.vol_type == "implied" and self.dvol_processed_path is None:
-            msg = "dvol_processed_path is required when vol_type is 'implied'"
             raise ValueError(msg)
         return self
 

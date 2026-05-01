@@ -65,6 +65,9 @@
 | fee_rate | 0.0002 | Maker fee（limit order） |
 | position_size | 3000.0 | 每筆交易大小 |
 
+DVOL 檔案路徑由 `data.requirements.features` 宣告。策略參數只控制
+`vol_type` 與交易邏輯，不保存 feature 資料路徑。
+
 ## 特徵工程
 
 `DirectionFeatureEngineer` 產生約 50 個特徵：
@@ -95,8 +98,6 @@ strategy:
     kappa: 1000.0
     ema_window: 15
     vol_type: "implied"
-    dvol_raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
-    dvol_processed_path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
     min_holding_bars: 5
     max_holding_bars: 13
     min_entry_edge: 0.0012

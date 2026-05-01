@@ -6,23 +6,26 @@ from typing import TYPE_CHECKING
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
-from tradingdev.app import job_store
 from tradingdev.app.job_service import JobService
+from tradingdev.app.job_store import JobStore
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pytest import MonkeyPatch
+
+class _TerminatesJobService(JobService):
+    def _is_pid_alive(self, pid: object) -> bool:
+        return True
+
+    def _terminate_pid(self, pid: int) -> tuple[bool, str | None]:
+        return True, None
 
 
 def test_cancel_job_marks_active_job_cancelled(
     tmp_path: Path,
-    monkeypatch: MonkeyPatch,
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
-    store = SQLiteStore(workspace)
-    monkeypatch.setattr(job_store, "_WORKSPACE", workspace)
-    monkeypatch.setattr(job_store, "_STORE", store)
+    job_store = JobStore(workspace=workspace, store=SQLiteStore(workspace))
     job_store.create_job(
         job_id="job_cancel",
         strategy_name="fixture",
@@ -34,9 +37,7 @@ def test_cancel_job_marks_active_job_cancelled(
     )
     job_store.update_job("job_cancel", status="running_backtest", pid=12345)
 
-    service = JobService()
-    monkeypatch.setattr(service, "_is_pid_alive", lambda _pid: True)
-    monkeypatch.setattr(service, "_terminate_pid", lambda _pid: (True, None))
+    service = _TerminatesJobService(job_store=job_store)
 
     response = service.cancel_job("job_cancel")
 
@@ -55,12 +56,9 @@ def test_cancel_job_marks_active_job_cancelled(
 
 def test_cancel_job_rejects_terminal_job(
     tmp_path: Path,
-    monkeypatch: MonkeyPatch,
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
-    store = SQLiteStore(workspace)
-    monkeypatch.setattr(job_store, "_WORKSPACE", workspace)
-    monkeypatch.setattr(job_store, "_STORE", store)
+    job_store = JobStore(workspace=workspace, store=SQLiteStore(workspace))
     job_store.create_job(
         job_id="job_done",
         strategy_name="fixture",
@@ -72,7 +70,7 @@ def test_cancel_job_rejects_terminal_job(
     )
     job_store.update_job("job_done", status="done")
 
-    response = JobService().cancel_job("job_done")
+    response = JobService(job_store=job_store).cancel_job("job_done")
 
     assert response["success"] is False
     assert response["status"] == "done"
@@ -80,12 +78,9 @@ def test_cancel_job_rejects_terminal_job(
 
 def test_get_job_status_returns_run_id_for_completed_optimization(
     tmp_path: Path,
-    monkeypatch: MonkeyPatch,
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
-    store = SQLiteStore(workspace)
-    monkeypatch.setattr(job_store, "_WORKSPACE", workspace)
-    monkeypatch.setattr(job_store, "_STORE", store)
+    job_store = JobStore(workspace=workspace, store=SQLiteStore(workspace))
     job_store.create_job(
         job_id="job_optimization",
         strategy_name="fixture",
@@ -111,7 +106,7 @@ def test_get_job_status_returns_run_id_for_completed_optimization(
         job_type="optimization",
     )
 
-    response = JobService().get_job_status("job_optimization")
+    response = JobService(job_store=job_store).get_job_status("job_optimization")
 
     assert response["status"] == "done"
     assert response["job_type"] == "optimization"

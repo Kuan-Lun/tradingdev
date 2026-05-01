@@ -111,12 +111,10 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 |------|--------|------|
 | `vol_window` | 30 | 滾動波動率估計窗口（`implied` 時不使用） |
 | `vol_type` | "implied" | `"realized"` / `"parkinson"` / `"implied"` |
-| `dvol_raw_path` | "workspace/data/raw/btc_dvol_1m_2024_2025.csv" | DVOL 原始 CSV 路徑（`implied` 時必填） |
-| `dvol_processed_path` | "workspace/data/processed/btc_dvol_1m_2024_2025.parquet" | DVOL 處理後 Parquet 路徑（`implied` 時必填） |
 
 ### Implied Volatility (DVOL)
 
-當 `vol_type: "implied"` 時，策略使用 **Deribit DVOL** 指數作為波動度來源，而非從歷史價格估計。
+當 `vol_type: "implied"` 時，策略使用 DataFrame 中的 `dvol` 欄位作為波動度來源，而非從歷史價格估計。DVOL 檔案路徑由 `data.requirements.features` 宣告，策略參數不保存資料路徑。
 
 **DVOL 簡介**：
 - Deribit 的 BTC 隱含波動度指數，類似傳統市場的 VIX
@@ -308,8 +306,6 @@ strategy:
     # Volatility
     vol_window: 30
     vol_type: "implied"
-    dvol_raw_path: "workspace/data/raw/btc_dvol_1m_2024_2025.csv"
-    dvol_processed_path: "workspace/data/processed/btc_dvol_1m_2024_2025.parquet"
 
     # Holding management
     min_holding_bars: 5
