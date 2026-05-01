@@ -79,6 +79,8 @@ tests/                 app/domain/mcp/adapters/integration/shared layered tests
 - **Runtime data cache**: defaults to `workspace/data/raw` and
   `workspace/data/processed`; `TRADINGDEV_DATA_ROOT` may override raw/processed
   data root.
+- **Hook wrappers**: `.Codex/hooks/` contains Codex-facing delegation wrappers
+  only; canonical hook implementations live in `scripts/hooks/`.
 - **Job/run/artifact storage**: metadata lives in `workspace/tradingdev.sqlite`;
   run result, config snapshot, strategy source snapshot, and dataset fingerprint
   files live under `workspace/runs/<run_id>/`. Backtest runs also store a

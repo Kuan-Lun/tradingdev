@@ -1,6 +1,24 @@
 """Data requirement schema tests."""
 
-from tradingdev.domain.data.requirements import DataRequirement
+from tradingdev.domain.data.requirements import DataRequirement, DataSourceSpec
+
+
+def test_data_source_spec_parses_metadata() -> None:
+    source = DataSourceSpec(
+        name="binance_funding",
+        kind="derivatives",
+        metadata={"endpoint": "fundingRate", "symbol": "BTCUSDT"},
+    )
+
+    assert source.name == "binance_funding"
+    assert source.kind == "derivatives"
+    assert source.metadata["endpoint"] == "fundingRate"
+
+
+def test_data_source_spec_defaults_metadata() -> None:
+    source = DataSourceSpec(name="deribit_dvol", kind="volatility_index")
+
+    assert source.metadata == {}
 
 
 def test_data_requirements_parse_features() -> None:

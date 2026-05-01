@@ -61,6 +61,14 @@ Feature paths are declared only in `data.requirements`, not in
 whether each feature path exists, how many rows it has, and how many missing
 values are present in the declared column.
 
+## Lifecycle
+
+This is a bundled strategy under
+`src/tradingdev/domain/strategies/bundled/quantile_strategy/`, so it is
+git-versioned and treated as promoted by `StrategyService`. Generated strategy
+states (`draft`, `validated`, `runnable`, `promoted`) apply only to runtime
+artifacts under `workspace/generated_strategies/`.
+
 ## Key Parameters
 
 - `horizon_candidates`: prediction horizons explored in `fit()`.

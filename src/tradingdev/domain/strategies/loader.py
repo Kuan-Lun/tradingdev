@@ -56,17 +56,20 @@ class StrategyLoader:
             msg = "strategy.parameters must be a mapping"
             raise ValueError(msg)
 
-        if strategy_id in self._bundled_class_by_id():
+        bundled = self._bundled_class_by_id()
+        if strategy_id in bundled:
             return self._create_bundled(strategy_cfg, engine, parallel_config)
+        self._reject_unknown_bundled_source(strategy_id, strategy_cfg, bundled)
 
         return self._create_generated(strategy_cfg, engine)
 
     def load_class(self, strategy_cfg: dict[str, Any]) -> type[BaseStrategy]:
         """Resolve a strategy class from bundled metadata or generated source."""
         strategy_id = self._required_strategy_string(strategy_cfg, "id")
-        bundled = self._bundled_class_by_id().get(strategy_id)
-        if bundled is not None:
-            module_name, class_name = bundled
+        bundled = self._bundled_class_by_id()
+        bundled_class = bundled.get(strategy_id)
+        if bundled_class is not None:
+            module_name, class_name = bundled_class
             module = importlib.import_module(module_name)
             cls = getattr(module, class_name)
             if not issubclass(cls, BaseStrategy):
@@ -76,9 +79,9 @@ class StrategyLoader:
 
         class_name = self._required_strategy_string(strategy_cfg, "class_name")
         source_value = self._required_strategy_string(strategy_cfg, "source_path")
-        module = self._load_module(
-            self._resolve_generated_source(Path(str(source_value)))
-        )
+        source_path = Path(str(source_value))
+        self._reject_unknown_bundled_source(strategy_id, strategy_cfg, bundled)
+        module = self._load_module(self._resolve_generated_source(source_path))
         cls = getattr(module, class_name, None)
         if cls is None:
             msg = f"Class {class_name!r} not found"
@@ -108,6 +111,32 @@ class StrategyLoader:
             if isinstance(strategy_id, str) and strategy_id:
                 result[strategy_id] = (module_name, class_name)
         return result
+
+    def _reject_unknown_bundled_source(
+        self,
+        strategy_id: str,
+        strategy_cfg: dict[str, Any],
+        bundled: dict[str, tuple[str, str]],
+    ) -> None:
+        source_value = strategy_cfg.get("source_path")
+        if not isinstance(source_value, str) or not source_value:
+            return
+        if not self._is_bundled_source(Path(source_value)):
+            return
+        known = ", ".join(sorted(bundled))
+        msg = (
+            f"Bundled strategy id {strategy_id!r} is not recognized. "
+            f"Known bundled strategy ids: {known}"
+        )
+        raise ValueError(msg)
+
+    def _is_bundled_source(self, source_path: Path) -> bool:
+        candidate = source_path
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        resolved = candidate.resolve()
+        bundled_root = (Path(__file__).resolve().parent / "bundled").resolve()
+        return resolved.is_relative_to(bundled_root)
 
     def _create_bundled(
         self,

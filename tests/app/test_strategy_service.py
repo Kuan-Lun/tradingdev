@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -10,6 +11,8 @@ from tradingdev.app.strategy_service import StrategyService
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 _STRATEGY_CODE = """\
 from __future__ import annotations
@@ -177,6 +180,38 @@ def test_strategy_service_rejects_banned_import(tmp_path: Path) -> None:
     codes = [item["code"] for item in validated["diagnostics"]]
     assert "banned import: os" in messages
     assert "banned_import" in codes
+
+
+def test_validate_fails_when_quality_gate_command_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+
+    def raise_missing(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("uv")
+
+    monkeypatch.setattr(subprocess, "run", raise_missing)
+
+    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+
+    validated = service.validate("fixture_strategy")
+
+    assert validated["success"] is False
+    assert validated["status"] == "draft"
+    diagnostics = validated["diagnostics"]
+    assert {item["code"] for item in diagnostics} >= {
+        "ruff_unavailable",
+        "mypy_unavailable",
+    }
+    assert all(
+        item["level"] == "error"
+        for item in diagnostics
+        if item["code"] in {"ruff_unavailable", "mypy_unavailable"}
+    )
 
 
 def test_validate_rejects_runnable_strategy(tmp_path: Path) -> None:

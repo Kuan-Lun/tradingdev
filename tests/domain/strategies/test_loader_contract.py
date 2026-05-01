@@ -59,5 +59,5 @@ def test_loader_rejects_legacy_bundled_strategy_id() -> None:
     raw_config["strategy"]["id"] = "kd_strategy"
     engine = SignalBacktestEngine(init_cash=10_000.0)
 
-    with pytest.raises(ValueError, match="Generated strategy must live under"):
+    with pytest.raises(ValueError, match="Bundled strategy id 'kd_strategy'"):
         StrategyLoader().create_from_config(raw_config, engine)

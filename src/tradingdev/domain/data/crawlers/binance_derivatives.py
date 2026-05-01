@@ -3,6 +3,12 @@
 Fetches funding rate historical data from Binance public API
 (no API key required).
 
+Decision note: this crawler is intentionally kept separate from
+``binance_api.py``.  The Binance API crawler owns OHLCV market candles, while
+this module owns derivatives-specific feature series declared through
+``data.requirements.features``.  Keeping the adapters separate avoids mixing
+market-candle cache semantics with funding-rate feature ingestion.
+
 Note: Open Interest and Long/Short Ratio historical data is only
 available for the most recent ~2 weeks via Binance API, making them
 unsuitable for backtesting.  They can still be used in live trading.
