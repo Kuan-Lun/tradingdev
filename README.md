@@ -2,8 +2,9 @@
 
 TradingDev 是 **MCP-first quantitative strategy development server**。主要入口
 是 MCP tools；CLI 與 dashboard 是 adapters，會共用同一層 application services。
-範圍只包含歷史回測、策略研究、參數最佳化與 run artifact 管理，不包含 live
-trading、交易憑證或下單。
+目前版本聚焦在歷史回測、策略研究、參數最佳化與 run artifact 管理；專案名稱保留
+未來延伸到 paper/live execution 的空間，但現階段不提供 live trading、交易憑證
+管理或下單功能。
 
 ## 快速開始
 
