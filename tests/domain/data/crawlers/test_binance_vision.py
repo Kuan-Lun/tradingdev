@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import calendar
 import io
 import zipfile
-from datetime import UTC, date, datetime
-from pathlib import Path
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -19,6 +18,8 @@ from tradingdev.domain.data.crawlers.binance_vision import (
     _to_vision_symbol,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ------------------------------------------------------------------ #
 # Helper utilities                                                    #
@@ -36,7 +37,20 @@ def _make_zip_csv(rows: list[tuple[object, ...]]) -> bytes:
 
 
 def _candle_row(ts_ms: int) -> tuple[object, ...]:
-    return (ts_ms, 40000.0, 40100.0, 39900.0, 40050.0, 500.0, ts_ms + 86_399_999, 1.0, 10, 1.0, 1.0, 0)
+    return (
+        ts_ms,
+        40000.0,
+        40100.0,
+        39900.0,
+        40050.0,
+        500.0,
+        ts_ms + 86_399_999,
+        1.0,
+        10,
+        1.0,
+        1.0,
+        0,
+    )
 
 
 def _jan_2024_zip() -> bytes:
@@ -95,7 +109,14 @@ class TestParseZipCsv:
         ts_ms = 1704067200000
         content = _make_zip_csv([_candle_row(ts_ms)])
         df = _parse_zip_csv(content)
-        assert list(df.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
+        assert list(df.columns) == [
+            "timestamp",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]
         assert df["timestamp"].dt.tz is not None
         assert df["open"].dtype == float
 
@@ -123,26 +144,31 @@ class TestBinanceVisionCrawler:
         zip_content = _jan_2024_zip()
         mock_resp = _make_mock_response(zip_content)
 
-        frozen_today = date(2026, 5, 1)
-        with patch.object(crawler._client, "get", return_value=mock_resp) as mock_get:
-            with patch(
-                "tradingdev.domain.data.crawlers.binance_vision.datetime"
-            ) as mock_dt:
-                mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
-                mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-                _ = frozen_today  # silence unused
-                df = crawler.fetch(
-                    "BTC/USDT",
-                    "1d",
-                    datetime(2024, 1, 1, tzinfo=UTC),
-                    datetime(2024, 1, 31, tzinfo=UTC),
-                )
+        with (
+            patch.object(crawler._client, "get", return_value=mock_resp) as mock_get,
+            patch("tradingdev.domain.data.crawlers.binance_vision.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            df = crawler.fetch(
+                "BTC/USDT",
+                "1d",
+                datetime(2024, 1, 1, tzinfo=UTC),
+                datetime(2024, 1, 31, tzinfo=UTC),
+            )
 
         called_url = mock_get.call_args[0][0]
         assert "monthly" in called_url
         assert "BTCUSDT-1d-2024-01.zip" in called_url
         assert len(df) == 31
-        assert list(df.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
+        assert list(df.columns) == [
+            "timestamp",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]
 
     def test_fetch_filters_to_requested_range(
         self, crawler: BinanceVisionCrawler
@@ -150,18 +176,18 @@ class TestBinanceVisionCrawler:
         zip_content = _jan_2024_zip()
         mock_resp = _make_mock_response(zip_content)
 
-        with patch.object(crawler._client, "get", return_value=mock_resp):
-            with patch(
-                "tradingdev.domain.data.crawlers.binance_vision.datetime"
-            ) as mock_dt:
-                mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
-                mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-                df = crawler.fetch(
-                    "BTC/USDT",
-                    "1d",
-                    datetime(2024, 1, 5, tzinfo=UTC),
-                    datetime(2024, 1, 10, tzinfo=UTC),
-                )
+        with (
+            patch.object(crawler._client, "get", return_value=mock_resp),
+            patch("tradingdev.domain.data.crawlers.binance_vision.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            df = crawler.fetch(
+                "BTC/USDT",
+                "1d",
+                datetime(2024, 1, 5, tzinfo=UTC),
+                datetime(2024, 1, 10, tzinfo=UTC),
+            )
 
         assert df["timestamp"].min() >= pd.Timestamp("2024-01-05", tz=UTC)
         assert df["timestamp"].max() <= pd.Timestamp("2024-01-10", tz=UTC)
@@ -171,38 +197,45 @@ class TestBinanceVisionCrawler:
     ) -> None:
         mock_resp = _make_mock_response(b"", status_code=404)
 
-        with patch.object(crawler._client, "get", return_value=mock_resp):
-            with patch(
-                "tradingdev.domain.data.crawlers.binance_vision.datetime"
-            ) as mock_dt:
-                mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
-                mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-                df = crawler.fetch(
-                    "BTC/USDT",
-                    "1d",
-                    datetime(2024, 1, 1, tzinfo=UTC),
-                    datetime(2024, 1, 31, tzinfo=UTC),
-                )
+        with (
+            patch.object(crawler._client, "get", return_value=mock_resp),
+            patch("tradingdev.domain.data.crawlers.binance_vision.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            df = crawler.fetch(
+                "BTC/USDT",
+                "1d",
+                datetime(2024, 1, 1, tzinfo=UTC),
+                datetime(2024, 1, 31, tzinfo=UTC),
+            )
 
         assert df.empty
-        assert list(df.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
+        assert list(df.columns) == [
+            "timestamp",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]
 
     def test_market_type_in_url(self, crawler: BinanceVisionCrawler) -> None:
         zip_content = _jan_2024_zip()
         mock_resp = _make_mock_response(zip_content)
 
-        with patch.object(crawler._client, "get", return_value=mock_resp) as mock_get:
-            with patch(
-                "tradingdev.domain.data.crawlers.binance_vision.datetime"
-            ) as mock_dt:
-                mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
-                mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-                crawler.fetch(
-                    "BTC/USDT",
-                    "1d",
-                    datetime(2024, 1, 1, tzinfo=UTC),
-                    datetime(2024, 1, 31, tzinfo=UTC),
-                )
+        with (
+            patch.object(crawler._client, "get", return_value=mock_resp) as mock_get,
+            patch("tradingdev.domain.data.crawlers.binance_vision.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            crawler.fetch(
+                "BTC/USDT",
+                "1d",
+                datetime(2024, 1, 1, tzinfo=UTC),
+                datetime(2024, 1, 31, tzinfo=UTC),
+            )
 
         called_url = mock_get.call_args[0][0]
         assert "futures/um" in called_url
@@ -212,18 +245,20 @@ class TestBinanceVisionCrawler:
         zip_content = _jan_2024_zip()
         mock_resp = _make_mock_response(zip_content)
 
-        with patch.object(spot_crawler._client, "get", return_value=mock_resp) as mock_get:
-            with patch(
-                "tradingdev.domain.data.crawlers.binance_vision.datetime"
-            ) as mock_dt:
-                mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
-                mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-                spot_crawler.fetch(
-                    "BTC/USDT",
-                    "1d",
-                    datetime(2024, 1, 1, tzinfo=UTC),
-                    datetime(2024, 1, 31, tzinfo=UTC),
-                )
+        with (
+            patch.object(
+                spot_crawler._client, "get", return_value=mock_resp
+            ) as mock_get,
+            patch("tradingdev.domain.data.crawlers.binance_vision.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = datetime(2026, 5, 1, tzinfo=UTC)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            spot_crawler.fetch(
+                "BTC/USDT",
+                "1d",
+                datetime(2024, 1, 1, tzinfo=UTC),
+                datetime(2024, 1, 31, tzinfo=UTC),
+            )
 
         called_url = mock_get.call_args[0][0]
         assert "spot" in called_url
