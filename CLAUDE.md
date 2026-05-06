@@ -108,3 +108,18 @@ tests/                 app/domain/mcp/adapters/integration/shared layered tests
   merging with `git branch -d feature/<name>`.
 - **Tags**: milestones as `v<major>.<minor>.<patch>`.
 - **Commit prefixes**: `feat:` `fix:` `refactor:` `test:` `docs:` `chore:`.
+
+**Always use the git flow script** — never run `git commit` directly:
+
+```bash
+scripts/git-flow-commit.sh <branch-suffix> "$(cat <<'EOF'
+<prefix>: <title>
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+EOF
+)" [files...]
+```
+
+The script creates the feature branch, commits, merges `--no-ff` into main,
+and deletes the branch atomically. A `pre-commit` hook blocks any attempt to
+commit directly to main.
