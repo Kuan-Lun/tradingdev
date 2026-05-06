@@ -47,6 +47,7 @@ class OHLCVBar(BaseModel):
 class DataConfig(BaseModel):
     """Data source and path configuration."""
 
-    source: str = "binance_api"
+    source: str = "binance_vision"
+    market_type: str = "futures/um"
     raw_dir: str = "workspace/data/raw"
     processed_dir: str = "workspace/data/processed"

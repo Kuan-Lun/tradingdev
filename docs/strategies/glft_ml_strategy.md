@@ -109,7 +109,6 @@ strategy:
 data:
   requirements:
     market:
-      source: "binance_api"
       symbol: "BTC/USDT"
       timeframe: "1m"
     features:

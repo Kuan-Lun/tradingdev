@@ -37,10 +37,8 @@ backtest:
   slippage: 0.0005
 
 data:
-  source: "binance_api"
   requirements:
     market:
-      source: "binance_api"
       symbol: "BTC/USDT"
       timeframe: "1h"
     features: []

@@ -70,7 +70,7 @@ class DataService:
             return DataRequirement(**req)
         return DataRequirement(
             market=MarketDataSpec(
-                source=str(data.get("source", "binance_api")),
+                source=str(data.get("source", "binance_vision")),
                 symbol=backtest_config.symbol,
                 timeframe=backtest_config.timeframe,
             ),

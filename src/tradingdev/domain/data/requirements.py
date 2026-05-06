@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class MarketDataSpec(BaseModel):
     """Primary market data requirement."""
 
-    source: str = "binance_api"
+    source: str = "binance_vision"
     symbol: str
     timeframe: str
 
