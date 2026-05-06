@@ -157,6 +157,10 @@ The dashboard reads run metadata and pipeline artifacts through `RunService` /
 - Strategy signal convention: `1` long, `-1` short, `0` flat.
 - Strategy parameters live in YAML `strategy.parameters`.
 - Data requirements live in YAML `data.requirements`.
+- `data.source` selects the market data crawler: `"binance_vision"` (default,
+  uses data.binance.vision; no geo-restriction) or `"binance_api"` (uses ccxt).
+- `data.market_type` selects the market segment: `"futures/um"` (default, USD-M
+  perpetuals) or `"spot"`.
 - `inspect_dataset(config_path)` reports market cache availability and feature
   source missing-value status from the same data root used by backtests.
 - `start_backtest` / `start_walk_forward` write a per-job effective config under
