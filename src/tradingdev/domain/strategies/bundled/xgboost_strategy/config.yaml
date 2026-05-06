@@ -59,10 +59,8 @@ backtest:
   mode: "volume" # volume mode: SL/TP 後立即重入場，最大化交易量
 
 data:
-  source: "binance_api"
   requirements:
     market:
-      source: "binance_api"
       symbol: "BTC/USDT"
       timeframe: "1m"
     features: []

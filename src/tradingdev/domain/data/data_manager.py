@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from tradingdev.domain.data.crawlers.binance_api import BinanceAPICrawler
+from tradingdev.domain.data.crawlers.binance_vision import BinanceVisionCrawler
 from tradingdev.domain.data.loader import DataLoader
 from tradingdev.domain.data.processor import DataProcessor
 
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tradingdev.domain.backtest.schemas import BacktestConfig
+    from tradingdev.domain.data.crawlers.base import BaseCrawler
     from tradingdev.domain.data.schemas import DataConfig
 
 logger = logging.getLogger(__name__)
@@ -83,9 +85,14 @@ class DataManager:
         self._data_cfg = data_config
         self._bt_cfg = backtest_config
         self._now_fn = now_fn
-        self._crawler = BinanceAPICrawler()
+        self._crawler: BaseCrawler = self._build_crawler()
         self._loader = DataLoader()
         self._processor = DataProcessor()
+
+    def _build_crawler(self) -> BaseCrawler:
+        if self._data_cfg.source == "binance_api":
+            return BinanceAPICrawler()
+        return BinanceVisionCrawler(market_type=self._data_cfg.market_type)
 
     # ------------------------------------------------------------------ #
     # Public API                                                          #

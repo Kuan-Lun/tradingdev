@@ -107,10 +107,9 @@ backtest:
   mode: "signal"
 
 data:
-  source: "binance_api"
+  # market_type: "futures/um"  # default; use "spot" for spot markets
   requirements:
     market:
-      source: "binance_api"
       symbol: "BTC/USDT"
       timeframe: "1h"
     features: []

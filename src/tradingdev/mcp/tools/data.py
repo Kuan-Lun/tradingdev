@@ -42,7 +42,7 @@ def register(mcp: FastMCP, service: DataService) -> None:
             end_date=end_date,
             mode="volume",
         )
-        dataset = service.load({"data": {"source": "binance_api"}}, bt_cfg)
+        dataset = service.load({"data": {"source": "binance_vision"}}, bt_cfg)
         return {
             "success": True,
             "rows": len(dataset.frame),

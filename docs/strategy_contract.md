@@ -54,10 +54,10 @@ backtest:
   mode: "signal"
 
 data:
-  source: "binance_api"
+  # source defaults to "binance_vision"; set "binance_api" to use ccxt instead
+  # market_type defaults to "futures/um"; set "spot" for spot markets
   requirements:
     market:
-      source: "binance_api"
       symbol: "BTC/USDT"
       timeframe: "1h"
     features: []
@@ -69,7 +69,6 @@ Feature sources are explicit:
 data:
   requirements:
     market:
-      source: "binance_api"
       symbol: "BTC/USDT"
       timeframe: "1m"
     features:

@@ -22,7 +22,6 @@ strategy:
 data:
   requirements:
     market:
-      source: "binance_api"
       symbol: "BTC/USDT"
       timeframe: "1m"
     features: []
@@ -51,7 +50,6 @@ The strategy declares market OHLCV only:
 data:
   requirements:
     market:
-      source: "binance_api"
       symbol: "BTC/USDT"
       timeframe: "1m"
     features: []

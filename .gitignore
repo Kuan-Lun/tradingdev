@@ -12,7 +12,7 @@ build/
 venv/
 
 # Legacy root-level runtime data path removed from app defaults
-data/
+/data/
 
 # IDE
 .idea/
