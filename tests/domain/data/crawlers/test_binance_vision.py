@@ -32,7 +32,7 @@ def _make_zip_csv(
     """Build a fake Binance Vision ZIP with a single K-line CSV."""
     lines = [",".join(str(v) for v in row) for row in rows]
     if include_header:
-        header = "open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore"
+        header = "open_time,open,high,low,close,volume,close_time,quote_volume,count"
         lines = [header] + lines
     csv_bytes = "\n".join(lines).encode()
     buf = io.BytesIO()
