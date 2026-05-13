@@ -26,9 +26,14 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------ #
 
 
-def _make_zip_csv(rows: list[tuple[object, ...]]) -> bytes:
+def _make_zip_csv(
+    rows: list[tuple[object, ...]], *, include_header: bool = False
+) -> bytes:
     """Build a fake Binance Vision ZIP with a single K-line CSV."""
     lines = [",".join(str(v) for v in row) for row in rows]
+    if include_header:
+        header = "open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore"
+        lines = [header] + lines
     csv_bytes = "\n".join(lines).encode()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -126,6 +131,15 @@ class TestParseZipCsv:
         df = _parse_zip_csv(content)
         expected = pd.Timestamp("2024-01-01", tz=UTC)
         assert df["timestamp"].iloc[0] == expected
+
+    def test_csv_with_header_row(self) -> None:
+        # Newer Binance Vision CSVs include a header row starting with "open_time"
+        ts_ms = 1704067200000
+        content = _make_zip_csv([_candle_row(ts_ms)], include_header=True)
+        df = _parse_zip_csv(content)
+        assert len(df) == 1
+        assert df["timestamp"].iloc[0] == pd.Timestamp("2024-01-01", tz=UTC)
+        assert df["close"].iloc[0] == 40050.0
 
 
 # ------------------------------------------------------------------ #
