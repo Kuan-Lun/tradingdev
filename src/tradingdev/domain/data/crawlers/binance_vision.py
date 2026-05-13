@@ -47,10 +47,13 @@ def _parse_zip_csv(content: bytes) -> pd.DataFrame:
         csv_name = zf.namelist()[0]
         with zf.open(csv_name) as f:
             raw = pd.read_csv(f, header=None, usecols=range(6))
+    # Newer Binance Vision CSV files include a header row; skip it if present
+    if isinstance(raw.iloc[0, 0], str):
+        raw = raw.iloc[1:].reset_index(drop=True)
     raw.columns = pd.Index(range(6))
     result = pd.DataFrame(
         {
-            "timestamp": pd.to_datetime(raw[0], unit="ms", utc=True),
+            "timestamp": pd.to_datetime(pd.to_numeric(raw[0]), unit="ms", utc=True),
             "open": raw[1].astype(float),
             "high": raw[2].astype(float),
             "low": raw[3].astype(float),
