@@ -27,11 +27,13 @@ class BacktestConfig(BaseModel):
     monthly_max_loss: float = 1500.0
     random_seed: int | None = None
 
-    @field_validator("end_date")
-    @classmethod
-    def end_after_start(cls, v: dt.datetime, info: object) -> dt.datetime:
+    @model_validator(mode="after")
+    def end_after_start(self) -> Self:
         """Validate that end_date is after start_date."""
-        return v
+        if self.end_date <= self.start_date:
+            msg = "end_date must be after start_date"
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def signal_mode_requires_init_cash(self) -> Self:
