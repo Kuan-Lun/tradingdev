@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import ast
-import inspect
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import yaml
 
 from tradingdev.adapters.storage.filesystem import (
@@ -21,7 +19,11 @@ from tradingdev.adapters.storage.filesystem import (
     write_json,
 )
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
-from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.contract import (
+    DRY_RUN_FIXTURE_ROWS,
+    VALIDATE_FIXTURE_ROWS,
+    SignalContractChecker,
+)
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import (
     StrategyDiagnostic,
@@ -68,6 +70,7 @@ class StrategyService:
         self._workspace = workspace or WorkspacePaths()
         self._loader = StrategyLoader(workspace_root=self._workspace.root)
         self._validator = StrategyValidator()
+        self._contract_checker = SignalContractChecker(self._loader)
         self._workspace.ensure()
         self._store = store or get_sqlite_store(self._workspace)
 
@@ -287,29 +290,22 @@ class StrategyService:
         source_path = Path(metadata.source_path)
         diagnostics: list[StrategyDiagnostic] = []
         diagnostics.extend(self._validator.syntax_diagnostics(source_path))
-        contract: dict[str, Any] = {"diagnostics": [], "signal_analysis": {}}
+        signal_analysis: dict[str, Any] = {}
         if not self._has_error(diagnostics):
             diagnostics.extend(self._validator.static_policy_scan(source_path))
             diagnostics.extend(self._quality_gate_diagnostics(source_path))
-            contract = self._run_signal_contract(metadata, fixture_rows=80)
+            contract = self._contract_checker.check(
+                metadata,
+                fixture_rows=VALIDATE_FIXTURE_ROWS,
+            )
             diagnostics.extend(contract["diagnostics"])
-        success = not self._has_error(diagnostics)
-        metadata.validation = ValidationResult(
-            checked_at=now_iso(),
-            success=success,
-            diagnostics=diagnostics,
-            signal_analysis=contract.get("signal_analysis", {}),
+            signal_analysis = contract.get("signal_analysis", {})
+        return self._record_check_outcome(
+            metadata,
+            diagnostics,
+            signal_analysis,
+            phase="validation",
         )
-        metadata.status = StrategyStatus.VALIDATED if success else StrategyStatus.DRAFT
-        metadata.updated_at = now_iso()
-        self._write_metadata(self._metadata_path(strategy_id), metadata)
-        return {
-            "success": success,
-            "strategy_id": strategy_id,
-            "status": metadata.status.value,
-            "diagnostics": [item.model_dump(mode="json") for item in diagnostics],
-            "signal_analysis": contract.get("signal_analysis", {}),
-        }
 
     def dry_run(self, strategy_id: str) -> dict[str, Any]:
         """Run a lightweight signal-generation smoke test."""
@@ -321,25 +317,50 @@ class StrategyService:
                 "success": False,
                 "error": "dry_run_strategy requires validated strategy status",
             }
-        contract = self._run_signal_contract(metadata, fixture_rows=240)
-        valid = not self._has_error(contract["diagnostics"])
-        metadata.status = StrategyStatus.RUNNABLE if valid else metadata.status
-        metadata.dry_run = ValidationResult(
-            checked_at=now_iso(),
-            success=valid,
-            diagnostics=contract["diagnostics"],
-            signal_analysis=contract.get("signal_analysis", {}),
+        contract = self._contract_checker.check(
+            metadata,
+            fixture_rows=DRY_RUN_FIXTURE_ROWS,
         )
+        return self._record_check_outcome(
+            metadata,
+            contract["diagnostics"],
+            contract.get("signal_analysis", {}),
+            phase="dry_run",
+        )
+
+    def _record_check_outcome(
+        self,
+        metadata: StrategyMetadata,
+        diagnostics: list[StrategyDiagnostic],
+        signal_analysis: dict[str, Any],
+        *,
+        phase: str,
+    ) -> dict[str, Any]:
+        """Persist a lifecycle check result and advance or reset the status."""
+        success = not self._has_error(diagnostics)
+        result = ValidationResult(
+            checked_at=now_iso(),
+            success=success,
+            diagnostics=diagnostics,
+            signal_analysis=signal_analysis,
+        )
+        if phase == "validation":
+            metadata.validation = result
+            metadata.status = (
+                StrategyStatus.VALIDATED if success else StrategyStatus.DRAFT
+            )
+        else:
+            metadata.dry_run = result
+            if success:
+                metadata.status = StrategyStatus.RUNNABLE
         metadata.updated_at = now_iso()
-        self._write_metadata(self._metadata_path(strategy_id), metadata)
+        self._write_metadata(self._metadata_path(metadata.strategy_id), metadata)
         return {
-            "success": valid,
-            "strategy_id": strategy_id,
+            "success": success,
+            "strategy_id": metadata.strategy_id,
             "status": metadata.status.value,
-            "diagnostics": [
-                item.model_dump(mode="json") for item in contract["diagnostics"]
-            ],
-            "signal_analysis": contract.get("signal_analysis", {}),
+            "diagnostics": [item.model_dump(mode="json") for item in diagnostics],
+            "signal_analysis": signal_analysis,
         }
 
     def promote(self, strategy_id: str) -> dict[str, Any]:
@@ -543,169 +564,6 @@ class StrategyService:
                     )
                 )
         return diagnostics
-
-    def _run_signal_contract(
-        self,
-        metadata: StrategyMetadata,
-        *,
-        fixture_rows: int,
-    ) -> dict[str, Any]:
-        diagnostics: list[StrategyDiagnostic] = []
-        try:
-            strategy_cfg = {
-                "id": metadata.strategy_id,
-                "source_path": metadata.source_path,
-                "class_name": metadata.class_name,
-            }
-            cls = self._loader.load_class(strategy_cfg)
-            strategy = self._instantiate_generated(cls, metadata)
-            if not isinstance(strategy, BaseStrategy):
-                diagnostics.append(
-                    self._diagnostic(
-                        code="base_strategy_inheritance",
-                        phase="contract",
-                        message="strategy must inherit BaseStrategy",
-                        fix="Make the generated class inherit from BaseStrategy.",
-                    )
-                )
-                return {"diagnostics": diagnostics}
-            df = self._fixture_df(fixture_rows)
-            before = df.copy(deep=True)
-            result = strategy.generate_signals(df)
-            if not isinstance(result, pd.DataFrame):
-                diagnostics.append(
-                    self._diagnostic(
-                        code="signals_not_dataframe",
-                        phase="contract",
-                        message="generate_signals must return DataFrame",
-                        fix="Return the copied DataFrame with a signal column.",
-                    )
-                )
-                return {"diagnostics": diagnostics}
-            if not df.equals(before):
-                diagnostics.append(
-                    self._diagnostic(
-                        code="input_mutated",
-                        phase="contract",
-                        message="generate_signals must not mutate input",
-                        fix="Start with result = df.copy() and mutate result only.",
-                    )
-                )
-            if "signal" not in result.columns:
-                diagnostics.append(
-                    self._diagnostic(
-                        code="missing_signal_column",
-                        phase="contract",
-                        message="result must include signal column",
-                        fix="Add result['signal'] with values -1, 0, or 1.",
-                    )
-                )
-                return {"diagnostics": diagnostics}
-            signals = result["signal"]
-            values = set(signals.dropna().unique())
-            if not values.issubset({-1, 0, 1}):
-                diagnostics.append(
-                    self._diagnostic(
-                        code="invalid_signal_values",
-                        phase="contract",
-                        message="signal values must be limited to -1, 0, and 1",
-                        fix=(
-                            "Map all generated signals to the project convention: "
-                            "-1, 0, 1."
-                        ),
-                    )
-                )
-            return {
-                "diagnostics": diagnostics,
-                "signal_analysis": self._signal_analysis(result),
-            }
-        except Exception as exc:  # noqa: BLE001
-            diagnostics.append(
-                self._diagnostic(
-                    code="contract_execution_error",
-                    phase="contract",
-                    message=str(exc),
-                    fix="Fix the class name, constructor, imports, or signal logic.",
-                )
-            )
-            return {"diagnostics": diagnostics}
-
-    def _instantiate_generated(
-        self,
-        cls: type[BaseStrategy],
-        metadata: StrategyMetadata,
-    ) -> BaseStrategy:
-        config_path = Path(metadata.config_path)
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        strategy_cfg = raw.get("strategy", {}) if isinstance(raw, dict) else {}
-        params = (
-            strategy_cfg.get("parameters", {}) if isinstance(strategy_cfg, dict) else {}
-        )
-        params = params if isinstance(params, dict) else {}
-
-        signature = inspect.signature(cls)
-        kwargs: dict[str, Any] = {}
-        for name, parameter in signature.parameters.items():
-            if name == "backtest_engine":
-                kwargs[name] = None
-            elif name in params:
-                kwargs[name] = params[name]
-            elif parameter.default is inspect.Parameter.empty:
-                msg = f"Constructor parameter {name!r} has no default or YAML value"
-                raise TypeError(msg)
-        return cls(**kwargs)
-
-    def _fixture_df(self, rows: int) -> pd.DataFrame:
-        close: list[float] = []
-        price = 100.0
-        for i in range(rows):
-            if rows <= 80:
-                price += 0.1
-            elif i < rows // 3:
-                price += 0.12
-            elif i < (rows * 2) // 3:
-                price -= 0.08
-            else:
-                price += 0.18 if i % 2 == 0 else -0.11
-            close.append(price)
-        return pd.DataFrame(
-            {
-                "timestamp": pd.date_range(
-                    "2024-01-01", periods=rows, freq="h", tz="UTC"
-                ),
-                "open": [value - 0.05 for value in close],
-                "high": [value + 0.5 for value in close],
-                "low": [value - 0.5 for value in close],
-                "close": close,
-                "volume": [1000.0 + (i % 24) * 10.0 for i in range(rows)],
-            }
-        )
-
-    def _signal_analysis(self, result: pd.DataFrame) -> dict[str, Any]:
-        signals = result["signal"]
-        distribution = {
-            str(key): int(value)
-            for key, value in signals.value_counts(dropna=False).to_dict().items()
-        }
-        transitions = int(signals.fillna(0).ne(signals.fillna(0).shift()).sum() - 1)
-        active = int(signals.isin([-1, 1]).sum())
-        return {
-            "rows": int(len(result)),
-            "signal_distribution": distribution,
-            "nan_count": int(signals.isna().sum()),
-            "transition_count": max(transitions, 0),
-            "active_signal_ratio": active / max(len(result), 1),
-            "first_timestamp": (
-                str(result["timestamp"].iloc[0])
-                if "timestamp" in result.columns and not result.empty
-                else None
-            ),
-            "last_timestamp": (
-                str(result["timestamp"].iloc[-1])
-                if "timestamp" in result.columns and not result.empty
-                else None
-            ),
-        }
 
     def _diagnostic(
         self,
