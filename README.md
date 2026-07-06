@@ -109,9 +109,11 @@ uv run python -m tradingdev --config \
 ## Dashboard
 
 The dashboard reads completed MCP runs through `RunService` and
-`ArtifactService`:
+`ArtifactService`. It depends on `streamlit`/`plotly`, which live in the
+`dashboard` extra rather than the base install:
 
 ```bash
+uv sync --extra dashboard
 uv run streamlit run src/tradingdev/adapters/dashboard/app.py -- --run-id <run_id>
 ```
 
