@@ -10,6 +10,10 @@ dashboard are adapters over the same `tradingdev.app` services. Scope is
 historical backtesting, strategy research, optimization, and artifact tracking;
 there is no live trading, credential handling, or order placement.
 
+## Communication
+
+- Claude 必須以繁體中文回答所有對話內容，不論使用者以何種語言提問；程式碼、指令、檔名、專有名詞等仍維持原文。
+
 ## Commands
 
 ```bash
