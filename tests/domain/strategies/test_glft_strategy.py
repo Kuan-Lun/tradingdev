@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
@@ -15,7 +16,7 @@ from tradingdev.domain.strategies.bundled.glft_strategy.config import (
 from tradingdev.domain.strategies.bundled.glft_strategy.strategy import GLFTStrategy
 
 if TYPE_CHECKING:
-    import pandas as pd
+    from collections.abc import Callable
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -263,6 +264,48 @@ class TestGLFTSignalGeneration:
         cols_before = set(sample_ohlcv_df.columns)
         strategy.generate_signals(sample_ohlcv_df)
         assert set(sample_ohlcv_df.columns) == cols_before
+
+    def test_no_look_ahead_bias(
+        self,
+        sample_ohlcv_df: pd.DataFrame,
+        assert_no_look_ahead: Callable[..., None],
+    ) -> None:
+        """Signals must be identical when future bars are truncated away."""
+        strategy = GLFTStrategy(config=_make_config())
+        assert_no_look_ahead(
+            strategy,
+            sample_ohlcv_df,
+            check_points=[20, 45, 70, 99],
+        )
+
+    def test_signals_cover_long_short_and_flat(self) -> None:
+        """A mean-reverting series must produce all three signal states."""
+        n = 240
+        t = np.arange(n)
+        close = 100.0 + 3.0 * np.sin(t / 6.0)
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2024-01-01", periods=n, freq="min"),
+                "open": close,
+                "high": close + 0.1,
+                "low": close - 0.1,
+                "close": close,
+                "volume": np.full(n, 100.0),
+            }
+        )
+        config = _make_config(
+            gamma=0.0,
+            kappa=1000.0,
+            min_entry_edge=0.005,
+            min_holding_bars=2,
+            max_holding_bars=8,
+        )
+        strategy = GLFTStrategy(config=config)
+
+        signals = strategy.generate_signals(df)["signal"]
+
+        assert not signals.isna().any()
+        assert set(signals.unique()) == {-1.0, 0.0, 1.0}
 
 
 # ── fit() tests ──────────────────────────────────────────────

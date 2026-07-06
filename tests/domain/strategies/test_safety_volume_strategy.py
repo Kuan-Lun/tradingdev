@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pandas as pd
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
@@ -330,3 +335,16 @@ class TestSafetyVolumeStrategy:
         params = strategy.get_parameters()
         assert "lookback_candidates" in params
         assert "risk_threshold" in params
+
+    def test_no_look_ahead_bias(
+        self,
+        large_ohlcv_df: pd.DataFrame,
+        assert_no_look_ahead: Callable[..., None],
+    ) -> None:
+        """Rolling risk prediction may only use bars at or before each bar."""
+        strategy = SafetyVolumeStrategy(config=_make_config())
+        fit_data = large_ohlcv_df.iloc[:300].copy()
+        test_data = large_ohlcv_df.iloc[300:340].reset_index(drop=True)
+
+        strategy.fit(fit_data)
+        assert_no_look_ahead(strategy, test_data, check_points=[15, 39])

@@ -1,6 +1,9 @@
 """Tests for the KD crossover strategy."""
 
-import pandas as pd
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import pytest
 
 from tradingdev.domain.backtest.signal_engine import (
@@ -11,6 +14,11 @@ from tradingdev.domain.strategies.bundled.kd_strategy.config import (
     KDStrategyConfig,
 )
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pandas as pd
 
 
 class TestKDStrategy:
@@ -46,9 +54,27 @@ class TestKDStrategy:
         result = strategy.generate_signals(sample_ohlcv_with_kd)
         assert "signal" in result.columns
 
-    def test_no_look_ahead_bias(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
-        result = self.strategy.generate_signals(sample_ohlcv_with_kd)
-        assert result["signal"].iloc[0] == 0
+    def test_no_look_ahead_bias(
+        self,
+        sample_ohlcv_with_kd: pd.DataFrame,
+        assert_no_look_ahead: Callable[..., None],
+    ) -> None:
+        assert_no_look_ahead(
+            self.strategy,
+            sample_ohlcv_with_kd,
+            check_points=[30, 75, 120, 199],
+        )
+
+    def test_signals_cover_long_short_and_flat(
+        self, sample_ohlcv_with_kd: pd.DataFrame
+    ) -> None:
+        config = KDStrategyConfig(overbought=50.0, oversold=50.0)
+        strategy = KDStrategy(config=config)
+
+        signals = strategy.generate_signals(sample_ohlcv_with_kd)["signal"]
+
+        assert not signals.isna().any()
+        assert set(signals.unique()) == {-1, 0, 1}
 
 
 class TestKDStrategyFit:

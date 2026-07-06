@@ -1,8 +1,13 @@
 """Tests for the XGBoost direction prediction strategy."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import pandas as pd
 import pytest
 
+from tradingdev.domain.ml.retrainer import RollingRetrainer
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.strategies.bundled.xgboost_strategy.config import (
     XGBoostStrategyConfig,
@@ -10,6 +15,9 @@ from tradingdev.domain.strategies.bundled.xgboost_strategy.config import (
 from tradingdev.domain.strategies.bundled.xgboost_strategy.strategy import (
     XGBoostStrategy,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class TestXGBoostStrategy:
@@ -62,3 +70,60 @@ class TestXGBoostStrategy:
         assert "lookback_candidates" in params
         assert "retrain_interval" in params
         assert params["best_lookback"] is None
+
+    def test_no_look_ahead_bias(
+        self,
+        large_ohlcv_df: pd.DataFrame,
+        assert_no_look_ahead: Callable[..., None],
+    ) -> None:
+        """Rolling prediction may only use bars at or before each bar."""
+        strategy = XGBoostStrategy(config=self._make_config())
+        fit_data = large_ohlcv_df.iloc[:800].copy()
+        test_data = large_ohlcv_df.iloc[800:].reset_index(drop=True)
+
+        strategy.fit(fit_data)
+        assert_no_look_ahead(strategy, test_data, check_points=[60, 120, 199])
+
+
+class _StubFeatureEngineer:
+    """Feature engineer stand-in that passes bars through unchanged."""
+
+    def transform(self, df: pd.DataFrame, include_target: bool = False) -> pd.DataFrame:
+        return df
+
+
+class _StubDirectionModel:
+    """Direction model emitting a scripted probability per prediction."""
+
+    def __init__(self, probabilities: list[tuple[float, float]]) -> None:
+        self._probabilities = probabilities
+        self._calls = 0
+
+    def predict_proba(self, _df: pd.DataFrame) -> pd.DataFrame:
+        p_long, p_short = self._probabilities[self._calls]
+        self._calls += 1
+        return pd.DataFrame({1: [p_long], -1: [p_short]})
+
+
+class TestRollingRetrainerSignalMapping:
+    def test_probabilities_map_to_long_short_and_flat(self) -> None:
+        """The tri-state mapping must emit exactly -1, 0, and 1."""
+        model = _StubDirectionModel([(0.9, 0.1), (0.1, 0.9), (0.5, 0.5)])
+        retrainer = RollingRetrainer(
+            model_config=XGBoostModelConfig(),
+            retrain_interval=1000,
+            threshold=0.6,
+            cooldown=0,
+            lookback=1000,
+        )
+        test_df = pd.DataFrame({"close": [100.0, 101.0, 102.0]})
+        train_df = pd.DataFrame({"close": [99.0, 99.5]})
+
+        signals = retrainer.run(
+            test_df,
+            train_df,
+            model,  # type: ignore[arg-type]
+            _StubFeatureEngineer(),  # type: ignore[arg-type]
+        )
+
+        assert signals.tolist() == [1, -1, 0]
