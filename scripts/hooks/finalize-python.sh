@@ -25,7 +25,12 @@ trap 'exit 2' ERR
 
 PATHS=(src tests scripts)
 
-uv run black "${PATHS[@]}" >&2
-uv run ruff check --fix "${PATHS[@]}" >&2
-uv run black "${PATHS[@]}" >&2
-uv run mypy "${PATHS[@]}" >&2
+# --all-extras: a bare `uv run` re-syncs to the base lock and silently drops
+# optional extras (e.g. dashboard's streamlit/plotly). Since src/tests/scripts
+# includes dashboard code, dropping the extra makes mypy.ini's
+# ignore_missing_imports treat those modules as Any, masking real type errors
+# in decorators and return types that rely on their real stubs.
+uv run --all-extras black "${PATHS[@]}" >&2
+uv run --all-extras ruff check --fix "${PATHS[@]}" >&2
+uv run --all-extras black "${PATHS[@]}" >&2
+uv run --all-extras mypy "${PATHS[@]}" >&2

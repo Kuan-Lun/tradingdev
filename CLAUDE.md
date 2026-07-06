@@ -17,19 +17,21 @@ there is no live trading, credential handling, or order placement.
 ## Commands
 
 ```bash
-# Install dependencies
-uv sync
+# Install dependencies (--all-extras: src/tests/scripts includes dashboard
+# code, so mypy/black/ruff need streamlit/plotly installed to type-check it
+# correctly — a bare `uv sync`/`uv run` drops optional extras)
+uv sync --all-extras
 
 # Tests
-uv run pytest tests/
-uv run pytest tests/ -v
+uv run --all-extras pytest tests/
+uv run --all-extras pytest tests/ -v
 
 # Code quality
 ./scripts/hooks/finalize-python.sh
 ./scripts/hooks/finalize-markdown.sh
-uv run black src tests scripts
-uv run ruff check --fix src tests scripts
-uv run mypy src tests scripts
+uv run --all-extras black src tests scripts
+uv run --all-extras ruff check --fix src tests scripts
+uv run --all-extras mypy src tests scripts
 
 # MCP entry points
 uv run tradingdev-mcp
