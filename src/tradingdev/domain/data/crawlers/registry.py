@@ -53,5 +53,12 @@ def _binance_api_factory(_data_config: DataConfig) -> BaseCrawler:
     return BinanceAPICrawler()
 
 
+def _yahoo_finance_factory(_data_config: DataConfig) -> BaseCrawler:
+    from tradingdev.domain.data.crawlers.yahoo_finance import YahooFinanceCrawler
+
+    return YahooFinanceCrawler()
+
+
 register_crawler("binance_vision", _binance_vision_factory)
 register_crawler("binance_api", _binance_api_factory)
+register_crawler("yahoo_finance", _yahoo_finance_factory)
