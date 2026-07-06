@@ -4,11 +4,14 @@ This file guides Claude Code when working in this repository.
 
 ## Project Overview
 
-TradingDev is an MCP-first quantitative strategy development server for crypto
-futures research. MCP tools are the primary product entry point. CLI and
-dashboard are adapters over the same `tradingdev.app` services. Scope is
-historical backtesting, strategy research, optimization, and artifact tracking;
-there is no live trading, credential handling, or order placement.
+TradingDev is an MCP-first quantitative strategy development server. MCP tools
+are the primary product entry point. CLI and dashboard are adapters over the
+same `tradingdev.app` services. Scope is historical backtesting, strategy
+research, optimization, and artifact tracking; there is no live trading,
+credential handling, or order placement. Market data is multi-asset through a
+crawler registry (crypto via Binance sources; stocks/futures/indices/FX via
+Yahoo Finance); adding a source only requires a new `BaseCrawler` adapter
+registered in `domain/data/crawlers/registry.py`.
 
 ## Communication
 
@@ -81,7 +84,11 @@ working around it.
   `strategy.parameters`.
 - **Strategy lifecycle**: `save_strategy` creates draft; `validate_strategy`
   creates validated; `dry_run_strategy` creates runnable; execution accepts only
-  runnable or promoted strategies.
+  runnable or promoted strategies. The gate lives in
+  `StrategyService.resolve_executable` and is enforced at execution time by
+  `BacktestService`, so MCP jobs, the CLI, and workers cannot bypass it.
+  `validate` and `dry_run` share one `SignalContractChecker` run at two fixture
+  depths.
 - **Generated strategy execution safety**: `validate_strategy` and
   `dry_run_strategy` currently execute generated Python code during contract
   checks. Sandboxed execution isolation is future work and must be addressed
@@ -91,6 +98,11 @@ working around it.
   runtime state under `workspace/generated_strategies/` and `workspace/configs/`.
 - **Data requirements**: runtime feature inputs are declared in
   `data.requirements`, not inferred from strategy parameter names.
+- **Data source selection**: `data.requirements.market.source` picks the
+  crawler from `domain/data/crawlers/registry.py` (`binance_vision` default,
+  `binance_api`, `yahoo_finance`); when omitted it inherits legacy
+  `data.source`. `DataManager` takes a `MarketDataRequest` plus an injected
+  crawler and does not depend on `domain.backtest`.
 - **Dataset inspection**: `inspect_dataset(config_path)` reports market cache
   availability and declared feature source health from the same data root used
   by backtests.
