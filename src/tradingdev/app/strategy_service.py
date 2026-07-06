@@ -38,6 +38,12 @@ from tradingdev.domain.strategies.validator import (
 
 _VALID_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 
+_EXECUTABLE_STATUSES = {StrategyStatus.RUNNABLE, StrategyStatus.PROMOTED}
+
+
+class StrategyNotExecutableError(RuntimeError):
+    """Raised when a strategy has not reached an executable lifecycle status."""
+
 
 @dataclass(frozen=True)
 class StrategySaveResult:
@@ -202,6 +208,25 @@ class StrategyService:
                     metadata={"version": strategy.get("version")},
                 )
         return None
+
+    def resolve_executable(self, strategy_id: str) -> StrategySpec:
+        """Return the spec for a strategy allowed to execute backtests.
+
+        Raises:
+            StrategyNotExecutableError: If the strategy is unknown or has not
+                reached runnable or promoted status.
+        """
+        spec = self.load(strategy_id)
+        if spec is None:
+            msg = f"Strategy not found: {strategy_id}"
+            raise StrategyNotExecutableError(msg)
+        if spec.status not in _EXECUTABLE_STATUSES:
+            msg = (
+                "Strategy must be runnable or promoted before execution. "
+                f"Current status: {spec.status.value}"
+            )
+            raise StrategyNotExecutableError(msg)
+        return spec
 
     def record_validation_status(
         self,
