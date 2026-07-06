@@ -9,14 +9,13 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.data_manager import (
     DataManager,
     _is_year_complete,
     _normalize_symbol,
     _year_range,
 )
-from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
 
 # ------------------------------------------------------------------ #
 # Utility function tests                                              #
@@ -77,16 +76,15 @@ class TestIsYearComplete:
 class TestPathGeneration:
     def setup_method(self) -> None:
         self.data_cfg = DataConfig(source="binance_api")
-        self.bt_cfg = BacktestConfig(
+        self.bt_cfg = MarketDataRequest(
             symbol="BTC/USDT",
             timeframe="1h",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 12, 31),
-            mode="volume",
         )
         self.manager = DataManager(
             data_config=self.data_cfg,
-            backtest_config=self.bt_cfg,
+            request=self.bt_cfg,
         )
 
     def test_raw_path_complete(self) -> None:
@@ -111,7 +109,7 @@ class TestPathGeneration:
             raw_dir="custom/raw",
             processed_dir="custom/processed",
         )
-        manager = DataManager(data_config=data_cfg, backtest_config=self.bt_cfg)
+        manager = DataManager(data_config=data_cfg, request=self.bt_cfg)
         assert manager._raw_path_for_year(2024) == Path(
             "custom/raw/btcusdt_1h_2024.csv"
         )
@@ -149,17 +147,16 @@ class TestDataManagerYearly:
             raw_dir=str(raw_dir),
             processed_dir=str(proc_dir),
         )
-        bt_cfg = BacktestConfig(
+        bt_cfg = MarketDataRequest(
             symbol="BTC/USDT",
             timeframe="1h",
-            mode="volume",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 12, 31),
         )
         frozen_now = lambda: datetime(2026, 2, 1, tzinfo=UTC)  # noqa: E731
         manager = DataManager(
             data_config=data_cfg,
-            backtest_config=bt_cfg,
+            request=bt_cfg,
             now_fn=frozen_now,
         )
 
@@ -185,17 +182,16 @@ class TestDataManagerYearly:
             raw_dir=str(raw_dir),
             processed_dir=str(proc_dir),
         )
-        bt_cfg = BacktestConfig(
+        bt_cfg = MarketDataRequest(
             symbol="BTC/USDT",
             timeframe="1h",
-            mode="volume",
             start_date=datetime(2026, 1, 1),
             end_date=datetime(2026, 12, 31),
         )
         frozen_now = lambda: datetime(2026, 6, 15, tzinfo=UTC)  # noqa: E731
         manager = DataManager(
             data_config=data_cfg,
-            backtest_config=bt_cfg,
+            request=bt_cfg,
             now_fn=frozen_now,
         )
 
@@ -225,10 +221,9 @@ class TestDataManagerYearly:
             raw_dir=str(raw_dir),
             processed_dir=str(proc_dir),
         )
-        bt_cfg = BacktestConfig(
+        bt_cfg = MarketDataRequest(
             symbol="BTC/USDT",
             timeframe="1h",
-            mode="volume",
             start_date=datetime(2025, 1, 1),
             end_date=datetime(2025, 12, 31),
         )
@@ -236,7 +231,7 @@ class TestDataManagerYearly:
         frozen_now = lambda: datetime(2026, 2, 1, tzinfo=UTC)  # noqa: E731
         manager = DataManager(
             data_config=data_cfg,
-            backtest_config=bt_cfg,
+            request=bt_cfg,
             now_fn=frozen_now,
         )
 
@@ -266,17 +261,16 @@ class TestDataManagerYearly:
             source="binance_api",
             processed_dir=str(proc_dir),
         )
-        bt_cfg = BacktestConfig(
+        bt_cfg = MarketDataRequest(
             symbol="BTC/USDT",
             timeframe="1h",
-            mode="volume",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 12, 31),
         )
         frozen_now = lambda: datetime(2026, 2, 1, tzinfo=UTC)  # noqa: E731
         manager = DataManager(
             data_config=data_cfg,
-            backtest_config=bt_cfg,
+            request=bt_cfg,
             now_fn=frozen_now,
         )
 
@@ -302,17 +296,16 @@ class TestDataManagerYearly:
             source="binance_api",
             processed_dir=str(proc_dir),
         )
-        bt_cfg = BacktestConfig(
+        bt_cfg = MarketDataRequest(
             symbol="BTC/USDT",
             timeframe="1h",
-            mode="volume",
             start_date=datetime(2024, 1, 2),
             end_date=datetime(2024, 1, 3),
         )
         frozen_now = lambda: datetime(2026, 2, 1, tzinfo=UTC)  # noqa: E731
         manager = DataManager(
             data_config=data_cfg,
-            backtest_config=bt_cfg,
+            request=bt_cfg,
             now_fn=frozen_now,
         )
 
@@ -335,10 +328,9 @@ class TestDataManagerYearly:
             source="binance_api",
             processed_dir=str(proc_dir),
         )
-        bt_cfg = BacktestConfig(
+        bt_cfg = MarketDataRequest(
             symbol="BTC/USDT",
             timeframe="1h",
-            mode="volume",
             start_date=datetime(2026, 1, 1),
             end_date=datetime(2026, 12, 31),
         )
@@ -346,7 +338,7 @@ class TestDataManagerYearly:
         frozen_now = lambda: datetime(2026, 6, 15, tzinfo=UTC)  # noqa: E731
         manager = DataManager(
             data_config=data_cfg,
-            backtest_config=bt_cfg,
+            request=bt_cfg,
             now_fn=frozen_now,
         )
 

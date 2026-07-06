@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.data.crawlers.registry import available_sources
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -22,6 +22,11 @@ def register(mcp: FastMCP, service: DataService) -> None:
         return service.list_available_data()
 
     @mcp.tool()
+    def list_data_sources() -> list[str]:
+        """List registered market data source names."""
+        return available_sources()
+
+    @mcp.tool()
     def inspect_dataset(config_path: str | None = None) -> dict[str, Any]:
         """Inspect the workspace data cache."""
         path = Path(config_path) if config_path else None
@@ -33,16 +38,19 @@ def register(mcp: FastMCP, service: DataService) -> None:
         timeframe: str,
         start_date: str,
         end_date: str,
+        source: str = "binance_vision",
     ) -> dict[str, Any]:
-        """Ensure OHLCV data for the requested range is cached."""
-        bt_cfg = BacktestConfig(
+        """Ensure OHLCV data for the requested range is cached.
+
+        ``source`` selects the market data crawler (see list_data_sources).
+        """
+        dataset = service.ensure(
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
-            mode="volume",
+            source=source,
         )
-        dataset = service.load({"data": {"source": "binance_vision"}}, bt_cfg)
         return {
             "success": True,
             "rows": len(dataset.frame),

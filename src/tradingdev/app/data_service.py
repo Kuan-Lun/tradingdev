@@ -18,14 +18,15 @@ from tradingdev.adapters.storage.filesystem import (
 )
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
-from tradingdev.domain.data.data_manager import DataManager
+from tradingdev.domain.data.crawlers.registry import create_crawler
+from tradingdev.domain.data.data_manager import DataManager, market_data_filename
 from tradingdev.domain.data.loader import DataLoader
 from tradingdev.domain.data.requirements import (
     DataRequirement,
     FeatureSpec,
     MarketDataSpec,
 )
-from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
 from tradingdev.shared.utils.config import load_config
 
 
@@ -62,15 +63,24 @@ class DataService:
         raw_config: dict[str, Any],
         backtest_config: BacktestConfig,
     ) -> DataRequirement:
-        """Parse explicit data requirements, defaulting to market data only."""
+        """Parse explicit data requirements, defaulting to market data only.
+
+        ``requirements.market.source`` is the single source-selection field;
+        when omitted it inherits ``data.source`` so older configs keep
+        working.
+        """
         raw = raw_config.get("data", {})
         data = raw if isinstance(raw, dict) else {}
+        default_source = str(data.get("source", "binance_vision"))
         req = data.get("requirements") if isinstance(data, dict) else None
         if isinstance(req, dict):
+            market = req.get("market")
+            if isinstance(market, dict) and "source" not in market:
+                req = {**req, "market": {**market, "source": default_source}}
             return DataRequirement(**req)
         return DataRequirement(
             market=MarketDataSpec(
-                source=str(data.get("source", "binance_vision")),
+                source=default_source,
                 symbol=backtest_config.symbol,
                 timeframe=backtest_config.timeframe,
             ),
@@ -84,16 +94,48 @@ class DataService:
     ) -> LoadedDataset:
         """Load OHLCV data and merge declared feature sources."""
         data_config = self.data_config(raw_config)
-        manager = DataManager(data_config=data_config, backtest_config=backtest_config)
-        frame, processed_path = manager.load()
         requirements = self.requirements(raw_config, backtest_config)
+        request = self._request_from_backtest(backtest_config)
+        frame, processed_path = self._load_market(
+            request,
+            data_config,
+            requirements.market.source,
+        )
 
         for feature in requirements.features:
-            frame = self._merge_feature(frame, feature, backtest_config)
+            frame = self._merge_feature(frame, feature, request)
 
-        dataset_id = self._dataset_id(backtest_config, requirements)
+        dataset_id = self._dataset_id(request, requirements)
         return LoadedDataset(
             frame=frame, processed_path=processed_path, dataset_id=dataset_id
+        )
+
+    def ensure(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        start_date: str,
+        end_date: str,
+        source: str = "binance_vision",
+    ) -> LoadedDataset:
+        """Ensure OHLCV data for the requested range is cached locally."""
+        request = MarketDataRequest(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        data_config = self.data_config({"data": {"source": source}})
+        frame, processed_path = self._load_market(request, data_config, source)
+        requirements = DataRequirement(
+            market=MarketDataSpec(source=source, symbol=symbol, timeframe=timeframe),
+            features=[],
+        )
+        return LoadedDataset(
+            frame=frame,
+            processed_path=processed_path,
+            dataset_id=self._dataset_id(request, requirements),
         )
 
     def list_available_data(self) -> list[dict[str, Any]]:
@@ -129,15 +171,16 @@ class DataService:
         processed_dir = self._processed_data_dir()
         if not processed_dir.exists():
             return False
-        normalized = symbol.replace("/", "").lower()
         try:
             start_year = int(start_date[:4])
             end_year = int(end_date[:4])
         except (ValueError, IndexError):
             return False
         for year in range(start_year, end_year + 1):
-            complete = processed_dir / f"{normalized}_{timeframe}_{year}.parquet"
-            partial = processed_dir / f"{normalized}_{timeframe}_{year}_partial.parquet"
+            complete = processed_dir / market_data_filename(symbol, timeframe, year)
+            partial = processed_dir / market_data_filename(
+                symbol, timeframe, year, partial=True
+            )
             if not complete.exists() and not partial.exists():
                 return False
         return True
@@ -161,34 +204,55 @@ class DataService:
 
         raw_config = load_config(config_path)
         backtest_config = BacktestConfig(**raw_config["backtest"])
+        request = self._request_from_backtest(backtest_config)
         requirements = self.requirements(raw_config, backtest_config)
         response["requirements"] = requirements.model_dump(mode="json")
         response["market_available"] = self.data_available(
-            backtest_config.symbol,
-            backtest_config.timeframe,
-            backtest_config.start_date.date().isoformat(),
-            backtest_config.end_date.date().isoformat(),
+            request.symbol,
+            request.timeframe,
+            request.start_date.date().isoformat(),
+            request.end_date.date().isoformat(),
         )
-        response["market"] = self._inspect_market(backtest_config)
+        response["market"] = self._inspect_market(request)
         response["dataset_fingerprint"] = self._dataset_fingerprint_report(
-            backtest_config,
+            request,
             requirements,
             response["market"],
         )
         response["features"] = [
-            self._inspect_feature(feature, backtest_config)
-            for feature in requirements.features
+            self._inspect_feature(feature, request) for feature in requirements.features
         ]
         return response
+
+    def _request_from_backtest(
+        self,
+        backtest_config: BacktestConfig,
+    ) -> MarketDataRequest:
+        return MarketDataRequest(
+            symbol=backtest_config.symbol,
+            timeframe=backtest_config.timeframe,
+            start_date=backtest_config.start_date,
+            end_date=backtest_config.end_date,
+        )
+
+    def _load_market(
+        self,
+        request: MarketDataRequest,
+        data_config: DataConfig,
+        source: str,
+    ) -> tuple[pd.DataFrame, Path]:
+        crawler = create_crawler(source, data_config)
+        manager = DataManager(data_config, request, crawler=crawler)
+        return manager.load()
 
     def _merge_feature(
         self,
         frame: pd.DataFrame,
         feature: FeatureSpec,
-        backtest_config: BacktestConfig,
+        request: MarketDataRequest,
     ) -> pd.DataFrame:
         if feature.type == "dvol":
-            feature_df = self._load_or_fetch_dvol(feature, backtest_config)
+            feature_df = self._load_or_fetch_dvol(feature, request)
             value_column = feature.column
             if (
                 value_column not in feature_df.columns
@@ -198,17 +262,12 @@ class DataService:
             merged = feature_df[["timestamp", value_column]].rename(
                 columns={value_column: feature.column}
             )
-        elif feature.type == "funding_rate":
-            if not feature.path:
-                msg = "funding_rate feature requires data.requirements.features[].path"
-                raise ValueError(msg)
-            feature_df = self._loader.load_parquet(
-                self._resolve_data_path(feature.path)
-            )
-            merged = feature_df[["timestamp", feature.column]]
         else:
             if not feature.path:
-                msg = "custom feature requires data.requirements.features[].path"
+                msg = (
+                    f"{feature.type} feature requires "
+                    "data.requirements.features[].path"
+                )
                 raise ValueError(msg)
             feature_df = self._loader.load_parquet(
                 self._resolve_data_path(feature.path)
@@ -222,23 +281,23 @@ class DataService:
     def _load_or_fetch_dvol(
         self,
         feature: FeatureSpec,
-        backtest_config: BacktestConfig,
+        request: MarketDataRequest,
     ) -> pd.DataFrame:
         processed_path = (
             self._resolve_data_path(feature.path)
             if feature.path
-            else self._default_dvol_path(backtest_config)
+            else self._default_dvol_path(request)
         )
         if processed_path.exists():
             return self._loader.load_parquet(processed_path)
 
         crawler = DeribitDVOLCrawler()
-        currency = backtest_config.symbol.split("/")[0]
+        currency = request.symbol.split("/")[0]
         raw = crawler.fetch(
             symbol=currency,
-            timeframe=backtest_config.timeframe,
-            start=backtest_config.start_date,
-            end=backtest_config.end_date,
+            timeframe=request.timeframe,
+            start=request.start_date,
+            end=request.end_date,
         )
         raw_path = (
             self._resolve_data_path(feature.raw_path)
@@ -252,13 +311,12 @@ class DataService:
         raw.to_parquet(processed_path, index=False)
         return raw
 
-    def _default_dvol_path(self, backtest_config: BacktestConfig) -> Path:
-        symbol = backtest_config.symbol.split("/")[0].lower()
-        start_year = backtest_config.start_date.year
-        end_year = backtest_config.end_date.year
+    def _default_dvol_path(self, request: MarketDataRequest) -> Path:
+        symbol = request.symbol.split("/")[0].lower()
+        start_year = request.start_date.year
+        end_year = request.end_date.year
         return self._processed_data_dir() / (
-            f"{symbol}_dvol_{backtest_config.timeframe}_"
-            f"{start_year}_{end_year}.parquet"
+            f"{symbol}_dvol_{request.timeframe}_{start_year}_{end_year}.parquet"
         )
 
     def _data_dirs(self) -> tuple[Path, Path]:
@@ -271,14 +329,13 @@ class DataService:
     def _processed_data_dir(self) -> Path:
         return self._data_dirs()[1]
 
-    def _market_paths(self, backtest_config: BacktestConfig) -> list[Path]:
-        normalized = backtest_config.symbol.replace("/", "").lower()
+    def _market_paths(self, request: MarketDataRequest) -> list[Path]:
         return [
             self._processed_data_dir()
-            / f"{normalized}_{backtest_config.timeframe}_{year}.parquet"
+            / market_data_filename(request.symbol, request.timeframe, year)
             for year in range(
-                backtest_config.start_date.year,
-                backtest_config.end_date.year + 1,
+                request.start_date.year,
+                request.end_date.year + 1,
             )
         ]
 
@@ -291,11 +348,11 @@ class DataService:
             return path
         return (Path.cwd() / path).resolve()
 
-    def _inspect_market(self, backtest_config: BacktestConfig) -> dict[str, Any]:
-        paths = self._market_paths(backtest_config)
+    def _inspect_market(self, request: MarketDataRequest) -> dict[str, Any]:
+        paths = self._market_paths(request)
         report: dict[str, Any] = {
-            "symbol": backtest_config.symbol,
-            "timeframe": backtest_config.timeframe,
+            "symbol": request.symbol,
+            "timeframe": request.timeframe,
             "paths": [str(path) for path in paths],
             "exists": all(path.exists() for path in paths),
             "rows": 0,
@@ -335,10 +392,10 @@ class DataService:
     def _inspect_feature(
         self,
         feature: FeatureSpec,
-        backtest_config: BacktestConfig,
+        request: MarketDataRequest,
     ) -> dict[str, Any]:
         path = (
-            self._default_dvol_path(backtest_config)
+            self._default_dvol_path(request)
             if feature.type == "dvol" and not feature.path
             else self._resolve_data_path(feature.path) if feature.path else None
         )
@@ -367,7 +424,7 @@ class DataService:
 
     def _dataset_fingerprint_report(
         self,
-        backtest_config: BacktestConfig,
+        request: MarketDataRequest,
         requirements: DataRequirement,
         market_report: object,
     ) -> dict[str, str]:
@@ -377,7 +434,7 @@ class DataService:
                 path = Path(str(value))
                 if path.exists():
                     file_hashes.append({"path": str(path), "sha256": sha256_file(path)})
-        dataset_id = self._dataset_id(backtest_config, requirements)
+        dataset_id = self._dataset_id(request, requirements)
         payload = {
             "dataset_id": dataset_id,
             "files": file_hashes,
@@ -390,7 +447,7 @@ class DataService:
 
     def _dataset_id(
         self,
-        backtest_config: BacktestConfig,
+        request: MarketDataRequest,
         requirements: DataRequirement,
     ) -> str:
         feature_key = ",".join(
@@ -398,7 +455,7 @@ class DataService:
             for feature in requirements.features
         )
         return (
-            f"{backtest_config.symbol}:{backtest_config.timeframe}:"
-            f"{backtest_config.start_date.date()}:{backtest_config.end_date.date()}:"
+            f"{request.symbol}:{request.timeframe}:"
+            f"{request.start_date.date()}:{request.end_date.date()}:"
             f"{feature_key}"
         )
