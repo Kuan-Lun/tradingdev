@@ -9,11 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import yaml
 from pydantic import BaseModel
 
 from tradingdev.domain.backtest.schemas import ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -34,9 +34,15 @@ class StrategyModuleSpec:
 class StrategyLoader:
     """Load bundled or workspace-generated strategies through one contract."""
 
-    def __init__(self, *, workspace_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        workspace_root: Path | None = None,
+        catalog: BundledStrategyCatalog | None = None,
+    ) -> None:
         self._workspace_root = workspace_root or Path("workspace").resolve()
         self._generated_root = self._workspace_root / "generated_strategies"
+        self._catalog = catalog or BundledStrategyCatalog()
 
     def create_from_config(
         self,
@@ -92,25 +98,11 @@ class StrategyLoader:
         return cast("type[BaseStrategy]", cls)
 
     def _bundled_class_by_id(self) -> dict[str, tuple[str, str]]:
-        """Discover bundled strategy classes from bundled config files."""
-        bundled_root = Path(__file__).resolve().parent / "bundled"
-        result: dict[str, tuple[str, str]] = {}
-        for config_path in sorted(bundled_root.glob("*/config.yaml")):
-            module_name = (
-                "tradingdev.domain.strategies.bundled."
-                f"{config_path.parent.name}.strategy"
-            )
-            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
-            if not isinstance(strategy, dict):
-                continue
-            class_name = strategy.get("class_name")
-            if not isinstance(class_name, str) or not class_name:
-                continue
-            strategy_id = strategy.get("id")
-            if isinstance(strategy_id, str) and strategy_id:
-                result[strategy_id] = (module_name, class_name)
-        return result
+        """Discover bundled strategy classes from the bundled catalog."""
+        return {
+            entry.strategy_id: (entry.module_name, entry.class_name)
+            for entry in self._catalog.entries()
+        }
 
     def _reject_unknown_bundled_source(
         self,
@@ -131,12 +123,7 @@ class StrategyLoader:
         raise ValueError(msg)
 
     def _is_bundled_source(self, source_path: Path) -> bool:
-        candidate = source_path
-        if not candidate.is_absolute():
-            candidate = Path.cwd() / candidate
-        resolved = candidate.resolve()
-        bundled_root = (Path(__file__).resolve().parent / "bundled").resolve()
-        return resolved.is_relative_to(bundled_root)
+        return self._catalog.contains_source(source_path)
 
     def _create_bundled(
         self,
