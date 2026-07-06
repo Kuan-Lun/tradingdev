@@ -15,7 +15,10 @@ import yaml
 from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.app.data_service import DataService
 from tradingdev.app.job_store import JobStore, get_default_job_store
-from tradingdev.app.strategy_service import StrategyService
+from tradingdev.app.strategy_service import (
+    StrategyNotExecutableError,
+    StrategyService,
+)
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.shared.utils.config import load_config
 
@@ -23,7 +26,6 @@ from tradingdev.shared.utils.config import load_config
 class JobService:
     """Create and query background jobs."""
 
-    _RUNNABLE_STATUSES = {"runnable", "promoted"}
     _ACTIVE_STATUSES = {
         "queued",
         "downloading_data",
@@ -426,22 +428,11 @@ class JobService:
         return path
 
     def _resolve_strategy_run_config(self, strategy_id: str) -> tuple[Path | None, str]:
-        strategy = self._strategy_service.get_strategy(strategy_id)
-        if not strategy.get("success"):
-            return None, str(strategy.get("error", "Strategy not found"))
-        metadata = strategy.get("metadata", {})
-        if not isinstance(metadata, dict):
-            return None, "Strategy metadata is invalid"
-        status = str(metadata.get("status", "draft"))
-        if status not in self._RUNNABLE_STATUSES:
-            return None, (
-                "Strategy must be runnable or promoted before execution. "
-                f"Current status: {status}"
-            )
-        config_path = metadata.get("config_path")
-        if not config_path:
-            return None, "Strategy metadata has no config_path"
-        path = Path(str(config_path))
+        try:
+            spec = self._strategy_service.resolve_executable(strategy_id)
+        except StrategyNotExecutableError as exc:
+            return None, str(exc)
+        path = Path(spec.config_path)
         return (path, "") if path.exists() else (None, f"Config not found: {path}")
 
     def _is_pid_alive(self, pid: object) -> bool:

@@ -9,8 +9,13 @@ import pytest
 
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService, LoadedDataset
+from tradingdev.app.strategy_service import (
+    StrategyNotExecutableError,
+    StrategyService,
+)
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -102,6 +107,22 @@ class _StrategyLoaderStub:
         return self.strategy
 
 
+class _GateStub:
+    def __init__(self, source_path: str = "") -> None:
+        self.resolved: list[str] = []
+        self.source_path = source_path
+
+    def resolve_executable(self, strategy_id: str) -> StrategySpec:
+        self.resolved.append(strategy_id)
+        return StrategySpec(
+            strategy_id=strategy_id,
+            class_name="Fixture",
+            source_path=self.source_path,
+            config_path="",
+            status=StrategyStatus.RUNNABLE,
+        )
+
+
 def _service(
     tmp_path: Path,
     *,
@@ -118,6 +139,7 @@ def _service(
     service = BacktestService(
         data_service=cast("DataService", data_service),
         strategy_loader=cast("StrategyLoader", strategy_loader),
+        strategy_gate=_GateStub(),
     )
     return service, data_service, strategy_loader, strategy
 
@@ -156,6 +178,69 @@ def test_run_raw_config_walk_forward_uses_validation_section(tmp_path: Path) -> 
     assert len(run.pipeline.fold_results) == 2
     assert run.metrics["n_folds"] == 2
     assert strategy.fit_lengths == [10, 10]
+
+
+def _gate_service(tmp_path: Path) -> StrategyService:
+    from tradingdev.adapters.storage.filesystem import WorkspacePaths
+
+    return StrategyService(WorkspacePaths(tmp_path / "workspace"))
+
+
+def _stub_backtest_service(
+    tmp_path: Path,
+    gate: StrategyService | _GateStub,
+) -> BacktestService:
+    dataset = LoadedDataset(
+        frame=_frame(),
+        processed_path=tmp_path / "processed.parquet",
+        dataset_id="dataset-fixture",
+    )
+    return BacktestService(
+        data_service=cast("DataService", _DataServiceStub(dataset)),
+        strategy_loader=cast("StrategyLoader", _StrategyLoaderStub(_SignalStrategy())),
+        strategy_gate=gate,
+    )
+
+
+def test_run_raw_config_rejects_unknown_strategy(tmp_path: Path) -> None:
+    service = _stub_backtest_service(tmp_path, _gate_service(tmp_path))
+
+    with pytest.raises(StrategyNotExecutableError, match="not found"):
+        service.run_raw_config(_raw_config())
+
+
+def test_run_raw_config_rejects_draft_generated_strategy(tmp_path: Path) -> None:
+    strategy_service = _gate_service(tmp_path)
+    saved = strategy_service.save_draft(
+        "fixture",
+        "class Fixture:\n    pass\n",
+        "strategy:\n  class_name: Fixture\n",
+    )
+    assert saved.success is True
+    service = _stub_backtest_service(tmp_path, strategy_service)
+
+    with pytest.raises(StrategyNotExecutableError, match="runnable or promoted"):
+        service.run_raw_config(_raw_config())
+
+
+def test_run_raw_config_allows_promoted_bundled_strategy(tmp_path: Path) -> None:
+    service = _stub_backtest_service(tmp_path, _gate_service(tmp_path))
+    raw_config = _raw_config()
+    raw_config["strategy"] = {"id": "kd_crossover", "parameters": {}}
+
+    run = service.run_raw_config(raw_config)
+
+    assert run.mode == "simple"
+
+
+def test_run_raw_config_rejects_source_path_mismatch(tmp_path: Path) -> None:
+    gate = _GateStub(source_path=str(tmp_path / "registered.py"))
+    service = _stub_backtest_service(tmp_path, gate)
+    raw_config = _raw_config()
+    raw_config["strategy"]["source_path"] = str(tmp_path / "other.py")
+
+    with pytest.raises(StrategyNotExecutableError, match="does not match"):
+        service.run_raw_config(raw_config)
 
 
 def test_run_config_rejects_walk_forward_config_without_flag(

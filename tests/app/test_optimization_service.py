@@ -8,6 +8,8 @@ from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
+from tradingdev.app.strategy_service import StrategyNotExecutableError
+from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -15,13 +17,28 @@ if TYPE_CHECKING:
     from tradingdev.adapters.execution.process_runner import ProcessRunner
     from tradingdev.app.strategy_service import StrategyService
 
+_EXECUTABLE = {StrategyStatus.RUNNABLE, StrategyStatus.PROMOTED}
+
 
 class _StrategyServiceStub:
     def __init__(self, metadata: dict[str, Any]) -> None:
         self.metadata = metadata
 
-    def get_strategy(self, strategy_id: str) -> dict[str, Any]:
-        return {"success": True, "metadata": self.metadata, "id": strategy_id}
+    def resolve_executable(self, strategy_id: str) -> StrategySpec:
+        status = StrategyStatus(str(self.metadata["status"]))
+        if status not in _EXECUTABLE:
+            msg = (
+                "Strategy must be runnable or promoted before execution. "
+                f"Current status: {status.value}"
+            )
+            raise StrategyNotExecutableError(msg)
+        return StrategySpec(
+            strategy_id=strategy_id,
+            class_name="Fixture",
+            source_path="",
+            config_path=str(self.metadata["config_path"]),
+            status=status,
+        )
 
 
 class _RunnerStub:
@@ -137,9 +154,6 @@ def test_start_optimization_requires_runnable_strategy(tmp_path: Path) -> None:
     )
 
     assert response["job_id"] == ""
-    assert (
-        response["message"]
-        == "Strategy must be runnable or promoted before optimization."
-    )
+    assert "must be runnable or promoted" in response["message"]
     assert job_store.list_all_jobs() == []
     assert runner.calls == []

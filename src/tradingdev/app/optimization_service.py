@@ -9,7 +9,10 @@ from uuid import uuid4
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.app.job_store import JobStore, get_default_job_store
-from tradingdev.app.strategy_service import StrategyService
+from tradingdev.app.strategy_service import (
+    StrategyNotExecutableError,
+    StrategyService,
+)
 
 
 class OptimizationService:
@@ -108,15 +111,11 @@ class OptimizationService:
         }
 
     def _resolve_strategy_config(self, strategy_id: str) -> tuple[Path | None, str]:
-        strategy = self._strategy_service.get_strategy(strategy_id)
-        if not strategy.get("success"):
-            return None, str(strategy.get("error", "Strategy not found"))
-        metadata = strategy.get("metadata", {})
-        if not isinstance(metadata, dict):
-            return None, "Strategy metadata is invalid"
-        if str(metadata.get("status", "draft")) not in {"runnable", "promoted"}:
-            return None, "Strategy must be runnable or promoted before optimization."
-        path = Path(str(metadata.get("config_path", "")))
+        try:
+            spec = self._strategy_service.resolve_executable(strategy_id)
+        except StrategyNotExecutableError as exc:
+            return None, str(exc)
+        path = Path(spec.config_path)
         return (path, "") if path.exists() else (None, f"Config not found: {path}")
 
     def _validate_request(
