@@ -50,7 +50,7 @@ def _register_tools() -> None:
     )
     optimization_service = OptimizationService(strategy_service=strategy_service)
     run_service = RunService()
-    artifact_service = ArtifactService(strategy_service=strategy_service)
+    artifact_service = ArtifactService()
     feature_request_service = FeatureRequestService()
 
     strategy.register(mcp, strategy_service, _PACKAGE_ROOT)
