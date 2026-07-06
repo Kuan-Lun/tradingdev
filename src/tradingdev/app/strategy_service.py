@@ -19,6 +19,7 @@ from tradingdev.adapters.storage.filesystem import (
     write_json,
 )
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
     VALIDATE_FIXTURE_ROWS,
@@ -68,7 +69,11 @@ class StrategyService:
         store: SQLiteStore | None = None,
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
-        self._loader = StrategyLoader(workspace_root=self._workspace.root)
+        self._catalog = BundledStrategyCatalog()
+        self._loader = StrategyLoader(
+            workspace_root=self._workspace.root,
+            catalog=self._catalog,
+        )
         self._validator = StrategyValidator()
         self._contract_checker = SignalContractChecker(self._loader)
         self._workspace.ensure()
@@ -190,27 +195,18 @@ class StrategyService:
                 metadata=metadata,
             )
 
-        bundled = (
-            Path(__file__).resolve().parents[1] / "domain" / "strategies" / "bundled"
+        entry = self._catalog.get(strategy_id)
+        if entry is None or entry.declared_source_path is None:
+            return None
+        return StrategySpec(
+            strategy_id=strategy_id,
+            class_name=entry.class_name,
+            source_path=entry.declared_source_path,
+            config_path=str(entry.config_path),
+            status=StrategyStatus.PROMOTED,
+            kind="bundled",
+            metadata={"version": entry.strategy_section.get("version")},
         )
-        for config_path in sorted(bundled.glob("*/config.yaml")):
-            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
-            if isinstance(strategy, dict) and strategy.get("id") == strategy_id:
-                class_name = strategy.get("class_name")
-                source_path = strategy.get("source_path")
-                if not isinstance(class_name, str) or not isinstance(source_path, str):
-                    return None
-                return StrategySpec(
-                    strategy_id=strategy_id,
-                    class_name=class_name,
-                    source_path=source_path,
-                    config_path=str(config_path),
-                    status=StrategyStatus.PROMOTED,
-                    kind="bundled",
-                    metadata={"version": strategy.get("version")},
-                )
-        return None
 
     def resolve_executable(self, strategy_id: str) -> StrategySpec:
         """Return the spec for a strategy allowed to execute backtests.
@@ -381,31 +377,25 @@ class StrategyService:
     def list_strategies(self) -> list[dict[str, Any]]:
         """List bundled and generated strategies."""
         items: list[dict[str, Any]] = []
-        bundled_root = (
-            Path(__file__).resolve().parents[1] / "domain" / "strategies" / "bundled"
-        )
-        for config_path in sorted(bundled_root.glob("*/config.yaml")):
-            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
-            if isinstance(strategy, dict):
-                strategy_id = str(strategy.get("id", ""))
-                items.append(
-                    {
-                        "strategy_id": strategy_id,
-                        "class_name": strategy.get("class_name"),
-                        "description": strategy.get("description", ""),
-                        "kind": "bundled",
-                        "status": "promoted",
-                        "config_path": str(config_path),
-                        "metadata": {
-                            "version": strategy.get("version"),
-                            "source_path": strategy.get("source_path"),
-                            "parameters": strategy.get("parameters", {}),
-                        },
-                        "data_requirements": self._data_requirements(raw),
-                        "recent_runs": self._recent_runs(strategy_id),
-                    }
-                )
+        for entry in self._catalog.entries():
+            strategy = entry.strategy_section
+            items.append(
+                {
+                    "strategy_id": entry.strategy_id,
+                    "class_name": entry.class_name,
+                    "description": strategy.get("description", ""),
+                    "kind": "bundled",
+                    "status": "promoted",
+                    "config_path": str(entry.config_path),
+                    "metadata": {
+                        "version": strategy.get("version"),
+                        "source_path": entry.declared_source_path,
+                        "parameters": strategy.get("parameters", {}),
+                    },
+                    "data_requirements": self._data_requirements(entry.raw_config),
+                    "recent_runs": self._recent_runs(entry.strategy_id),
+                }
+            )
         for metadata_path in sorted(
             self._workspace.generated_strategies.glob("*.json")
         ):
@@ -452,26 +442,20 @@ class StrategyService:
                 "yaml_config": config_path.read_text(encoding="utf-8"),
                 "metadata": metadata.model_dump(mode="json"),
             }
-        bundled = (
-            Path(__file__).resolve().parents[1] / "domain" / "strategies" / "bundled"
-        )
-        for config_path in bundled.glob("*/config.yaml"):
-            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            strategy = raw.get("strategy", {}) if isinstance(raw, dict) else {}
-            if isinstance(strategy, dict) and strategy.get("id") == strategy_id:
-                source_path = (config_path.parent / "strategy.py").resolve()
-                return {
-                    "success": True,
-                    "strategy_id": strategy_id,
-                    "kind": "bundled",
-                    "source_code": source_path.read_text(encoding="utf-8"),
-                    "yaml_config": config_path.read_text(encoding="utf-8"),
-                    "metadata": {
-                        "status": "promoted",
-                        "source_path": str(source_path),
-                        "config_path": str(config_path),
-                    },
-                }
+        entry = self._catalog.get(strategy_id)
+        if entry is not None:
+            return {
+                "success": True,
+                "strategy_id": strategy_id,
+                "kind": "bundled",
+                "source_code": entry.module_source_path.read_text(encoding="utf-8"),
+                "yaml_config": entry.config_path.read_text(encoding="utf-8"),
+                "metadata": {
+                    "status": "promoted",
+                    "source_path": str(entry.module_source_path),
+                    "config_path": str(entry.config_path),
+                },
+            }
         return {"success": False, "error": f"Strategy not found: {strategy_id}"}
 
     def _metadata_path(self, strategy_id: str) -> Path:
