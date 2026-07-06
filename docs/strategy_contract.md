@@ -54,10 +54,17 @@ backtest:
   mode: "signal"
 
 data:
-  # source defaults to "binance_vision"; set "binance_api" to use ccxt instead
-  # market_type defaults to "futures/um"; set "spot" for spot markets
+  # market_type defaults to "futures/um" (binance_vision only); "spot" for spot
   requirements:
     market:
+      # source selects the market data crawler registered in
+      # domain/data/crawlers/registry.py:
+      #   "binance_vision" (default) - crypto, data.binance.vision
+      #   "binance_api"              - crypto, ccxt
+      #   "yahoo_finance"            - stocks/ETFs/futures/indices/FX,
+      #                                Yahoo symbols ("AAPL", "ES=F", "^GSPC")
+      # omitted -> inherits legacy top-level data.source
+      source: "binance_vision"
       symbol: "BTC/USDT"
       timeframe: "1h"
     features: []
@@ -86,16 +93,19 @@ data:
 
 1. `save_strategy`: writes draft source, config, and metadata.
 2. `validate_strategy`: runs syntax, static policy, restricted import checks,
-   ruff, mypy, inheritance, constructor, and signal-contract checks. It returns
-   structured diagnostics with `level`, `code`, `phase`, `message`, and optional
-   `fix`.
-3. `dry_run_strategy`: accepts only `validated` strategies, performs a
-   lightweight signal dry run, returns `signal_analysis`, and marks the
-   strategy runnable when it passes.
-4. `promote_strategy`: artifact tool that marks a runnable generated strategy as
-   promoted.
+   ruff, mypy, inheritance, constructor, and the shared signal-contract gate on
+   a short fixture. It returns structured diagnostics with `level`, `code`,
+   `phase`, `message`, and optional `fix`.
+3. `dry_run_strategy`: accepts only `validated` strategies, re-runs the same
+   signal-contract gate on a longer fixture, returns `signal_analysis`, and
+   marks the strategy runnable when it passes.
+4. `promote_strategy`: strategy tool that marks a runnable generated strategy
+   as promoted (owned by `StrategyService`).
 5. `start_backtest` / `start_walk_forward`: execute only runnable or promoted
-   generated strategies, and promoted bundled strategies.
+   generated strategies, and promoted bundled strategies. The gate is enforced
+   again at execution time inside `BacktestService`, so the CLI and subprocess
+   workers cannot bypass the lifecycle, and the config's `source_path` must
+   match the registered strategy source.
 
 ## Security Model
 

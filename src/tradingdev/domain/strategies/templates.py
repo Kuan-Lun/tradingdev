@@ -26,14 +26,16 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
         ),
         "lifecycle": (
             "save_strategy stores a draft; validate_strategy runs static checks, "
-            "restricted import checks, ruff, mypy, inheritance checks, and a "
-            "smoke signal contract with structured diagnostics; validate_strategy "
-            "and dry_run_strategy currently execute generated Python code. "
-            "Sandboxed execution isolation is required future work. "
-            "dry_run_strategy returns signal_analysis and promotes validated "
-            "code to runnable; start_backtest/start_walk_forward accept only "
-            "runnable or promoted generated strategies and promoted bundled "
-            "strategies."
+            "restricted import checks, ruff, mypy, inheritance checks, and the "
+            "shared signal-contract gate on a short fixture with structured "
+            "diagnostics; dry_run_strategy accepts only validated strategies and "
+            "re-runs the same signal-contract gate on a longer fixture, returns "
+            "signal_analysis, and marks the strategy runnable; promote_strategy "
+            "marks a runnable strategy promoted. validate_strategy and "
+            "dry_run_strategy currently execute generated Python code; sandboxed "
+            "execution isolation is required future work. Execution accepts only "
+            "runnable or promoted strategies and enforces this gate at execution "
+            "time on every entry point (MCP jobs, CLI, workers)."
         ),
     }
 
@@ -107,9 +109,13 @@ backtest:
   mode: "signal"
 
 data:
-  # market_type: "futures/um"  # default; use "spot" for spot markets
+  # market_type: "futures/um"  # binance_vision only; use "spot" for spot
   requirements:
     market:
+      # source selects the data crawler: "binance_vision" (default),
+      # "binance_api" (ccxt), or "yahoo_finance" (stocks/futures/indices/FX,
+      # Yahoo symbols such as "AAPL", "ES=F", "^GSPC")
+      source: "binance_vision"
       symbol: "BTC/USDT"
       timeframe: "1h"
     features: []

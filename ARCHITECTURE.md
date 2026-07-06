@@ -60,10 +60,13 @@ flowchart TB
     app --> runs[RunService]
     app --> artifacts[ArtifactService]
 
-    loader --> bundled[bundled strategies]
+    loader --> catalog[BundledStrategyCatalog]
     loader --> generated[workspace generated strategies]
+    data --> registry[crawler registry]
+    registry --> crawlers[binance_vision / binance_api / yahoo_finance]
     data --> manager[domain.data.DataManager]
     data --> requirements[DataRequirement]
+    backtest --> gate[strategy execution gate]
     backtest --> engines[domain.backtest.engines facade]
     app --> optimization[domain.optimization grid search]
     jobs --> workers[mcp.workers subprocesses]
@@ -93,9 +96,20 @@ stateDiagram-v2
 
 Generated strategies must live in `workspace/generated_strategies/`.
 `StrategyService` persists generated strategy metadata as typed
-`StrategyMetadata` / `ValidationResult` models. Bundled strategies live next to
-their git-versioned configs and parameter config models under
-`src/tradingdev/domain/strategies/bundled/<strategy>/`.
+`StrategyMetadata` / `ValidationResult` models and owns every lifecycle
+transition, including `promote`. `validate_strategy` and `dry_run_strategy`
+share one `SignalContractChecker` (`domain/strategies/contract.py`) run at two
+fixture depths. Bundled strategies live next to their git-versioned configs and
+parameter config models under
+`src/tradingdev/domain/strategies/bundled/<strategy>/` and are discovered
+through `BundledStrategyCatalog`.
+
+Execution is gated in the application layer: `BacktestService.run_raw_config`
+resolves the strategy through `StrategyService.resolve_executable`, which
+rejects anything that is not runnable or promoted and verifies that the
+config's `source_path` matches the registered source. `JobService` and
+`OptimizationService` use the same gate, so MCP jobs, the CLI, and subprocess
+workers all pass through one check.
 
 ## Storage
 
@@ -157,10 +171,19 @@ The dashboard reads run metadata and pipeline artifacts through `RunService` /
 - Strategy signal convention: `1` long, `-1` short, `0` flat.
 - Strategy parameters live in YAML `strategy.parameters`.
 - Data requirements live in YAML `data.requirements`.
-- `data.source` selects the market data crawler: `"binance_vision"` (default,
-  uses data.binance.vision; no geo-restriction) or `"binance_api"` (uses ccxt).
-- `data.market_type` selects the market segment: `"futures/um"` (default, USD-M
-  perpetuals) or `"spot"`.
+- `data.requirements.market.source` selects the market data crawler from the
+  registry in `domain/data/crawlers/registry.py`: `"binance_vision"` (default,
+  crypto via data.binance.vision; no geo-restriction), `"binance_api"` (crypto
+  via ccxt), or `"yahoo_finance"` (stocks/ETFs/futures/indices/FX via the
+  public Yahoo chart API, Yahoo symbol conventions). When omitted it inherits
+  legacy `data.source`. New sources register a `BaseCrawler` factory; no
+  strategy-layer or pipeline change is required.
+- `data.market_type` selects the Binance Vision market segment: `"futures/um"`
+  (default, USD-M perpetuals) or `"spot"`.
+- `DataManager` consumes a `MarketDataRequest` (symbol/timeframe/date range)
+  and an injected crawler; `domain.data` no longer depends on
+  `domain.backtest`. Yearly cache file names come from
+  `market_data_filename()`.
 - `inspect_dataset(config_path)` reports market cache availability and feature
   source missing-value status from the same data root used by backtests.
 - `start_backtest` / `start_walk_forward` write a per-job effective config under
