@@ -145,4 +145,53 @@ def test_requirements_default_to_market_data_only(tmp_path: Path) -> None:
 
     assert requirements.market.symbol == "BTC/USDT"
     assert requirements.market.timeframe == "1h"
+    assert requirements.market.source == "binance_api"
     assert requirements.features == []
+
+
+def test_requirements_market_inherits_data_source_when_omitted(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = DataService(workspace)
+    backtest_config = BacktestConfig(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        init_cash=10000.0,
+    )
+
+    requirements = service.requirements(
+        {
+            "data": {
+                "source": "binance_api",
+                "requirements": {
+                    "market": {"symbol": "BTC/USDT", "timeframe": "1h"},
+                    "features": [],
+                },
+            }
+        },
+        backtest_config,
+    )
+
+    assert requirements.market.source == "binance_api"
+
+    explicit = service.requirements(
+        {
+            "data": {
+                "source": "binance_api",
+                "requirements": {
+                    "market": {
+                        "source": "binance_vision",
+                        "symbol": "BTC/USDT",
+                        "timeframe": "1h",
+                    },
+                    "features": [],
+                },
+            }
+        },
+        backtest_config,
+    )
+
+    assert explicit.market.source == "binance_vision"

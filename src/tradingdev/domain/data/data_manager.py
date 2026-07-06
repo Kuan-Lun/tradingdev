@@ -14,17 +14,15 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from tradingdev.domain.data.crawlers.binance_api import BinanceAPICrawler
-from tradingdev.domain.data.crawlers.binance_vision import BinanceVisionCrawler
+from tradingdev.domain.data.crawlers.registry import create_crawler
 from tradingdev.domain.data.loader import DataLoader
 from tradingdev.domain.data.processor import DataProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tradingdev.domain.backtest.schemas import BacktestConfig
     from tradingdev.domain.data.crawlers.base import BaseCrawler
-    from tradingdev.domain.data.schemas import DataConfig
+    from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +33,25 @@ def _now_utc() -> datetime:
 
 
 def _normalize_symbol(symbol: str) -> str:
-    """Normalize symbol for file naming: ``'BTC/USDT'`` -> ``'btcusdt'``."""
-    return symbol.replace("/", "").lower()
+    """Normalize symbol for file naming: keep alphanumerics, lowercase.
+
+    ``'BTC/USDT'`` -> ``'btcusdt'``, ``'ES=F'`` -> ``'esf'``,
+    ``'^GSPC'`` -> ``'gspc'``.
+    """
+    return "".join(ch for ch in symbol if ch.isalnum()).lower()
+
+
+def market_data_filename(
+    symbol: str,
+    timeframe: str,
+    year: int,
+    *,
+    partial: bool = False,
+    suffix: str = "parquet",
+) -> str:
+    """Return the canonical cache file name for one year of market data."""
+    partial_suffix = "_partial" if partial else ""
+    return f"{_normalize_symbol(symbol)}_{timeframe}_{year}{partial_suffix}.{suffix}"
 
 
 def _is_year_complete(year: int, now_fn: Callable[[], datetime] = _now_utc) -> bool:
@@ -69,8 +84,11 @@ class DataManager:
     once the year ends.
 
     Args:
-        data_config: Parsed data section configuration.
-        backtest_config: Parsed backtest section configuration.
+        data_config: Parsed data section configuration (cache dirs and the
+                     default source when no crawler is injected).
+        request: The market data slice to load.
+        crawler: Crawler to fetch with.  Defaults to the crawler registered
+                 for ``data_config.source``.
         now_fn: Callable returning the current UTC datetime.
                 Defaults to ``_now_utc``.  Override for testing.
     """
@@ -78,21 +96,20 @@ class DataManager:
     def __init__(
         self,
         data_config: DataConfig,
-        backtest_config: BacktestConfig,
+        request: MarketDataRequest,
         *,
+        crawler: BaseCrawler | None = None,
         now_fn: Callable[[], datetime] = _now_utc,
     ) -> None:
         self._data_cfg = data_config
-        self._bt_cfg = backtest_config
+        self._request = request
         self._now_fn = now_fn
-        self._crawler: BaseCrawler = self._build_crawler()
+        self._crawler: BaseCrawler = crawler or create_crawler(
+            data_config.source,
+            data_config,
+        )
         self._loader = DataLoader()
         self._processor = DataProcessor()
-
-    def _build_crawler(self) -> BaseCrawler:
-        if self._data_cfg.source == "binance_api":
-            return BinanceAPICrawler()
-        return BinanceVisionCrawler(market_type=self._data_cfg.market_type)
 
     # ------------------------------------------------------------------ #
     # Public API                                                          #
@@ -106,12 +123,12 @@ class DataManager:
             The effective path is the first year's processed file and
             can be used for cache key computation.
         """
-        years = _year_range(self._bt_cfg.start_date, self._bt_cfg.end_date)
+        years = _year_range(self._request.start_date, self._request.end_date)
         logger.info(
             "Yearly cache mode: years=%s, range=%s to %s",
             years,
-            self._bt_cfg.start_date.isoformat(),
-            self._bt_cfg.end_date.isoformat(),
+            self._request.start_date.isoformat(),
+            self._request.end_date.isoformat(),
         )
 
         yearly_dfs: list[pd.DataFrame] = []
@@ -132,7 +149,7 @@ class DataManager:
 
         Returns the first year's processed file path.
         """
-        years = _year_range(self._bt_cfg.start_date, self._bt_cfg.end_date)
+        years = _year_range(self._request.start_date, self._request.end_date)
         year = years[0]
         complete = _is_year_complete(year, self._now_fn)
         return self._processed_path_for_year(year, partial=not complete)
@@ -199,8 +216,8 @@ class DataManager:
         )
 
         raw_df = self._crawler.fetch(
-            symbol=self._bt_cfg.symbol,
-            timeframe=self._bt_cfg.timeframe,
+            symbol=self._request.symbol,
+            timeframe=self._request.timeframe,
             start=start,
             end=end,
         )
@@ -218,8 +235,8 @@ class DataManager:
 
     def _trim_to_range(self, df: pd.DataFrame) -> pd.DataFrame:
         """Trim combined DataFrame to exact ``start_date`` / ``end_date``."""
-        start = self._bt_cfg.start_date
-        end = self._bt_cfg.end_date
+        start = self._request.start_date
+        end = self._request.end_date
 
         # Ensure timezone awareness
         if start.tzinfo is None:
@@ -236,16 +253,21 @@ class DataManager:
 
     def _raw_path_for_year(self, year: int, *, partial: bool = False) -> Path:
         """Generate raw CSV path for a given year."""
-        sym = _normalize_symbol(self._bt_cfg.symbol)
-        tf = self._bt_cfg.timeframe
-        suffix = "_partial" if partial else ""
-        filename = f"{sym}_{tf}_{year}{suffix}.csv"
+        filename = market_data_filename(
+            self._request.symbol,
+            self._request.timeframe,
+            year,
+            partial=partial,
+            suffix="csv",
+        )
         return Path(self._data_cfg.raw_dir) / filename
 
     def _processed_path_for_year(self, year: int, *, partial: bool = False) -> Path:
         """Generate processed parquet path for a given year."""
-        sym = _normalize_symbol(self._bt_cfg.symbol)
-        tf = self._bt_cfg.timeframe
-        suffix = "_partial" if partial else ""
-        filename = f"{sym}_{tf}_{year}{suffix}.parquet"
+        filename = market_data_filename(
+            self._request.symbol,
+            self._request.timeframe,
+            year,
+            partial=partial,
+        )
         return Path(self._data_cfg.processed_dir) / filename

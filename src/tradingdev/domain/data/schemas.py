@@ -51,3 +51,12 @@ class DataConfig(BaseModel):
     market_type: str = "futures/um"
     raw_dir: str = "workspace/data/raw"
     processed_dir: str = "workspace/data/processed"
+
+
+class MarketDataRequest(BaseModel):
+    """A concrete market data slice to fetch, independent of backtesting."""
+
+    symbol: str
+    timeframe: str
+    start_date: datetime
+    end_date: datetime
