@@ -59,6 +59,18 @@ workspace/             runtime generated strategies, configs, data, runs, SQLite
 tests/                 app/domain/mcp/adapters/integration/shared layered tests
 ```
 
+## Architecture
+
+This project is pre-1.0 and the sections below describe today's design, not a
+contract to preserve. If a change intentionally replaces one of these patterns,
+update or delete the stale part of this doc in the same change rather than
+working around it.
+
+## Design Principles
+
+- Follow SOLID principles: single responsibility, open/closed, Liskov
+  substitution, interface segregation, dependency inversion.
+
 ## Key Design Decisions
 
 - **Signal convention**: `1` = long, `-1` = short, `0` = flat.
@@ -92,6 +104,46 @@ tests/                 app/domain/mcp/adapters/integration/shared layered tests
 - **Dashboard data source**: dashboard reads `RunService` / `ArtifactService`,
   never old cache files directly.
 - **Logging**: use logging helpers, not `print()`.
+
+## Code Style
+
+- **Sync obligation for tooling configuration:** the IDE save pipeline and the
+  Stop hook pipeline are kept in lockstep across the locations below. Any
+  change to one of them requires matching updates to the others in the same
+  change.
+  - Python formatting/lint/type-check:
+    [.vscode/settings.json](.vscode/settings.json) (`[python]` block),
+    [mypy.ini](mypy.ini) (strict mode), the `[lint]` section of
+    [ruff.toml](ruff.toml), all auto-discovered by both the IDE and
+    `uv run`, and the shared implementation at
+    [scripts/hooks/finalize-python.sh](scripts/hooks/finalize-python.sh),
+    registered as a Claude Stop hook in
+    [.claude/settings.local.json](.claude/settings.local.json).
+  - Markdown formatting: [.vscode/settings.json](.vscode/settings.json)
+    (`[markdown]` block), the shared implementation at
+    [scripts/hooks/finalize-markdown.sh](scripts/hooks/finalize-markdown.sh),
+    and the same Claude Stop-hook registration in
+    [.claude/settings.local.json](.claude/settings.local.json).
+  - Tool versions: the `dev` group of `[dependency-groups]` in
+    [pyproject.toml](pyproject.toml) pins `black`, `ruff`, `mypy`, and
+    `pymarkdownlnt`. Both the IDE pipeline (when invoked via `uv run`) and the
+    Stop-hook scripts resolve to these venv-installed versions, so bumping any
+    of them must be done here — not via Homebrew or any other system-wide
+    install.
+- Ruff's `E2xx` whitespace rules (e.g. `E271`/`E272`
+  multiple-spaces-before/after-keyword) are preview-only in this Ruff version
+  and stay off even with `select = ["E", ...]` unless `preview = true` is set.
+  Don't be surprised if the CLI/hook misses a whitespace nit that an IDE
+  extension flags separately.
+- Python version range: refer to `requires-python` in
+  [pyproject.toml](pyproject.toml)
+- **Comments:** default to none. Only add one when the *why* isn't obvious
+  from the code itself (a hidden constraint, a non-obvious invariant, a
+  workaround for a specific bug). Never frame a comment around the current
+  change, refactor, or task ("moved here for X", "changed from Y to Z",
+  "added for the Z flow") — write it as a timeless statement of the
+  constraint, since that context rots as the codebase evolves but the
+  underlying constraint doesn't. Prefer one line over a multi-line block.
 
 ## Document Maintenance
 
