@@ -83,3 +83,8 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
         execution isolation is future work.
         """
         return service.dry_run(strategy_id)
+
+    @mcp.tool()
+    def promote_strategy(strategy_id: str) -> dict[str, Any]:
+        """Promote a runnable generated strategy."""
+        return service.promote(strategy_id)

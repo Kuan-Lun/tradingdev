@@ -17,7 +17,6 @@ from tradingdev.app.run_lineage import (
     load_config_payload,
     resolve_strategy_source,
 )
-from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.shared.utils.cache import cache_dir, compute_cache_key
 
@@ -30,12 +29,10 @@ class ArtifactService:
         *,
         workspace: WorkspacePaths | None = None,
         store: SQLiteStore | None = None,
-        strategy_service: StrategyService | None = None,
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._workspace.ensure()
         self._store = store or get_sqlite_store(self._workspace)
-        self._strategy_service = strategy_service or StrategyService(self._workspace)
 
     def list_artifacts(self, run_id: str | None = None) -> list[dict[str, Any]]:
         """List artifact metadata."""
@@ -149,7 +146,3 @@ class ArtifactService:
             },
         )
         return cache_path
-
-    def promote_strategy(self, strategy_id: str) -> dict[str, Any]:
-        """Promote a runnable generated strategy artifact."""
-        return self._strategy_service.promote(strategy_id)
