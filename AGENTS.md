@@ -39,8 +39,12 @@
 
 ## 環境與品質工具
 
-- 使用 repository 的虛擬環境；開發環境由 `uv sync --all-extras` 建立。
+- 使用 repository 的虛擬環境；開發環境由 `uv sync --locked --all-extras` 建立。
   Python 命令使用 `uv run python`，共用 scripts 使用同一個 `.venv` interpreter。
+- `uv.lock` 納入 Git；跨平台套件差異以依賴條件與實際平台測試處理。
+  `scripts/rebuild-env.sh` 先檢查 lock，再重建本 repository 的 `.venv` 並安裝
+  鎖定版本，不刪除 lock 或清空共用 uv 快取。更新依賴須明確更新 lock、檢查
+  差異並測試，不以重建環境隱式升級套件。
 - Ruff lint、Ruff formatter 與 strict Mypy 的唯一規則來源是 `pyproject.toml`。
   IDE 與 CLI 同步；生成策略使用同一份政策，wheel 收錄該設定。
 - 不使用 Black、獨立 `mypy.ini` 或另一份較寬鬆的生成策略規則。
@@ -49,8 +53,8 @@
 - `scripts/check-fast.sh` 執行唯讀 Ruff、格式、strict Mypy 與 Markdown 檢查。
   Markdown 使用專案 PyMarkdown；中文敘述與表格不套用 ASCII 行寬限制。
 - 不依賴系統全域安裝的品質工具，不使用代理專屬 Stop hooks 重複執行檢查。
-- Python 版本、依賴與 project version 以 `pyproject.toml` 為準；不要移植其他
-  repository 的版本、lockfile 或 dependency audit 政策。
+- Python 版本、依賴與 project version 以 `pyproject.toml` 為準；不要直接移植
+  其他 repository 的版本或 dependency audit 政策。
 
 ## 測試與清理
 

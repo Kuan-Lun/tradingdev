@@ -26,7 +26,9 @@ def main() -> None:
             importlib.metadata.distribution("streamlit")
             importlib.metadata.distribution("plotly")
         except importlib.metadata.PackageNotFoundError:
-            parser.error("Run uv sync --all-extras before checking dashboard types.")
+            parser.error(
+                "Run uv sync --locked --all-extras before checking dashboard types."
+            )
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     markdown = sorted(
         str(path.relative_to(ROOT))

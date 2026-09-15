@@ -9,7 +9,7 @@ TradingDev 是 **MCP-first quantitative strategy development server**。主要�
 ## 快速開始
 
 ```bash
-uv sync
+uv sync --locked
 uv run python -c "import tradingdev; print('OK')"
 uv run pytest
 ```
@@ -121,7 +121,7 @@ The dashboard reads completed MCP runs through `RunService` and
 `dashboard` extra rather than the base install:
 
 ```bash
-uv sync --extra dashboard
+uv sync --locked --extra dashboard
 uv run streamlit run src/tradingdev/adapters/dashboard/app.py -- --run-id <run_id>
 ```
 
@@ -130,12 +130,28 @@ If `--run-id` is omitted, the sidebar lists runs from `workspace/tradingdev.sqli
 ## 開發檢查
 
 ```bash
-uv sync --all-extras
+uv sync --locked --all-extras
 ./scripts/install-git-hooks.sh
 ./scripts/format.sh
 ./scripts/check-fast.sh
 uv run --all-extras pytest
 ```
+
+`uv.lock` 納入 Git，記錄各平台依賴條件與鎖定版本；重建環境時使用這份檔案。
+若 `.venv` 損壞或需要重新安裝開發環境，在 macOS／Linux 的 Bash 執行：
+
+```bash
+./scripts/rebuild-env.sh
+```
+
+腳本先檢查 lockfile 是否存在且符合 `pyproject.toml`，通過才清除並重建本
+repository 的 `.venv`，使用 Python 3.13 安裝鎖定的 runtime、dev 與 dashboard
+依賴。它保留 lockfile、workspace 與共用 uv 快取；安裝若中斷，可重新執行。
+缺少或過時的 lockfile 會在重建前失敗。修改依賴時，另外執行 `uv lock`，
+檢查差異並提交 `pyproject.toml` 與 `uv.lock`；升級版本可明確使用
+`uv lock --upgrade-package <package>`，完成後同步環境並執行相關測試。
+跨平台 lockfile 不代表所有套件與工具都已通過 Windows 測試；目前重建與 Git
+檢查腳本使用 Bash／POSIX 路徑，尚未提供原生 Windows 執行保證。
 
 開發政策見 [AGENTS.md](AGENTS.md)。在 task branch 完成一個可驗證階段後，
 以 `scripts/git-flow-commit.sh "type: message" [files...]` 提交；全部完成後，
