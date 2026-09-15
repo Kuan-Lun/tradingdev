@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from tradingdev.domain.backtest.schemas import ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
+from tradingdev.shared.paths import resolve_workspace_root
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -40,14 +41,14 @@ class StrategyLoader:
         workspace_root: Path | None = None,
         catalog: BundledStrategyCatalog | None = None,
     ) -> None:
-        self._workspace_root = workspace_root or Path("workspace").resolve()
+        self._workspace_root = resolve_workspace_root(workspace_root)
         self._generated_root = self._workspace_root / "generated_strategies"
         self._catalog = catalog or BundledStrategyCatalog()
 
     def create_from_config(
         self,
         raw_config: dict[str, Any],
-        engine: BaseBacktestEngine,
+        engine: BaseBacktestEngine | None,
         parallel_config: ParallelConfig | None = None,
     ) -> BaseStrategy:
         """Build a strategy instance from a parsed YAML configuration."""
@@ -128,7 +129,7 @@ class StrategyLoader:
     def _create_bundled(
         self,
         strategy_cfg: dict[str, Any],
-        engine: BaseBacktestEngine,
+        engine: BaseBacktestEngine | None,
         parallel_config: ParallelConfig | None,
     ) -> BaseStrategy:
         cls = self.load_class(strategy_cfg)
@@ -198,23 +199,27 @@ class StrategyLoader:
     def _create_generated(
         self,
         strategy_cfg: dict[str, Any],
-        engine: BaseBacktestEngine,
+        engine: BaseBacktestEngine | None,
     ) -> BaseStrategy:
-        class_name = self._required_strategy_string(strategy_cfg, "class_name")
-        source_value = self._required_strategy_string(strategy_cfg, "source_path")
-
-        source_path = self._resolve_generated_source(Path(str(source_value)))
-        module = self._load_module(source_path)
-        cls = getattr(module, class_name, None)
-        if cls is None:
-            msg = f"Class {class_name!r} not found in {source_path}"
+        """Apply the same YAML constructor contract in checks and real runs."""
+        cls = self.load_class(strategy_cfg)
+        params = strategy_cfg.get("parameters", {})
+        if not isinstance(params, dict):
+            msg = "strategy.parameters must be a mapping"
+            raise ValueError(msg)
+        if "backtest_engine" in params:
+            msg = "strategy.parameters cannot override the injected backtest_engine"
             raise ValueError(msg)
 
-        instance = cls(backtest_engine=engine)
-        if not isinstance(instance, BaseStrategy):
-            msg = f"{class_name} must inherit from BaseStrategy"
-            raise TypeError(msg)
-        return instance
+        kwargs = dict(params)
+        signature = inspect.signature(cls)
+        if "backtest_engine" in signature.parameters:
+            kwargs["backtest_engine"] = engine
+        # Binding rejects misspelled parameters and missing required values
+        # before calling the constructor, with identical diagnostics at every
+        # execution depth. Constructors accepting **kwargs retain that behavior.
+        signature.bind(**kwargs)
+        return cls(**kwargs)
 
     def _required_strategy_string(
         self,
@@ -250,5 +255,9 @@ class StrategyLoader:
             msg = f"Cannot load module from {source_path}"
             raise ImportError(msg)
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        # LLM repair loops can rewrite same-size source within one timestamp
+        # unit. Read and compile the current source directly so a stale .pyc
+        # never changes which revision gets validated or executed.
+        code = compile(source_path.read_bytes(), str(source_path), "exec")
+        exec(code, module.__dict__)  # noqa: S102
         return module

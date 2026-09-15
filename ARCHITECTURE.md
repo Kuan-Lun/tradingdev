@@ -4,6 +4,11 @@ TradingDev 的主要產品邊界是 MCP tools。MCP、CLI 與 dashboard 不各�
 而是呼叫 `tradingdev.app` services；domain 層保存交易、資料、策略與模型邏輯；
 adapters 層負責 FastMCP、CLI、dashboard、SQLite、filesystem 與 subprocess。
 
+`mcp.server.create_server(workspace)` 統一組裝共用 workspace 與 SQLite store
+的 services。匯入 server 模組不建立 runtime 檔案；啟動時可使用 `--workspace`
+或 `TRADINGDEV_WORKSPACE`。背景 worker 與品質檢查使用 server 的 Python
+interpreter；worker 明確繼承解析後的工作區與資料目錄。
+
 ## Module Layout
 
 ```text

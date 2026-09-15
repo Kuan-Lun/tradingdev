@@ -4,23 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from tradingdev.shared.paths import resolve_workspace_root
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class WorkspacePaths:
     """Resolve and create TradingDev runtime workspace paths."""
 
     def __init__(self, root: Path | None = None) -> None:
-        configured = os.environ.get("TRADINGDEV_WORKSPACE")
-        if root is not None:
-            self.root = root.expanduser().resolve()
-        elif configured:
-            self.root = Path(configured).expanduser().resolve()
-        else:
-            self.root = Path("workspace").resolve()
+        self.root = resolve_workspace_root(root)
 
     @property
     def generated_strategies(self) -> Path:

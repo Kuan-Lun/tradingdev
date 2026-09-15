@@ -66,6 +66,10 @@ packages = ["src/tradingdev"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: integration tests, including real MCP subprocess workflows",
+    "live_llm: end-to-end tests using an authenticated LLM client",
+]
 
 # Dev tools: [dependency-groups].dev is the canonical uv-native source.
 # No [project.optional-dependencies].dev is maintained to avoid duplication.

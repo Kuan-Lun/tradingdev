@@ -47,11 +47,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import pandas as pd
-
 from tradingdev.domain.strategies.base import BaseStrategy
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 
 

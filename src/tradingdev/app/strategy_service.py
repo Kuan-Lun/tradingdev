@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -289,7 +290,9 @@ class StrategyService:
         signal_analysis: dict[str, Any] = {}
         if not self._has_error(diagnostics):
             diagnostics.extend(self._validator.static_policy_scan(source_path))
+        if not self._has_error(diagnostics):
             diagnostics.extend(self._quality_gate_diagnostics(source_path))
+        if not self._has_error(diagnostics):
             contract = self._contract_checker.check(
                 metadata,
                 fixture_rows=VALIDATE_FIXTURE_ROWS,
@@ -500,8 +503,36 @@ class StrategyService:
     def _quality_gate_diagnostics(self, source_path: Path) -> list[StrategyDiagnostic]:
         diagnostics: list[StrategyDiagnostic] = []
         for command, label, timeout in (
-            (["uv", "run", "ruff", "check", str(source_path)], "ruff", 30),
-            (["uv", "run", "mypy", str(source_path)], "mypy", 60),
+            (
+                [
+                    sys.executable,
+                    "-m",
+                    "ruff",
+                    "check",
+                    "--isolated",
+                    "--select",
+                    "E,F,W,I,N,UP,B,A,C4,SIM,TC",
+                    "--target-version",
+                    "py312",
+                    "--config",
+                    'lint.isort.known-first-party=["tradingdev"]',
+                    str(source_path),
+                ],
+                "ruff",
+                30,
+            ),
+            (
+                [
+                    sys.executable,
+                    "-m",
+                    "mypy",
+                    "--config-file",
+                    str(Path(__file__).with_name("strategy_mypy.ini")),
+                    str(source_path),
+                ],
+                "mypy",
+                60,
+            ),
         ):
             try:
                 result = subprocess.run(
@@ -518,7 +549,8 @@ class StrategyService:
                         phase="quality_gate",
                         message=f"{label} quality gate could not start: {exc}",
                         fix=(
-                            "Install uv and project dependencies before running "
+                            "Install ruff and mypy in the server's Python "
+                            "environment before running "
                             "validate_strategy."
                         ),
                     )

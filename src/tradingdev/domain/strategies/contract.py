@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,13 +42,24 @@ class SignalContractChecker:
         """Return contract diagnostics and signal analysis for a strategy."""
         diagnostics: list[StrategyDiagnostic] = []
         try:
-            strategy_cfg = {
-                "id": metadata.strategy_id,
-                "source_path": metadata.source_path,
-                "class_name": metadata.class_name,
-            }
-            cls = self._loader.load_class(strategy_cfg)
-            strategy = self._instantiate(cls, metadata)
+            config_path = Path(metadata.config_path)
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                msg = "YAML config must be a mapping"
+                raise ValueError(msg)
+            strategy_cfg = raw.get("strategy")
+            if not isinstance(strategy_cfg, dict):
+                msg = "strategy config must be a mapping"
+                raise ValueError(msg)
+            for field, expected in (
+                ("id", metadata.strategy_id),
+                ("class_name", metadata.class_name),
+                ("source_path", metadata.source_path),
+            ):
+                if strategy_cfg.get(field) != expected:
+                    msg = f"strategy.{field} does not match saved strategy metadata"
+                    raise ValueError(msg)
+            strategy = self._loader.create_from_config(raw, engine=None)
             if not isinstance(strategy, BaseStrategy):
                 diagnostics.append(
                     _contract_diagnostic(
@@ -114,31 +124,6 @@ class SignalContractChecker:
                 )
             )
             return {"diagnostics": diagnostics}
-
-    def _instantiate(
-        self,
-        cls: type[BaseStrategy],
-        metadata: StrategyMetadata,
-    ) -> BaseStrategy:
-        config_path = Path(metadata.config_path)
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        strategy_cfg = raw.get("strategy", {}) if isinstance(raw, dict) else {}
-        params = (
-            strategy_cfg.get("parameters", {}) if isinstance(strategy_cfg, dict) else {}
-        )
-        params = params if isinstance(params, dict) else {}
-
-        signature = inspect.signature(cls)
-        kwargs: dict[str, Any] = {}
-        for name, parameter in signature.parameters.items():
-            if name == "backtest_engine":
-                kwargs[name] = None
-            elif name in params:
-                kwargs[name] = params[name]
-            elif parameter.default is inspect.Parameter.empty:
-                msg = f"Constructor parameter {name!r} has no default or YAML value"
-                raise TypeError(msg)
-        return cls(**kwargs)
 
 
 def _contract_diagnostic(*, code: str, message: str, fix: str) -> StrategyDiagnostic:
