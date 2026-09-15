@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,15 +16,12 @@ from scripts.pr_context import (  # noqa: E402 - standalone entry point
     get_pull_request,
     repository_for_remote,
 )
+from scripts.process_guard import run_captured  # noqa: E402
 
 
 def _git(*arguments: str, allow_missing: bool = False) -> str:
-    result = subprocess.run(
-        ["git", *arguments],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=120,
+    result = run_captured(
+        ["git", *arguments], cwd=Path.cwd(), env=dict(os.environ), timeout=120
     )
     if result.returncode and not (allow_missing and result.returncode == 1):
         diagnostic = "\n".join(

@@ -74,7 +74,9 @@
 ## 工作樹與分階段提交
 
 - 唯讀分析不建立 branch；修改前用 `scripts/detect-primary-branch.sh` 判定
-  主線，建立專用 task branch。主線透過 GitHub PR 合併，不可直接 commit、push 或 rebase。
+  主線。從主線開始工作時建立 task branch；已在適合目前任務的開發／PR
+  分支時沿用，不另拆分支。主線透過 GitHub PR 合併，不可直接 commit、
+  push 或 rebase。
 - 不得 stash、reset、clean、覆寫或混入既有使用者修改。若工作樹包含與任務
   無關的修改，使用獨立 worktree，不擅自搬移那些修改。
 - 開始實作時辨識可獨立檢查的開發階段；每完成一個有意義的階段，執行
@@ -114,7 +116,8 @@
   修正文件後正常分階段提交，再重新檢查。
 - 證據超過 reviewer 的明確容量限制時直接失敗，不截斷後假裝完整審查。
   LLM 語意審查可能漏判，不能當成文件正確性的形式證明。
-- 檢查結束再讀 PR 核對版本，輸出 PR URL、base／head SHA 與候選 tree。
+- 檢查結束再讀 PR 身分／狀態與實際遠端 refs 核對版本，不以 PR API 的
+  base SHA 代表即時主線。輸出 PR URL、base／head SHA 與候選 tree。
   審閱者在 GitHub 網頁合併前，須確認目前 base／head 仍相同；任一改變
   都重新執行。純本機結果只代表當次版本，不能鎖住網站或消除檢查後競態。
   本專案不要求雲端 Codex CI 或上傳憑證；目前採審閱者遵守流程。

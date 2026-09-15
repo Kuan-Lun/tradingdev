@@ -7,12 +7,14 @@ import signal
 import subprocess
 import time
 from contextlib import suppress
+from tempfile import TemporaryFile
 from typing import TYPE_CHECKING
 
 import psutil
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import TextIO
 
 _GRACE_SECONDS = 5.0
 _STOP_SECONDS = 3.0
@@ -81,15 +83,22 @@ def _cleanup(leader: psutil.Process | None, known: set[psutil.Process]) -> None:
         )
 
 
-def run_checked(
-    command: list[str], *, cwd: Path, env: dict[str, str], timeout: float
-) -> None:
-    """Run a check, allowing teardown on interruption before stopping descendants."""
+def _run(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: float,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
     if not _observe({psutil.Process()}):
         raise RuntimeError(
             "Process inspection access is required before running checks"
         )
-    process = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
+    process = subprocess.Popen(
+        command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True
+    )
     leader: psutil.Process | None = None
     known: set[psutil.Process] = set()
     failure: BaseException | None = None
@@ -128,5 +137,44 @@ def run_checked(
                 process.wait()
     if failure is not None:
         raise failure
-    if process.returncode:
-        raise subprocess.CalledProcessError(process.returncode, command)
+    assert process.returncode is not None
+    return process.returncode
+
+
+def run_checked(
+    command: list[str], *, cwd: Path, env: dict[str, str], timeout: float
+) -> None:
+    """Run a check, allowing teardown on interruption before stopping descendants."""
+    returncode = _run(command, cwd=cwd, env=env, timeout=timeout)
+    if returncode:
+        raise subprocess.CalledProcessError(returncode, command)
+
+
+def run_captured(
+    command: list[str], *, cwd: Path, env: dict[str, str], timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Capture output without pipe backpressure, with the same descendant cleanup."""
+    with (
+        TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stdout,
+        TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr,
+    ):
+        try:
+            returncode = _run(
+                command,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        except subprocess.TimeoutExpired as error:
+            stdout.seek(0)
+            stderr.seek(0)
+            error.output = stdout.read().encode("utf-8")
+            error.stderr = stderr.read().encode("utf-8")
+            raise
+        stdout.seek(0)
+        stderr.seek(0)
+        return subprocess.CompletedProcess(
+            command, returncode, stdout.read(), stderr.read()
+        )

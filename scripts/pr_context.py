@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
+
+from scripts.process_guard import run_captured
 
 _SLUG = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+")
 _SHA = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})")
@@ -32,9 +36,7 @@ class PullRequest:
 
 def _read(command: list[str], description: str) -> str:
     try:
-        result = subprocess.run(
-            command, text=True, capture_output=True, check=False, timeout=30
-        )
+        result = run_captured(command, cwd=Path.cwd(), env=dict(os.environ), timeout=30)
     except FileNotFoundError as error:
         raise RuntimeError(f"{description}: {command[0]} is not installed.") from error
     except subprocess.TimeoutExpired as error:

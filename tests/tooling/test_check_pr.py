@@ -164,15 +164,10 @@ def test_conflicting_candidate_fails_before_verification_and_cleans_up(
     _assert_cleaned(scenario)
 
 
-@pytest.mark.parametrize("field", ["base_sha", "head_sha"])
-def test_fetched_sha_must_match_api_before_running_checks(
-    scenario: Scenario, monkeypatch: MonkeyPatch, field: str
+def test_fetched_head_must_match_api_before_running_checks(
+    scenario: Scenario, monkeypatch: MonkeyPatch
 ) -> None:
-    request = (
-        replace(scenario.request, base_sha="a" * 40)
-        if field == "base_sha"
-        else replace(scenario.request, head_sha="a" * 40)
-    )
+    request = replace(scenario.request, head_sha="a" * 40)
     monkeypatch.setattr(check_pr, "get_pull_request", lambda *_: request)
     monkeypatch.setattr(
         check_pr, "verify_candidate", lambda _: pytest.fail("mismatch reached checks")
@@ -182,7 +177,7 @@ def test_fetched_sha_must_match_api_before_running_checks(
     _assert_cleaned(scenario)
 
 
-@pytest.mark.parametrize("field", ["base_sha", "head_sha", "state"])
+@pytest.mark.parametrize("field", ["head_sha", "state", "base_ref"])
 def test_pr_movement_during_checks_invalidates_result(
     scenario: Scenario,
     monkeypatch: MonkeyPatch,
@@ -191,7 +186,7 @@ def test_pr_movement_during_checks_invalidates_result(
 ) -> None:
     changed = {
         "state": replace(scenario.request, state="closed"),
-        "base_sha": replace(scenario.request, base_sha="a" * 40),
+        "base_ref": replace(scenario.request, base_ref="release"),
         "head_sha": replace(scenario.request, head_sha="a" * 40),
     }[field]
     responses = iter((scenario.request, changed))
@@ -354,3 +349,118 @@ def test_fetch_failure_removes_partial_repository_without_touching_source(
         check_pr.check_pr(7)
     assert _source_state(scenario.source) == before
     _assert_cleaned(scenario)
+
+
+@pytest.mark.parametrize("lag", ["initial", "final", "both"])
+def test_api_base_lag_does_not_override_live_remote_base(
+    scenario: Scenario, monkeypatch: MonkeyPatch, lag: str, capsys: CaptureFixture[str]
+) -> None:
+    first = (
+        replace(scenario.request, base_sha="a" * 40)
+        if lag in ("initial", "both")
+        else scenario.request
+    )
+    final = (
+        replace(scenario.request, base_sha="b" * 40)
+        if lag in ("final", "both")
+        else scenario.request
+    )
+    responses = iter((first, final))
+    monkeypatch.setattr(check_pr, "get_pull_request", lambda *_: next(responses))
+    checked: list[git_gate.MergeCandidate] = []
+    monkeypatch.setattr(check_pr, "verify_candidate", checked.append)
+    remote_calls: list[str] = []
+
+    def source(remote: str) -> str:
+        remote_calls.append(remote)
+        return str(scenario.source)
+
+    monkeypatch.setattr(check_pr, "remote_url", source)
+    check_pr.check_pr(7)
+    assert checked[0].base == scenario.request.base_sha
+    assert remote_calls == ["origin"]
+    assert "PR checks passed" in capsys.readouterr().out
+    _assert_cleaned(scenario)
+
+
+@pytest.mark.parametrize("ref", ["refs/heads/main", "refs/pull/7/head"])
+@pytest.mark.parametrize("change", ["move", "delete"])
+def test_actual_remote_ref_movement_invalidates_unchanged_api_response(
+    scenario: Scenario,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    ref: str,
+    change: str,
+) -> None:
+    def mutate(_: git_gate.MergeCandidate) -> None:
+        if change == "delete":
+            _git(scenario.source, "update-ref", "-d", ref)
+        else:
+            replacement = (
+                scenario.request.head_sha
+                if ref == "refs/heads/main"
+                else scenario.request.base_sha
+            )
+            _git(scenario.source, "update-ref", ref, replacement)
+
+    monkeypatch.setattr(check_pr, "verify_candidate", mutate)
+    with pytest.raises(RuntimeError, match="changed during checks|disappeared"):
+        check_pr.check_pr(7)
+    assert "PR checks passed" not in capsys.readouterr().out
+    _assert_cleaned(scenario)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "",
+        "a" * 40 + "\trefs/heads/main\n",
+        "not-a-sha\trefs/heads/main\n",
+        "a" * 40 + "\trefs/heads/main\n" + "b" * 40 + "\trefs/heads/main\n",
+        "a" * 40 + "\trefs/unexpected/main\n",
+        "a" * 40 + " refs/heads/main\n",
+    ],
+)
+def test_advertised_ref_response_must_contain_two_valid_unique_refs(
+    scenario: Scenario, monkeypatch: MonkeyPatch, output: str
+) -> None:
+    def captured(
+        command: list[str], *, cwd: Path, env: dict[str, str], timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        assert command == [
+            "git",
+            "ls-remote",
+            "--refs",
+            "--",
+            str(scenario.source),
+            "refs/heads/main",
+            "refs/pull/7/head",
+        ]
+        assert cwd.resolve() == scenario.source.resolve()
+        assert timeout == 120
+        assert "GIT_DIR" not in env
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(check_pr, "run_captured", captured)
+    with pytest.raises(RuntimeError, match="invalid Git data|disappeared"):
+        check_pr._remote_refs(
+            str(scenario.source), "refs/heads/main", "refs/pull/7/head"
+        )
+
+
+def test_remote_ref_verification_failure_hides_credential_bearing_command(
+    scenario: Scenario, monkeypatch: MonkeyPatch
+) -> None:
+    def captured(
+        command: list[str], *, cwd: Path, env: dict[str, str], timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, timeout, stderr="private-token")
+
+    monkeypatch.setattr(check_pr, "run_captured", captured)
+    with pytest.raises(RuntimeError, match="Remote ref verification failed") as failure:
+        check_pr._remote_refs(
+            "https://private-token@github.com/owner/project",
+            "refs/heads/main",
+            "refs/pull/7/head",
+        )
+    assert "private-token" not in str(failure.value)

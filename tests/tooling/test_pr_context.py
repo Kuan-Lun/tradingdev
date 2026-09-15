@@ -237,7 +237,7 @@ def test_command_timeout_is_bounded_and_reported(monkeypatch: MonkeyPatch) -> No
         assert kwargs["timeout"] == 30
         raise subprocess.TimeoutExpired(command, 30, stderr="private-token")
 
-    monkeypatch.setattr(subprocess, "run", timeout)
+    monkeypatch.setattr(pr_context, "run_captured", timeout)
     with pytest.raises(RuntimeError, match="30 seconds") as failure:
         pr_context.repository_for_remote()
     assert "private-token" not in str(failure.value)

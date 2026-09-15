@@ -19,7 +19,10 @@ if TYPE_CHECKING:
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.process_guard import run_checked  # noqa: E402 - standalone entry point
+from scripts.process_guard import (  # noqa: E402 - standalone entry point
+    run_captured,
+    run_checked,
+)
 
 
 def git(*arguments: str) -> str:
@@ -156,7 +159,7 @@ def merge_candidate(
         environment = execution_environment(repository)
 
         def candidate_git(*args: str) -> str:
-            result = subprocess.run(
+            result = run_captured(
                 [
                     "git",
                     "-C",
@@ -165,9 +168,16 @@ def merge_candidate(
                     f"core.hooksPath={os.devnull}",
                     *args,
                 ],
-                env=environment,
-                capture_output=True,
-                text=True,
+                # Fetch needs authentication helpers; merge uses project rules.
+                env=environment
+                if args[0] == "fetch"
+                else {
+                    **environment,
+                    "GIT_CONFIG_GLOBAL": os.devnull,
+                    "GIT_CONFIG_SYSTEM": os.devnull,
+                    "GIT_ATTR_NOSYSTEM": "1",
+                },
+                cwd=repository,
                 timeout=120,
             )
             if result.returncode:
@@ -185,6 +195,8 @@ def merge_candidate(
             "fetch",
             "--quiet",
             "--no-tags",
+            "--no-prune",
+            "--no-recurse-submodules",
             "--no-write-fetch-head",
             "--",
             source,

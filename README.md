@@ -182,7 +182,8 @@ Commit hook 驗證暫存內容的獨立 snapshot，包含 task branch 合併與�
 ### 審閱者在本機檢查 PR
 
 負責決定合併的人，在已提交且乾淨的 checkout 明確執行下列命令。
-需要本機 `gh` 已登入且能讀取 repository，以及已登入的 Codex CLI、連線
+需要 Git 支援 `merge-tree --write-tree`、本機 `gh` 已登入且能讀取 repository，
+以及已登入的 Codex CLI、連線
 及本專案完整開發環境；不需要雲端 Codex CI 或把憑證交給別人。
 
 ```bash
@@ -201,12 +202,15 @@ Commit hook 驗證暫存內容的獨立 snapshot，包含 task branch 合併與�
 與測試產物在結束時清理；快照執行上限 900 秒，文件審查上限 180 秒，
 程序清理時間另計。Codex 語意審查仍可能漏判。
 
-結束時再次核對 PR，輸出 URL、base／head SHA、候選 tree 與結果，供審閱者
+結束時再次核對 PR 身分／狀態與實際遠端 refs；PR API 的 base SHA 可能
+落後主線，因此不作為即時版本依據。輸出 URL、base／head SHA、候選 tree
+與結果，供審閱者
 自行貼到 PR。腳本不發送評論或合併。網頁合併前必須核對目前 base／head；
 任一改變便重新檢查。可在自己的終端機讀取目前版本：
 
 ```bash
-gh pr view 123 --json url,state,baseRefOid,headRefOid
+# main、123 與 origin 請使用該 PR 的目標主線、編號及 remote。
+git ls-remote origin refs/heads/main refs/pull/123/head
 ```
 
 純本機檢查無法知道使用者何時按下 GitHub 合併，也不能阻止核對後的版本
