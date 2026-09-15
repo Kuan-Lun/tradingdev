@@ -186,6 +186,16 @@ Commit hook 驗證暫存內容的獨立 snapshot，包含 task branch 合併與�
 以及已登入的 Codex CLI、連線
 及本專案完整開發環境；不需要雲端 Codex CI 或把憑證交給別人。
 
+PR 檢查與清理命令目前只支援 `github.com`，`gh` 必須登入該 host。
+Remote 可使用 `https://github.com/OWNER/REPO.git`、
+`git@github.com:OWNER/REPO.git` 或 `ssh://git@github.com/OWNER/REPO.git`；
+僅接受預設連接埠（HTTPS 443／SSH 22），不支援 Enterprise host、SSH alias、
+本機路徑或含登入憑證的 HTTPS URL。
+
+待檢查的 PR 必須仍開啟、尚未合併、來源 repository 可辨識，且目標是本機
+偵測出的主線。`--remote` 只指定 PR 目標 repository，不會更改前述主線
+偵測規則；需要其他主線名稱時設定 `git config tradingdev.primaryBranch <branch>`。
+
 ```bash
 # 將 123 換成待審查的 PR 編號；可加 --remote upstream 指定目標 remote。
 ./scripts/check-pr.sh 123
@@ -233,7 +243,8 @@ uv run --no-sync python scripts/git_gate.py full --base main
 ```
 
 可加 `--remote upstream` 指定 PR 目標 repository。腳本只 fetch 目標主線，
-不執行 pull。它核對 PR 已合併、本機 upstream repository／分支與 PR
+不執行 pull。PR 也必須以本機偵測出的主線為目標。它核對 PR 已合併、
+本機 upstream repository／分支與 PR
 來源相符、本機 tip 等於 PR head，以及 PR head／merge commit 都已在
 取得的主線歷史中，才原子刪除指定的本機分支 ref。檢查後若分支增加提交，
 刪除會失敗。它不依靠 commit message 的分支名稱，也不呼叫 LLM。
