@@ -155,35 +155,70 @@ workspace 與共用 uv 快取；安裝若中斷，可重新執行。
 檢查腳本使用 Bash／POSIX 路徑，尚未提供原生 Windows 執行保證。
 
 開發政策見 [AGENTS.md](AGENTS.md)。在 task branch 完成一個可驗證階段後，
-以 `scripts/git-flow-commit.sh "type: message" [files...]` 提交；全部完成後，
-用 `scripts/git-flow-merge.sh` 合併回主線。
+以 `scripts/git-flow-commit.sh "type: message" [files...]` 提交。一般 push 不跑
+完整測試或呼叫模型；PR 評論、審閱與合併在 GitHub 網頁進行。工作完成時
+保留分支，不自動在本機合併主線；舊 `scripts/git-flow-merge.sh` 已移除。
 
 由舊版遷移時，請從 `.claude/settings.local.json` 等客戶端設定移除指向
 `scripts/hooks/finalize-python.sh`、`scripts/hooks/finalize-markdown.sh` 或
 `.Codex/hooks/` 下對應 wrapper 的 Stop hook 註冊；這些腳本已移除。
-Git hook 安裝器不修改客戶端設定。手動格式化與快速檢查改用上面的
-`scripts/format.sh`、`scripts/check-fast.sh`，提交與合併檢查由 Git hooks 執行。
+Git hook 安裝器不修改客戶端設定。手動格式化與快速檢查使用上面的
+`scripts/format.sh`、`scripts/check-fast.sh`。
 
-Hook 安裝器也會調整本 repository 的 Git 設定：主線 merge 使用 `--no-ff`，
-禁止主線 rebase，並設定 `pull.rebase=false`、`pull.ff=only`。因此後續
-`git pull` 遇到分歧會停止，不會自動 merge 或 rebase；需要明確處理分歧後再整合。
-安裝器遇到其他自訂 hooks 設定會停止，避免覆蓋它們。
+重新執行 `scripts/install-git-hooks.sh` 可遷移既有設定：僅當本機主線
+`mergeOptions` 唯一值為舊版 `--no-ff` 時移除它，保留其他自訂值；設定
+主線 `rebase=false`、`pull.ff=only`，保留開發者的 `pull.rebase`。
+一般 pull 遇到分歧會停止；可明確 merge 主線到 task branch，不強制對共用
+分支 rebase。安裝器遇到其他自訂 hooks 設定會停止，避免覆蓋它們。
+主線依 `tradingdev.primaryBranch`、`origin/HEAD`、本機或 origin 唯一的
+`main`／`master` 依序辨識；自訂名稱可用
+`git config tradingdev.primaryBranch <branch>` 指定，不要求存在本機主線。
 
-Merge commit 只能建立在主線；把已分歧的主線 merge 進 task branch 也會被
-hook 拒絕。若需要同步，可在本機 task branch 執行 `git rebase <primary>`。
-整合腳本只要求兩個分支有共同祖先，不要求 task branch 先包含主線最新提交。
-主線依 `tradingdev.primaryBranch`、`origin/HEAD`、唯一的 `main`／`master`
-依序辨識；自訂名稱可用 `git config tradingdev.primaryBranch <branch>` 指定。
+Commit hook 驗證暫存內容的獨立 snapshot，包含 task branch 合併與解決衝突
+後的提交。主線直接 commit、建立 merge commit、rebase、push（含刪除）
+會被拒絕。Git hooks 無法攔截 GitHub 網頁合併，也不攔截本機 fast-forward
+參照更新；主線用來追蹤已在 GitHub 合併的結果。
 
-Commit hook 只做暫存內容的快速檢查。合併時會自動用 Codex 檢查程式與既有
-文件是否一致，再跑完整 pytest；需要已登入的 Codex CLI 及連線。審查只讀
-Git 內容，不會修改文件；過時文件、錯誤或逾時都會阻止合併，保留 task branch。
-Ruff／Mypy 檢查需要 dashboard extra，以免缺少套件型別掩蓋問題。
+### 審閱者在本機檢查 PR
 
-檢查使用獨立臨時 snapshot，結束即刪除。完整檢查通過紀錄保存在 Git metadata，
-相同內容與檢查環境可重用；主線 push 也必須有通過紀錄。
-可在已提交且乾淨的分支執行 `uv run --no-sync python scripts/git_gate.py full`
-預先檢查。Codex 文件審查是語意輔助，仍可能漏判。
+負責決定合併的人，在已提交且乾淨的 checkout 明確執行下列命令。
+需要本機 `gh` 已登入且能讀取 repository，以及已登入的 Codex CLI、連線
+及本專案完整開發環境；不需要雲端 Codex CI 或把憑證交給別人。
+
+```bash
+# 將 123 換成待審查的 PR 編號；可加 --remote upstream 指定目標 remote。
+./scripts/check-pr.sh 123
+```
+
+腳本讀取指定 PR，在獨立臨時 repository fetch 當前主線與 PR head，計算
+合併候選內容。版本不一致或合併衝突會立即失敗；它不切換目前分支。
+接著執行 Codex 程式／文件一致性審查及 `scripts/check-full.sh`，包含快速
+檢查和完整 pytest（真實 Codex 經 MCP 撰寫策略的測試也在內）。Ruff／Mypy
+需要 dashboard extra，以免缺少套件型別掩蓋問題。
+
+文件審查只讀 Git 內容，不修改文件；過時文件、錯誤或逾時會令命令失敗。
+每次執行都重新檢查，不使用舊版完整檢查快取。臨時 repository、snapshot
+與測試產物在結束時清理；快照執行上限 900 秒，文件審查上限 180 秒，
+程序清理時間另計。Codex 語意審查仍可能漏判。
+
+結束時再次核對 PR，輸出 URL、base／head SHA、候選 tree 與結果，供審閱者
+自行貼到 PR。腳本不發送評論或合併。網頁合併前必須核對目前 base／head；
+任一改變便重新檢查。可在自己的終端機讀取目前版本：
+
+```bash
+gh pr view 123 --json url,state,baseRefOid,headRefOid
+```
+
+純本機檢查無法知道使用者何時按下 GitHub 合併，也不能阻止核對後的版本
+變更；目前靠審閱者遵守此流程，沒有遠端強制檢查門禁。
+
+尚未建立 PR 時，可檢查本機指定主線與目前提交的合併候選：
+
+```bash
+uv run --no-sync python scripts/git_gate.py full --base main
+```
+
+這不驗證遠端 PR；`--base` 必須明確指定，也可加 `--head <ref>`。
 
 ## 相關文件
 

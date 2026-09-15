@@ -17,8 +17,10 @@ if [[ -z "$existing" ]]; then
 fi
 primary="$(scripts/detect-primary-branch.sh)"
 git config --local core.hooksPath .githooks
-git config --local "branch.$primary.mergeOptions" --no-ff
+merge_options="$(git config --local --get-all "branch.$primary.mergeOptions" || true)"
+if [[ "$merge_options" == --no-ff ]]; then
+    git config --local --unset-all "branch.$primary.mergeOptions"
+fi
 git config --local "branch.$primary.rebase" false
-git config --local pull.rebase false
 git config --local pull.ff only
 printf 'Installed TradingDev hooks for %s.\n' "$primary"

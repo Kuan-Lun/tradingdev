@@ -74,7 +74,7 @@
 ## 工作樹與分階段提交
 
 - 唯讀分析不建立 branch；修改前用 `scripts/detect-primary-branch.sh` 判定
-  主線，建立專用 task branch。主線只接受 merge，不可直接 commit 或 rebase。
+  主線，建立專用 task branch。主線透過 GitHub PR 合併，不可直接 commit、push 或 rebase。
 - 不得 stash、reset、clean、覆寫或混入既有使用者修改。若工作樹包含與任務
   無關的修改，使用獨立 worktree，不擅自搬移那些修改。
 - 開始實作時辨識可獨立檢查的開發階段；每完成一個有意義的階段，執行
@@ -85,37 +85,50 @@
   此腳本只提交目前 task branch；不會立即合併或刪除分支。
 - 非 merge commit 使用 Conventional Commits；不相容變更標註 `!` 或
   `BREAKING CHANGE:`，並在對話交代具體影響。
-- Merge commit 只能建立於主線；task branch 若需同步主線，可 rebase 該
-  task branch。整合只要求共同祖先，不要求先包含主線最新提交。
-- 任務完成且工作樹乾淨後，使用 `scripts/git-flow-merge.sh` 整合。它以
-  `--no-ff` 合併至主線；失敗會 abort 並保留 task branch，成功才移除專用
-  worktree（若有）及以 `branch -d` 刪除已合併分支。
-- 授權的開發流程包含上述本機分階段 commit 與整合；push、遠端分支、tag、
-  publish、deploy 與 force 操作仍需使用者明確授權。不得用 `--no-verify`。
+- task branch 可以 merge 主線；共用分支不強迫 rebase 或改寫歷史。同步時
+  仍檢查待提交 snapshot。主線只用來追蹤 GitHub 已合併結果。
+- 任務完成後保留已提交的 task branch，交由 GitHub PR 評論、審阅與合併。
+  不在本機自動合併回主線，不以提交或工作結束推斷 PR 已可合併。
+- 授權的開發流程包含本機分階段 commit；push、建立 PR、發布評論、遠端
+  分支、tag、publish、deploy 與 force 操作仍需使用者明確授權。
+  不得用 `--no-verify` 繞過檢查。
 
-## Git hooks 與自動文件審查
+## Git hooks 與本機 PR 審查
 
 - 用 `scripts/install-git-hooks.sh` 安裝 repository 的 `.githooks`。
 - 每次 commit 只跑快速檢查與提交格式檢查。快速檢查驗證暫存內容的獨立
   snapshot，不能用尚未暫存的修正掩蓋待提交版本的錯誤。
-- 合併主線前，自動由 Codex 比對候選程式差異與既有架構／契約／操作文件，
-  然後執行 `scripts/check-full.sh`（快速檢查加完整 pytest，包含真實 Codex）。
+- 一般 task branch push 不跑完整 pytest 或呼叫模型。Hook 拒絕直接推送
+  或刪除主線；本機 hook 不能攔截 GitHub 網頁合併，也不能攔截不建立
+  commit 的本機 fast-forward。不得把 hook 描述為遠端強制門禁。
+- 準備決定合併的審閱者，明確執行 `scripts/check-pr.sh <PR編號>`。
+  不自動猜測開發完成時機。使用本機 GitHub CLI 讀取 PR，以及已登入的
+  Codex CLI；檢查本身不建立 PR、發送評論、push 或合併。
+- PR 檢查 fetch 主線與 PR head 至獨立臨時 Git repository，計算合併候選
+  tree；不切換或更新開發者的分支。衝突或讀取版本不一致直接失敗。
+- 先由 Codex 比對候選程式差異與既有架構／契約／操作文件，再執行
+  `scripts/check-full.sh`（快速檢查加完整 pytest，包含真實 Codex）。
+  每次明確執行都重新檢查，不重用舊版完整檢查 receipt。
 - 文件審查使用唯讀、無工具的 Codex 執行，僅傳入 Git 版本的程式與文件，
-  不修改 repository。發現過時文件、執行失敗、逾時或無效回覆皆阻止合併。
-  修正文件後正常提交，再重新合併；不在 hook 中偷偷修改或提交文件。
+  不修改 repository。過時文件、執行失敗、逾時或無效回覆皆令檢查失敗。
+  修正文件後正常分階段提交，再重新檢查。
 - 證據超過 reviewer 的明確容量限制時直接失敗，不截斷後假裝完整審查。
   LLM 語意審查可能漏判，不能當成文件正確性的形式證明。
-- 完整檢查驗證合併後的確切 Git tree。成功紀錄放在 Git metadata；相同
-  內容與檢查環境可重用，主線 push 也會查核紀錄。不得修改或偽造紀錄。
-- `scripts/git_gate.py full` 可手動驗證已提交且乾淨的 task branch。一次
-  snapshot 檢查執行逾時為 900 秒，文件審查為 180 秒，程序清理另計；
-  這不是整個開發任務時限。
-- 測試、審查或候選內容在檢查中改變時不得視為通過。Hook 不執行遠端發布。
+- 檢查結束再讀 PR 核對版本，輸出 PR URL、base／head SHA 與候選 tree。
+  審閱者在 GitHub 網頁合併前，須確認目前 base／head 仍相同；任一改變
+  都重新執行。純本機結果只代表當次版本，不能鎖住網站或消除檢查後競態。
+  本專案不要求雲端 Codex CI 或上傳憑證；目前採審閱者遵守流程。
+- 尚未建立 PR 時，可在乾淨且已提交的 checkout 執行
+  `uv run --no-sync python scripts/git_gate.py full --base <主線ref>`。
+  此命令只驗證本機指定 ref，不代表遠端 PR 已驗證。
+- 一次 snapshot 檢查逾時為 900 秒，文件審查為 180 秒，程序清理另計；
+  這不是整個開發任務時限。檢查結束清理臨時內容與啟動的程序。
+- 測試、審查或候選內容在檢查中改變時不得視為通過。不得修改或偽造結果。
 
 ## 完成回報
 
 - 說明改了什麼、原因與設計取捨，包括功能和結構的變化。
 - 說明是否受最小修改／向後相容限制，及實際相容性影響；不能只說「重構」。
 - 列出執行的檢查、結果及未涵蓋範圍。對清理的主張必須有對應證據。
-- 列出各階段 commit、主線 merge 與 branch／worktree 清理狀態，說明是否
+- 列出各階段 commit、PR／合併與 branch／worktree 清理狀態，說明是否
   已 push。不要只回覆「已完成」或只提供一個通過的測試總數。
