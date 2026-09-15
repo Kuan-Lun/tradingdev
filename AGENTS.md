@@ -81,6 +81,8 @@
   此腳本只提交目前 task branch；不會立即合併或刪除分支。
 - 非 merge commit 使用 Conventional Commits；不相容變更標註 `!` 或
   `BREAKING CHANGE:`，並在對話交代具體影響。
+- Merge commit 只能建立於主線；task branch 若需同步主線，可 rebase 該
+  task branch。整合只要求共同祖先，不要求先包含主線最新提交。
 - 任務完成且工作樹乾淨後，使用 `scripts/git-flow-merge.sh` 整合。它以
   `--no-ff` 合併至主線；失敗會 abort 並保留 task branch，成功才移除專用
   worktree（若有）及以 `branch -d` 刪除已合併分支。
