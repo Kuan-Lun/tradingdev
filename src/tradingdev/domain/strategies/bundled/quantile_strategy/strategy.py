@@ -404,7 +404,7 @@ class QuantileStrategy(BaseStrategy):
         self._feature_names = best_fnames
 
         logger.info(
-            "Fit complete: horizon=%d, confidence=%.2f, " "efs=%.4f (%s=%.4f)",
+            "Fit complete: horizon=%d, confidence=%.2f, efs=%.4f (%s=%.4f)",
             best_horizon,
             best_confidence,
             best_efs,

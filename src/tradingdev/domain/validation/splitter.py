@@ -46,12 +46,10 @@ class DataSplitter:
         ts = df["timestamp"]
 
         train_mask = (ts >= _to_utc_ts(cfg.train_start)) & (  # type: ignore[arg-type]
-            ts
-            < _to_utc_ts(cfg.train_end) + pd.Timedelta(days=1)  # type: ignore[arg-type]
+            ts < _to_utc_ts(cfg.train_end) + pd.Timedelta(days=1)  # type: ignore[arg-type]
         )
         test_mask = (ts >= _to_utc_ts(cfg.test_start)) & (  # type: ignore[arg-type]
-            ts
-            < _to_utc_ts(cfg.test_end) + pd.Timedelta(days=1)  # type: ignore[arg-type]
+            ts < _to_utc_ts(cfg.test_end) + pd.Timedelta(days=1)  # type: ignore[arg-type]
         )
         return [(df[train_mask].copy(), df[test_mask].copy())]
 

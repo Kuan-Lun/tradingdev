@@ -195,9 +195,9 @@ async def run_codex(
                         assert item.get("server") == "tradingdev", item.get("server")
                         assert item.get("tool") in LIFECYCLE_TOOLS, item.get("tool")
                         seen_calls.add(str(item["id"]))
-                        assert (
-                            len(seen_calls) <= max_tool_calls
-                        ), f"Codex exceeded {max_tool_calls} MCP tool calls"
+                        assert len(seen_calls) <= max_tool_calls, (
+                            f"Codex exceeded {max_tool_calls} MCP tool calls"
+                        )
                 returncode = await process.wait()
                 errors = [
                     str(event.get("message") or event.get("error"))
@@ -216,9 +216,9 @@ async def run_codex(
         finally:
             _terminate_tree(identity, descendants)
             await asyncio.wait_for(process.wait(), timeout=3)
-    assert any(
-        event.get("type") == "turn.completed" for event in events
-    ), "Codex did not complete its turn"
+    assert any(event.get("type") == "turn.completed" for event in events), (
+        "Codex did not complete its turn"
+    )
     return events
 
 
@@ -253,9 +253,9 @@ def verify_generated_strategy(
                 raise AssertionError(msg)
             time.sleep(0.02)
         output, _ = process.communicate(timeout=timeout_seconds)
-        assert (
-            process.returncode == 0
-        ), f"Generated strategy verification failed:\n{output[-4000:]}"
+        assert process.returncode == 0, (
+            f"Generated strategy verification failed:\n{output[-4000:]}"
+        )
     except subprocess.TimeoutExpired as exc:
         msg = f"Generated strategy verification exceeded {timeout_seconds:g}s"
         raise AssertionError(msg) from exc

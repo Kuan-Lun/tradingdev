@@ -20,6 +20,7 @@ from tradingdev.adapters.storage.filesystem import (
     write_json,
 )
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.app.quality_policy import quality_config_path
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
@@ -502,6 +503,7 @@ class StrategyService:
 
     def _quality_gate_diagnostics(self, source_path: Path) -> list[StrategyDiagnostic]:
         diagnostics: list[StrategyDiagnostic] = []
+        config_path = str(quality_config_path())
         for command, label, timeout in (
             (
                 [
@@ -509,13 +511,8 @@ class StrategyService:
                     "-m",
                     "ruff",
                     "check",
-                    "--isolated",
-                    "--select",
-                    "E,F,W,I,N,UP,B,A,C4,SIM,TC",
-                    "--target-version",
-                    "py312",
                     "--config",
-                    'lint.isort.known-first-party=["tradingdev"]',
+                    config_path,
                     str(source_path),
                 ],
                 "ruff",
@@ -527,7 +524,8 @@ class StrategyService:
                     "-m",
                     "mypy",
                     "--config-file",
-                    str(Path(__file__).with_name("strategy_mypy.ini")),
+                    config_path,
+                    "--follow-imports=silent",
                     str(source_path),
                 ],
                 "mypy",

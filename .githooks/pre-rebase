@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+primary="$(scripts/detect-primary-branch.sh)"
+branch="${2:-$(git branch --show-current)}"
+[[ "${branch#refs/heads/}" != "$primary" ]] || {
+    echo "Rebasing $primary is not allowed." >&2
+    exit 1
+}

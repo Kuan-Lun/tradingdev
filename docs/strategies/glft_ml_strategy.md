@@ -7,6 +7,7 @@
 以 maker fee（0.02%/side）取代 taker fee（0.06%/side）。
 
 與純 GLFT 策略的關鍵差異：
+
 - ML 方向過濾：只在 ML 預測方向一致時開倉
 - Maker fee：假設使用 limit order（fee_rate=0.0002）
 - 更低的 entry edge 門檻（因手續費更低）

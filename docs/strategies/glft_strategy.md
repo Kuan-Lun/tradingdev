@@ -15,16 +15,19 @@
 GLFT 模型解決了做市商的庫存風險問題，給出最優報價：
 
 - **Reservation price** (庫存調整公允價格):
-  ```
+
+  ```text
   r(t, q) = s(t) - q · γ · σ² · τ
   ```
 
 - **Optimal spread** (最優報價差):
-  ```
+
+  ```text
   δ*(t) = γ · σ² · τ + (2/γ) · ln(1 + γ/κ)
   ```
 
 其中：
+
 - `s(t)` = 中間價 (mid-price)
 - `q` = 庫存方向 (+1=多頭, -1=空頭, 0=空倉)
 - `γ` = 風險厭惡係數 (越大越保守)
@@ -36,7 +39,7 @@ GLFT 模型解決了做市商的庫存風險問題，給出最優報價：
 
 本實作使用純百分比空間的 GLFT **半價差 (half-spread)** 公式，即原始 optimal spread 的一半（`δ*/2`），因為我們是將單側偏離度 `|deviation|` 與閾值比較：
 
-```
+```text
 half_spread = γ · σ² · τ / 2 + (1/γ) · ln(1 + γ/κ)
 ```
 
@@ -53,7 +56,7 @@ half_spread = γ · σ² · τ / 2 + (1/γ) · ln(1 + γ/κ)
 3. 計算正規化 half-spread 作為進場閾值
 4. 利潤目標和止損控制出場
 
-```
+```text
 FLAT ──(|deviation| > half_spread)──► LONG/SHORT
                                           │
                          ┌────────────────┼────────────────┐
@@ -83,6 +86,7 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 | 3 | 利潤目標 | `profit_target_ratio` | deviation 回歸至目標水平 → 獲利了結 |
 
 利潤目標計算：`target = entry_dev × (1 - profit_target_ratio)`
+
 - ratio=1.0 → target=0（等待完全回歸到 EMA）
 - ratio=0.5 → target=entry_dev 的 50%（回歸一半即出場）
 - ratio=1.5 → target 超過 EMA（等待 overshoot）
@@ -117,15 +121,18 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 當 `vol_type: "implied"` 時，策略使用 DataFrame 中的 `dvol` 欄位作為波動度來源，而非從歷史價格估計。DVOL 檔案路徑由 `data.requirements.features` 宣告，策略參數不保存資料路徑。
 
 **DVOL 簡介**：
+
 - Deribit 的 BTC 隱含波動度指數，類似傳統市場的 VIX
 - 衡量市場預期的未來 30 天年化波動度（單位：%）
 - 由選擇權市場價格反推（forward-looking）
 - 公開 API，免 API Key，支援 1 分鐘解析度
 
 **轉換公式**（年化 % → per-bar sigma）：
-```
+
+```text
 sigma_per_bar = DVOL / 100 / sqrt(525960)
 ```
+
 其中 `525960 = 365.25 × 24 × 60`（年分鐘數）。
 
 ### Multi-Timeframe
@@ -163,7 +170,7 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 
 啟用 `dynamic_sizing: true` 時，倉位大小根據進場偏離度動態調整——偏離度越大表示均值回歸機會越好，因此分配更大倉位。
 
-```
+```text
 weight = |deviation| / edge_for_full_size
 weight = clamp(weight, min_position_size / position_size, 1.0)
 actual_size = position_size × weight
@@ -197,6 +204,7 @@ actual_size = position_size × weight
 #### 約束優化
 
 fit() 使用**約束優化**策略：
+
 1. 過濾掉估計月均 PnL（`daily_pnl_mean * 30`）低於 `min_monthly_pnl` 的參數組合
 2. 在通過約束的組合中，最大化 `target_metric`（交易量）
 
@@ -215,6 +223,7 @@ fit() 使用**約束優化**策略：
 **限制**: ≤3 min 交易占比 < 60%, ≤5 min 交易占比 < 75%
 
 **合規機制**:
+
 - `min_holding_bars >= 5`（@1m timeframe = 5 分鐘）
 - 狀態機強制執行：持倉期間內不可提前退出
 - 較大的 position_size (10,000 USDT) 減少所需交易次數
@@ -242,6 +251,7 @@ fit() 使用**約束優化**策略：
 | `edge_for_full_size` | [0.003, 0.005, 0.008] | **0.008** |
 
 **參數解讀**：
+
 - `gamma=0` → GLFT half-spread 退化為 `1/κ = 1/750 ≈ 0.13%`，但被 `min_entry_edge=0.12%` 取代，實際由 min_entry_edge 主導進場
 - `ema_window=15` → 15 分鐘 EMA 作為公允價格，較快響應價格變動
 - `max_holding_bars=13` → 最多持倉 13 分鐘，配合 5 分鐘最短持倉，實際持倉 5~13 分鐘
@@ -275,16 +285,19 @@ fit() 使用**約束優化**策略：
 ### 結果分析
 
 **交易量達標**：
+
 - 訓練期月均交易量：29,992,151 / 12 ≈ **2,499,346 USDT/月**（單邊）
 - 測試期月均交易量：21,799,951 / 12 ≈ **1,816,663 USDT/月**（單邊）
 - 距離 12.5M USDT/月目標仍有差距，需要更低的進場門檻或更大倉位
 
 **虧損控制**：
+
 - 訓練期年化虧損 -17.99%，恰好在 -18% 約束邊界
 - 測試期年化虧損 -12.37%，較訓練期改善（OOS 泛化尚可）
 - Win Rate ~50-52%，但 Profit Factor < 1，表示虧損交易的平均虧損大於獲利交易的平均獲利
 
 **泛化性**：
+
 - 測試期虧損較訓練期少（-12.37% vs -18.04%），非過擬合表現
 - 測試期交易量較訓練期少 27%，可能是 2025 年市場波動結構不同所致
 - Daily PnL Max 在測試期幾乎為零（+0.70），說明 2025 年幾乎沒有單日正收益

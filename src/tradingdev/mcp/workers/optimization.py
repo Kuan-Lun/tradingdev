@@ -397,17 +397,17 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         batch = remaining_combos[batch_start : batch_start + batch_size]
 
         try:
-            batch_results: list[
-                tuple[dict[str, Any], float, dict[str, Any]]
-            ] = Parallel(n_jobs=n_jobs)(
-                delayed(_evaluate_combo)(
-                    strategy_cfg,
-                    train_bt_cfg.model_dump(),
-                    train_df_json,
-                    combo,
-                    optimization_metric,
+            batch_results: list[tuple[dict[str, Any], float, dict[str, Any]]] = (
+                Parallel(n_jobs=n_jobs)(
+                    delayed(_evaluate_combo)(
+                        strategy_cfg,
+                        train_bt_cfg.model_dump(),
+                        train_df_json,
+                        combo,
+                        optimization_metric,
+                    )
+                    for combo in batch
                 )
-                for combo in batch
             )
         except Exception as exc:
             _fail(job_id, f"Optimization error at batch {batch_start}: {exc}")

@@ -5,6 +5,12 @@ Generated strategies are runtime artifacts managed by MCP. They are saved under
 Bundled strategies are engineering-maintained code under
 `src/tradingdev/domain/strategies/bundled/`.
 
+Generated code must pass the repository's Ruff and strict Mypy rules from
+`pyproject.toml`, including the Pydantic plugin and explicit dependency overrides.
+The installed wheel carries this same policy. Caller-local configuration cannot
+relax it. Mypy follows imports silently so diagnostics target the generated file;
+unknown imports and missing annotations are still rejected.
+
 ## Python Contract
 
 Generated code must:

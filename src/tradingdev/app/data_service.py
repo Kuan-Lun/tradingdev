@@ -265,8 +265,7 @@ class DataService:
         else:
             if not feature.path:
                 msg = (
-                    f"{feature.type} feature requires "
-                    "data.requirements.features[].path"
+                    f"{feature.type} feature requires data.requirements.features[].path"
                 )
                 raise ValueError(msg)
             feature_df = self._loader.load_parquet(
@@ -397,7 +396,9 @@ class DataService:
         path = (
             self._default_dvol_path(request)
             if feature.type == "dvol" and not feature.path
-            else self._resolve_data_path(feature.path) if feature.path else None
+            else self._resolve_data_path(feature.path)
+            if feature.path
+            else None
         )
         exists = bool(path and path.exists())
         missing_values: int | None = None

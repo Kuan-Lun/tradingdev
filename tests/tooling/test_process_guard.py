@@ -1,0 +1,150 @@
+"""Check-runner cleanup includes children that create independent sessions."""
+
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+import sys
+from contextlib import suppress
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
+
+import psutil
+import pytest
+from scripts.process_guard import run_checked
+
+if TYPE_CHECKING:
+    from pytest import MonkeyPatch
+
+_CHILD = "import time; time.sleep(60)"
+_SPAWN = """\
+import signal
+import subprocess
+import sys
+import time
+import os
+from pathlib import Path
+
+child = subprocess.Popen([sys.executable, '-c', sys.argv[1]], start_new_session=True)
+Path('child.pid').write_text(str(child.pid))
+Path('leader.pid').write_text(str(os.getpid()))
+"""
+
+
+def _assert_stopped(root: Path) -> None:
+    for name in ("leader.pid", "child.pid"):
+        pid = int((root / name).read_text())
+        try:
+            process = psutil.Process(pid)
+            assert process.status() == psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            pass
+
+
+def _emergency_cleanup(root: Path) -> None:
+    for name in ("leader.pid", "child.pid"):
+        marker = root / name
+        if marker.exists():
+            with suppress(psutil.NoSuchProcess):
+                process = psutil.Process(int(marker.read_text()))
+                if _CHILD in process.cmdline():
+                    process.kill()
+
+
+def test_timeout_stops_independent_child_and_allows_leader_teardown() -> None:
+    with TemporaryDirectory(prefix="tradingdev-process-test-") as directory:
+        root = Path(directory)
+        code = (
+            _SPAWN
+            + """\
+try:
+    time.sleep(60)
+except KeyboardInterrupt:
+    Path('teardown.completed').write_text('done')
+"""
+        )
+        try:
+            with pytest.raises(subprocess.TimeoutExpired, match="timed out"):
+                run_checked(
+                    [sys.executable, "-c", code, _CHILD],
+                    cwd=root,
+                    env=dict(os.environ),
+                    timeout=0.5,
+                )
+            assert (root / "teardown.completed").read_text() == "done"
+            _assert_stopped(root)
+        finally:
+            _emergency_cleanup(root)
+    assert not root.exists()
+
+
+def test_normal_leader_exit_cleans_child_without_signalling_exited_group(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    def reject_group(pid: int, sig: int) -> None:
+        pytest.fail(f"Signalled exited leader group {pid} with {sig}")
+
+    monkeypatch.setattr(os, "killpg", reject_group)
+    with TemporaryDirectory(prefix="tradingdev-process-test-") as directory:
+        root = Path(directory)
+        try:
+            run_checked(
+                [sys.executable, "-c", _SPAWN + "time.sleep(0.3)", _CHILD],
+                cwd=root,
+                env=dict(os.environ),
+                timeout=5,
+            )
+            _assert_stopped(root)
+        finally:
+            _emergency_cleanup(root)
+    assert not root.exists()
+
+
+def test_group_permission_denied_falls_back_to_individual_signals(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    attempted: list[int] = []
+
+    def deny_group(pid: int, sig: int) -> None:
+        attempted.append(sig)
+        raise PermissionError("group signalling denied")
+
+    monkeypatch.setattr(os, "killpg", deny_group)
+    with TemporaryDirectory(prefix="tradingdev-process-test-") as directory:
+        root = Path(directory)
+        try:
+            with pytest.raises(subprocess.TimeoutExpired):
+                run_checked(
+                    [sys.executable, "-c", _SPAWN + "time.sleep(60)", _CHILD],
+                    cwd=root,
+                    env=dict(os.environ),
+                    timeout=0.5,
+                )
+            assert signal.SIGINT in attempted
+            _assert_stopped(root)
+        finally:
+            _emergency_cleanup(root)
+    assert not root.exists()
+
+
+def test_process_inspection_denied_prevents_launch(monkeypatch: MonkeyPatch) -> None:
+    def deny_inspection(process: psutil.Process, recursive: bool = False) -> None:
+        raise psutil.AccessDenied(process.pid)
+
+    def reject_launch(*args: object, **kwargs: object) -> None:
+        pytest.fail("A check was launched without access to track its children")
+
+    monkeypatch.setattr(psutil.Process, "children", deny_inspection)
+    monkeypatch.setattr(subprocess, "Popen", reject_launch)
+    with TemporaryDirectory(prefix="tradingdev-process-test-") as directory:
+        root = Path(directory)
+        with pytest.raises(RuntimeError, match="inspection access.*before"):
+            run_checked(
+                [sys.executable, "-c", "raise SystemExit(0)"],
+                cwd=root,
+                env=dict(os.environ),
+                timeout=1,
+            )
+    assert not root.exists()

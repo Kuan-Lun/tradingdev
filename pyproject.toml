@@ -44,6 +44,10 @@ dependencies = [
     "psutil>=7.1.3",
     "autogluon-tabular[all]>=1.5.0",
     "mcp[cli]>=1.28.1",
+    "mypy>=2.1.0",
+    "pandas-stubs>=3.0.3.260530",
+    "ruff>=0.15.20",
+    "types-pyyaml>=6.0.12.20260518",
 ]
 
 [project.optional-dependencies]
@@ -63,6 +67,45 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/tradingdev"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"pyproject.toml" = "tradingdev/_quality/pyproject.toml"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "TC"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tradingdev"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+warn_return_any = true
+warn_unused_configs = true
+mypy_path = "$MYPY_CONFIG_FILE_DIR/src"
+
+[[tool.mypy.overrides]]
+module = [
+    "vectorbt.*",
+    "pandas_ta.*",
+    "ccxt.*",
+    "xgboost.*",
+    "sklearn.*",
+    "pandas.*",
+    "yaml.*",
+    "plotly.*",
+    "streamlit.*",
+    "psutil.*",
+    "joblib.*",
+    "autogluon.*",
+    "mcp.*",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
@@ -75,12 +118,7 @@ markers = [
 # No [project.optional-dependencies].dev is maintained to avoid duplication.
 [dependency-groups]
 dev = [
-    "black>=26.5.1",
-    "mypy>=2.1.0",
-    "pandas-stubs>=3.0.3.260530",
-    # Provides the `pymarkdown` CLI used by scripts/hooks/finalize-markdown.sh.
+    # Markdown checks and explicit formatting share scripts/quality.py.
     "pymarkdownlnt>=0.9.38",
     "pytest>=9.1.1",
-    "ruff>=0.15.20",
-    "types-pyyaml>=6.0.12.20260518",
 ]

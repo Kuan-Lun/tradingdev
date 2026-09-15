@@ -7,19 +7,21 @@
     "reportMissingImports": "none"
   },
   // --- 格式化設定 ---
-  // 使用 Black 作為 Python 的 formatter；Ruff 的 source.fixAll 限制在 Python
-  // 範圍內，避免它對 markdown 等其他檔案叫醒 preview-mode 警告。
+  // Ruff 格式化與修正共用 pyproject.toml 的規則。
   "editor.formatOnSave": true,
   "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.codeActionsOnSave": {
       "source.fixAll.ruff": "always"
     }
   },
-  "black-formatter.importStrategy": "fromEnvironment",
   "ruff.importStrategy": "fromEnvironment",
   "[markdown]": {
     "editor.defaultFormatter": "DavidAnson.vscode-markdownlint"
+  },
+  // Same prose/table line-width policy as scripts/quality.py.
+  "markdownlint.config": {
+    "MD013": false
   },
   // --- 一般編輯偏好 ---
   "files.trimTrailingWhitespace": true,
@@ -27,14 +29,10 @@
   "editor.rulers": [
     88
   ],
-  "flake8.args": [
-    "--max-line-length=88",
-    "--ignore=E203,E226,E501,W503,E704"
-  ],
   // --- mypy 擴充套件 ---
   // 使用專案虛擬環境中的 mypy，確保 IDE 與 CLI (uv run mypy) 結果一致。
   "mypy-type-checker.importStrategy": "fromEnvironment",
   "mypy-type-checker.args": [
-    "--config-file=mypy.ini"
+    "--config-file=${workspaceFolder}/pyproject.toml"
   ]
 }
