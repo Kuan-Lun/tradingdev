@@ -130,10 +130,26 @@ If `--run-id` is omitted, the sidebar lists runs from `workspace/tradingdev.sqli
 ## 開發檢查
 
 ```bash
+uv sync --all-extras
+./scripts/install-git-hooks.sh
 ./scripts/format.sh
 ./scripts/check-fast.sh
-uv run pytest
+uv run --all-extras pytest
 ```
+
+開發政策見 [AGENTS.md](AGENTS.md)。在 task branch 完成一個可驗證階段後，
+以 `scripts/git-flow-commit.sh "type: message" [files...]` 提交；全部完成後，
+用 `scripts/git-flow-merge.sh` 合併回主線。
+
+Commit hook 只做暫存內容的快速檢查。合併時會自動用 Codex 檢查程式與既有
+文件是否一致，再跑完整 pytest；需要已登入的 Codex CLI 及連線。審查只讀
+Git 內容，不會修改文件；過時文件、錯誤或逾時都會阻止合併，保留 task branch。
+Ruff／Mypy 檢查需要 dashboard extra，以免缺少套件型別掩蓋問題。
+
+檢查使用獨立臨時 snapshot，結束即刪除。完整檢查通過紀錄保存在 Git metadata，
+相同內容與檢查環境可重用；主線 push 也必須有通過紀錄。
+可在已提交且乾淨的分支執行 `uv run --no-sync python scripts/git_gate.py full`
+預先檢查。Codex 文件審查是語意輔助，仍可能漏判。
 
 ## 相關文件
 
