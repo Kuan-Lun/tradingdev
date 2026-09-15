@@ -125,6 +125,19 @@
   這不是整個開發任務時限。檢查結束清理臨時內容與啟動的程序。
 - 測試、審查或候選內容在檢查中改變時不得視為通過。不得修改或偽造結果。
 
+## PR 合併後的本機分支清理
+
+- 使用 `scripts/cleanup-pr.sh <PR編號> --branch <本機分支>` 明確指定對象，
+  可加 `--remote <remote>`。由固定腳本核對，不交給 LLM 猜測分支。
+- 先 fetch 目標主線，不執行 pull。確認 PR 已合併、來源 repository／分支
+  與本機 upstream 相符、本機 tip 等於 PR head，且 head／merge commit
+  都在最新取得的主線歷史中，再以預期 SHA 原子刪除該本機 ref。
+- 保護主線與 `tradingdev.protectedBranch` 設定的分支；已被任何 worktree
+  checkout 的分支一律保留。額外提交、身分不明、squash／rebase 導致無法
+  證明祖先關係時保留分支，說明原因；不自動使用 force 刪除。
+- 不刪除遠端分支、worktree 或 branch config。保留 config 避免在 ref
+  刪除後誤刪同名新分支設定；成功訊息須說明保留的內容。
+
 ## 完成回報
 
 - 說明改了什麼、原因與設計取捨，包括功能和結構的變化。

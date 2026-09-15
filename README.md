@@ -220,6 +220,28 @@ uv run --no-sync python scripts/git_gate.py full --base main
 
 這不驗證遠端 PR；`--base` 必須明確指定，也可加 `--head <ref>`。
 
+### PR 合併後清理本機分支
+
+在 GitHub 合併後，切換到其他分支，再明確指定已完成的 PR 與本機分支：
+
+```bash
+./scripts/cleanup-pr.sh 123 --branch feature/my-task
+```
+
+可加 `--remote upstream` 指定 PR 目標 repository。腳本只 fetch 目標主線，
+不執行 pull。它核對 PR 已合併、本機 upstream repository／分支與 PR
+來源相符、本機 tip 等於 PR head，以及 PR head／merge commit 都已在
+取得的主線歷史中，才原子刪除指定的本機分支 ref。檢查後若分支增加提交，
+刪除會失敗。它不依靠 commit message 的分支名稱，也不呼叫 LLM。
+
+主線與 `git config --add tradingdev.protectedBranch <branch>` 指定的分支
+會保留；正在任何 worktree checkout 的分支也不刪除。若 GitHub 使用
+squash／rebase 而無法證明原始 head 已包含於主線，腳本保留分支並要求人工
+確認；fetch 不會恢復改寫過的祖先關係。
+
+遠端分支、worktree 與本機 branch config 都保留。保留 config 是為了避免
+ref 刪除後與同名新分支競態而誤刪設定；命令結果會明確列出此行為。
+
 ## 相關文件
 
 - [ARCHITECTURE.md](ARCHITECTURE.md)
