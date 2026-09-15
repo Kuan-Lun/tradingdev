@@ -141,6 +141,10 @@ uv run --all-extras pytest
 以 `scripts/git-flow-commit.sh "type: message" [files...]` 提交；全部完成後，
 用 `scripts/git-flow-merge.sh` 合併回主線。
 
+Hook 安裝器也會調整本 repository 的 Git 設定：主線 merge 使用 `--no-ff`，
+禁止主線 rebase，並設定 `pull.rebase=false`、`pull.ff=only`。因此後續
+`git pull` 遇到分歧會停止，不會自動 merge 或 rebase；需要明確處理分歧後再整合。
+
 Commit hook 只做暫存內容的快速檢查。合併時會自動用 Codex 檢查程式與既有
 文件是否一致，再跑完整 pytest；需要已登入的 Codex CLI 及連線。審查只讀
 Git 內容，不會修改文件；過時文件、錯誤或逾時都會阻止合併，保留 task branch。
