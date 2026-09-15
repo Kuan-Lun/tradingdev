@@ -64,6 +64,7 @@ def _project() -> Iterator[RebuildProject]:
                 "UV_CACHE_DIR": str(directory / "uv-cache"),
                 "UV_OFFLINE": "1",
                 "UV_PYTHON_DOWNLOADS": "never",
+                "UV_PYTHON": sys.executable,
                 "TMPDIR": str(directory),
                 "TMP": str(directory),
                 "TEMP": str(directory),
@@ -79,7 +80,7 @@ def _project() -> Iterator[RebuildProject]:
 def test_rebuild_preserves_lock_workspace_and_shared_cache() -> None:
     with _project() as project:
         root = project.root
-        project.run("uv", "lock", "--python", "3.13")
+        project.run("uv", "lock")
         lock = (root / "uv.lock").read_bytes()
         sentinels = [
             root / "workspace/__pycache__/user-data",
@@ -100,7 +101,8 @@ def test_rebuild_preserves_lock_workspace_and_shared_cache() -> None:
             str(root / ".venv/bin/python"),
             "-c",
             "import sys; from pathlib import Path; "
-            "assert Path(sys.prefix).resolve() == (Path.cwd() / '.venv').resolve()",
+            "assert Path(sys.prefix).resolve() == (Path.cwd() / '.venv').resolve(); "
+            f"assert sys.version_info[:2] == {tuple(sys.version_info[:2])!r}",
         )
 
 
@@ -110,7 +112,7 @@ def test_invalid_lock_preserves_existing_environment(lock_state: str) -> None:
         root = project.root
         lock_path = root / "uv.lock"
         if lock_state == "stale":
-            project.run("uv", "lock", "--python", "3.13")
+            project.run("uv", "lock")
             (root / "pyproject.toml").write_text(
                 _PYPROJECT.replace('version = "0.1.0"', 'version = "0.2.0"'),
                 encoding="utf-8",

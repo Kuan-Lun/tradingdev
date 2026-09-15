@@ -145,8 +145,9 @@ uv run --all-extras pytest
 ```
 
 腳本先檢查 lockfile 是否存在且符合 `pyproject.toml`，通過才清除並重建本
-repository 的 `.venv`，使用 Python 3.13 安裝鎖定的 runtime、dev 與 dashboard
-依賴。它保留 lockfile、workspace 與共用 uv 快取；安裝若中斷，可重新執行。
+repository 的 `.venv`，由 uv 依 `pyproject.toml` 選擇相容的 Python（目前為
+3.12 或 3.13），安裝鎖定的 runtime、dev 與 dashboard 依賴。它保留 lockfile、
+workspace 與共用 uv 快取；安裝若中斷，可重新執行。
 缺少或過時的 lockfile 會在重建前失敗。修改依賴時，另外執行 `uv lock`，
 檢查差異並提交 `pyproject.toml` 與 `uv.lock`；升級版本可明確使用
 `uv lock --upgrade-package <package>`，完成後同步環境並執行相關測試。
