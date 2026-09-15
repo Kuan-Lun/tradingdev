@@ -196,10 +196,39 @@ Remote 可使用 `https://github.com/OWNER/REPO.git`、
 偵測出的主線。`--remote` 只指定 PR 目標 repository，不會更改前述主線
 偵測規則；需要其他主線名稱時設定 `git config tradingdev.primaryBranch <branch>`。
 
+#### 取得 PR 編號並執行檢查
+
+PR 編號是 GitHub 在建立 Pull Request 時分配的整數，顯示在 PR 標題旁的
+`#編號`，也出現在網址結尾的 `/pull/編號`。例如，網址結尾為 `/pull/27`
+的 PR，其編號就是 `27`。
+
+操作順序如下：
+
+1. 開發者在開發分支完成階段性 commit，將分支 push 到 GitHub。
+2. 開發者在 GitHub 的 Pull requests 頁面，從該分支向目標主線建立 PR。
+3. 審閱者打開這個 PR，從標題或網址取得編號。
+4. 審閱者在本機 repository 根目錄執行 `check-pr.sh`，傳入該編號。
+5. 檢查通過後，審閱者在 GitHub 留下評論、核對版本並決定是否合併。
+
+若 PR 已經存在，直接從第 3 步開始。也可以在本機 repository 根目錄列出
+目前開啟的 PR，從輸出的 `number` 欄位取得編號：
+
 ```bash
-# 將 123 換成待審查的 PR 編號；可加 --remote upstream 指定目標 remote。
-./scripts/check-pr.sh 123
+gh pr list --state open --json number,title,url
 ```
+
+以下範例假設要檢查的是 PR #27；請將 `27` 換成你實際取得的 PR 編號：
+
+```bash
+./scripts/check-pr.sh 27
+```
+
+數字 `27` 僅為範例，不代表本專案目前存在這個 PR；傳入的是 PR 編號，
+不是分支名稱或 commit SHA。腳本預設查詢 `origin` 對應的 repository。
+若 PR 的目標是 `upstream`，可執行 `./scripts/check-pr.sh 27 --remote upstream`；
+使用 `gh pr list` 查詢時，也要加上 `--repo OWNER/REPO` 指定同一個目標
+repository，其中 `OWNER/REPO` 是該 remote 在 GitHub 上的擁有者與專案名稱。
+只有本機 commit、尚未建立 PR 時，請使用本節後面的本機候選檢查命令。
 
 腳本讀取指定 PR，在獨立臨時 repository fetch 當前主線與 PR head，計算
 合併候選內容。版本不一致或合併衝突會立即失敗；它不切換目前分支。
@@ -219,8 +248,8 @@ Remote 可使用 `https://github.com/OWNER/REPO.git`、
 任一改變便重新檢查。可在自己的終端機讀取目前版本：
 
 ```bash
-# main、123 與 origin 請使用該 PR 的目標主線、編號及 remote。
-git ls-remote origin refs/heads/main refs/pull/123/head
+# 延續 PR #27 的範例；請替換為實際主線名稱、PR 編號及 remote。
+git ls-remote origin refs/heads/main refs/pull/27/head
 ```
 
 純本機檢查無法知道使用者何時按下 GitHub 合併，也不能阻止核對後的版本
@@ -236,11 +265,15 @@ uv run --no-sync python scripts/git_gate.py full --base main
 
 ### PR 合併後清理本機分支
 
-在 GitHub 合併後，切換到其他分支，再明確指定已完成的 PR 與本機分支：
+在 GitHub 合併後，切換到其他分支，再明確指定已完成的 PR 與本機分支。
+以下延續 PR #27 的範例，假設要清理的本機分支叫 `feature/my-task`：
 
 ```bash
-./scripts/cleanup-pr.sh 123 --branch feature/my-task
+./scripts/cleanup-pr.sh 27 --branch feature/my-task
 ```
+
+請將 `27` 換成已合併的 PR 編號，將 `feature/my-task` 換成要刪除的實際
+本機分支名稱；這兩個參數分別指定 PR 與本機分支，不能互換。
 
 可加 `--remote upstream` 指定 PR 目標 repository。腳本只 fetch 目標主線，
 不執行 pull。PR 也必須以本機偵測出的主線為目標。它核對 PR 已合併、
