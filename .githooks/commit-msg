@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+first_line=''
+IFS= read -r first_line < "$1" || [[ -n "$first_line" ]]
+if [[ -f "$(git rev-parse --git-path MERGE_HEAD)" && "$first_line" == Merge\ * ]]; then
+    exit 0
+fi
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._/-]+\))?(!)?: .+'
+[[ "$first_line" =~ $pattern ]] || {
+    echo 'Commit message must follow Conventional Commits.' >&2
+    exit 1
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import os
 import subprocess
 import sys
@@ -20,6 +21,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["check", "format"])
     arguments = parser.parse_args()
+    if arguments.action == "check":
+        try:
+            importlib.metadata.distribution("streamlit")
+            importlib.metadata.distribution("plotly")
+        except importlib.metadata.PackageNotFoundError:
+            parser.error("Run uv sync --all-extras before checking dashboard types.")
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     markdown = sorted(
         str(path.relative_to(ROOT))

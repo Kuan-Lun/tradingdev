@@ -19,6 +19,10 @@
   "[markdown]": {
     "editor.defaultFormatter": "DavidAnson.vscode-markdownlint"
   },
+  // Same prose/table line-width policy as scripts/quality.py.
+  "markdownlint.config": {
+    "MD013": false
+  },
   // --- 一般編輯偏好 ---
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
