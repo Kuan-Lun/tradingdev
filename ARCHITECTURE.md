@@ -9,6 +9,12 @@ adapters 層負責 FastMCP、CLI、dashboard、SQLite、filesystem 與 subproces
 或 `TRADINGDEV_WORKSPACE`。背景 worker 與品質檢查使用 server 的 Python
 interpreter；worker 明確繼承解析後的工作區與資料目錄。
 
+Repository 與生成策略的 Ruff／strict Mypy 規則都來自 `pyproject.toml`。
+Wheel 將同一份設定收錄為 `tradingdev/_quality/pyproject.toml`；驗證程序指定
+該設定，不使用呼叫端工作目錄的設定。Ruff、Mypy 與所需 stubs 隨 runtime
+安裝。生成策略另外使用 `follow-imports=silent`，保留依賴型別分析並只回報
+策略本身的錯誤。
+
 ## Module Layout
 
 ```text

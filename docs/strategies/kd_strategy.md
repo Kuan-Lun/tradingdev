@@ -8,7 +8,7 @@
 
 ### %K（快線）
 
-```
+```text
 %K = SMA( (Close - Lowest Low(N)) / (Highest High(N) - Lowest Low(N)) × 100, smooth_K )
 ```
 
@@ -17,7 +17,7 @@
 
 ### %D（慢線）
 
-```
+```text
 %D = SMA(%K, D_period)
 ```
 

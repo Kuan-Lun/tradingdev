@@ -82,7 +82,9 @@ class SQLiteStore:
     def initialize(self) -> None:
         """Create metadata tables if they do not exist."""
         with self.connect() as conn:
-            conn.executescript(_CREATE_JOBS_TABLE_SQL + """
+            conn.executescript(
+                _CREATE_JOBS_TABLE_SQL
+                + """
 
                 create table if not exists runs (
                     run_id text primary key,
@@ -118,7 +120,8 @@ class SQLiteStore:
                     payload text not null,
                     foreign key(job_id) references jobs(job_id)
                 );
-                """)
+                """
+            )
             self._relax_job_backtest_columns(conn)
             self._ensure_column(conn, "jobs", "created_at", "text")
             self._ensure_column(conn, "jobs", "started_at", "text")

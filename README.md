@@ -130,8 +130,8 @@ If `--run-id` is omitted, the sidebar lists runs from `workspace/tradingdev.sqli
 ## 開發檢查
 
 ```bash
-./scripts/hooks/finalize-python.sh
-./scripts/hooks/finalize-markdown.sh
+./scripts/format.sh
+./scripts/check-fast.sh
 uv run pytest
 ```
 

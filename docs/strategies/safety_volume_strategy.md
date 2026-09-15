@@ -30,7 +30,7 @@ Risk Gate 放行後決定做多或做空。
 
 管理持倉生命週期，確保符合交易所規則。
 
-```
+```text
 FLAT ──(safe + direction)──► LONG/SHORT
                                  │
                     ┌────────────┼────────────┐
@@ -91,6 +91,7 @@ FLAT ──(safe + direction)──► LONG/SHORT
 **限制**: ≤3 min 交易占比 < 60%, ≤5 min 交易占比 < 75%
 
 **合規機制**:
+
 - `min_holding_bars >= 5`（@1m timeframe = 5 分鐘）
 - 狀態機強制執行：持倉期間內不可提前退出（僅緊急 SL 例外）
 - 較大的 position_size (3000 USDT) 減少所需交易次數

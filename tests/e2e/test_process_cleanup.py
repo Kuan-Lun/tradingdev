@@ -134,9 +134,9 @@ def test_cleanup_escalates_when_a_process_ignores_sigterm(
     )
     try:
         assert process.stdout is not None
-        assert select.select([process.stdout], [], [], 30)[
-            0
-        ], "Child never became ready"
+        assert select.select([process.stdout], [], [], 30)[0], (
+            "Child never became ready"
+        )
         assert process.stdout.readline() == b"ready\n"
         identity = _process_identity(process.pid)
         assert identity is not None

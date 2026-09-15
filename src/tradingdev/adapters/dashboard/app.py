@@ -100,10 +100,7 @@ def _resolve_run(
 
     with st.sidebar:
         labels = [
-            (
-                f"{run['run_id']} | {run['strategy_id']} | "
-                f"{run.get('created_at', '')}"
-            )
+            (f"{run['run_id']} | {run['strategy_id']} | {run.get('created_at', '')}")
             for run in runs
         ]
         selected = st.selectbox("Run", labels)
