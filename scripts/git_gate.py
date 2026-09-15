@@ -159,17 +159,38 @@ def check_snapshot(tree: str, profile: str) -> None:
             **execution_environment(candidate),
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_SYSTEM": os.devnull,
+            **{
+                f"GIT_{role}_{field}": value
+                for role in ("AUTHOR", "COMMITTER")
+                for field, value in {
+                    "NAME": "TradingDev checks",
+                    "EMAIL": "checks@tradingdev.invalid",
+                    "DATE": "2000-01-01T00:00:00+00:00",
+                }.items()
+            },
         }
 
         def snapshot_git(*arguments: str) -> str:
             return subprocess.check_output(
-                ["git", *arguments], cwd=candidate, env=environment, text=True
+                [
+                    "git",
+                    "-c",
+                    f"core.hooksPath={os.devnull}",
+                    "-c",
+                    "commit.gpgSign=false",
+                    *arguments,
+                ],
+                cwd=candidate,
+                env=environment,
+                text=True,
             ).strip()
 
-        snapshot_git("init", "--quiet")
+        snapshot_git("init", "--quiet", "--template=")
         snapshot_git("add", "--force", "--all")
         if snapshot_git("write-tree") != tree:
             raise RuntimeError("The exported files differ from the Git candidate.")
+        commit = snapshot_git("commit-tree", tree, "-m", "Check candidate snapshot")
+        snapshot_git("update-ref", "HEAD", commit)
         run(
             ["bash", f"scripts/check-{profile}.sh"],
             cwd=candidate,

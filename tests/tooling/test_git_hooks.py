@@ -39,6 +39,14 @@ else:
     content = (root / 'src/app.py').read_text()
 record = {'mode': mode, 'root': str(root), 'content': content,
           'base': base, 'tree': tree}
+if mode != 'docs':
+    for field, args in {
+        'head': ['rev-parse', 'HEAD'],
+        'head_tree': ['rev-parse', 'HEAD^{tree}'],
+        'head_content': ['show', 'HEAD:src/app.py'],
+    }.items():
+        result = subprocess.run(['git', *args], capture_output=True, text=True)
+        record[field] = result.stdout if result.returncode == 0 else None
 with Path(os.environ['HOOK_TEST_RECORD']).open('a') as stream:
     stream.write(json.dumps(record) + '\\n')
 failure = os.environ.get('HOOK_TEST_FAIL')
@@ -246,6 +254,40 @@ def test_stage_commit_script_keeps_unrelated_edits_and_branch() -> None:
         assert repo.git("status", "--porcelain") == ""
         assert not repo.events("full")
         assert not repo.events("docs")
+
+
+def test_snapshot_head_contains_staged_candidate_and_is_reproducible() -> None:
+    with _repository() as repo:
+        repo.start_task()
+        previous = repo.git("rev-parse", "HEAD")
+        repo.write("src/app.py", "VALUE = 'staged candidate'\n")
+        repo.git("add", "src/app.py")
+        candidate = repo.git("write-tree")
+        repo.write("src/app.py", "VALUE = 'unstaged changes'\n")
+        repo.git("config", "commit.gpgSign", "true")
+
+        for label, year in (("First", 2020), ("Second", 2025)):
+            for role in ("AUTHOR", "COMMITTER"):
+                repo.environment.update(
+                    {
+                        f"GIT_{role}_NAME": f"{label} User",
+                        f"GIT_{role}_EMAIL": f"{label.lower()}@example.invalid",
+                        f"GIT_{role}_DATE": f"{year}-01-01T00:00:00+00:00",
+                    }
+                )
+            repo.run(sys.executable, "scripts/git_gate.py", "commit")
+
+        events = repo.events("fast")
+        assert len(events) == 2
+        assert events[0]["head"] == events[1]["head"]
+        assert events[0]["head"] not in {None, previous + "\n"}
+        for event in events:
+            assert event["head_tree"] == candidate + "\n"
+            assert event["head_content"] == "VALUE = 'staged candidate'\n"
+            assert not Path(str(event["root"])).exists()
+        assert repo.git("rev-parse", "HEAD") == previous
+        assert repo.git("write-tree") == candidate
+        assert (repo.root / "src/app.py").read_text() == "VALUE = 'unstaged changes'\n"
 
 
 @pytest.mark.parametrize("failure", ["full", "docs", "mutation", "staged_mutation"])
