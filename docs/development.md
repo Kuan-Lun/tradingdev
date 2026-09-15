@@ -12,6 +12,8 @@ uv sync --locked --all-extras
 ./scripts/install-git-hooks.sh
 ```
 
+安裝器會調整本機 Git 設定，摘要見文末的[注意事項](#注意事項)。
+
 | 命令 | 用途 |
 | --- | --- |
 | `./scripts/rebuild-env.sh` | 重建 `.venv`，依 `uv.lock` 安裝鎖定版本。 |
@@ -75,6 +77,10 @@ uv run --no-sync python scripts/git_gate.py full --base main
 
 ## 注意事項
 
+- **Git 設定**：安裝器只調整本 repository，設定 `core.hooksPath=.githooks`、
+  `branch.<主線>.rebase=false` 與 `pull.ff=only`，讓一般 pull 遇分歧時停止。
+  遷移時僅移除唯一值為 `--no-ff` 的 `branch.<主線>.mergeOptions`，
+  保留其他自訂 merge options 與 `pull.rebase`。
 - **環境**：腳本使用 Bash，目前未保證原生 Windows 相容；Git 需支援
   `merge-tree --write-tree`。更新依賴時執行 `uv lock`，並提交 lockfile 與設定變更。
 - **登入與連線**：完整測試及文件審查需要已登入的 Codex CLI 與網路；可用
