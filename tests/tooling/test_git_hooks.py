@@ -175,6 +175,19 @@ def test_primary_branch_rejects_direct_commit_without_losing_staged_changes() ->
         assert not repo.events("docs")
 
 
+def test_whitespace_failure_reports_the_file_and_preserves_the_index() -> None:
+    with _repository() as repo:
+        repo.start_task()
+        before = repo.git("rev-parse", "HEAD")
+        repo.write("src/app.py", "VALUE = 'feature'  \n")
+        repo.git("add", "src/app.py")
+        result = repo.run("git", "commit", "-m", "feat: candidate", check=False)
+        assert result.returncode != 0
+        assert "src/app.py:1: trailing whitespace" in result.stdout + result.stderr
+        assert repo.git("rev-parse", "HEAD") == before
+        assert repo.git("diff", "--cached", "--name-only") == "src/app.py"
+
+
 def test_commit_message_hook_rejects_invalid_message_and_accepts_conventional() -> None:
     with _repository() as repo:
         repo.start_task()

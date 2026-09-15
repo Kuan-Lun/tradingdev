@@ -21,7 +21,15 @@ from scripts.process_guard import run_checked  # noqa: E402 - standalone entry p
 
 
 def git(*arguments: str) -> str:
-    return subprocess.check_output(["git", *arguments], text=True).strip()
+    result = subprocess.run(
+        ["git", *arguments], text=True, capture_output=True, check=False
+    )
+    if result.returncode:
+        diagnostic = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part.strip()
+        )
+        raise RuntimeError(diagnostic or f"git {' '.join(arguments)} failed")
+    return result.stdout.strip()
 
 
 def environment_key() -> str:
