@@ -9,4 +9,8 @@ if [[ "$(git branch --show-current)" == "$primary" ]]; then
     }
     exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" scripts/git_gate.py merge
 fi
+if [[ -f "$(git rev-parse --git-path MERGE_HEAD)" ]]; then
+    echo "Merge commits must be made on $primary." >&2
+    exit 1
+fi
 exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" scripts/git_gate.py commit

@@ -298,6 +298,41 @@ def test_primary_rebase_is_rejected_without_moving_primary() -> None:
         assert repo.git("status", "--porcelain") == ""
 
 
+def test_task_branch_rejects_commit_after_resolving_merge_conflicts() -> None:
+    with _repository() as repo:
+        task = repo.commit_task()
+        repo.git("switch", "-c", "feature/upstream", "main")
+        repo.write("src/app.py", "VALUE = 'upstream'\n")
+        repo.run("scripts/git-flow-commit.sh", "feat: change upstream", "src/app.py")
+        repo.run("scripts/git-flow-merge.sh")
+        primary = repo.git("rev-parse", "main")
+        repo.git("switch", "feature/test-hooks")
+
+        conflict = repo.run("git", "merge", "main", check=False)
+        assert conflict.returncode != 0
+        assert repo.git("diff", "--name-only", "--diff-filter=U") == "src/app.py"
+        repo.write("src/app.py", "VALUE = 'resolved'\n")
+        repo.git("add", "src/app.py")
+        assert repo.git("diff", "--name-only", "--diff-filter=U") == ""
+        checks = repo.record.read_text()
+
+        result = repo.run(
+            "git",
+            "commit",
+            "-m",
+            "Merge branch 'main' into feature/test-hooks",
+            check=False,
+        )
+        assert result.returncode != 0
+        assert "Merge commits must be made on main" in result.stdout + result.stderr
+        assert repo.git("rev-parse", "HEAD") == task
+        assert repo.git("rev-parse", "main") == primary
+        assert repo.git("branch", "--show-current") == "feature/test-hooks"
+        assert repo.git("rev-parse", "MERGE_HEAD") == primary
+        assert repo.git("show", ":src/app.py") == "VALUE = 'resolved'"
+        assert repo.record.read_text() == checks
+
+
 def test_failed_cross_worktree_merge_aborts_primary_and_retains_task() -> None:
     with _repository() as repo:
         previous = repo.git("rev-parse", "HEAD")
