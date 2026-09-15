@@ -158,6 +158,12 @@ workspace 與共用 uv 快取；安裝若中斷，可重新執行。
 以 `scripts/git-flow-commit.sh "type: message" [files...]` 提交；全部完成後，
 用 `scripts/git-flow-merge.sh` 合併回主線。
 
+由舊版遷移時，請從 `.claude/settings.local.json` 等客戶端設定移除指向
+`scripts/hooks/finalize-python.sh`、`scripts/hooks/finalize-markdown.sh` 或
+`.Codex/hooks/` 下對應 wrapper 的 Stop hook 註冊；這些腳本已移除。
+Git hook 安裝器不修改客戶端設定。手動格式化與快速檢查改用上面的
+`scripts/format.sh`、`scripts/check-fast.sh`，提交與合併檢查由 Git hooks 執行。
+
 Hook 安裝器也會調整本 repository 的 Git 設定：主線 merge 使用 `--no-ff`，
 禁止主線 rebase，並設定 `pull.rebase=false`、`pull.ff=only`。因此後續
 `git pull` 遇到分歧會停止，不會自動 merge 或 rebase；需要明確處理分歧後再整合。
