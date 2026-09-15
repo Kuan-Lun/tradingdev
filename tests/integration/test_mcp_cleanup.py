@@ -1,0 +1,107 @@
+"""Verify real active workers and temporary artifacts are cleaned on all exits."""
+
+from __future__ import annotations
+
+import sqlite3
+from typing import TYPE_CHECKING
+
+import anyio
+import psutil
+import pytest
+
+from tests.integration.mcp_harness import temporary_mcp_workspace, worker_is_alive
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pandas as pd
+
+pytestmark = [pytest.mark.integration, pytest.mark.anyio]
+
+
+class ForcedCleanupError(RuntimeError):
+    """Deliberate failure while a real optimization worker awaits confirmation."""
+
+
+def _exception_leaves(error: BaseException) -> list[BaseException]:
+    if isinstance(error, BaseExceptionGroup):
+        return [leaf for child in error.exceptions for leaf in _exception_leaves(child)]
+    return [error]
+
+
+@pytest.mark.parametrize("force_failure", [False, True])
+async def test_active_worker_and_files_are_removed_on_context_exit(
+    sample_ohlcv_with_kd: pd.DataFrame,
+    force_failure: bool,
+) -> None:
+    root: Path | None = None
+    worker: psutil.Process | None = None
+    server: psutil.Process | None = None
+    caught: BaseException | None = None
+    try:
+        with temporary_mcp_workspace() as workspace:
+            root = workspace.root
+            workspace.seed_market(sample_ohlcv_with_kd)
+            async with workspace.connect() as client:
+                contract = await client.call("get_strategy_contract")
+                saved = await client.call(
+                    "save_strategy",
+                    strategy_id="cleanup_strategy",
+                    code=contract["example_strategy_code"],
+                    yaml_config=contract["example_yaml_config"],
+                )
+                assert saved["success"], saved
+                for tool in ("validate_strategy", "dry_run_strategy"):
+                    checked = await client.call(tool, strategy_id="cleanup_strategy")
+                    assert checked["success"], checked
+                started = await client.call(
+                    "start_optimization",
+                    strategy_id="cleanup_strategy",
+                    symbol="BTC/USDT",
+                    timeframe="1h",
+                    param_ranges={"fast_period": [3], "slow_period": [8]},
+                    optimization_metric="total_return",
+                    train_start="2024-01-01",
+                    train_end="2024-01-03",
+                    test_start="2024-01-04",
+                    test_end="2024-01-07",
+                )
+                assert started["job_id"], started
+                with anyio.fail_after(120):
+                    while True:
+                        status = await client.call(
+                            "get_job_status", job_id=started["job_id"]
+                        )
+                        assert status["status"] not in {"failed", "done"}, status
+                        if status["status"] == "pending_confirmation":
+                            break
+                        await anyio.sleep(0.1)
+                with sqlite3.connect(
+                    workspace.workspace / "tradingdev.sqlite"
+                ) as connection:
+                    row = connection.execute(
+                        "SELECT pid FROM jobs WHERE job_id = ?",
+                        (started["job_id"],),
+                    ).fetchone()
+                assert row is not None
+                worker = psutil.Process(row[0])
+                server = psutil.Process(worker.ppid())
+                assert worker_is_alive(worker)
+                assert "tradingdev.mcp.server" in server.cmdline()
+                assert (workspace.workspace / "configs/cleanup_strategy.yaml").exists()
+                if force_failure:
+                    raise ForcedCleanupError("Exercise failed-test teardown")
+    except BaseException as error:
+        caught = error
+
+    assert root is not None and not root.exists()
+    if worker is None and caught is not None:
+        raise caught
+    assert worker is not None and not worker_is_alive(worker)
+    assert server is not None and not worker_is_alive(server)
+    if force_failure:
+        assert caught is not None
+        leaves = _exception_leaves(caught)
+        assert len(leaves) == 1 and isinstance(leaves[0], ForcedCleanupError), caught
+    elif caught is not None:
+        raise caught

@@ -18,6 +18,13 @@ Generated code must:
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
 
+Validation, dry-run, backtest and walk-forward use the same constructor binding:
+YAML parameters become keyword arguments. Missing required parameters and names
+the constructor cannot accept fail validation. `backtest_engine` is injected by
+the application and cannot be overridden in YAML. Saving a revised draft loads
+the latest source, including same-size edits made within one filesystem timestamp
+interval.
+
 Allowed import roots for generated strategies are intentionally small:
 
 - Python standard library: `__future__`, `collections`, `dataclasses`,
@@ -114,6 +121,8 @@ first layer. It rejects known unsafe imports (`os`, `sys`, `subprocess`,
 `socket`, `requests`, `httpx`, `ccxt`, `shutil`, `pathlib`), dynamic execution
 calls (`eval`, `exec`, `__import__`), raw `open`, and common destructive file
 operations such as `unlink`, `remove`, `rmtree`, and `write_text`.
+Static-policy or quality-gate errors stop validation before generated code is
+imported or executed.
 
 This is not a full process sandbox. `validate_strategy` and `dry_run_strategy`
 still import and execute generated Python to check class loading, constructor

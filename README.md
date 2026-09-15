@@ -11,8 +11,13 @@ TradingDev 是 **MCP-first quantitative strategy development server**。主要�
 ```bash
 uv sync
 uv run python -c "import tradingdev; print('OK')"
-uv run pytest tests/
+uv run pytest
 ```
+
+`pytest` 預設執行全部單元、MCP 整合及真實 Codex 端對端測試。
+需有已登入的 Codex CLI 與模型網路連線；測試會自動啟動 MCP，並清除臨時產物。
+CLI 會從 `PATH` 或 macOS 的 VS Code 擴充套件尋找，也可用
+`TRADINGDEV_CODEX_BIN` 指定。缺少 CLI、登入或連線時，測試會回報失敗。
 
 ## 啟動 MCP
 
@@ -21,6 +26,9 @@ uv run pytest tests/
 ```bash
 uv run tradingdev-mcp
 ```
+
+可用 `--workspace /absolute/path/to/workspace` 或 `TRADINGDEV_WORKSPACE`
+指定獨立工作區；背景 worker 會使用同一工作區與 Python 環境。
 
 HTTP / streamable-http：
 
@@ -124,7 +132,7 @@ If `--run-id` is omitted, the sidebar lists runs from `workspace/tradingdev.sqli
 ```bash
 ./scripts/hooks/finalize-python.sh
 ./scripts/hooks/finalize-markdown.sh
-uv run pytest tests/
+uv run pytest
 ```
 
 ## 相關文件

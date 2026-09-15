@@ -46,11 +46,15 @@ class JobService:
         process_runner: ProcessRunner | None = None,
         project_root: Path | None = None,
     ) -> None:
-        self._strategy_service = strategy_service or StrategyService()
-        self._data_service = data_service or DataService()
         self._job_store = job_store or get_default_job_store()
+        self._strategy_service = strategy_service or StrategyService(
+            self._job_store.workspace
+        )
+        self._data_service = data_service or DataService(self._job_store.workspace)
         self._project_root = (project_root or self._default_project_root()).resolve()
-        self._process_runner = process_runner or ProcessRunner(self._project_root)
+        self._process_runner = process_runner or ProcessRunner(
+            self._project_root, workspace=self._job_store.workspace
+        )
 
     def start_backtest(
         self,
