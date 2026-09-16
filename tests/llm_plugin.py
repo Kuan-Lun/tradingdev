@@ -1,0 +1,63 @@
+"""Make model execution an explicit pytest choice, never an implicit expense."""
+
+from __future__ import annotations
+
+import math
+from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
+
+import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    group = parser.getgroup("TradingDev LLM tests")
+    group.addoption("--llm-provider", choices=("codex", "local"), default=None)
+    group.addoption("--llm-model", default=None)
+    group.addoption("--llm-base-url", default="http://localhost:11434/v1")
+    group.addoption("--llm-timeout", type=float, default=600.0)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    provider = config.getoption("llm_provider")
+    if provider is None:
+        return
+    timeout = config.getoption("llm_timeout")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise pytest.UsageError("--llm-timeout must be finite and positive")
+    if provider == "local":
+        if not config.getoption("llm_model"):
+            raise pytest.UsageError("Local LLM tests require --llm-model")
+        url = urlsplit(config.getoption("llm_base_url"))
+        if (
+            url.scheme not in {"http", "https"}
+            or url.hostname not in {"localhost", "127.0.0.1", "::1"}
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+        ):
+            raise pytest.UsageError("--llm-base-url must be a local loopback URL")
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    if config.getoption("llm_provider") is not None:
+        return
+    deselected: Sequence[pytest.Item] = [
+        item for item in items if item.get_closest_marker("live_llm") is not None
+    ]
+    items[:] = [item for item in items if item not in deselected]
+    config.hook.pytest_deselected(items=deselected)
+
+
+def pytest_report_header(config: pytest.Config) -> str:
+    provider = config.getoption("llm_provider")
+    return (
+        f"LLM tests: {provider} (explicit opt-in)"
+        if provider
+        else "LLM tests excluded; use scripts/check-llm.sh codex|local"
+    )

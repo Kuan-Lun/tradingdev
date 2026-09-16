@@ -16,6 +16,7 @@ from typing import Any
 import psutil
 
 from tests.e2e.codex_binary import resolve_codex_binary
+from tests.integration.mcp_harness import MCPWorkspace
 
 LIFECYCLE_TOOLS = [
     "list_strategies",
@@ -24,27 +25,24 @@ LIFECYCLE_TOOLS = [
     "save_strategy",
     "validate_strategy",
     "dry_run_strategy",
+    "start_backtest",
+    "get_job_status",
+    "list_runs",
+    "get_run",
+    "list_artifacts",
+    "get_artifact",
 ]
 
 
 def runtime_environment(root: Path) -> dict[str, str]:
     """Keep server, verifier and CLI runtime caches inside the temporary root."""
     repo = Path(__file__).resolve().parents[2]
-    return {
-        "PYTHONPATH": os.pathsep.join((str(repo), str(repo / "src"))),
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "TRADINGDEV_WORKSPACE": str(root / "workspace"),
-        "TRADINGDEV_DATA_ROOT": str(root / "data"),
-        "TRADINGDEV_PROJECT_ROOT": str(root),
-        "MYPY_CACHE_DIR": str(root / "mypy_cache"),
-        "RUFF_CACHE_DIR": str(root / "ruff_cache"),
-        "NUMBA_CACHE_DIR": str(root / "numba_cache"),
-        "MPLCONFIGDIR": str(root / "matplotlib"),
-        "XDG_CACHE_HOME": str(root / "xdg_cache"),
-    }
+    environment = MCPWorkspace(root).environment()
+    environment["PYTHONPATH"] = os.pathsep.join((environment["PYTHONPATH"], str(repo)))
+    return environment
 
 
-def _command(root: Path) -> list[str]:
+def _command(root: Path, model: str | None = None) -> list[str]:
     binary = resolve_codex_binary()
     command = [
         binary,
@@ -89,7 +87,7 @@ def _command(root: Path) -> list[str]:
     )
     for key, value in config.items():
         command.extend(["-c", f"{key}={json.dumps(value)}"])
-    if model := os.environ.get("TRADINGDEV_CODEX_MODEL"):
+    if model := model or os.environ.get("TRADINGDEV_CODEX_MODEL"):
         command.extend(["--model", model])
     return command
 
@@ -156,10 +154,11 @@ async def run_codex(
     prompt: str,
     *,
     timeout_seconds: float = 300,
-    max_tool_calls: int = 24,
+    max_tool_calls: int = 64,
+    model: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run one prompt, fail on bypasses/limits, and always stop the subprocess tree."""
-    command = [*_command(root), prompt]
+    command = [*_command(root, model), prompt]
     events: list[dict[str, Any]] = []
     seen_calls: set[str] = set()
     stderr_path = root / "codex_stderr.log"
@@ -227,12 +226,19 @@ def verify_generated_strategy(
     *,
     timeout_seconds: float = 30,
     startup_timeout_seconds: float = 30,
+    scenario: str | None = None,
 ) -> None:
     """Check generated code in a bounded subprocess and always reap it."""
     ready = root / "verifier.ready"
     ready.unlink(missing_ok=True)
     process = subprocess.Popen(  # noqa: S603
-        [sys.executable, "-m", "tests.e2e.verify_strategy", str(root)],
+        [
+            sys.executable,
+            "-m",
+            "tests.e2e.verify_strategy",
+            str(root),
+            *([scenario] if scenario else []),
+        ],
         cwd=root,
         env={**os.environ, **runtime_environment(root)},
         stdin=subprocess.DEVNULL,

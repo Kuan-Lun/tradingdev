@@ -19,7 +19,21 @@ uv sync --locked --all-extras
 | `./scripts/rebuild-env.sh` | 重建 `.venv`，依 `uv.lock` 安裝鎖定版本。 |
 | `./scripts/format.sh` | 自動修正 lint 與格式，會修改檔案。 |
 | `./scripts/check-fast.sh` | 唯讀檢查 Ruff、格式、strict Mypy 與 Markdown。 |
-| `uv run --all-extras pytest` | 完整測試，包含真實 Codex／MCP 策略生成。 |
+| `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
+
+## 選擇性 LLM 測試
+
+兩個入口共用均線、動量與錯誤草稿修復情境，要求模型完成策略生成、回測及
+結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
+
+```bash
+./scripts/check-llm.sh codex
+./scripts/check-llm.sh local --llm-model qwen3-coder:30b
+```
+
+Local 使用支援工具呼叫的 Chat Completions 服務，預設
+`http://localhost:11434/v1`；其他本機服務以 `--llm-base-url` 指定。
+可加 `-k sma` 只跑均線情境，或 `--llm-timeout 900` 調整每個模型情境的秒數上限。
 
 ## 從開發到合併
 
@@ -47,7 +61,7 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 ```
 
 審閱者可留在目前開發分支執行；腳本會自動檢查合併候選、執行 Codex 文件
-審查與完整 pytest，並清理臨時產物。
+審查與完整離線 pytest，並清理臨時產物；真實模型策略測試由審閱者視變更另行執行。
 
 ### 3. 在 GitHub 審閱並合併
 
@@ -83,8 +97,10 @@ uv run --no-sync python scripts/git_gate.py full --base main
   保留其他自訂 merge options 與 `pull.rebase`。
 - **環境**：腳本使用 Bash，目前未保證原生 Windows 相容；Git 需支援
   `merge-tree --write-tree`。更新依賴時執行 `uv lock`，並提交 lockfile 與設定變更。
-- **登入與連線**：完整測試及文件審查需要已登入的 Codex CLI 與網路；可用
-  `TRADINGDEV_CODEX_BIN` 指定 CLI。PR 檢查與清理另需 `gh` 能存取目標 repository。
+- **模型與費用**：日常 pytest 不需模型服務。Codex 策略測試及 PR 文件審查
+  需要已登入的 Codex CLI、網路與額度；可用 `TRADINGDEV_CODEX_BIN` 指定 CLI。
+  本地測試須自行安裝並啟動模型服務，不會自動下載模型或改用付費服務；本地
+  模型通過不代表 Codex／Claude 相容性已驗證。PR 檢查與清理另需 `gh` 能存取 repository。
 - **PR 與 remote**：PR 檢查要求乾淨且已提交的工作樹，以及開啟且指向主線的 PR。
   兩個 PR 腳本僅支援 `github.com` 的標準 HTTPS／SSH remote，預設為 `origin`；
   例如改用名為 `upstream` 的 remote，就加 `--remote upstream`。

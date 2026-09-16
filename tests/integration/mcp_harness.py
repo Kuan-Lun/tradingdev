@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 @dataclass
 class MCPClient:
     session: ClientSession
+    instructions: str = ""
 
     async def call(self, name: str, **arguments: Any) -> Any:
         result = await self.session.call_tool(name, arguments)
@@ -64,11 +65,10 @@ class MCPWorkspace:
         frame.to_parquet(path, index=False)
         return path
 
-    @asynccontextmanager
-    async def connect(self) -> AsyncIterator[MCPClient]:
+    def environment(self) -> dict[str, str]:
+        """Confine caches and block market network access in the backend."""
         source_root = Path(__file__).resolve().parents[2] / "src"
         env = {
-            **os.environ,
             "PYTHONPATH": str(source_root),
             "PYTHONDONTWRITEBYTECODE": "1",
             "TRADINGDEV_WORKSPACE": str(self.workspace),
@@ -93,11 +93,15 @@ class MCPWorkspace:
             encoding="utf-8",
         )
         env["PYTHONPATH"] = os.pathsep.join((str(guard), str(source_root)))
+        return env
+
+    @asynccontextmanager
+    async def connect(self) -> AsyncIterator[MCPClient]:
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "tradingdev.mcp.server"],
             cwd=str(self.root),
-            env=env,
+            env={**os.environ, **self.environment()},
         )
         log_path = self.root / "server.log"
         try:
@@ -110,7 +114,7 @@ class MCPWorkspace:
                         assert initialized.serverInfo.name == "tradingdev"
                         assert "save_strategy" in (initialized.instructions or "")
                         try:
-                            yield MCPClient(session)
+                            yield MCPClient(session, initialized.instructions or "")
                         finally:
                             self.stop_workers()
         except BaseException:
@@ -185,7 +189,7 @@ def worker_is_alive(process: psutil.Process) -> bool:
 
 @contextmanager
 def temporary_mcp_workspace() -> Iterator[MCPWorkspace]:
-    # Unlike tmp_path, this does not retain strategy drafts/results after pytest.
+    # Also used outside pytest; stop detached workers before removing files.
     directory: str | None = None
     try:
         with TemporaryDirectory(prefix="tradingdev-mcp-test-") as directory:

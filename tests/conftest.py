@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytest_plugins = ["tests.llm_plugin"]
+
 
 @pytest.fixture
 def tmp_path() -> Iterator[Path]:

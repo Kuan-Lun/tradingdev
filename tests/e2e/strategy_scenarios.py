@@ -1,0 +1,107 @@
+"""Provider-neutral requirements and independent signal expectations."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import pandas as pd
+
+
+@dataclass(frozen=True)
+class Scenario:
+    name: str
+    parameters: dict[str, int]
+    overrides: dict[str, int]
+    requirement: str
+    repair: bool = False
+
+    @property
+    def strategy_id(self) -> str:
+        return f"llm_{self.name}"
+
+    @property
+    def prompt(self) -> str:
+        repair = (
+            "後端已有這個策略的錯誤草稿。先 get_strategy 並 validate_strategy，"
+            "必須先取得失敗診斷，再修改儲存，不能直接覆寫而跳過診斷。"
+            if self.repair
+            else "請先查詢策略清單。"
+        )
+        return f"""請透過 TradingDev MCP 開發策略 {self.strategy_id}。
+{repair}
+讀取 get_strategy_contract，依照契約完成 Python 與 YAML。{self.requirement}
+所有參數放在 strategy.parameters 且可覆寫：{self.parameters}。
+YAML backtest 設定 BTC/USDT、1h、2024-01-01 至 2024-01-08、init_cash=10000、
+mode=signal、fees=0、slippage=0、random_seed=42。data.features 為空。
+完成 save_strategy、validate_strategy、dry_run_strategy；若有錯誤請讀取診斷修正，
+直到 runnable。不 promote。接著你必須親自透過 MCP start_backtest 啟動這個策略，
+symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
+本次行情已預先放入後端快取，不下載行情、不使用外部資料。
+持續 get_job_status 查詢直到 done，再以回傳的 run_id 呼叫 get_run，
+以及 list_artifacts，讀取結果後才結束並簡述結果。不得只啟動工作就結束。
+只能透過 MCP 工具撰寫與執行，不使用 shell 或直接編輯檔案。
+"""
+
+
+_SMA_REQUIREMENT = (
+    "用收盤價 5 根與 20 根簡單均線判斷：短均線>長均線時每根 signal=1，"
+    "小於時每根=-1，相等或資料不足20根時=0。不得修改輸入資料或使用未來資料。"
+)
+SCENARIOS = {
+    "sma": Scenario(
+        "sma",
+        {"fast_period": 5, "slow_period": 20},
+        {"fast_period": 3, "slow_period": 8},
+        _SMA_REQUIREMENT,
+    ),
+    "momentum": Scenario(
+        "momentum",
+        {"lookback": 6},
+        {"lookback": 3},
+        "比較每根 close 與 lookback 根前的 close；較高每根 signal=1，較低=-1，"
+        "相等或沒有足夠歷史=0。不得修改輸入資料或使用未來資料。",
+    ),
+    "repair": Scenario(
+        "repair",
+        {"fast_period": 5, "slow_period": 20},
+        {"fast_period": 3, "slow_period": 8},
+        _SMA_REQUIREMENT,
+        repair=True,
+    ),
+}
+
+
+def market_frame() -> pd.DataFrame:
+    close = pd.Series(
+        [
+            100.0 + value
+            for value in ([*range(1, 41), *range(40, 0, -1), *([1] * 16)] * 2)
+        ]
+    )
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range(
+                "2024-01-01", periods=len(close), freq="h", tz="UTC"
+            ),
+            "open": close,
+            "high": close + 1,
+            "low": close - 1,
+            "close": close,
+            "volume": 100.0,
+        }
+    )
+
+
+def expected_signals(
+    frame: pd.DataFrame, scenario: Scenario, parameters: dict[str, int]
+) -> pd.Series:
+    close = frame["close"]
+    if scenario.name == "momentum":
+        left, right = close, close.shift(parameters["lookback"])
+    else:
+        left = close.rolling(parameters["fast_period"]).mean()
+        right = close.rolling(parameters["slow_period"]).mean()
+    expected = pd.Series(0, index=frame.index, name="signal")
+    expected.loc[left > right] = 1
+    expected.loc[left < right] = -1
+    return expected
