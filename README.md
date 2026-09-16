@@ -106,6 +106,8 @@ uv run python -m tradingdev --config \
   src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml
 ```
 
+報表以 `N/A` 表示缺少或沒有有限數值的指標，不代表零。
+
 含 `validation:` 的 config 需明確執行 walk-forward：
 
 ```bash

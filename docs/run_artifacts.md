@@ -74,7 +74,10 @@ dashboard rendering, and artifact lookup always read through SQLite first, then
 resolve files from the recorded artifact paths.
 
 Optimization `result.json` includes the best parameters, training metrics and
-out-of-sample metrics, with the same content returned by `get_run`. Non-finite
-metric values are serialized as JSON `null`, including nested optimization
-metrics. Parameters outside the search grid retain their YAML values; selection
-uses training results, and only the selected parameters are evaluated out of sample.
+out-of-sample metrics, with the same content returned by `get_run`. Parameters
+outside the search grid retain their YAML values; selection uses training
+results, and only the selected parameters are evaluated out of sample.
+
+Non-finite metric values are serialized as JSON `null`, including nested
+optimization metrics. The CLI displays missing or non-finite metrics as `N/A`,
+while keeping finite zero values visible as zero.
