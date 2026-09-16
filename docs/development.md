@@ -19,6 +19,7 @@ uv sync --locked --all-extras
 | `./scripts/rebuild-env.sh` | 重建 `.venv`，依 `uv.lock` 安裝鎖定版本。 |
 | `./scripts/format.sh` | 自動修正 lint 與格式，會修改檔案。 |
 | `./scripts/check-fast.sh` | 唯讀檢查 Ruff、格式、strict Mypy 與 Markdown。 |
+| `./scripts/check-full.sh` | 執行上述品質檢查與完整離線 pytest；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
 
 ## 選擇性 LLM 測試
@@ -34,8 +35,7 @@ uv sync --locked --all-extras
   --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900
 ```
 
-本地測試已驗證支援 Ollama 的 Qwen3.8 27B；上述設定在 MacBook M4 Pro 48GB
-通過均線、動量與草稿修復三個情境。模型可用 `ollama pull qwen3.8:27b` 安裝。
+本地測試已驗證支援 Ollama 的 Qwen3.8 27B。模型可用 `ollama pull qwen3.8:27b` 安裝。
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
 `http://localhost:11434/v1`；其他本機服務以 `--llm-base-url` 指定。
 其他支援工具呼叫的本地模型可用 `--llm-model` 指定，須另行執行測試驗證。
