@@ -58,6 +58,7 @@ async def run_local_model(
     model: str,
     base_url: str,
     timeout_seconds: float,
+    temperature: float | None = None,
     max_tool_calls: int = 64,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[ToolCall]:
@@ -93,16 +94,18 @@ async def run_local_model(
             ]
             allowed = {tool["function"]["name"] for tool in tools}
             while True:
+                request: dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                    "stream": False,
+                }
+                if temperature is not None:
+                    request["temperature"] = temperature
                 response = await http.post(
                     base_url.rstrip("/") + "/chat/completions",
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "tools": tools,
-                        "tool_choice": "auto",
-                        "stream": False,
-                        "temperature": 0,
-                    },
+                    json=request,
                 )
                 response.raise_for_status()
                 choice = response.json()["choices"][0]

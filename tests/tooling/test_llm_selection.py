@@ -24,6 +24,8 @@ def test_model(pytestconfig):
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}
     Path("model.ran").write_text(provider, encoding="utf-8")
+    temperature = pytestconfig.getoption("llm_temperature")
+    Path("temperature.ran").write_text(repr(temperature), encoding="utf-8")
 """
 
 
@@ -84,6 +86,7 @@ def test_explicit_provider_includes_live_tests(
     assert "2 passed" in result.stdout
     assert (tmp_path / "model.ran").read_text(encoding="utf-8") == provider
     assert (tmp_path / "offline.ran").exists()
+    assert (tmp_path / "temperature.ran").read_text(encoding="utf-8") == "None"
 
 
 @pytest.mark.parametrize(
@@ -143,5 +146,50 @@ def test_nonfinite_or_nonpositive_model_timeout_is_rejected(
     )
     assert result.returncode == pytest.ExitCode.USAGE_ERROR
     assert "--llm-timeout must be finite and positive" in result.stderr
+    assert not (tmp_path / "offline.ran").exists()
+    assert not (tmp_path / "model.ran").exists()
+
+
+@pytest.mark.parametrize("temperature", [0.0, 0.7, 2.0])
+def test_explicit_local_temperature_reaches_selected_tests(
+    tmp_path: Path, temperature: float
+) -> None:
+    result = _run_selection(
+        tmp_path,
+        "--llm-provider=local",
+        "--llm-model=fixture",
+        f"--llm-temperature={temperature}",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+    assert (tmp_path / "temperature.ran").read_text(encoding="utf-8") == repr(
+        temperature
+    )
+
+
+@pytest.mark.parametrize("temperature", ["nan", "inf", "-inf", "-0.1", "2.1"])
+def test_invalid_local_temperature_fails_before_any_test_executes(
+    tmp_path: Path, temperature: str
+) -> None:
+    result = _run_selection(
+        tmp_path,
+        "--llm-provider=local",
+        "--llm-model=fixture",
+        f"--llm-temperature={temperature}",
+    )
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "--llm-temperature" in result.stderr
+    assert not (tmp_path / "offline.ran").exists()
+    assert not (tmp_path / "model.ran").exists()
+
+
+@pytest.mark.parametrize("provider", [None, "codex"])
+def test_temperature_requires_explicit_local_provider(
+    tmp_path: Path, provider: str | None
+) -> None:
+    options = [] if provider is None else [f"--llm-provider={provider}"]
+    result = _run_selection(tmp_path, *options, "--llm-temperature=0.7")
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "--llm-temperature" in result.stderr
     assert not (tmp_path / "offline.ran").exists()
     assert not (tmp_path / "model.ran").exists()

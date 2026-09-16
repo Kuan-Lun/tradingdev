@@ -18,10 +18,24 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--llm-model", default=None)
     group.addoption("--llm-base-url", default="http://localhost:11434/v1")
     group.addoption("--llm-timeout", type=float, default=600.0)
+    group.addoption(
+        "--llm-temperature",
+        type=float,
+        default=None,
+        help="Local model sampling override; omitted uses the server's model defaults",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
     provider = config.getoption("llm_provider")
+    temperature = config.getoption("llm_temperature")
+    if temperature is not None:
+        if provider != "local":
+            raise pytest.UsageError("--llm-temperature requires --llm-provider local")
+        if not math.isfinite(temperature) or not 0 <= temperature <= 2:
+            raise pytest.UsageError(
+                "--llm-temperature must be finite and between 0 and 2"
+            )
     if provider is None:
         return
     timeout = config.getoption("llm_timeout")

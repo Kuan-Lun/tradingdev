@@ -28,11 +28,13 @@ uv sync --locked --all-extras
 
 ```bash
 ./scripts/check-llm.sh codex
-./scripts/check-llm.sh local --llm-model qwen3-coder:30b
+./scripts/check-llm.sh local --llm-model qwen3.8:27b
 ```
 
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
 `http://localhost:11434/v1`；其他本機服務以 `--llm-base-url` 指定。
+本地參考模型為 Qwen3.8 27B，可用 `ollama pull qwen3.8:27b` 安裝。
+取樣沿用模型服務的預設值；需要覆寫時加 `--llm-temperature 1.0`（範圍 0–2）。
 可加 `-k sma` 只跑均線情境，或 `--llm-timeout 900` 調整每個模型情境的秒數上限。
 
 ## 從開發到合併
