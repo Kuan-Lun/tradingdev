@@ -201,8 +201,8 @@ def _text_payload(value: Any) -> dict[str, str]:
     ("structured", "content"),
     [
         (
-            {"success": True, "values": [1, "1", None]},
-            [_text_payload({"values": [1, "1", None], "success": True})],
+            {"success": True, "values": [1, "1", 0.1, None]},
+            [_text_payload({"values": [1, "1", 0.1, None], "success": True})],
         ),
         (
             {"result": [{"id": "a"}, {"id": "b"}]},
@@ -236,6 +236,11 @@ def test_duplicate_content_is_removed_without_mutation_or_metadata_loss(
     [
         ({"success": True}, [_text_payload({"success": 1})]),
         ({"count": 1}, [_text_payload({"count": 1.0})]),
+        (
+            {"value": 9007199254740992.0},
+            [{"type": "text", "text": '{"value": 9007199254740993.0}'}],
+        ),
+        ({"value": 0.0}, [{"type": "text", "text": '{"value": 1e-400}'}]),
         (
             {"success": True},
             [{"type": "text", "text": '{"success": false, "success": true}'}],
@@ -298,6 +303,8 @@ def test_duplicate_content_is_removed_without_mutation_or_metadata_loss(
     ids=[
         "bool-v-int",
         "int-v-float",
+        "float-rounding",
+        "float-underflow",
         "duplicate-key",
         "nan",
         "infinity",

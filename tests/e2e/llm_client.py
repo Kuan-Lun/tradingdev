@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -52,6 +53,13 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"Non-finite JSON number: {value}")
 
 
+def _exact_json_float(token: str) -> float:
+    value = float(token)
+    if Decimal(token) != Decimal(str(value)):
+        raise ValueError("JSON number loses precision when parsed")
+    return value
+
+
 def _canonical_json(value: Any) -> str:
     # Values come from the MCP SDK's JSON serialization or strict json.loads.
     # JSON spelling distinguishes booleans from numbers (unlike Python ==).
@@ -88,6 +96,7 @@ def compact_tool_result(payload: dict[str, Any]) -> dict[str, Any]:
                     block["text"],
                     object_pairs_hook=_unique_json_object,
                     parse_constant=_reject_json_constant,
+                    parse_float=_exact_json_float,
                 )
             )
         candidates = [structured]
