@@ -1,7 +1,7 @@
 """Integration tests: each data source feeds the existing backtest pipeline.
 
 Both tests stub only the external transport (ccxt client / HTTP client) and
-run the real crawler, DataManager yearly cache, DataService feature merge,
+run the real crawler, DataManager yearly cache, DataService market-data loading,
 strategy loader, and backtest engine end to end.
 """
 
