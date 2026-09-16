@@ -35,8 +35,7 @@ uv sync --locked --all-extras
   --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900
 ```
 
-本地測試已驗證支援 Ollama 的 Qwen3.8 27B；上述設定在 MacBook M4 Pro 48GB
-通過均線、動量與草稿修復三個情境。模型可用 `ollama pull qwen3.8:27b` 安裝。
+本地測試已驗證支援 Ollama 的 Qwen3.8 27B。模型可用 `ollama pull qwen3.8:27b` 安裝。
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
 `http://localhost:11434/v1`；其他本機服務以 `--llm-base-url` 指定。
 其他支援工具呼叫的本地模型可用 `--llm-model` 指定，須另行執行測試驗證。
