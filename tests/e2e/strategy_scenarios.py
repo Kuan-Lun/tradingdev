@@ -32,7 +32,7 @@ class Scenario:
 讀取 get_strategy_contract，依照契約完成 Python 與 YAML。{self.requirement}
 所有參數放在 strategy.parameters 且可覆寫：{self.parameters}。
 YAML backtest 設定 BTC/USDT、1h、2024-01-01 至 2024-01-08、init_cash=10000、
-mode=signal、fees=0、slippage=0、random_seed=42。data.features 為空。
+mode=signal、fees=0、slippage=0、random_seed=42。data.requirements.features 為空。
 完成 save_strategy、validate_strategy、dry_run_strategy；若有錯誤請讀取診斷修正，
 直到 runnable。不 promote。接著你必須親自透過 MCP start_backtest 啟動這個策略，
 symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。

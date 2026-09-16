@@ -22,12 +22,25 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--llm-temperature",
         type=float,
         default=None,
-        help="Local model sampling override; omitted uses the server's model defaults",
+        help="Local model sampling override; omitted uses the server's API defaults",
+    )
+    group.addoption(
+        "--llm-reasoning-effort",
+        default=None,
+        help="Local model reasoning effort (for example low); supported by the server",
     )
 
 
 def pytest_configure(config: pytest.Config) -> None:
     provider = config.getoption("llm_provider")
+    effort = config.getoption("llm_reasoning_effort")
+    if effort is not None:
+        if provider != "local":
+            raise pytest.UsageError(
+                "--llm-reasoning-effort requires --llm-provider local"
+            )
+        if not effort.strip():
+            raise pytest.UsageError("--llm-reasoning-effort must not be empty")
     temperature = config.getoption("llm_temperature")
     if temperature is not None:
         if provider != "local":

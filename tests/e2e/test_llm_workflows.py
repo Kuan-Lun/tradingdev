@@ -158,6 +158,7 @@ def test_llm_authors_backtests_and_queries_results(
                     scenario.prompt,
                     base_url=pytestconfig.getoption("llm_base_url"),
                     temperature=pytestconfig.getoption("llm_temperature"),
+                    reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
 

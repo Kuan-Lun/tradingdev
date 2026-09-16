@@ -59,6 +59,7 @@ async def run_local_model(
     base_url: str,
     timeout_seconds: float,
     temperature: float | None = None,
+    reasoning_effort: str | None = None,
     max_tool_calls: int = 64,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[ToolCall]:
@@ -103,6 +104,8 @@ async def run_local_model(
                 }
                 if temperature is not None:
                     request["temperature"] = temperature
+                if reasoning_effort is not None:
+                    request["reasoning_effort"] = reasoning_effort
                 response = await http.post(
                     base_url.rstrip("/") + "/chat/completions",
                     json=request,

@@ -90,6 +90,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                     requests.append(body)
                     assert body["model"] == "offline-fixture-model"
                     assert "temperature" not in body
+                    assert "reasoning_effort" not in body
                     assert body["messages"][0] == {
                         "role": "system",
                         "content": client.instructions,
@@ -187,6 +188,32 @@ def test_explicit_temperature_is_preserved_across_model_tool_rounds(
             base_url="http://localhost/v1",
             timeout_seconds=1,
             temperature=temperature,
+            transport=httpx.MockTransport(respond),
+        )
+    )
+    assert len(requests) == 2
+    assert calls == [ToolCall("list_strategies", {}, [])]
+    invoke.assert_awaited_once_with("list_strategies", {})
+
+
+def test_explicit_reasoning_effort_is_preserved_across_model_tool_rounds() -> None:
+    client, invoke = _mock_client()
+    requests: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        assert body["reasoning_effort"] == "low"
+        return _reply([_call()] if len(requests) == 1 else None)
+
+    calls = asyncio.run(
+        run_local_model(
+            client,
+            "Use the selected reasoning effort",
+            model="fixture",
+            base_url="http://localhost/v1",
+            timeout_seconds=1,
+            reasoning_effort="low",
             transport=httpx.MockTransport(respond),
         )
     )

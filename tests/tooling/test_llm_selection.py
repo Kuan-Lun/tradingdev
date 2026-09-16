@@ -26,6 +26,8 @@ def test_model(pytestconfig):
     Path("model.ran").write_text(provider, encoding="utf-8")
     temperature = pytestconfig.getoption("llm_temperature")
     Path("temperature.ran").write_text(repr(temperature), encoding="utf-8")
+    reasoning_effort = pytestconfig.getoption("llm_reasoning_effort")
+    Path("reasoning_effort.ran").write_text(repr(reasoning_effort), encoding="utf-8")
 """
 
 
@@ -87,6 +89,7 @@ def test_explicit_provider_includes_live_tests(
     assert (tmp_path / "model.ran").read_text(encoding="utf-8") == provider
     assert (tmp_path / "offline.ran").exists()
     assert (tmp_path / "temperature.ran").read_text(encoding="utf-8") == "None"
+    assert (tmp_path / "reasoning_effort.ran").read_text(encoding="utf-8") == "None"
 
 
 @pytest.mark.parametrize(
@@ -191,5 +194,46 @@ def test_temperature_requires_explicit_local_provider(
     result = _run_selection(tmp_path, *options, "--llm-temperature=0.7")
     assert result.returncode == pytest.ExitCode.USAGE_ERROR
     assert "--llm-temperature" in result.stderr
+    assert not (tmp_path / "offline.ran").exists()
+    assert not (tmp_path / "model.ran").exists()
+
+
+def test_explicit_local_reasoning_effort_reaches_selected_tests(
+    tmp_path: Path,
+) -> None:
+    result = _run_selection(
+        tmp_path,
+        "--llm-provider=local",
+        "--llm-model=fixture",
+        "--llm-reasoning-effort=low",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+    assert (tmp_path / "reasoning_effort.ran").read_text(encoding="utf-8") == "'low'"
+
+
+def test_blank_local_reasoning_effort_fails_before_any_test_executes(
+    tmp_path: Path,
+) -> None:
+    result = _run_selection(
+        tmp_path,
+        "--llm-provider=local",
+        "--llm-model=fixture",
+        "--llm-reasoning-effort= ",
+    )
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "--llm-reasoning-effort" in result.stderr
+    assert not (tmp_path / "offline.ran").exists()
+    assert not (tmp_path / "model.ran").exists()
+
+
+@pytest.mark.parametrize("provider", [None, "codex"])
+def test_reasoning_effort_requires_explicit_local_provider(
+    tmp_path: Path, provider: str | None
+) -> None:
+    options = [] if provider is None else [f"--llm-provider={provider}"]
+    result = _run_selection(tmp_path, *options, "--llm-reasoning-effort=low")
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "--llm-reasoning-effort" in result.stderr
     assert not (tmp_path / "offline.ran").exists()
     assert not (tmp_path / "model.ran").exists()
