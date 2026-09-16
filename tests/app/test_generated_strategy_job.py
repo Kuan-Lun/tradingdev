@@ -1,4 +1,8 @@
-"""Integration tests for the MCP-facing application workflow."""
+"""Service composition: persist a job/config and request the correct worker.
+
+The process runner is recorded, not executed. Real MCP/worker lifecycle coverage
+lives in tests/integration/test_mcp_protocol.py.
+"""
 
 from __future__ import annotations
 
@@ -16,8 +20,6 @@ from tradingdev.app.strategy_service import StrategyService
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from pytest import MonkeyPatch
 
 
 class FakeRunner(ProcessRunner):
@@ -80,7 +82,6 @@ data:
 
 def test_generated_strategy_can_start_backtest_job(
     tmp_path: Path,
-    monkeypatch: MonkeyPatch,
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
@@ -97,7 +98,7 @@ def test_generated_strategy_can_start_backtest_job(
         "integration_strategy",
         _STRATEGY_CODE,
         _YAML,
-        request_summary="integration smoke test",
+        request_summary="service scheduling test",
     )
     assert saved.success is True
     assert strategy_service.validate("integration_strategy")["success"] is True

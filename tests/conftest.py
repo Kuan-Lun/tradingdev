@@ -1,10 +1,41 @@
 """Shared test fixtures."""
 
+import os
+from collections.abc import Iterator
 from datetime import UTC
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import pandas as pd
 import pytest
+
+pytest_plugins = ["tests.llm_plugin"]
+
+
+@pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    """Remove each test's files during teardown, including failed tests.
+
+    Pytest's built-in fixture retains recent runs by default. TemporaryDirectory
+    reports cleanup errors instead of silently retaining strategy/data artifacts.
+    Tests that launch processes must stop them before this fixture is torn down.
+    """
+    original_cwd = Path.cwd()
+    with TemporaryDirectory(prefix="tradingdev-test-") as directory:
+        path = Path(directory).resolve()
+        try:
+            yield path
+        finally:
+            # A test may request monkeypatch before tmp_path, making its chdir
+            # undo run after our teardown. Windows cannot remove the current cwd.
+            try:
+                current_cwd = Path.cwd()
+            except FileNotFoundError:
+                os.chdir(original_cwd)
+            else:
+                if current_cwd.is_relative_to(path):
+                    os.chdir(original_cwd)
 
 
 def _make_ohlcv(

@@ -61,8 +61,10 @@
 
 ## 測試與清理
 
-- `pytest`／`uv run pytest` 預設執行完整套件，包含真實 Codex 經 MCP 撰寫
-  策略的測試。需要已登入 Codex CLI 及網路；缺少條件須失敗，不得默默略過。
+- `pytest`／`uv run pytest` 預設執行完整離線套件，不呼叫模型。真實模型測試
+  由 `scripts/check-llm.sh codex|local` 明確啟用；共用策略生成、修復、回測與
+  結果查詢情境。選擇後若缺少 CLI、登入、模型服務或模型能力須失敗，不得
+  默默略過或退回另一個 provider。離線通過不代表真實模型相容性已驗證。
 - 行為變更更新相關測試；bug fix 加入能重現問題的 regression test。驗證
   正常、邊界與失敗路徑，避免只重述實作的測試。
 - 清楚區分真實 LLM、真實 MCP／worker、service 與替代外部服務的測試。
@@ -112,7 +114,8 @@
 - PR 檢查 fetch 主線與 PR head 至獨立臨時 Git repository，計算合併候選
   tree；不切換或更新開發者的分支。衝突或讀取版本不一致直接失敗。
 - 先由 Codex 比對候選程式差異與既有架構／契約／操作文件，再執行
-  `scripts/check-full.sh`（快速檢查加完整 pytest，包含真實 Codex）。
+  `scripts/check-full.sh`（快速檢查加完整離線 pytest）。真實模型策略測試由
+  審閱者依變更明確執行，不再是每次 PR 的強制檢查；Codex 文件審查仍會呼叫模型。
   每次明確執行都重新檢查，不重用舊版完整檢查 receipt。
 - 文件審查使用唯讀、無工具的 Codex 執行，僅傳入 Git 版本的程式與文件，
   不修改 repository。過時文件、執行失敗、逾時或無效回覆皆令檢查失敗。

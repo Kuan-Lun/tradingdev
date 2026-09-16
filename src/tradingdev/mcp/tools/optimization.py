@@ -32,7 +32,13 @@ def register(
         test_start: str,
         test_end: str,
     ) -> dict[str, Any]:
-        """Launch a parameter optimization job."""
+        """Launch optimization and wait for confirmation after estimating its cost.
+
+        Dates are inclusive UTC calendar days and must satisfy
+        train_start < train_end < test_start < test_end, without overlap.
+        Grid values override matching YAML parameters; other parameters stay fixed.
+        Review get_job_status before calling confirm_optimization.
+        """
         payload = OptimizationInput(
             strategy_id=strategy_id,
             symbol=symbol,

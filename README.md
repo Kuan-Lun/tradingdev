@@ -70,6 +70,13 @@ Claude Desktop 範例：
 | Artifacts | `list_artifacts`, `get_artifact`, `promote_strategy` |
 | Requests | `record_feature_request`, `list_feature_requests` |
 
+最佳化先以 `start_optimization` 試跑並估時，等使用者同意後才呼叫
+`confirm_optimization` 執行完整搜尋；以 `get_job_status`／`get_run` 查詢結果。
+進入 `pending_confirmation` 後最多等待 30 分鐘；逾時工作會標示為 `failed`，
+不會執行剩餘搜尋。
+訓練與測試日期都包含終日，須符合 `train_start < train_end < test_start < test_end`。
+呼叫指定的交易對與時間框架會覆寫 YAML；搜尋參數以外的 YAML 固定參數仍會保留。
+
 ## 工作區與檔案
 
 - 內建策略：
@@ -100,6 +107,8 @@ Claude Desktop 範例：
 uv run python -m tradingdev --config \
   src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml
 ```
+
+報表以 `N/A` 表示缺少或沒有有限數值的指標，不代表零。
 
 含 `validation:` 的 config 需明確執行 walk-forward：
 

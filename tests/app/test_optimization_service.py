@@ -69,7 +69,12 @@ def _service(
 
 def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> None:
     config_path = tmp_path / "strategy.yaml"
-    config_path.write_text("strategy:\n  id: fixture\n", encoding="utf-8")
+    config_path.write_text(
+        "strategy:\n  id: fixture\nbacktest:\n  symbol: ETH/USDT\n"
+        "  timeframe: 4h\n  start_date: '2024-01-01'\n"
+        "  end_date: '2024-12-31'\n  init_cash: 10000\n",
+        encoding="utf-8",
+    )
     service, job_store, runner = _service(
         tmp_path,
         metadata={"status": "runnable", "config_path": str(config_path)},
@@ -83,7 +88,7 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
         optimization_metric="sharpe_ratio",
         train_start="2024-01-01",
         train_end="2024-02-01",
-        test_start="2024-02-01",
+        test_start="2024-02-02",
         test_end="2024-03-01",
     )
 

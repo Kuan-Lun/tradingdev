@@ -25,6 +25,7 @@ import os
 import signal
 import time
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -110,36 +111,10 @@ def _evaluate_combo(
     """
     import pandas as pd
 
-    from tradingdev.app.backtest_service import BacktestService
-    from tradingdev.domain.backtest.schemas import BacktestConfig
-    from tradingdev.domain.strategies.loader import StrategyLoader
-
-    # Reconstruct DataFrame
-    df = pd.read_json(df_json, orient="split")
-
-    bt_cfg = BacktestConfig(**bt_cfg_dict)
-    service = BacktestService()
-    engine = service.create_engine(bt_cfg)
-    cls = StrategyLoader().load_class(strategy_cfg)
-
-    # Instantiate strategy with params
-    sig = inspect.signature(cls)
-    kwargs: dict[str, Any] = {}
-    if "backtest_engine" in sig.parameters:
-        kwargs["backtest_engine"] = engine
-    for k, v in param_dict.items():
-        if k in sig.parameters:
-            kwargs[k] = v
-    strategy = cls(**kwargs)
-
-    # Run backtest
-    signals_df = strategy.generate_signals(df)
-    result = engine.run(signals_df)
-
-    target_val = result.metrics.get(metric_name, float("-inf"))
-    serialized = service.serialize_metrics(result.metrics)
-
-    return param_dict, float(target_val), serialized
+    df = pd.read_json(StringIO(df_json), orient="split")
+    return _run_single_combo(
+        strategy_cfg, BacktestConfig(**bt_cfg_dict), df, param_dict, metric_name
+    )
 
 
 def _run_single_combo(
@@ -152,16 +127,13 @@ def _run_single_combo(
     """Run a single combo in the main process (for trial run)."""
     service = BacktestService()
     engine = service.create_engine(bt_cfg)
-    cls = StrategyLoader().load_class(strategy_cfg)
-
-    sig = inspect.signature(cls)
-    kwargs: dict[str, Any] = {}
-    if "backtest_engine" in sig.parameters:
-        kwargs["backtest_engine"] = engine
-    for k, v in param_dict.items():
-        if k in sig.parameters:
-            kwargs[k] = v
-    strategy = cls(**kwargs)
+    effective_strategy = {
+        **strategy_cfg,
+        "parameters": {**strategy_cfg.get("parameters", {}), **param_dict},
+    }
+    strategy = StrategyLoader().create_from_config(
+        {"strategy": effective_strategy}, engine
+    )
 
     signals_df = strategy.generate_signals(df)
     result = engine.run(signals_df)
@@ -198,11 +170,8 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     # --- Phase 2: load config ---
     try:
         raw_config: dict[str, Any] = load_config(config_path)
-        # Override date range to cover full period
-        bt_raw = dict(raw_config["backtest"])
-        bt_raw["start_date"] = train_start
-        bt_raw["end_date"] = test_end
-        bt_cfg = BacktestConfig(**bt_raw)
+        # The job snapshot includes request overrides and the complete final day.
+        bt_cfg = BacktestConfig(**raw_config["backtest"])
     except Exception as exc:
         _fail(job_id, f"Config error: {exc}")
         return
@@ -324,7 +293,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         signal.signal(signal.SIGALRM, old_handler)
 
     # Estimate total time
-    n_jobs = estimate_n_jobs(train_df)
+    n_jobs = min(estimate_n_jobs(train_df), max(total_combinations - 1, 1))
     # Remaining combos after trial (first already done)
     remaining_count = total_combinations - 1
     estimated_total_seconds = round(

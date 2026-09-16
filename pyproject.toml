@@ -111,7 +111,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "integration: integration tests, including real MCP subprocess workflows",
-    "live_llm: end-to-end tests using an authenticated LLM client",
+    "live_llm: explicitly enabled model/MCP workflows (--llm-provider codex|local)",
 ]
 
 # Dev tools: [dependency-groups].dev is the canonical uv-native source.

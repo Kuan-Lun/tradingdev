@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pandas as pd
+import pytest
 
 from tradingdev.adapters.cli import main as cli_main
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.backtest_service import BacktestRun
+from tradingdev.app.data_service import DataService, LoadedDataset
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.backtest.result import BacktestResult
+from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
+from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -178,3 +187,89 @@ backtest:
     assert service.calls == [(config_path, True)]
     assert artifacts.calls[0]["strategy_id"] == "cli_walk_forward"
     assert any("WF" in msg for msg in logger.messages)
+
+
+@pytest.mark.parametrize(
+    ("unavailable_metric", "raw_value", "report_label"),
+    [
+        ("profit_factor", float("inf"), "Profit Factor"),
+        ("sharpe_ratio", float("nan"), "Sharpe Ratio"),
+        ("annual_return", float("-inf"), "Annual Return"),
+    ],
+    ids=["infinite-profit-factor", "nan-sharpe-ratio", "negative-infinite-return"],
+)
+def test_cli_reports_and_caches_serialized_nonfinite_metrics(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    unavailable_metric: str,
+    raw_value: float,
+    report_label: str,
+) -> None:
+    """Use engine fixtures through real serialization, reporting, and storage."""
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    monkeypatch.setenv("TRADINGDEV_WORKSPACE", str(workspace.root))
+    monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=2, freq="h", tz="UTC"),
+            "close": [100.0, 101.0],
+        }
+    )
+    processed_path = tmp_path / "processed.parquet"
+    frame.to_parquet(processed_path)
+    dataset = LoadedDataset(frame, processed_path, "dataset-cli-nonfinite")
+    monkeypatch.setattr(DataService, "load", lambda *_args: dataset)
+    monkeypatch.setattr(
+        KDStrategy,
+        "generate_signals",
+        lambda _self, data: data.assign(signal=1),
+    )
+    metrics = _metrics()
+    metrics[unavailable_metric] = raw_value
+    engine_result = BacktestResult(
+        metrics=metrics,
+        equity_curve=np.array([10_000.0, 10_100.0]),
+        mode="signal",
+    )
+    # Replace the numerical engine, keeping the service's real serialization
+    # boundary. This test does not compile Numba code or create its disk caches.
+    monkeypatch.setattr(SignalBacktestEngine, "run", lambda *_args: engine_result)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """\
+strategy:
+  id: kd_crossover
+backtest:
+  symbol: BTC/USDT
+  timeframe: 1h
+  start_date: "2024-01-01"
+  end_date: "2024-01-02"
+  init_cash: 10000.0
+  fees: 0.0
+  slippage: 0.0
+""",
+        encoding="utf-8",
+    )
+    logger = _LoggerStub()
+    monkeypatch.setattr(cli_main, "logger", logger)
+    monkeypatch.setattr("sys.argv", ["tradingdev", "--config", str(config_path)])
+
+    cli_main.main()
+
+    report = next(msg for msg in logger.messages if "Backtest results:" in msg)
+    assert f"{report_label}:" in report
+    metric_line = next(line for line in report.splitlines() if report_label in line)
+    assert metric_line.split(":", 1)[1].strip() == "N/A"
+    assert any("Result cached" in msg for msg in logger.messages)
+    store = SQLiteStore(workspace)
+    runs = store.list_runs()
+    assert len(runs) == 1
+    assert runs[0]["metrics"][unavailable_metric] is None
+    assert runs[0]["metrics"]["total_trades"] == 4
+    artifacts = ArtifactService(workspace=workspace, store=store)
+    loaded = artifacts.load_pipeline_result(runs[0]["run_id"])
+    assert loaded["success"] is True
+    result = loaded["pipeline"].backtest_result
+    assert result is not None
+    assert not math.isfinite(result.metrics[unavailable_metric])
+    assert len(list((workspace.processed_data / "cache").glob("*.pkl"))) == 1
