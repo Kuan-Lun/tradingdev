@@ -30,13 +30,12 @@ uv sync --locked --all-extras
 
 ```bash
 ./scripts/check-llm.sh codex --llm-model gpt-5.6-luna
-./scripts/check-llm.sh local --llm-model qwen3.8:27b \
-  --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900
+./scripts/check-llm.sh local --llm-model MODEL_NAME --llm-timeout 900
 ```
 
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
 `http://localhost:11434/v1`；其他本機服務以 `--llm-base-url` 指定。
-本地參考模型為 Qwen3.8 27B，可用 `ollama pull qwen3.8:27b` 安裝。
+`MODEL_NAME` 是佔位文字，請替換為本機服務實際提供且支援工具呼叫的模型名稱。
 未指定 temperature 時採服務 API 的預設值，不保證等於模型設定檔；需要覆寫時
 加 `--llm-temperature 1.0`（範圍 0–2）。
 推理強度以 `--llm-reasoning-effort` 指定，支援值依模型服務而定；省略時使用服務預設。
@@ -111,6 +110,9 @@ uv run --no-sync python scripts/git_gate.py full --base main
   指定其他模型。模型不可用時測試會失敗，不會自動改用其他模型。
   本地測試須自行安裝並啟動模型服務，不會自動下載模型或改用付費服務；本地
   模型通過不代表 Codex／Claude 相容性已驗證。PR 檢查與清理另需 `gh` 能存取 repository。
+- **本地模型已知問題**：Ollama `0.34.1` 搭配 `qwen3.8:27b` 的實測曾在工具
+  呼叫時發生 HTTP 500（XML 解析失敗）。此組合未通過最新整套測試，
+  不列為推薦設定。
 - **PR 與 remote**：PR 檢查要求乾淨且已提交的工作樹，以及開啟且指向主線的 PR。
   兩個 PR 腳本僅支援 `github.com` 的標準 HTTPS／SSH remote，預設為 `origin`；
   例如改用名為 `upstream` 的 remote，就加 `--remote upstream`。
