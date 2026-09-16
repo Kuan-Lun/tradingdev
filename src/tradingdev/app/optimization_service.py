@@ -128,9 +128,7 @@ class OptimizationService:
                 error=f"Worker failed to start: {type(exc).__name__}: {exc}",
             )
             raise
-        self._job_store.update_job(
-            job_id, pid=identity.pid, process_create_time=identity.create_time
-        )
+        self._job_store.update_job(job_id, **identity.job_fields())
         return {
             "job_id": job_id,
             "message": (

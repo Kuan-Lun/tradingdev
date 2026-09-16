@@ -5,11 +5,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import signal
 import sqlite3
 import sys
-import time
-from contextlib import asynccontextmanager, closing, contextmanager, suppress
+from contextlib import asynccontextmanager, closing, contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -21,7 +19,10 @@ import psutil
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from tradingdev.adapters.execution.process_runner import ProcessIdentity
+from tradingdev.adapters.execution.process_runner import (
+    WorkerHandle,
+    request_worker_stop,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -127,85 +128,69 @@ class MCPWorkspace:
             raise
 
     def stop_workers(self) -> None:
-        """Stop only this workspace's detached worker groups.
-
-        Target individual PIDs from our database; global process enumeration is
-        unavailable in some sandboxes. The MCP server owns/reaps these children,
-        so a zombie already counts as exited while its parent is shutting down.
-        """
+        """Ask workspace supervisors to stop their workers before deleting files."""
         database = self.workspace / "tradingdev.sqlite"
-        if not database.exists():
-            return
-        with closing(sqlite3.connect(database)) as connection:
-            workers = connection.execute(
-                "SELECT pid, payload FROM jobs WHERE pid IS NOT NULL"
-            ).fetchall()
-        processes: list[psutil.Process] = []
         failures: list[Exception] = []
-        for pid, payload in workers:
-            identity = ProcessIdentity.from_values(
-                pid, json.loads(payload).get("process_create_time")
-            )
-            if identity is None:
-                failures.append(
-                    AssertionError(f"Worker creation identity missing: PID {pid}")
+        handles: set[WorkerHandle] = set()
+        if database.exists():
+            try:
+                with closing(sqlite3.connect(database)) as connection:
+                    workers = connection.execute(
+                        "SELECT pid, payload FROM jobs WHERE pid IS NOT NULL"
+                    ).fetchall()
+            except Exception as error:
+                failures.append(error)
+            else:
+                for pid, payload in workers:
+                    try:
+                        record = json.loads(payload)
+                        if not isinstance(record, dict):
+                            raise AssertionError(f"Invalid worker record: PID {pid}")
+                        handle = WorkerHandle.from_job({**record, "pid": pid})
+                        if handle is None:
+                            raise AssertionError(
+                                f"Worker control identity missing or invalid: PID {pid}"
+                            )
+                        handles.add(handle)
+                    except Exception as error:
+                        failures.append(error)
+
+        # A supervisor may have started before identity capture or DB update.
+        # Inspect launch directories too: absence of start is not proof of exit.
+        try:
+            launches = list((self.workspace / ".workers").iterdir())
+        except FileNotFoundError:
+            launches = []
+        except Exception as error:
+            launches = []
+            failures.append(error)
+        for launch in launches:
+            try:
+                start = launch / "start.json"
+                try:
+                    record = json.loads(start.read_text(encoding="utf-8"))
+                except FileNotFoundError as error:
+                    raise AssertionError(
+                        f"Unidentified worker launch; start record missing: {launch}"
+                    ) from error
+                handle = (
+                    WorkerHandle.from_job(record) if isinstance(record, dict) else None
                 )
-                continue
-            try:
-                # Constructing Process(pid) alone accepts an already-reused PID.
-                process = identity.get_process()
-                if process is None:
-                    continue
-                command = process.cmdline()
-                # Also reject another workspace's process or a non-worker.
-                if not any("tradingdev.mcp.workers." in item for item in command):
-                    continue
-                if not any(str(self.workspace) in item for item in command) and (
-                    Path(process.cwd()).resolve() != self.root
-                ):
-                    continue
-                if os.getpgid(pid) != pid:
-                    continue
-                processes.append(process)
-            except (psutil.NoSuchProcess, ProcessLookupError):
-                continue
-            except (psutil.AccessDenied, PermissionError) as error:
+                if handle is None or handle.control_id != start.parent.name:
+                    raise AssertionError(f"Invalid worker control record: {start}")
+                handles.add(handle)
+            except Exception as error:
                 failures.append(error)
-        for process in processes:
+
+        for handle in handles:
             try:
-                self._signal_worker_group(process, signal.SIGTERM)
-            except (psutil.AccessDenied, PermissionError) as error:
+                request_worker_stop(self.workspace, handle)
+            except Exception as error:
                 failures.append(error)
-        alive = self._wait_for_workers(processes)
-        for process in alive:
-            try:
-                self._signal_worker_group(process, signal.SIGKILL)
-            except (psutil.AccessDenied, PermissionError) as error:
-                failures.append(error)
-        alive = self._wait_for_workers(alive)
-        if alive:
-            failures.append(AssertionError(f"Test workers did not exit: {alive}"))
         if len(failures) == 1:
             raise failures[0]
         if failures:
             raise ExceptionGroup("Test worker cleanup failed", failures)
-
-    @staticmethod
-    def _signal_worker_group(process: psutil.Process, sig: signal.Signals) -> None:
-        with suppress(psutil.NoSuchProcess, ProcessLookupError):
-            # Recheck the retained identity for reuse after initial inspection.
-            if process.is_running() and os.getpgid(process.pid) == process.pid:
-                os.killpg(process.pid, sig)
-
-    @staticmethod
-    def _wait_for_workers(processes: list[psutil.Process]) -> list[psutil.Process]:
-        deadline = time.monotonic() + 5
-        alive = processes
-        while alive and time.monotonic() < deadline:
-            alive = [process for process in alive if worker_is_alive(process)]
-            if alive:
-                time.sleep(0.05)
-        return alive
 
 
 def worker_is_alive(process: psutil.Process) -> bool:

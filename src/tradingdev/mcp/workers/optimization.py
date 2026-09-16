@@ -21,7 +21,6 @@ import argparse
 import inspect
 import json
 import logging
-import os
 import signal
 import time
 from datetime import UTC, datetime
@@ -31,7 +30,7 @@ from typing import Any
 
 from joblib import Parallel, delayed
 
-from tradingdev.adapters.execution.process_runner import ProcessIdentity
+from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
@@ -165,13 +164,12 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     test_start: str = job["test_start"]
     test_end: str = job["test_end"]
 
-    # --- Phase 1: mark running & record PID ---
-    identity = ProcessIdentity.capture(os.getpid())
+    # --- Phase 1: mark running & preserve the supervisor control identity ---
+    handle = WorkerHandle.from_environment()
     job_store.update_job(
         job_id,
         status="downloading_data",
-        pid=identity.pid,
-        process_create_time=identity.create_time,
+        **handle.job_fields(),
     )
 
     # --- Phase 2: load config ---

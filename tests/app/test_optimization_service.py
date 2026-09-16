@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from tradingdev.adapters.execution.process_runner import ProcessIdentity
+from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.job_service import JobService
@@ -51,9 +51,9 @@ class _RunnerStub:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
-    def spawn_module(self, module: str, *args: str) -> ProcessIdentity:
+    def spawn_module(self, module: str, *args: str) -> WorkerHandle:
         self.calls.append((module, args))
-        return ProcessIdentity(2468, 100.0)
+        return WorkerHandle(2468, 100.0, "a" * 32)
 
 
 def _service(
@@ -108,6 +108,7 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
     assert job["job_type"] == "optimization"
     assert job["pid"] == 2468
     assert job["process_create_time"] == 100.0
+    assert job["worker_control_id"] == "a" * 32
     assert job["total_combinations"] == 6
     assert job["optimization_metric"] == "sharpe_ratio"
     assert job["param_ranges"] == {
@@ -137,7 +138,7 @@ def test_optimization_spawn_failure_is_persisted_before_reraising(
     )
     failure = failure_type("worker identity unavailable")
 
-    def fail_spawn(module: str, *args: str) -> ProcessIdentity:
+    def fail_spawn(module: str, *args: str) -> WorkerHandle:
         raise failure
 
     monkeypatch.setattr(runner, "spawn_module", fail_spawn)

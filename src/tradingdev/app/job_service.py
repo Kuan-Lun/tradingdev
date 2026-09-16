@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import os
-import signal
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import psutil
-
-from tradingdev.adapters.execution.process_runner import ProcessIdentity, ProcessRunner
+from tradingdev.adapters.execution.process_runner import (
+    ProcessIdentity,
+    ProcessRunner,
+    WorkerHandle,
+    request_worker_stop,
+)
 from tradingdev.app.data_service import DataService
 from tradingdev.app.job_config import apply_run_overrides, write_job_config
 from tradingdev.app.job_store import JobStore, get_default_job_store
@@ -129,13 +131,11 @@ class JobService:
             return {"status": "not_found", "error": f"No job with ID: {job_id}"}
 
         status = str(job["status"])
-        if status in {
-            "downloading_data",
-            "running_backtest",
-            "estimating",
-            "optimizing",
-            "testing_oos",
-        } and not self._is_process_alive(job):
+        if (
+            status in self._ACTIVE_STATUSES
+            and (status != "queued" or job.get("pid") is not None)
+            and not self._is_process_alive(job)
+        ):
             status = "failed"
             failure = {
                 "status": status,
@@ -278,15 +278,29 @@ class JobService:
             }
 
         process_terminated = False
-        identity = self._process_identity(job)
-        if identity is not None:
-            process_terminated, error = self._terminate_process(identity)
-            if error is not None:
+        handle = WorkerHandle.from_job(job)
+        if handle is None:
+            if status != "queued" or job.get("pid") is not None:
                 return {
                     "success": False,
-                    "error": error,
+                    "error": (
+                        "Worker control identity is unavailable; "
+                        "cannot confirm process cleanup."
+                    ),
                     "status": status,
-                    "pid": identity.pid,
+                    "pid": job.get("pid"),
+                }
+        else:
+            try:
+                process_terminated = request_worker_stop(
+                    self._job_store.workspace.root, handle
+                )
+            except (OSError, ValueError, RuntimeError) as exc:
+                return {
+                    "success": False,
+                    "error": f"Worker cleanup could not be confirmed: {exc}",
+                    "status": status,
+                    "pid": handle.pid,
                 }
 
         self._job_store.update_job(
@@ -363,9 +377,7 @@ class JobService:
                 error=f"Worker failed to start: {type(exc).__name__}: {exc}",
             )
             raise
-        self._job_store.update_job(
-            job_id, pid=identity.pid, process_create_time=identity.create_time
-        )
+        self._job_store.update_job(job_id, **identity.job_fields())
         data_msg = (
             "Data already cached locally."
             if data_available
@@ -419,22 +431,6 @@ class JobService:
     def _is_process_alive(self, job: dict[str, Any]) -> bool:
         identity = self._process_identity(job)
         return identity is not None and identity.get_process() is not None
-
-    def _terminate_process(self, identity: ProcessIdentity) -> tuple[bool, str | None]:
-        try:
-            process = identity.get_process()
-            if process is None or not process.is_running():
-                return False, None
-            if os.getpgid(identity.pid) == identity.pid:
-                os.killpg(identity.pid, signal.SIGTERM)
-            else:
-                # psutil rechecks the captured identity before individual signals.
-                process.terminate()
-            return True, None
-        except (psutil.NoSuchProcess, ProcessLookupError):
-            return False, None
-        except (psutil.AccessDenied, PermissionError):
-            return False, f"Permission denied when terminating process {identity.pid}"
 
     def _default_project_root(self) -> Path:
         configured = os.environ.get("TRADINGDEV_PROJECT_ROOT")
