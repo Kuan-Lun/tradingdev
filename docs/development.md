@@ -19,6 +19,7 @@ uv sync --locked --all-extras
 | `./scripts/rebuild-env.sh` | 重建 `.venv`，依 `uv.lock` 安裝鎖定版本。 |
 | `./scripts/format.sh` | 自動修正 lint 與格式，會修改檔案。 |
 | `./scripts/check-fast.sh` | 唯讀檢查 Ruff、格式、strict Mypy 與 Markdown。 |
+| `./scripts/check-full.sh` | 執行上述品質檢查與完整離線 pytest；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
 
 ## 選擇性 LLM 測試
