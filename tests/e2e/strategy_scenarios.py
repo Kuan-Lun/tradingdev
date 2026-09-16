@@ -38,8 +38,11 @@ mode=signal、fees=0、slippage=0、random_seed=42。data.requirements.features 
 symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
 本次行情已預先放入後端快取，不下載行情、不使用外部資料。
 持續 get_job_status 查詢直到 done，再以回傳的 run_id 呼叫 get_run，
-以及 list_artifacts，讀取結果後才結束並簡述結果。不得只啟動工作就結束。
+以及 list_artifacts，確認結果後就結束，只回答「完成」與 run_id。
+不得只啟動工作就結束；不需要額外取得 artifact 內容或撰寫回測報告。
 只能透過 MCP 工具撰寫與執行，不使用 shell 或直接編輯檔案。
+直接呼叫工具，不敘述計畫或重貼程式碼；程式、YAML 與 request_summary 保持精簡，
+但不得省略需求或驗證步驟。
 """
 
 

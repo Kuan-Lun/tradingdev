@@ -39,6 +39,71 @@ def tool_payload(result: dict[str, Any]) -> Any:
     return structured
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"Non-finite JSON number: {value}")
+
+
+def _canonical_json(value: Any) -> str:
+    # Values come from the MCP SDK's JSON serialization or strict json.loads.
+    # JSON spelling distinguishes booleans from numbers (unlike Python ==).
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def compact_tool_result(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove only an entirely redundant plain-text MCP content sequence.
+
+    Compare whole values, including an SDK result wrapper or list spread across
+    text blocks. Preserve additional text, metadata and every other payload key.
+    """
+    structured = payload.get("structuredContent")
+    content = payload.get("content")
+    if not isinstance(structured, dict) or not isinstance(content, list) or not content:
+        return payload
+    decoded = []
+    try:
+        for block in content:
+            if (
+                not isinstance(block, dict)
+                or block.get("type") != "text"
+                or not isinstance(block.get("text"), str)
+                or set(block) - {"type", "text", "annotations", "meta", "_meta"}
+                # Pydantic emits these known optional fields even when absent.
+                or any(
+                    block.get(key) is not None
+                    for key in ("annotations", "meta", "_meta")
+                )
+            ):
+                return payload
+            decoded.append(
+                json.loads(
+                    block["text"],
+                    object_pairs_hook=_unique_json_object,
+                    parse_constant=_reject_json_constant,
+                )
+            )
+        candidates = [structured]
+        if set(structured) == {"result"}:
+            candidates.append(structured["result"])
+        expected = {_canonical_json(candidate) for candidate in candidates}
+        observed = [_canonical_json(decoded)]
+        if len(decoded) == 1:
+            observed.append(_canonical_json(decoded[0]))
+        if not expected.intersection(observed):
+            return payload
+    except (TypeError, ValueError, RecursionError):
+        return payload
+    return {key: value for key, value in payload.items() if key != "content"}
+
+
 def codex_calls(events: list[dict[str, Any]]) -> list[ToolCall]:
     calls = []
     for item in successful_mcp_calls(events):
@@ -240,7 +305,9 @@ async def run_local_model(
                         {
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": json.dumps(payload, ensure_ascii=False),
+                            "content": json.dumps(
+                                compact_tool_result(payload), ensure_ascii=False
+                            ),
                         }
                     )
                 # Avoid a tight polling loop while a real backtest worker starts.

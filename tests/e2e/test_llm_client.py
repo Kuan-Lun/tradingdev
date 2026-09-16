@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import deepcopy
 from typing import Any
 from unittest.mock import AsyncMock, create_autospec, patch
 
@@ -13,7 +14,12 @@ from mcp import ClientSession
 from mcp.types import CallToolResult, ListToolsResult, Tool
 
 from tests.e2e.codex_harness import LIFECYCLE_TOOLS
-from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
+from tests.e2e.llm_client import (
+    ToolCall,
+    codex_calls,
+    compact_tool_result,
+    run_local_model,
+)
 from tests.integration.mcp_harness import MCPClient, temporary_mcp_workspace
 
 
@@ -78,6 +84,15 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                     tool.name: tool
                     for tool in (await client.session.list_tools()).tools
                 }
+                original_payloads = {
+                    call_id: (await client.session.call_tool(name, {})).model_dump(
+                        mode="json"
+                    )
+                    for call_id, name in (
+                        ("list", "list_strategies"),
+                        ("contract", "get_strategy_contract"),
+                    )
+                }
                 requests: list[dict[str, Any]] = []
                 repaired_id = ""
 
@@ -115,6 +130,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                                     "missing",
                                 ),
                                 _call("get_strategy", "{}", "invalid-schema"),
+                                _call("get_strategy_contract", "{}", "contract"),
                             ]
                         )
                     if len(requests) == 2:
@@ -123,6 +139,16 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                             for item in body["messages"]
                             if item["role"] == "tool"
                         }
+                        for call_id, original in original_payloads.items():
+                            compact = responses[call_id]
+                            assert compact == {
+                                key: value
+                                for key, value in original.items()
+                                if key != "content"
+                            }
+                            assert len(json.dumps(compact)) < 0.7 * len(
+                                json.dumps(original)
+                            )
                         listed = responses["list"]["structuredContent"]["result"]
                         assert listed and all(
                             item["kind"] == "bundled" for item in listed
@@ -158,13 +184,141 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                     timeout_seconds=20,
                     transport=httpx.MockTransport(respond),
                 )
-                assert len(calls) == 4
+                assert len(calls) == 5
                 assert isinstance(calls[0].result, list)
                 assert calls[1].result["success"] is False
                 assert calls[-1].arguments == {"strategy_id": repaired_id}
                 assert calls[-1].result["success"] is True
 
     asyncio.run(exercise())
+
+
+def _text_payload(value: Any) -> dict[str, str]:
+    return {"type": "text", "text": json.dumps(value)}
+
+
+@pytest.mark.parametrize(
+    ("structured", "content"),
+    [
+        (
+            {"success": True, "values": [1, "1", None]},
+            [_text_payload({"values": [1, "1", None], "success": True})],
+        ),
+        (
+            {"result": [{"id": "a"}, {"id": "b"}]},
+            [_text_payload({"id": "a"}), _text_payload({"id": "b"})],
+        ),
+        ({"result": [{"id": "a"}]}, [_text_payload({"id": "a"})]),
+        ({"result": [1, 2]}, [_text_payload([1, 2])]),
+        ({"result": "message"}, [_text_payload("message")]),
+        ({"result": False}, [_text_payload(False)]),
+    ],
+    ids=["whole-object", "sdk-list", "sdk-single-item", "list", "string", "boolean"],
+)
+def test_duplicate_content_is_removed_without_mutation_or_metadata_loss(
+    structured: dict[str, Any], content: list[dict[str, Any]]
+) -> None:
+    payload = {
+        "content": content,
+        "structuredContent": structured,
+        "isError": True,
+        "meta": {"trace": "keep"},
+        "unknown": [1, 2],
+    }
+    before = deepcopy(payload)
+    compact = compact_tool_result(payload)
+    assert compact == {key: value for key, value in before.items() if key != "content"}
+    assert payload == before
+
+
+@pytest.mark.parametrize(
+    ("structured", "content"),
+    [
+        ({"success": True}, [_text_payload({"success": 1})]),
+        ({"count": 1}, [_text_payload({"count": 1.0})]),
+        (
+            {"success": True},
+            [{"type": "text", "text": '{"success": false, "success": true}'}],
+        ),
+        (
+            {"value": float("nan")},
+            [{"type": "text", "text": '{"value": NaN}'}],
+        ),
+        (
+            {"value": float("inf")},
+            [{"type": "text", "text": '{"value": Infinity}'}],
+        ),
+        (
+            {"value": float("inf")},
+            [{"type": "text", "text": '{"value": 1e9999}'}],
+        ),
+        (
+            {"success": True},
+            [_text_payload({"success": True}), {"type": "text", "text": "Warning"}],
+        ),
+        (
+            {"result": [{"id": "a"}, {"id": "b"}]},
+            [_text_payload({"id": "b"}), _text_payload({"id": "a"})],
+        ),
+        (
+            {"success": True},
+            [
+                {"type": "text", "text": '{"success":'},
+                {"type": "text", "text": "true}"},
+            ],
+        ),
+        (
+            {"success": True},
+            [_text_payload({"success": True}), {"type": "image", "data": "keep"}],
+        ),
+        (
+            {"success": True},
+            [
+                {
+                    **_text_payload({"success": True}),
+                    "annotations": {"audience": ["user"]},
+                }
+            ],
+        ),
+        ({"success": True}, [{**_text_payload({"success": True}), "meta": {}}]),
+        (
+            {"success": True},
+            [{**_text_payload({"success": True}), "_meta": {"trace": "keep"}}],
+        ),
+        (
+            {"success": True},
+            [{**_text_payload({"success": True}), "unknown": None}],
+        ),
+        (
+            {"result": {"success": True}, "extra": "not a sole wrapper"},
+            [_text_payload({"success": True})],
+        ),
+        ({"nested": {"success": True}}, [_text_payload({"success": True})]),
+    ],
+    ids=[
+        "bool-v-int",
+        "int-v-float",
+        "duplicate-key",
+        "nan",
+        "infinity",
+        "overflow",
+        "additional-text",
+        "different-order",
+        "split-json",
+        "image",
+        "annotations",
+        "metadata",
+        "metadata-alias",
+        "unknown-key",
+        "not-sole-wrapper",
+        "subtree",
+    ],
+)
+def test_nonidentical_or_information_bearing_content_is_preserved(
+    structured: dict[str, Any], content: list[dict[str, Any]]
+) -> None:
+    payload = {"content": content, "structuredContent": structured, "isError": True}
+    assert compact_tool_result(payload) is payload
 
 
 @pytest.mark.parametrize("temperature", [0.0, 0.7, 2.0])
