@@ -14,6 +14,8 @@ from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from tests.integration.mcp_harness import MCPWorkspace
 
 pytestmark = pytest.mark.live_llm
@@ -39,40 +41,69 @@ async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None
 
 def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     """Require actual successful tool results in order, not a model's summary."""
-    names = [call.name for call in calls]
-    contract_index = names.index("get_strategy_contract")
-    save_index = next(
-        index
-        for index, call in enumerate(calls)
-        if call.name == "save_strategy"
-        and call.arguments.get("strategy_id") == scenario.strategy_id
-        and call.result
-        and call.result.get("success")
+    target = f"strategy_id={scenario.strategy_id!r}"
+
+    def require_index(description: str, indices: Iterator[int]) -> int:
+        index = next(indices, None)
+        if index is None:
+            raise AssertionError(f"Missing required MCP step: {description}")
+        return index
+
+    contract_index = require_index(
+        f"get_strategy_contract before saving {target}",
+        (
+            index
+            for index, call in enumerate(calls)
+            if call.name == "get_strategy_contract"
+        ),
     )
-    assert contract_index < save_index, names
+    save_index = require_index(
+        f"save_strategy({target}) returning success=True",
+        (
+            index
+            for index, call in enumerate(calls)
+            if call.name == "save_strategy"
+            and call.arguments.get("strategy_id") == scenario.strategy_id
+            and call.result
+            and call.result.get("success")
+        ),
+    )
+    assert contract_index < save_index, (
+        f"Invalid MCP step order for {target}: get_strategy_contract must precede "
+        f"the first successful save_strategy (events {contract_index}, {save_index})"
+    )
     previous = save_index
     for name, status in (
         ("validate_strategy", "validated"),
         ("dry_run_strategy", "runnable"),
     ):
-        previous = next(
+        previous = require_index(
+            f"{name}({target}) returning success=True, status={status!r} "
+            f"after {calls[previous].name} (event {previous})",
+            (
+                index
+                for index, call in enumerate(calls)
+                if index > previous
+                and call.name == name
+                and call.result
+                and call.result.get("success")
+                and call.result.get("status") == status
+                and call.arguments.get("strategy_id") == scenario.strategy_id
+            ),
+        )
+    start_index = require_index(
+        f"start_backtest for {target} returning a nonempty job_id "
+        "after successful dry_run_strategy",
+        (
             index
             for index, call in enumerate(calls)
             if index > previous
-            and call.name == name
+            and call.name == "start_backtest"
             and call.result
-            and call.result.get("success")
-            and call.result.get("status") == status
-            and call.arguments.get("strategy_id") == scenario.strategy_id
-        )
-    start_index, started = next(
-        (index, call)
-        for index, call in enumerate(calls)
-        if index > previous
-        and call.name == "start_backtest"
-        and call.result
-        and call.result.get("job_id")
+            and call.result.get("job_id")
+        ),
     )
+    started = calls[start_index]
     expected_arguments = {
         "strategy_id": scenario.strategy_id,
         "symbol": "BTC/USDT",
@@ -80,56 +111,96 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         "start_date": "2024-01-01",
         "end_date": "2024-01-08",
     }
-    assert started.arguments == expected_arguments, started
-    done_index, done = next(
-        (index, call)
-        for index, call in enumerate(calls)
-        if index > start_index
-        and call.name == "get_job_status"
-        and call.result
-        and call.arguments.get("job_id") == started.result["job_id"]
-        and call.result.get("status") == "done"
+    assert started.arguments == expected_arguments, (
+        f"start_backtest arguments differ for {target}: "
+        f"expected {expected_arguments!r}; got {started.arguments!r}"
     )
-    queried = next(
-        call
-        for index, call in enumerate(calls)
-        if index > done_index
-        and call.name == "get_run"
-        and call.result
-        and call.arguments.get("run_id") == done.result["run_id"]
+    job_id = started.result["job_id"]
+    done_index = require_index(
+        f"get_job_status(job_id={job_id!r}) returning status='done' "
+        f"after start_backtest for {target}",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index > start_index
+            and call.name == "get_job_status"
+            and call.result
+            and call.arguments.get("job_id") == job_id
+            and call.result.get("status") == "done"
+        ),
     )
-    assert queried.result["success"], queried
-    assert queried.result["run"]["metrics"] == done.result["metrics"]
-    assert queried.result["run"]["strategy_id"] == scenario.strategy_id
-    assert any(
-        index > done_index
-        and call.name == "list_artifacts"
-        and call.result
-        and call.arguments.get("run_id") == done.result["run_id"]
-        for index, call in enumerate(calls)
+    done = calls[done_index]
+    run_id = done.result["run_id"]
+    queried_index = require_index(
+        f"get_run(run_id={run_id!r}) returning a result after "
+        f"get_job_status reported done for {target}",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index > done_index
+            and call.name == "get_run"
+            and call.result
+            and call.arguments.get("run_id") == run_id
+        ),
+    )
+    queried = calls[queried_index]
+    assert queried.result["success"], (
+        f"get_run(run_id={run_id!r}) did not return success=True: {queried.result!r}"
+    )
+    assert queried.result["run"]["metrics"] == done.result["metrics"], (
+        f"get_run(run_id={run_id!r}) metrics differ from "
+        f"get_job_status(job_id={job_id!r}) metrics"
+    )
+    assert queried.result["run"]["strategy_id"] == scenario.strategy_id, (
+        f"get_run(run_id={run_id!r}) belongs to "
+        f"strategy_id={queried.result['run']['strategy_id']!r}, expected {target}"
+    )
+    require_index(
+        f"list_artifacts(run_id={run_id!r}) returning a nonempty result "
+        f"after get_job_status reported done for {target}",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index > done_index
+            and call.name == "list_artifacts"
+            and call.result
+            and call.arguments.get("run_id") == run_id
+        ),
     )
     if scenario.repair:
-        read_index = next(
-            index
-            for index, call in enumerate(calls)
-            if call.name == "get_strategy"
-            and call.arguments.get("strategy_id") == scenario.strategy_id
-            and call.result
-            and call.result.get("success")
+        read_index = require_index(
+            f"get_strategy({target}) returning success=True before repairing the draft",
+            (
+                index
+                for index, call in enumerate(calls)
+                if call.name == "get_strategy"
+                and call.arguments.get("strategy_id") == scenario.strategy_id
+                and call.result
+                and call.result.get("success")
+            ),
         )
-        failure_index = next(
-            index
-            for index, call in enumerate(calls)
-            if call.name == "validate_strategy"
-            and call.arguments.get("strategy_id") == scenario.strategy_id
-            and call.result
-            and call.result.get("success") is False
-            and any(
-                diagnostic.get("code") == "invalid_signal_values"
-                for diagnostic in call.result.get("diagnostics", [])
-            )
+        failure_index = require_index(
+            f"validate_strategy({target}) returning success=False with "
+            "diagnostic code='invalid_signal_values' before repairing the draft",
+            (
+                index
+                for index, call in enumerate(calls)
+                if call.name == "validate_strategy"
+                and call.arguments.get("strategy_id") == scenario.strategy_id
+                and call.result
+                and call.result.get("success") is False
+                and any(
+                    diagnostic.get("code") == "invalid_signal_values"
+                    for diagnostic in call.result.get("diagnostics", [])
+                )
+            ),
         )
-        assert read_index < failure_index < save_index
+        assert read_index < failure_index < save_index, (
+            f"Invalid MCP repair order for {target}: successful get_strategy must "
+            "precede validate_strategy with invalid_signal_values, which must "
+            f"precede successful save_strategy (events {read_index}, "
+            f"{failure_index}, {save_index})"
+        )
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS.values(), ids=SCENARIOS.keys())

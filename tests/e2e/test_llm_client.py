@@ -222,6 +222,129 @@ def test_explicit_reasoning_effort_is_preserved_across_model_tool_rounds() -> No
     invoke.assert_awaited_once_with("list_strategies", {})
 
 
+def test_progress_reports_usage_and_results_without_source_or_reasoning(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client, invoke = _mock_client()
+    invoke.return_value = CallToolResult(
+        content=[],
+        structuredContent={"success": True, "source_code": "PRIVATE_SOURCE"},
+    )
+    requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        payload = _reply([_call()] if requests == 1 else None).json()
+        if requests == 1:
+            payload["choices"][0]["message"]["reasoning"] = "PRIVATE_REASONING"
+            payload["usage"] = {
+                "prompt_tokens": 103,
+                "completion_tokens": 17,
+                "completion_tokens_details": {"reasoning_tokens": 7},
+            }
+        else:
+            messages = json.loads(request.content)["messages"]
+            assert messages[-2]["reasoning"] == "PRIVATE_REASONING"
+            assert (
+                json.loads(messages[-1]["content"])["structuredContent"]["source_code"]
+                == "PRIVATE_SOURCE"
+            )
+            payload["choices"][0]["message"]["content"] = (
+                "Task complete. " + "More detail. " * 100 + "UNPRINTED_TAIL"
+            )
+        return httpx.Response(200, json=payload)
+
+    calls = asyncio.run(
+        run_local_model(
+            client,
+            "Report progress",
+            model="fixture",
+            base_url="http://localhost/v1",
+            timeout_seconds=1,
+            transport=httpx.MockTransport(respond),
+        )
+    )
+    output = capsys.readouterr().out
+    assert calls[0].result["source_code"] == "PRIVATE_SOURCE"
+    assert "request started" in output and "response received" in output
+    assert "MCP tool list_strategies" in output and "success=True" in output
+    assert "input_tokens=103" in output and "output_tokens=17" in output
+    assert "reasoning_tokens=7" in output and "reasoning_chars=17" in output
+    assert "Task complete." in output
+    assert not any(
+        secret in output
+        for secret in ("PRIVATE_SOURCE", "PRIVATE_REASONING", "UNPRINTED_TAIL")
+    )
+
+
+def test_http_failure_keeps_status_error_and_bounded_response_diagnostic() -> None:
+    client, invoke = _mock_client()
+    with pytest.raises(httpx.HTTPStatusError) as failure:
+        asyncio.run(
+            run_local_model(
+                client,
+                "Unavailable model",
+                model="fixture",
+                base_url="http://localhost/v1",
+                timeout_seconds=1,
+                transport=httpx.MockTransport(
+                    lambda _request: httpx.Response(
+                        400,
+                        json={
+                            "error": "Unsupported reasoning effort",
+                            "detail": "x" * 2000 + "UNPRINTED_TAIL",
+                        },
+                    )
+                ),
+            )
+        )
+    error = failure.value
+    assert error.response.status_code == 400
+    assert str(error.request.url) == "http://localhost/v1/chat/completions"
+    assert isinstance(error.__cause__, httpx.HTTPStatusError)
+    assert error.__cause__.response is error.response
+    assert "Unsupported reasoning effort" in str(error)
+    assert "UNPRINTED_TAIL" not in str(error)
+    invoke.assert_not_awaited()
+
+
+def test_model_timeout_includes_recent_tool_failure_and_preserves_cause() -> None:
+    client, invoke = _mock_client()
+    invoke.return_value = CallToolResult(
+        content=[],
+        structuredContent={"success": False, "error": "Storage unavailable"},
+    )
+    requests = 0
+    original_error: httpx.ReadTimeout | None = None
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal requests, original_error
+        requests += 1
+        if requests == 1:
+            return _reply([_call()])
+        original_error = httpx.ReadTimeout("Model stalled", request=request)
+        raise original_error
+
+    with pytest.raises(AssertionError, match="after 1 MCP calls") as failure:
+        asyncio.run(
+            run_local_model(
+                client,
+                "Retry after tool failure",
+                model="fixture",
+                base_url="http://localhost/v1",
+                timeout_seconds=1,
+                transport=httpx.MockTransport(respond),
+            )
+        )
+    assert failure.value.__cause__ is original_error
+    diagnostic = str(failure.value)
+    assert "model round 2" in diagnostic
+    assert "list_strategies" in diagnostic and "success=False" in diagnostic
+    assert "Storage unavailable" in diagnostic
+    invoke.assert_awaited_once_with("list_strategies", {})
+
+
 @pytest.mark.parametrize(
     "invalid_call",
     [
@@ -316,7 +439,7 @@ def test_model_timeout_is_bounded_and_reports_completed_tool_count(
         finally:
             transport_finished = True
 
-    with pytest.raises(AssertionError, match="after 0 MCP calls"):
+    with pytest.raises(AssertionError, match="after 0 MCP calls") as error:
         asyncio.run(
             run_local_model(
                 client,
@@ -328,6 +451,8 @@ def test_model_timeout_is_bounded_and_reports_completed_tool_count(
             )
         )
     assert transport_finished
+    assert "model round 1" in str(error.value)
+    assert isinstance(error.value.__cause__, (TimeoutError, httpx.ReadTimeout))
     invoke.assert_not_awaited()
 
 
@@ -364,10 +489,11 @@ def test_model_deadline_also_cancels_stalled_mcp_tool_discovery() -> None:
         patch.object(
             client.session, "list_tools", new=AsyncMock(side_effect=stalled_discovery)
         ),
-        pytest.raises(AssertionError, match="after 0 MCP calls"),
+        pytest.raises(AssertionError, match="after 0 MCP calls") as error,
     ):
         asyncio.run(exercise())
     assert discovery_finished
+    assert "MCP tool discovery" in str(error.value)
     invoke.assert_not_awaited()
 
 

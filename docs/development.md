@@ -25,6 +25,8 @@ uv sync --locked --all-extras
 
 兩個入口共用均線、動量與錯誤草稿修復情境，要求模型完成策略生成、回測及
 結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
+入口即時顯示進度與耗時，第一個失敗就停止並顯示原因；要跑完全部情境可加
+`--maxfail=0`。
 
 ```bash
 ./scripts/check-llm.sh codex --llm-model gpt-5.3-codex-spark

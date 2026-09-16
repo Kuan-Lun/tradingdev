@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +52,59 @@ def codex_calls(events: list[dict[str, Any]]) -> list[ToolCall]:
     return calls
 
 
+def _progress(message: str) -> None:
+    print(f"[local-llm] {message}", flush=True)
+
+
+def _short_text(text: str, limit: int = 240) -> str:
+    compact = " ".join(text.split())
+    return compact if len(compact) <= limit else compact[:limit] + " [truncated]"
+
+
+def _tool_summary(call: ToolCall) -> str:
+    """Keep useful status fields without logging source code or full MCP payloads."""
+    result = call.result
+    if isinstance(result, dict):
+        fields = [
+            f"{key}={_short_text(str(result[key]))}"
+            for key in ("success", "status", "error", "job_id", "run_id")
+            if key in result and isinstance(result[key], (str, bool, int, float))
+        ]
+        diagnostics = result.get("diagnostics")
+        if isinstance(diagnostics, list):
+            codes = [
+                _short_text(str(item["code"]), 60)
+                for item in diagnostics[:3]
+                if isinstance(item, dict) and "code" in item
+            ]
+            if codes:
+                fields.append(f"diagnostics={','.join(codes)}")
+        summary = "; ".join(fields) or f"object with {len(result)} fields"
+    elif isinstance(result, list):
+        summary = f"{len(result)} items"
+    else:
+        summary = type(result).__name__
+    return f"{call.name}: {summary}"
+
+
+def _usage_summary(payload: dict[str, Any]) -> str:
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return ""
+    fields = [
+        f"{label}={usage[key]}"
+        for key, label in (
+            ("prompt_tokens", "input_tokens"),
+            ("completion_tokens", "output_tokens"),
+        )
+        if isinstance(usage.get(key), int)
+    ]
+    details = usage.get("completion_tokens_details")
+    if isinstance(details, dict) and isinstance(details.get("reasoning_tokens"), int):
+        fields.append(f"reasoning_tokens={details['reasoning_tokens']}")
+    return " " + " ".join(fields) if fields else ""
+
+
 async def run_local_model(
     client: MCPClient,
     prompt: str,
@@ -70,6 +124,9 @@ async def run_local_model(
     The caller owns the MCP session and its worker/file cleanup.
     """
     calls: list[ToolCall] = []
+    recent_results: list[str] = []
+    stage = "MCP tool discovery"
+    round_number = 0
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": client.instructions},
         {"role": "user", "content": prompt},
@@ -81,6 +138,7 @@ async def run_local_model(
                 timeout=timeout_seconds, transport=transport, trust_env=False
             ) as http,
         ):
+            _progress(f"{stage}: started")
             tools: list[dict[str, Any]] = [
                 {
                     "type": "function",
@@ -94,7 +152,10 @@ async def run_local_model(
                 if tool.name in LIFECYCLE_TOOLS
             ]
             allowed = {tool["function"]["name"] for tool in tools}
+            _progress(f"{stage}: {len(allowed)} tools available")
             while True:
+                round_number += 1
+                stage = f"model round {round_number}"
                 request: dict[str, Any] = {
                     "model": model,
                     "messages": messages,
@@ -106,17 +167,44 @@ async def run_local_model(
                     request["temperature"] = temperature
                 if reasoning_effort is not None:
                     request["reasoning_effort"] = reasoning_effort
+                _progress(f"{stage}: request started after {len(calls)} MCP calls")
+                started = time.monotonic()
                 response = await http.post(
                     base_url.rstrip("/") + "/chat/completions",
                     json=request,
                 )
-                response.raise_for_status()
-                choice = response.json()["choices"][0]
+                elapsed = time.monotonic() - started
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    detail = _short_text(response.text, 1200)
+                    raise httpx.HTTPStatusError(
+                        f"{exc}\n{stage} failed after {elapsed:.2f}s; "
+                        f"response body: {detail}",
+                        request=exc.request,
+                        response=exc.response,
+                    ) from exc
+                payload = response.json()
+                choice = payload["choices"][0]
                 message = choice["message"]
                 assert message.get("role") == "assistant", message
                 requested = message.get("tool_calls") or []
+                reasoning = message.get("reasoning", message.get("reasoning_content"))
+                reasoning_chars = len(reasoning) if isinstance(reasoning, str) else 0
+                _progress(
+                    f"{stage}: response received in {elapsed:.2f}s"
+                    f"{_usage_summary(payload)} reasoning_chars={reasoning_chars} "
+                    f"tool_calls={len(requested)}"
+                )
                 if not requested:
                     assert choice.get("finish_reason") == "stop", choice
+                    content = message.get("content")
+                    final_text = (
+                        _short_text(content) if isinstance(content, str) else ""
+                    )
+                    _progress(
+                        f"{stage}: finished; final text: {final_text or '(empty)'}"
+                    )
                     return calls
                 assert choice.get("finish_reason") in {"tool_calls", "stop"}, choice
                 assert len(calls) + len(requested) <= max_tool_calls, (
@@ -135,9 +223,19 @@ async def run_local_model(
                     parsed.append((call["id"], name, arguments))
                 messages.append(message)
                 for call_id, name, arguments in parsed:
+                    stage = f"MCP tool {name} (model round {round_number})"
+                    _progress(f"{stage}: started")
+                    started = time.monotonic()
                     result = await client.session.call_tool(name, arguments)
                     payload = result.model_dump(mode="json")
-                    calls.append(ToolCall(name, arguments, tool_payload(payload)))
+                    call = ToolCall(name, arguments, tool_payload(payload))
+                    calls.append(call)
+                    summary = f"{_tool_summary(call)}; mcp_error={result.isError}"
+                    recent_results.append(summary)
+                    _progress(
+                        f"{stage}: finished in {time.monotonic() - started:.2f}s; "
+                        f"{summary}"
+                    )
                     messages.append(
                         {
                             "role": "tool",
@@ -147,7 +245,12 @@ async def run_local_model(
                     )
                 # Avoid a tight polling loop while a real backtest worker starts.
                 if parsed and all(name == "get_job_status" for _, name, _ in parsed):
+                    stage = "backtest polling pause"
                     await asyncio.sleep(0.5)
     except (TimeoutError, httpx.TimeoutException) as exc:
-        msg = f"Local model exceeded {timeout_seconds:g}s after {len(calls)} MCP calls"
+        recent = " | ".join(recent_results[-3:]) or "none"
+        msg = (
+            f"Local model exceeded {timeout_seconds:g}s after {len(calls)} MCP calls; "
+            f"stage: {stage}; recent tool results: {recent}"
+        )
         raise AssertionError(msg) from exc
