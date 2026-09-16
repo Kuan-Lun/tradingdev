@@ -8,11 +8,14 @@ from typing import Any
 from uuid import uuid4
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
+from tradingdev.app.job_config import apply_run_overrides, write_job_config
 from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
     StrategyService,
 )
+from tradingdev.domain.backtest.schemas import BacktestRunConfig
+from tradingdev.shared.utils.config import load_config
 
 
 class OptimizationService:
@@ -78,7 +81,19 @@ class OptimizationService:
         for values in param_ranges.values():
             total_combinations *= len(values)
 
+        effective_config = apply_run_overrides(
+            load_config(config_path),
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=train_start,
+            # Optimization bounds are calendar days, including the final day.
+            end_date=f"{test_end}T23:59:59.999999",
+        )
+        BacktestRunConfig.model_validate(effective_config)
         job_id = uuid4().hex[:12]
+        effective_path = write_job_config(
+            self._job_store.workspace.runs / job_id, effective_config
+        )
         self._job_store.create_job(
             job_id=job_id,
             strategy_name=strategy_id,
@@ -86,11 +101,12 @@ class OptimizationService:
             timeframe=timeframe,
             start_date=train_start,
             end_date=test_end,
-            config_path=str(config_path),
+            config_path=str(effective_path),
         )
         self._job_store.update_job(
             job_id,
             job_type="optimization",
+            original_config_path=str(config_path),
             param_ranges=param_ranges,
             optimization_metric=optimization_metric,
             train_start=train_start,
@@ -146,9 +162,10 @@ class OptimizationService:
             ve = date.fromisoformat(test_end)
         except ValueError as exc:
             return f"Invalid date format: {exc}"
-        if not (ts < te <= vs < ve):
+        if not (ts < te < vs < ve):
             return (
-                "Dates must satisfy: train_start < train_end <= test_start < test_end. "
-                f"Got: {train_start} < {train_end} <= {test_start} < {test_end}"
+                "Dates must satisfy: train_start < train_end < test_start < test_end "
+                "(inclusive calendar days, without overlap). "
+                f"Got: {train_start}, {train_end}, {test_start}, {test_end}"
             )
         return ""

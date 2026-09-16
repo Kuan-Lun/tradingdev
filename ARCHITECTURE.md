@@ -122,6 +122,11 @@ config's `source_path` matches the registered source. `JobService` and
 `OptimizationService` use the same gate, so MCP jobs, the CLI, and subprocess
 workers all pass through one check.
 
+`app/job_config.py` applies request overrides and writes effective config snapshots
+for both backtest and optimization jobs. Optimization trials and parallel search
+share `StrategyLoader.create_from_config`, retaining fixed YAML parameters while
+overriding the searched parameters.
+
 ## Storage
 
 ```mermaid

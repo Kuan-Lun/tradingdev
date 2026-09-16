@@ -54,8 +54,9 @@ matching SQLite metadata:
 - `result.json`: serialized metrics, stored as `result_json`.
 - `config.yaml`: effective config snapshot used for the run, stored as
   `config_snapshot` with `config_hash`. For MCP-launched backtest and
-  walk-forward jobs this snapshot includes the symbol, timeframe, and date range
-  supplied to `start_backtest` / `start_walk_forward`.
+  walk-forward and optimization jobs this snapshot includes the symbol, timeframe,
+  and date range supplied to the start tool. Optimization includes the entire
+  final calendar day; ordinary backtest bounds remain timestamps.
 - `strategy.py`: generated or bundled strategy source snapshot when
   `strategy.source_path` is available, stored as `strategy_source` with
   source hash metadata. The same hash is indexed in `runs.source_hash` for
@@ -71,3 +72,9 @@ top-level/backtest `random_seed`, or the unique `random_seed`/`random_state`/
 `seed` value found under `strategy.parameters` when one exists. Run comparison,
 dashboard rendering, and artifact lookup always read through SQLite first, then
 resolve files from the recorded artifact paths.
+
+Optimization `result.json` includes the best parameters, training metrics and
+out-of-sample metrics, with the same content returned by `get_run`. Non-finite
+metric values are serialized as JSON `null`, including nested optimization
+metrics. Parameters outside the search grid retain their YAML values; selection
+uses training results, and only the selected parameters are evaluated out of sample.

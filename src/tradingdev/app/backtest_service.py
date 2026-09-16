@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -184,7 +185,13 @@ class BacktestService:
         return create_backtest_engine(config)
 
     def serialize_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
-        """Return the JSON-relevant metrics subset."""
-        return {
-            key: metrics[key] for key in self._RESULT_METRICS_KEYS if key in metrics
-        }
+        """Return JSON metrics with the same non-finite values as MCP responses."""
+        serialized: dict[str, Any] = {}
+        for key in self._RESULT_METRICS_KEYS:
+            if key not in metrics:
+                continue
+            value = metrics[key]
+            serialized[key] = (
+                None if isinstance(value, float) and not math.isfinite(value) else value
+            )
+        return serialized
