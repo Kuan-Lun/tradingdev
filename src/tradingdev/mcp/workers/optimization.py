@@ -1,8 +1,8 @@
 """Subprocess worker that executes a parameter optimization job.
 
-Invoked by the MCP server as a detached subprocess:
-
-    uv run python -m tradingdev.mcp.workers.optimization <job_id>
+Start jobs through the MCP start_optimization tool. Its application service uses
+ProcessRunner to launch a supervisor, which starts this worker and supplies
+TRADINGDEV_WORKER_IDENTITY. Running this module directly is not supported.
 
 The worker reads all configuration from job_store (populated by
 start_optimization), then:
