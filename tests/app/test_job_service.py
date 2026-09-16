@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import psutil
@@ -71,6 +73,61 @@ def test_start_walk_forward_uses_bundled_walkforward_config(
             ),
         )
     ]
+
+
+@pytest.mark.parametrize("walk_forward", [False, True])
+@pytest.mark.parametrize(
+    "failure_type", [OSError, RuntimeError, KeyboardInterrupt, asyncio.CancelledError]
+)
+def test_start_worker_failure_is_persisted_before_reraising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    walk_forward: bool,
+    failure_type: type[BaseException],
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = JobStore(workspace=workspace)
+    runner = _FakeRunner()
+    failure = failure_type("worker identity unavailable")
+
+    def fail_spawn(module: str, *args: str) -> ProcessIdentity:
+        raise failure
+
+    monkeypatch.setattr(runner, "spawn_module", fail_spawn)
+    service = JobService(
+        data_service=DataService(workspace),
+        job_store=store,
+        process_runner=runner,
+        project_root=tmp_path,
+    )
+    start = service.start_walk_forward if walk_forward else service.start_backtest
+
+    with pytest.raises(failure_type) as caught:
+        start(
+            strategy_id="kd_crossover",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date="2024-01-01",
+            end_date="2025-12-31",
+        )
+
+    assert caught.value is failure
+    jobs = store.list_all_jobs()
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job["status"] == "failed"
+    assert job["job_type"] == ("walk_forward" if walk_forward else "backtest")
+    assert job["error"] == (
+        f"Worker failed to start: {failure_type.__name__}: worker identity unavailable"
+    )
+    assert datetime.fromisoformat(job["ended_at"]) >= datetime.fromisoformat(
+        job["created_at"]
+    )
+    assert job["pid"] is None
+    assert job["process_create_time"] is None
+    response = service.get_job_status(job["job_id"])
+    assert response["status"] == "failed"
+    assert response["error"] == job["error"]
 
 
 def test_cancel_job_marks_active_job_cancelled(
@@ -219,6 +276,7 @@ def test_job_status_detects_reused_pid_as_terminated_worker(
     result = JobService(job_store=store).get_job_status("old_worker")
 
     assert result["status"] == "failed"
+    assert result["error"] == "Worker process terminated unexpectedly."
     job = store.get_job("old_worker")
     assert job is not None
     assert job["status"] == "failed"

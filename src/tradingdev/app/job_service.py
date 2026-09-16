@@ -137,12 +137,13 @@ class JobService:
             "testing_oos",
         } and not self._is_process_alive(job):
             status = "failed"
-            self._job_store.update_job(
-                job_id,
-                status=status,
-                error="Worker process terminated unexpectedly.",
-                ended_at=datetime.now(UTC).isoformat(),
-            )
+            failure = {
+                "status": status,
+                "error": "Worker process terminated unexpectedly.",
+                "ended_at": datetime.now(UTC).isoformat(),
+            }
+            self._job_store.update_job(job_id, **failure)
+            job.update(failure)
 
         created_at = datetime.fromisoformat(str(job["created_at"]))
         elapsed = round((datetime.now(UTC) - created_at).total_seconds(), 1)
@@ -349,10 +350,19 @@ class JobService:
         args = [job_id, str(effective_config_path)]
         if walk_forward:
             args.append("--walk-forward")
-        identity = self._process_runner.spawn_module(
-            "tradingdev.mcp.workers.backtest",
-            *args,
-        )
+        try:
+            identity = self._process_runner.spawn_module(
+                "tradingdev.mcp.workers.backtest",
+                *args,
+            )
+        except BaseException as exc:
+            # Interruptions must not leave a job queued after startup cleanup.
+            self._job_store.update_job(
+                job_id,
+                status="failed",
+                error=f"Worker failed to start: {type(exc).__name__}: {exc}",
+            )
+            raise
         self._job_store.update_job(
             job_id, pid=identity.pid, process_create_time=identity.create_time
         )
