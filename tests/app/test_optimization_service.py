@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from tradingdev.adapters.execution.process_runner import ProcessIdentity
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.job_store import JobStore
@@ -45,9 +46,9 @@ class _RunnerStub:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
-    def spawn_module(self, module: str, *args: str) -> int:
+    def spawn_module(self, module: str, *args: str) -> ProcessIdentity:
         self.calls.append((module, args))
-        return 2468
+        return ProcessIdentity(2468, 100.0)
 
 
 def _service(
@@ -101,6 +102,7 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
     assert job is not None
     assert job["job_type"] == "optimization"
     assert job["pid"] == 2468
+    assert job["process_create_time"] == 100.0
     assert job["total_combinations"] == 6
     assert job["optimization_metric"] == "sharpe_ratio"
     assert job["param_ranges"] == {

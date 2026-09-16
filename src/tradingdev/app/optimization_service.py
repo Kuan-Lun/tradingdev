@@ -115,11 +115,13 @@ class OptimizationService:
             test_end=test_end,
             total_combinations=total_combinations,
         )
-        pid = self._process_runner.spawn_module(
+        identity = self._process_runner.spawn_module(
             "tradingdev.mcp.workers.optimization",
             job_id,
         )
-        self._job_store.update_job(job_id, pid=pid)
+        self._job_store.update_job(
+            job_id, pid=identity.pid, process_create_time=identity.create_time
+        )
         return {
             "job_id": job_id,
             "message": (

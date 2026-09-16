@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from tradingdev.adapters.execution.process_runner import ProcessRunner
+from tradingdev.adapters.execution.process_runner import ProcessIdentity, ProcessRunner
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.data_service import DataService
@@ -28,9 +28,9 @@ class FakeRunner(ProcessRunner):
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
-    def spawn_module(self, module: str, *args: str) -> int:
+    def spawn_module(self, module: str, *args: str) -> ProcessIdentity:
         self.calls.append((module, args))
-        return 4321
+        return ProcessIdentity(4321, 100.0)
 
 
 _STRATEGY_CODE = """\
@@ -137,6 +137,7 @@ def test_generated_strategy_can_start_backtest_job(
     assert job is not None
     assert job["status"] == "queued"
     assert job["pid"] == 4321
+    assert job["process_create_time"] == 100.0
     assert job["job_type"] == "backtest"
     assert job["original_config_path"] == str(
         workspace.configs / "integration_strategy.yaml"

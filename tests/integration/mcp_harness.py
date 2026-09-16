@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import signal
 import sqlite3
 import sys
 import time
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, closing, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any
 
 import anyio
 import psutil
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+from tradingdev.adapters.execution.process_runner import ProcessIdentity
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -118,7 +122,7 @@ class MCPWorkspace:
                         finally:
                             self.stop_workers()
         except BaseException:
-            # Captured on failure before TemporaryDirectory deletes the log.
+            # Capture the failure log before successful workspace cleanup.
             print(log_path.read_text(encoding="utf-8"))
             raise
 
@@ -132,16 +136,28 @@ class MCPWorkspace:
         database = self.workspace / "tradingdev.sqlite"
         if not database.exists():
             return
-        with sqlite3.connect(database) as connection:
-            pids = connection.execute(
-                "SELECT pid FROM jobs WHERE pid IS NOT NULL"
+        with closing(sqlite3.connect(database)) as connection:
+            workers = connection.execute(
+                "SELECT pid, payload FROM jobs WHERE pid IS NOT NULL"
             ).fetchall()
         processes: list[psutil.Process] = []
-        for (pid,) in pids:
+        failures: list[Exception] = []
+        for pid, payload in workers:
+            identity = ProcessIdentity.from_values(
+                pid, json.loads(payload).get("process_create_time")
+            )
+            if identity is None:
+                failures.append(
+                    AssertionError(f"Worker creation identity missing: PID {pid}")
+                )
+                continue
             try:
-                process = psutil.Process(pid)
+                # Constructing Process(pid) alone accepts an already-reused PID.
+                process = identity.get_process()
+                if process is None:
+                    continue
                 command = process.cmdline()
-                # Never signal a reused PID or another workspace's process.
+                # Also reject another workspace's process or a non-worker.
                 if not any("tradingdev.mcp.workers." in item for item in command):
                     continue
                 if not any(str(self.workspace) in item for item in command) and (
@@ -153,18 +169,31 @@ class MCPWorkspace:
                 processes.append(process)
             except (psutil.NoSuchProcess, ProcessLookupError):
                 continue
+            except (psutil.AccessDenied, PermissionError) as error:
+                failures.append(error)
         for process in processes:
-            self._signal_worker_group(process, signal.SIGTERM)
+            try:
+                self._signal_worker_group(process, signal.SIGTERM)
+            except (psutil.AccessDenied, PermissionError) as error:
+                failures.append(error)
         alive = self._wait_for_workers(processes)
         for process in alive:
-            self._signal_worker_group(process, signal.SIGKILL)
+            try:
+                self._signal_worker_group(process, signal.SIGKILL)
+            except (psutil.AccessDenied, PermissionError) as error:
+                failures.append(error)
         alive = self._wait_for_workers(alive)
-        assert not alive, f"Test workers did not exit: {alive}"
+        if alive:
+            failures.append(AssertionError(f"Test workers did not exit: {alive}"))
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise ExceptionGroup("Test worker cleanup failed", failures)
 
     @staticmethod
     def _signal_worker_group(process: psutil.Process, sig: signal.Signals) -> None:
         with suppress(psutil.NoSuchProcess, ProcessLookupError):
-            # is_running checks process creation time to reject reused PIDs.
+            # Recheck the retained identity for reuse after initial inspection.
             if process.is_running() and os.getpgid(process.pid) == process.pid:
                 os.killpg(process.pid, sig)
 
@@ -190,14 +219,16 @@ def worker_is_alive(process: psutil.Process) -> bool:
 @contextmanager
 def temporary_mcp_workspace() -> Iterator[MCPWorkspace]:
     # Also used outside pytest; stop detached workers before removing files.
-    directory: str | None = None
+    directory = Path(mkdtemp(prefix="tradingdev-mcp-test-")).resolve()
+    workspace = MCPWorkspace(directory)
     try:
-        with TemporaryDirectory(prefix="tradingdev-mcp-test-") as directory:
-            workspace = MCPWorkspace(Path(directory).resolve())
-            try:
-                yield workspace
-            finally:
-                workspace.stop_workers()
+        yield workspace
     finally:
-        if directory is not None:
-            assert not Path(directory).exists()
+        try:
+            workspace.stop_workers()
+        except Exception as error:
+            raise RuntimeError(
+                f"Worker cleanup failed; temporary directory retained: {directory}"
+            ) from error
+        shutil.rmtree(directory)
+        assert not directory.exists()

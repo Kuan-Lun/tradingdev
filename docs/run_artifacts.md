@@ -28,7 +28,9 @@ workspace/
 - `jobs`: generic background job status, job type, pid,
   `created_at`/`started_at`/`ended_at`, error, and payload. Backtest-specific
   fields such as strategy, symbol, timeframe, date range, and config path are
-  nullable columns mirrored in the JSON payload when present.
+  nullable columns mirrored in the JSON payload when present. The payload also
+  records `process_create_time`, the worker's OS creation time in Unix seconds;
+  it identifies the worker together with `pid`, independently of job timestamps.
 - `runs`: completed run metadata, metrics JSON, config hash, source hash,
   random seed, dataset id, and artifact directory.
 - `artifacts`: run and non-run artifact metadata, path, sha256, and metadata JSON.
@@ -37,6 +39,11 @@ workspace/
 `job_id` and `run_id` are currently the same for completed backtest and
 optimization jobs. `get_job_status(job_id)` returns the `run_id` once a run is
 done.
+
+Older job records without `process_create_time` cannot prove ownership of a live
+PID. Cancellation marks the job cancelled without signalling a process and returns
+`process_terminated=false`. Status checks that require a live worker mark it failed
+when its identity is missing or no longer matches.
 
 ## MCP Lookup
 

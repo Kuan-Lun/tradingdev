@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
-from tradingdev.adapters.execution.process_runner import ProcessRunner
+import psutil
+import pytest
+
+from tradingdev.adapters.execution.process_runner import ProcessIdentity, ProcessRunner
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.data_service import DataService
@@ -16,10 +20,7 @@ if TYPE_CHECKING:
 
 
 class _TerminatesJobService(JobService):
-    def _is_pid_alive(self, pid: object) -> bool:
-        return True
-
-    def _terminate_pid(self, pid: int) -> tuple[bool, str | None]:
+    def _terminate_process(self, identity: ProcessIdentity) -> tuple[bool, str | None]:
         return True, None
 
 
@@ -27,9 +28,9 @@ class _FakeRunner(ProcessRunner):
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
-    def spawn_module(self, module: str, *args: str) -> int:
+    def spawn_module(self, module: str, *args: str) -> ProcessIdentity:
         self.calls.append((module, args))
-        return 4321
+        return ProcessIdentity(4321, 100.0)
 
 
 def test_start_walk_forward_uses_bundled_walkforward_config(
@@ -86,7 +87,9 @@ def test_cancel_job_marks_active_job_cancelled(
         end_date="2024-01-02",
         config_path="fixture.yaml",
     )
-    job_store.update_job("job_cancel", status="running_backtest", pid=12345)
+    job_store.update_job(
+        "job_cancel", status="running_backtest", pid=12345, process_create_time=100.0
+    )
 
     service = _TerminatesJobService(job_store=job_store)
 
@@ -163,3 +166,125 @@ def test_get_job_status_returns_run_id_for_completed_optimization(
     assert response["job_type"] == "optimization"
     assert response["run_id"] == "job_optimization"
     assert response["best_params"] == {"window": 10}
+
+
+@pytest.mark.parametrize("created_at", [None, 100.0])
+def test_cancel_does_not_signal_reused_or_unidentified_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    created_at: float | None,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = JobStore(workspace=workspace)
+    store.create_job(job_id="old_worker")
+    store.update_job(
+        "old_worker",
+        status="running_backtest",
+        pid=12345,
+        process_create_time=created_at,
+    )
+
+    class ReplacementProcess:
+        def create_time(self) -> float:
+            return 200.0
+
+    monkeypatch.setattr(psutil, "Process", lambda _pid: ReplacementProcess())
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+
+    result = JobService(job_store=store).cancel_job("old_worker")
+
+    assert result["success"] is True
+    assert result["process_terminated"] is False
+    assert not signals
+
+
+def test_job_status_detects_reused_pid_as_terminated_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = JobStore(workspace=workspace)
+    store.create_job(job_id="old_worker")
+    store.update_job(
+        "old_worker", status="running_backtest", pid=12345, process_create_time=100.0
+    )
+
+    class ReplacementProcess:
+        def create_time(self) -> float:
+            return 200.0
+
+    monkeypatch.setattr(psutil, "Process", lambda _pid: ReplacementProcess())
+
+    result = JobService(job_store=store).get_job_status("old_worker")
+
+    assert result["status"] == "failed"
+    job = store.get_job("old_worker")
+    assert job is not None
+    assert job["status"] == "failed"
+    assert job["error"] == "Worker process terminated unexpectedly."
+
+
+def test_permission_failure_does_not_claim_worker_was_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = JobStore(workspace=workspace)
+    store.create_job(job_id="worker")
+    store.update_job(
+        "worker", status="running_backtest", pid=12345, process_create_time=100.0
+    )
+
+    def denied(pid: int) -> psutil.Process:
+        raise psutil.AccessDenied(pid)
+
+    monkeypatch.setattr(psutil, "Process", denied)
+    service = JobService(job_store=store)
+
+    result = service.cancel_job("worker")
+
+    assert result["success"] is False
+    assert "Permission denied" in result["error"]
+    with pytest.raises(psutil.AccessDenied):
+        service.get_job_status("worker")
+    job = store.get_job("worker")
+    assert job is not None
+    assert job["status"] == "running_backtest"
+
+
+@pytest.mark.parametrize("group_leader", [True, False])
+def test_cancel_signals_only_matching_process_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    group_leader: bool,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = JobStore(workspace=workspace)
+    store.create_job(job_id="worker")
+    store.update_job(
+        "worker", status="running_backtest", pid=12345, process_create_time=100.0
+    )
+    signals: list[str] = []
+
+    class OriginalProcess:
+        def create_time(self) -> float:
+            return 100.0
+
+        def is_running(self) -> bool:
+            return True
+
+        def status(self) -> str:
+            return str(psutil.STATUS_RUNNING)
+
+        def terminate(self) -> None:
+            signals.append("process")
+
+    monkeypatch.setattr(psutil, "Process", lambda _pid: OriginalProcess())
+    monkeypatch.setattr(os, "getpgid", lambda _pid: 12345 if group_leader else 6789)
+    monkeypatch.setattr(os, "killpg", lambda _pid, _sig: signals.append("group"))
+
+    response = JobService(job_store=store).cancel_job("worker")
+
+    assert response["success"] is True
+    assert response["process_terminated"] is True
+    assert signals == ["group" if group_leader else "process"]

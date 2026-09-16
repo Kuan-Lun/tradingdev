@@ -212,6 +212,9 @@ The dashboard reads run metadata and pipeline artifacts through `RunService` /
   `validate_strategy` and `dry_run_strategy` currently execute generated Python
   code during contract checks; sandbox isolation is future work.
 - `cancel_job` marks active jobs as `cancelled` and terminates the worker process
-  when a live PID is known.
+  only when its PID and OS creation time match the persisted worker identity.
+  Job status checks and integration-test teardown use the same identity check;
+  a reused PID is not treated as the original worker. Records without a creation
+  identity cannot authorize a signal to a process.
 - Runtime cache defaults to `workspace/data/`; `TRADINGDEV_DATA_ROOT` can override
   raw/processed data root.

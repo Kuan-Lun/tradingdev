@@ -8,6 +8,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from tradingdev.adapters.execution.process_runner import ProcessIdentity
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.shared.utils.logger import setup_logger
@@ -29,7 +30,13 @@ def _run_backtest(
         config_path,
         walk_forward,
     )
-    job_store.update_job(job_id, status="downloading_data", pid=os.getpid())
+    identity = ProcessIdentity.capture(os.getpid())
+    job_store.update_job(
+        job_id,
+        status="downloading_data",
+        pid=identity.pid,
+        process_create_time=identity.create_time,
+    )
 
     try:
         service = BacktestService()

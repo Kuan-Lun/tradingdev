@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tradingdev.adapters.execution.process_runner import ProcessRunner
+import psutil
+
+from tradingdev.adapters.execution.process_runner import ProcessIdentity, ProcessRunner
 from tradingdev.app.data_service import DataService
 from tradingdev.app.job_config import apply_run_overrides, write_job_config
 from tradingdev.app.job_store import JobStore, get_default_job_store
@@ -133,7 +135,7 @@ class JobService:
             "estimating",
             "optimizing",
             "testing_oos",
-        } and not self._is_pid_alive(job.get("pid")):
+        } and not self._is_process_alive(job):
             status = "failed"
             self._job_store.update_job(
                 job_id,
@@ -275,15 +277,15 @@ class JobService:
             }
 
         process_terminated = False
-        pid = job.get("pid")
-        if isinstance(pid, int) and self._is_pid_alive(pid):
-            process_terminated, error = self._terminate_pid(pid)
+        identity = self._process_identity(job)
+        if identity is not None:
+            process_terminated, error = self._terminate_process(identity)
             if error is not None:
                 return {
                     "success": False,
                     "error": error,
                     "status": status,
-                    "pid": pid,
+                    "pid": identity.pid,
                 }
 
         self._job_store.update_job(
@@ -347,11 +349,13 @@ class JobService:
         args = [job_id, str(effective_config_path)]
         if walk_forward:
             args.append("--walk-forward")
-        pid = self._process_runner.spawn_module(
+        identity = self._process_runner.spawn_module(
             "tradingdev.mcp.workers.backtest",
             *args,
         )
-        self._job_store.update_job(job_id, pid=pid)
+        self._job_store.update_job(
+            job_id, pid=identity.pid, process_create_time=identity.create_time
+        )
         data_msg = (
             "Data already cached locally."
             if data_available
@@ -396,31 +400,31 @@ class JobService:
         path = Path(spec.config_path)
         return (path, "") if path.exists() else (None, f"Config not found: {path}")
 
-    def _is_pid_alive(self, pid: object) -> bool:
-        if not isinstance(pid, int):
-            return False
-        try:
-            os.kill(pid, 0)
-            return True
-        except (ProcessLookupError, PermissionError):
-            return False
+    @staticmethod
+    def _process_identity(job: dict[str, Any]) -> ProcessIdentity | None:
+        return ProcessIdentity.from_values(
+            job.get("pid"), job.get("process_create_time")
+        )
 
-    def _terminate_pid(self, pid: int) -> tuple[bool, str | None]:
+    def _is_process_alive(self, job: dict[str, Any]) -> bool:
+        identity = self._process_identity(job)
+        return identity is not None and identity.get_process() is not None
+
+    def _terminate_process(self, identity: ProcessIdentity) -> tuple[bool, str | None]:
         try:
-            os.killpg(pid, signal.SIGTERM)
-            return True, None
-        except ProcessLookupError:
-            return False, None
-        except PermissionError:
-            return False, f"Permission denied when terminating process group {pid}"
-        except OSError:
-            try:
-                os.kill(pid, signal.SIGTERM)
-                return True, None
-            except ProcessLookupError:
+            process = identity.get_process()
+            if process is None or not process.is_running():
                 return False, None
-            except PermissionError:
-                return False, f"Permission denied when terminating process {pid}"
+            if os.getpgid(identity.pid) == identity.pid:
+                os.killpg(identity.pid, signal.SIGTERM)
+            else:
+                # psutil rechecks the captured identity before individual signals.
+                process.terminate()
+            return True, None
+        except (psutil.NoSuchProcess, ProcessLookupError):
+            return False, None
+        except (psutil.AccessDenied, PermissionError):
+            return False, f"Permission denied when terminating process {identity.pid}"
 
     def _default_project_root(self) -> Path:
         configured = os.environ.get("TRADINGDEV_PROJECT_ROOT")
