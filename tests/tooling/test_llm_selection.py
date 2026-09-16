@@ -140,6 +140,64 @@ def test_invalid_local_configuration_fails_before_any_test_executes(
     assert not (tmp_path / "model.ran").exists()
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://[::1/v1",
+        "http://[not-ipv6]/v1",
+        "http://localhost:not-a-port/v1",
+        "http://localhost:65536/v1",
+        "http://127.0.0.1:-1/v1",
+        "http://[::1]:65536/v1",
+    ],
+    ids=[
+        "unclosed-ipv6",
+        "invalid-ipv6",
+        "nonnumeric-port",
+        "oversized-port",
+        "negative-port",
+        "ipv6-oversized-port",
+    ],
+)
+def test_malformed_local_url_is_usage_error_before_any_test_executes(
+    tmp_path: Path, base_url: str
+) -> None:
+    result = _run_selection(
+        tmp_path,
+        "--llm-provider=local",
+        "--llm-model=fixture",
+        f"--llm-base-url={base_url}",
+    )
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR, result.stderr
+    assert "--llm-base-url must be a local loopback URL" in result.stderr
+    assert "INTERNALERROR" not in result.stderr
+    assert not (tmp_path / "offline.ran").exists()
+    assert not (tmp_path / "model.ran").exists()
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://localhost:11434/v1",
+        "http://127.0.0.1:8080/v1",
+        "http://[::1]:11434/v1",
+        "https://localhost/v1",
+        "http://[::1]/v1",
+    ],
+)
+def test_valid_local_url_allows_selected_tests(tmp_path: Path, base_url: str) -> None:
+    result = _run_selection(
+        tmp_path,
+        "--llm-provider=local",
+        "--llm-model=fixture",
+        f"--llm-base-url={base_url}",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+    assert (tmp_path / "offline.ran").exists()
+    assert (tmp_path / "model.ran").read_text(encoding="utf-8") == "local"
+
+
 @pytest.mark.parametrize("timeout", ["nan", "inf", "-inf", "0", "-1"])
 def test_nonfinite_or_nonpositive_model_timeout_is_rejected(
     tmp_path: Path, timeout: str

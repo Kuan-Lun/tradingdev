@@ -57,7 +57,13 @@ def pytest_configure(config: pytest.Config) -> None:
     if provider == "local":
         if not config.getoption("llm_model"):
             raise pytest.UsageError("Local LLM tests require --llm-model")
-        url = urlsplit(config.getoption("llm_base_url"))
+        diagnostic = "--llm-base-url must be a local loopback URL"
+        try:
+            url = urlsplit(config.getoption("llm_base_url"))
+            # urllib validates the port's syntax and range only on access.
+            _ = url.port
+        except ValueError as error:
+            raise pytest.UsageError(diagnostic) from error
         if (
             url.scheme not in {"http", "https"}
             or url.hostname not in {"localhost", "127.0.0.1", "::1"}
@@ -66,7 +72,7 @@ def pytest_configure(config: pytest.Config) -> None:
             or url.query
             or url.fragment
         ):
-            raise pytest.UsageError("--llm-base-url must be a local loopback URL")
+            raise pytest.UsageError(diagnostic)
 
 
 def pytest_collection_modifyitems(
