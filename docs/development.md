@@ -29,7 +29,7 @@ uv sync --locked --all-extras
 `--maxfail=0`。
 
 ```bash
-./scripts/check-llm.sh codex --llm-model gpt-5.3-codex-spark
+./scripts/check-llm.sh codex --llm-model gpt-5.6-luna
 ./scripts/check-llm.sh local --llm-model qwen3.8:27b \
   --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900
 ```
@@ -107,7 +107,7 @@ uv run --no-sync python scripts/git_gate.py full --base main
   `merge-tree --write-tree`。更新依賴時執行 `uv lock`，並提交 lockfile 與設定變更。
 - **模型與費用**：日常 pytest 不需模型服務。Codex 策略測試及 PR 文件審查
   需要已登入的 Codex CLI、網路與額度；可用 `TRADINGDEV_CODEX_BIN` 指定 CLI。
-  上方 Codex 範例明確指定 Spark，須有該模型的存取權限；可用 `--llm-model`
+  上方 Codex 範例明確指定 Luna，須有該模型的存取權限；可用 `--llm-model`
   指定其他模型。模型不可用時測試會失敗，不會自動改用其他模型。
   本地測試須自行安裝並啟動模型服務，不會自動下載模型或改用付費服務；本地
   模型通過不代表 Codex／Claude 相容性已驗證。PR 檢查與清理另需 `gh` 能存取 repository。
