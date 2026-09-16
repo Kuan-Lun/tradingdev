@@ -3,7 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ $# -lt 1 || ( "$1" != codex && "$1" != local ) ]]; then
     echo 'Usage: scripts/check-llm.sh codex|local [pytest options]' >&2
-    echo 'Local example: scripts/check-llm.sh local --llm-model qwen3.8:27b --llm-reasoning-effort low' >&2
+    echo 'Local example:' >&2
+    echo '  scripts/check-llm.sh local --llm-model qwen3.8:27b \' >&2
+    echo '    --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900' >&2
     exit 2
 fi
 provider=$1

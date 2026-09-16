@@ -28,7 +28,8 @@ uv sync --locked --all-extras
 
 ```bash
 ./scripts/check-llm.sh codex
-./scripts/check-llm.sh local --llm-model qwen3.8:27b --llm-reasoning-effort low
+./scripts/check-llm.sh local --llm-model qwen3.8:27b \
+  --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900
 ```
 
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
