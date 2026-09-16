@@ -103,14 +103,6 @@ class GitRepository:
         self.run("scripts/git-flow-commit.sh", "feat: update behavior", "src/app.py")
         return self.git("rev-parse", "HEAD")
 
-    def task_worktree(self) -> GitRepository:
-        path = self.root.parent / "task-worktree"
-        self.git("worktree", "add", "-b", "feature/test-hooks", str(path))
-        task = GitRepository(path, self.environment, self.record)
-        task.write("src/app.py", "VALUE = 'feature'\n")
-        task.run("scripts/git-flow-commit.sh", "feat: update behavior", "src/app.py")
-        return task
-
 
 @contextmanager
 def _repository(primary: str = "main") -> Iterator[GitRepository]:
@@ -147,7 +139,7 @@ def _repository(primary: str = "main") -> Iterator[GitRepository]:
             "process_guard.py",
             "detect-primary-branch.sh",
             "git-flow-commit.sh",
-            "git-flow-merge.sh",
+            "install-git-hooks.sh",
         ):
             shutil.copy2(_PROJECT / "scripts" / name, root / "scripts" / name)
         repo.write("scripts/test_checker.py", _CHECKER)
@@ -290,42 +282,136 @@ def test_snapshot_head_contains_staged_candidate_and_is_reproducible() -> None:
         assert (repo.root / "src/app.py").read_text() == "VALUE = 'unstaged changes'\n"
 
 
-@pytest.mark.parametrize("failure", ["full", "docs", "mutation", "staged_mutation"])
-def test_merge_gate_failure_aborts_merge_and_preserves_task(failure: str) -> None:
+@pytest.mark.parametrize("failure", ["full", "mutation", "staged_mutation"])
+def test_full_snapshot_failure_cleans_temporary_files_and_preserves_checkout(
+    failure: str,
+) -> None:
     with _repository() as repo:
-        primary = repo.git("rev-parse", "main")
-        task = repo.commit_task()
+        before = repo.git("rev-parse", "HEAD")
+        tree = repo.git("write-tree")
         repo.environment["HOOK_TEST_FAIL"] = failure
-        result = repo.run("scripts/git-flow-merge.sh", check=False)
+        result = repo.run(
+            sys.executable,
+            "-B",
+            "-c",
+            "import sys; from scripts.git_gate import check_snapshot; "
+            "check_snapshot(sys.argv[1], 'full')",
+            tree,
+            check=False,
+        )
         assert result.returncode != 0
-        assert repo.git("rev-parse", "main") == primary
-        assert repo.git("rev-parse", "feature/test-hooks") == task
-        assert repo.git("branch", "--show-current") == "feature/test-hooks"
+        diagnostic = (
+            "full rejected candidate"
+            if failure == "full"
+            else "A check modified the candidate snapshot."
+        )
+        assert diagnostic in result.stdout + result.stderr
+        events = repo.events("full")
+        assert len(events) == 1
+        assert events[0]["head_tree"] == tree + "\n"
+        assert events[0]["content"] == "VALUE = 'initial'\n"
+        assert not Path(str(events[0]["root"])).parent.exists()
+        assert repo.git("rev-parse", "HEAD") == before
+        assert repo.git("write-tree") == tree
         assert repo.git("status", "--porcelain") == ""
-        assert not (repo.root / ".git/MERGE_HEAD").exists()
-        assert len(repo.events("docs" if failure == "docs" else "full")) == 1
-        for event in repo.events("full"):
-            assert not Path(str(event["root"])).exists()
+
+
+def _advance_primary(repo: GitRepository, path: str, content: str) -> str:
+    """Model a remote PR merged into main, followed by a local fast-forward."""
+    current = repo.git("branch", "--show-current")
+    before = repo.git("rev-parse", "main")
+    repo.git("switch", "-c", "feature/upstream", "main")
+    repo.write(path, content)
+    repo.run("scripts/git-flow-commit.sh", "feat: update upstream", path)
+    upstream = repo.git("rev-parse", "HEAD")
+    repo.git("update-ref", "refs/heads/main", upstream, before)
+    repo.git("switch", current)
+    return upstream
 
 
 @pytest.mark.parametrize("primary", ["main", "master", "trunk"])
-def test_successful_merge_checks_candidate_once_and_deletes_task(primary: str) -> None:
+def test_local_primary_merge_commit_is_blocked(primary: str) -> None:
     with _repository(primary) as repo:
-        previous = repo.git("rev-parse", primary)
+        before = repo.git("rev-parse", primary)
         task = repo.commit_task()
-        tree = repo.git("rev-parse", "HEAD^{tree}")
-        repo.run("scripts/git-flow-merge.sh")
-        assert repo.git("branch", "--show-current") == primary
-        assert repo.git("show", "-s", "--format=%P", "HEAD") == f"{previous} {task}"
-        assert repo.git("rev-parse", "HEAD^{tree}") == tree
+        repo.git("switch", primary)
+        result = repo.run("git", "merge", "--no-ff", "feature/test-hooks", check=False)
+        assert result.returncode != 0
+        assert "integrate through a GitHub PR" in result.stdout + result.stderr
+        assert repo.git("rev-parse", primary) == before
+        assert repo.git("rev-parse", "feature/test-hooks") == task
+        assert not repo.events("full")
+        assert not repo.events("docs")
+        manual = repo.run("git", "commit", "--no-edit", check=False)
+        assert manual.returncode != 0
+        assert repo.git("rev-parse", primary) == before
+
+
+def test_task_branch_can_merge_primary_with_only_fast_checks() -> None:
+    with _repository() as repo:
+        task = repo.commit_task()
+        upstream = _advance_primary(repo, "README.md", "# Updated upstream\n")
+        previous_checks = len(repo.events("fast"))
+        repo.run("git", "merge", "--no-edit", "main")
+        assert repo.git("show", "-s", "--format=%P", "HEAD") == f"{task} {upstream}"
+        assert repo.git("rev-parse", "main") == upstream
         assert repo.git("status", "--porcelain") == ""
-        assert repo.git("branch", "--list", "feature/test-hooks") == ""
-        repo.run(sys.executable, "scripts/git_gate.py", "full")
-        assert len(repo.events("full")) == 1
-        assert len(repo.events("docs")) == 1
-        assert repo.events("docs")[0]["tree"] == tree
-        assert repo.events("full")[0]["content"] == "VALUE = 'feature'\n"
-        assert not Path(str(repo.events("full")[0]["root"])).exists()
+        assert len(repo.events("fast")) == previous_checks + 1
+        assert not repo.events("full")
+        assert not repo.events("docs")
+
+
+def test_task_branch_merge_failure_preserves_commits_and_candidate() -> None:
+    with _repository() as repo:
+        task = repo.commit_task()
+        upstream = _advance_primary(repo, "README.md", "# Updated upstream\n")
+        repo.environment["HOOK_TEST_FAIL"] = "fast"
+        result = repo.run("git", "merge", "--no-edit", "main", check=False)
+        assert result.returncode != 0
+        assert "fast rejected candidate" in result.stdout + result.stderr
+        assert repo.git("rev-parse", "HEAD") == task
+        assert repo.git("rev-parse", "MERGE_HEAD") == upstream
+        assert repo.git("show", ":README.md") == "# Updated upstream"
+        assert not repo.events("full")
+        assert not repo.events("docs")
+        assert all(
+            not Path(str(event["root"])).exists() for event in repo.events("fast")
+        )
+
+
+def test_task_branch_checks_resolved_conflicts_before_committing_merge() -> None:
+    with _repository() as repo:
+        task = repo.commit_task()
+        upstream = _advance_primary(repo, "src/app.py", "VALUE = 'upstream'\n")
+        conflict = repo.run("git", "merge", "main", check=False)
+        assert conflict.returncode != 0
+        assert repo.git("diff", "--name-only", "--diff-filter=U") == "src/app.py"
+        repo.write("src/app.py", "VALUE = 'REJECT_FAST'\n")
+        repo.git("add", "src/app.py")
+        rejected = repo.run("git", "commit", "--no-edit", check=False)
+        assert rejected.returncode != 0
+        assert repo.git("rev-parse", "HEAD") == task
+        assert repo.git("rev-parse", "MERGE_HEAD") == upstream
+        repo.write("src/app.py", "VALUE = 'resolved'\n")
+        repo.git("add", "src/app.py")
+        repo.run("git", "commit", "--no-edit")
+        assert repo.git("show", "-s", "--format=%P", "HEAD") == f"{task} {upstream}"
+        assert repo.events("fast")[-1]["content"] == "VALUE = 'resolved'\n"
+        assert repo.git("status", "--porcelain") == ""
+        assert not repo.events("full")
+        assert not repo.events("docs")
+
+
+def test_merge_message_without_an_actual_merge_is_not_exempt() -> None:
+    with _repository() as repo:
+        repo.start_task()
+        before = repo.git("rev-parse", "HEAD")
+        repo.write("src/app.py", "VALUE = 'feature'\n")
+        repo.git("add", "src/app.py")
+        result = repo.run("git", "commit", "-m", "Merge pretend branch", check=False)
+        assert result.returncode != 0
+        assert "Conventional Commits" in result.stdout + result.stderr
+        assert repo.git("rev-parse", "HEAD") == before
 
 
 def test_primary_rebase_is_rejected_without_moving_primary() -> None:
@@ -340,74 +426,154 @@ def test_primary_rebase_is_rejected_without_moving_primary() -> None:
         assert repo.git("status", "--porcelain") == ""
 
 
-def test_task_branch_rejects_commit_after_resolving_merge_conflicts() -> None:
+def test_task_branch_rebase_can_synchronize_primary() -> None:
     with _repository() as repo:
-        task = repo.commit_task()
-        repo.git("switch", "-c", "feature/upstream", "main")
-        repo.write("src/app.py", "VALUE = 'upstream'\n")
-        repo.run("scripts/git-flow-commit.sh", "feat: change upstream", "src/app.py")
-        repo.run("scripts/git-flow-merge.sh")
-        primary = repo.git("rev-parse", "main")
-        repo.git("switch", "feature/test-hooks")
-
-        conflict = repo.run("git", "merge", "main", check=False)
-        assert conflict.returncode != 0
-        assert repo.git("diff", "--name-only", "--diff-filter=U") == "src/app.py"
-        repo.write("src/app.py", "VALUE = 'resolved'\n")
-        repo.git("add", "src/app.py")
-        assert repo.git("diff", "--name-only", "--diff-filter=U") == ""
-        checks = repo.record.read_text()
-
-        result = repo.run(
-            "git",
-            "commit",
-            "-m",
-            "Merge branch 'main' into feature/test-hooks",
-            check=False,
-        )
-        assert result.returncode != 0
-        assert "Merge commits must be made on main" in result.stdout + result.stderr
-        assert repo.git("rev-parse", "HEAD") == task
-        assert repo.git("rev-parse", "main") == primary
+        repo.commit_task()
+        upstream = _advance_primary(repo, "README.md", "# Updated upstream\n")
+        repo.run("git", "rebase", "main")
+        assert repo.git("rev-parse", "HEAD^") == upstream
         assert repo.git("branch", "--show-current") == "feature/test-hooks"
-        assert repo.git("rev-parse", "MERGE_HEAD") == primary
-        assert repo.git("show", ":src/app.py") == "VALUE = 'resolved'"
+        assert not repo.events("full")
+        assert not repo.events("docs")
+
+
+def _add_remote(repo: GitRepository) -> Path:
+    remote = repo.root.parent / "remote.git"
+    repo.run("git", "init", "--bare", "--initial-branch=main", str(remote))
+    repo.run("git", "-C", str(remote), "fetch", str(repo.root), "main:refs/heads/main")
+    repo.run("git", "-C", str(remote), "config", "receive.denyDeleteCurrent", "ignore")
+    repo.git("remote", "add", "origin", str(remote))
+    return remote
+
+
+def test_task_push_does_not_run_checks_or_require_a_receipt() -> None:
+    with _repository() as repo:
+        _add_remote(repo)
+        task = repo.commit_task()
+        checks = repo.record.read_text()
+        repo.environment["HOOK_TEST_FAIL"] = "full"
+        repo.run("git", "push", "-u", "origin", "feature/test-hooks")
+        assert repo.git("ls-remote", "origin", "refs/heads/feature/test-hooks") == (
+            f"{task}\trefs/heads/feature/test-hooks"
+        )
+        assert repo.record.read_text() == checks
+        repo.run("git", "push", "origin", "--delete", "feature/test-hooks")
+        assert repo.git("ls-remote", "origin", "refs/heads/feature/test-hooks") == ""
         assert repo.record.read_text() == checks
 
 
-def test_failed_cross_worktree_merge_aborts_primary_and_retains_task() -> None:
+@pytest.mark.parametrize("refspec", ["HEAD:main", ":main"])
+def test_primary_push_or_deletion_is_blocked_by_destination(refspec: str) -> None:
     with _repository() as repo:
-        previous = repo.git("rev-parse", "HEAD")
-        task = repo.task_worktree()
-        task_commit = task.git("rev-parse", "HEAD")
-        task.environment["HOOK_TEST_FAIL"] = "docs"
-        result = task.run("scripts/git-flow-merge.sh", check=False)
+        remote = _add_remote(repo)
+        before = repo.git("rev-parse", "main")
+        repo.commit_task()
+        checks = repo.record.read_text()
+        result = repo.run("git", "push", "origin", refspec, check=False)
         assert result.returncode != 0
-        assert len(repo.events("docs")) == 1
-        assert repo.git("rev-parse", "main") == previous
-        assert repo.git("status", "--porcelain") == ""
-        assert not (repo.root / ".git/MERGE_HEAD").exists()
-        assert task.root.exists()
-        assert task.git("branch", "--show-current") == "feature/test-hooks"
-        assert task.git("rev-parse", "HEAD") == task_commit
-        assert task.git("status", "--porcelain") == ""
-
-
-def test_successful_cross_worktree_merge_removes_only_task_worktree() -> None:
-    with _repository() as repo:
-        previous = repo.git("rev-parse", "HEAD")
-        task = repo.task_worktree()
-        task_commit = task.git("rev-parse", "HEAD")
-        candidate = task.git("rev-parse", "HEAD^{tree}")
-        task.run("scripts/git-flow-merge.sh")
-        assert repo.root.exists()
-        assert not task.root.exists()
-        assert repo.git("branch", "--show-current") == "main"
-        assert repo.git("show", "-s", "--format=%P", "HEAD") == (
-            f"{previous} {task_commit}"
+        assert (
+            "Direct pushes/deletions of main are blocked"
+            in result.stdout + result.stderr
         )
-        assert repo.git("rev-parse", "HEAD^{tree}") == candidate
-        assert repo.git("status", "--porcelain") == ""
-        assert repo.git("branch", "--list", "feature/test-hooks") == ""
-        assert len(repo.events("full")) == 1
-        assert len(repo.events("docs")) == 1
+        assert (
+            repo.run("git", "-C", str(remote), "rev-parse", "main").stdout.strip()
+            == before
+        )
+        assert repo.record.read_text() == checks
+
+
+def test_initial_primary_push_is_also_blocked() -> None:
+    with _repository() as repo:
+        remote = repo.root.parent / "empty-remote.git"
+        repo.run("git", "init", "--bare", str(remote))
+        repo.git("remote", "add", "origin", str(remote))
+        repo.commit_task()
+        checks = repo.record.read_text()
+        result = repo.run("git", "push", "origin", "HEAD:main", check=False)
+        assert result.returncode != 0
+        assert (
+            "Direct pushes/deletions of main are blocked"
+            in result.stdout + result.stderr
+        )
+        assert repo.git("ls-remote", "origin", "refs/heads/main") == ""
+        assert repo.record.read_text() == checks
+
+
+def test_installer_migrates_only_the_old_main_merge_option() -> None:
+    with _repository() as repo:
+        repo.git("config", "core.hooksPath", "scripts/hooks")
+        repo.git("config", "branch.main.mergeOptions", "--no-ff")
+        repo.git("config", "pull.rebase", "true")
+        repo.git("config", "branch.feature/test-hooks.mergeOptions", "--log")
+        repo.run("scripts/install-git-hooks.sh")
+        assert repo.git("config", "core.hooksPath") == ".githooks"
+        assert (
+            repo.run(
+                "git", "config", "--get", "branch.main.mergeOptions", check=False
+            ).returncode
+            == 1
+        )
+        assert repo.git("config", "branch.main.rebase") == "false"
+        assert repo.git("config", "pull.ff") == "only"
+        assert repo.git("config", "pull.rebase") == "true"
+        assert repo.git("config", "branch.feature/test-hooks.mergeOptions") == "--log"
+
+
+@pytest.mark.parametrize("options", [["--ff-only"], ["--no-ff", "--log"]])
+def test_installer_preserves_custom_main_merge_options(options: list[str]) -> None:
+    with _repository() as repo:
+        for option in options:
+            repo.git("config", "--add", "branch.main.mergeOptions", option)
+        repo.run("scripts/install-git-hooks.sh")
+        assert (
+            repo.git("config", "--get-all", "branch.main.mergeOptions").splitlines()
+            == options
+        )
+
+
+def test_installer_refuses_to_replace_unrelated_hooks() -> None:
+    with _repository() as repo:
+        repo.git("config", "core.hooksPath", "custom-hooks")
+        result = repo.run("scripts/install-git-hooks.sh", check=False)
+        assert result.returncode != 0
+        assert repo.git("config", "core.hooksPath") == "custom-hooks"
+        repo.git("config", "--unset", "core.hooksPath")
+        existing = repo.root / ".git/hooks/pre-commit"
+        existing.write_text("#!/bin/sh\nexit 0\n")
+        existing.chmod(0o755)
+        result = repo.run("scripts/install-git-hooks.sh", check=False)
+        assert result.returncode != 0
+        assert "Refusing to disable existing hook" in result.stderr
+        assert existing.read_text() == "#!/bin/sh\nexit 0\n"
+
+
+@pytest.mark.parametrize("source", ["config", "remote-head", "remote-main"])
+def test_primary_detection_does_not_require_local_primary(source: str) -> None:
+    with _repository() as repo:
+        primary = repo.git("rev-parse", "main")
+        repo.start_task()
+        repo.git("branch", "-D", "main")
+        if source == "config":
+            repo.git("config", "tradingdev.primaryBranch", "main")
+        else:
+            repo.git("update-ref", "refs/remotes/origin/main", primary)
+            if source == "remote-head":
+                repo.git(
+                    "symbolic-ref",
+                    "refs/remotes/origin/HEAD",
+                    "refs/remotes/origin/main",
+                )
+        assert repo.run("scripts/detect-primary-branch.sh").stdout.strip() == "main"
+        repo.run("scripts/install-git-hooks.sh")
+        repo.write("src/app.py", "VALUE = 'remote-only primary'\n")
+        repo.run(
+            "scripts/git-flow-commit.sh", "feat: work without local main", "src/app.py"
+        )
+
+
+def test_primary_detection_rejects_ambiguous_main_and_master() -> None:
+    with _repository() as repo:
+        repo.git("branch", "master")
+        result = repo.run("scripts/detect-primary-branch.sh", check=False)
+        assert result.returncode != 0
+        assert "both main and master exist" in result.stderr

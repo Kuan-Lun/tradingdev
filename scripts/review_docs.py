@@ -322,6 +322,7 @@ def review(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--base", required=True)
     parser.add_argument("--tree", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=180)
@@ -331,6 +332,7 @@ def main() -> int:
         review(
             args.base,
             args.tree,
+            repo=args.repo,
             timeout_seconds=args.timeout_seconds,
             max_evidence_bytes=args.max_evidence_bytes,
         )

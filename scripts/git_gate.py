@@ -1,23 +1,28 @@
-"""Check immutable Git candidates and retain successful local check receipts."""
+"""Check immutable Git candidates without changing the developer checkout."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import importlib.metadata
-import json
 import os
-import shutil
 import subprocess
 import sys
 import tarfile
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.process_guard import run_checked  # noqa: E402 - standalone entry point
+from scripts.process_guard import (  # noqa: E402 - standalone entry point
+    run_captured,
+    run_checked,
+)
 
 
 def git(*arguments: str) -> str:
@@ -30,90 +35,6 @@ def git(*arguments: str) -> str:
         )
         raise RuntimeError(diagnostic or f"git {' '.join(arguments)} failed")
     return result.stdout.strip()
-
-
-def environment_key() -> str:
-    packages = sorted(
-        (distribution.metadata["Name"], distribution.version)
-        for distribution in importlib.metadata.distributions()
-    )
-    encoded = json.dumps(
-        [
-            sys.version,
-            sys.executable,
-            sys.platform,
-            packages,
-            codex_identity(),
-            {
-                name: os.environ.get(name)
-                for name in (
-                    "TRADINGDEV_CODEX_BIN",
-                    "TRADINGDEV_CODEX_MODEL",
-                    "TRADINGDEV_CODEX_TIMEOUT",
-                    "CODEX_HOME",
-                )
-            },
-        ],
-        sort_keys=True,
-    ).encode()
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def codex_identity() -> tuple[str, str] | None:
-    binary = os.environ.get("TRADINGDEV_CODEX_BIN") or shutil.which("codex")
-    if (Path(__file__).resolve().parents[1] / "tests/e2e/codex_binary.py").is_file():
-        from tests.e2e.codex_binary import resolve_codex_binary
-
-        try:
-            binary = resolve_codex_binary()
-        except RuntimeError:
-            return None
-    if not binary or not Path(binary).is_file():
-        return None
-    with Path(binary).open("rb") as source:
-        return str(Path(binary).resolve()), hashlib.file_digest(
-            source, "sha256"
-        ).hexdigest()
-
-
-def receipt_path(tree: str, profile: str) -> Path:
-    directory = Path(git("rev-parse", "--git-common-dir")).resolve()
-    return directory / "tradingdev-checks" / f"{profile}-{tree}.json"
-
-
-def receipt_matches(tree: str, profile: str) -> bool:
-    try:
-        receipt = json.loads(receipt_path(tree, profile).read_text())
-    except (OSError, ValueError):
-        return False
-    return bool(
-        receipt
-        == {
-            "schema": 1,
-            "tree": tree,
-            "profile": profile,
-            "environment": environment_key(),
-            "result": "passed",
-        }
-    )
-
-
-def save_receipt(tree: str, profile: str) -> None:
-    path = receipt_path(tree, profile)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "schema": 1,
-                "tree": tree,
-                "profile": profile,
-                "environment": environment_key(),
-                "result": "passed",
-            },
-            indent=2,
-        )
-        + "\n"
-    )
 
 
 def execution_environment(cwd: Path) -> dict[str, str]:
@@ -145,12 +66,16 @@ def run(
     run_checked(command, cwd=cwd, env=environment, timeout=timeout)
 
 
-def check_snapshot(tree: str, profile: str) -> None:
+def check_snapshot(tree: str, profile: str, *, repo: Path | None = None) -> None:
     with TemporaryDirectory(prefix="tradingdev-git-check-") as temporary:
         root = Path(temporary)
         archive = root / "candidate.tar"
         with archive.open("wb") as output:
-            subprocess.run(["git", "archive", tree], stdout=output, check=True)
+            subprocess.run(
+                ["git", "-C", str(repo or Path.cwd()), "archive", tree],
+                stdout=output,
+                check=True,
+            )
         candidate = root / "candidate"
         candidate.mkdir()
         with tarfile.open(archive) as contents:
@@ -216,45 +141,113 @@ def check_commit() -> None:
     assert_index_unchanged(tree)
 
 
-def check_full(*, merging: bool) -> None:
-    git("diff", "--cached", "--check")
-    if git("status", "--porcelain", "--untracked-files=all") and not merging:
-        raise RuntimeError("Commit the task stages before running the full gate.")
-    if git("diff", "--name-only") or git("ls-files", "--others", "--exclude-standard"):
-        raise RuntimeError("Merge checks require no unstaged or untracked files.")
-    tree = git("write-tree")
-    if receipt_matches(tree, "full"):
-        print(f"Reusing successful full checks for {tree[:12]}.", flush=True)
-        return
-    checked_environment = environment_key()
-    primary = subprocess.check_output(
-        ["bash", "scripts/detect-primary-branch.sh"], text=True
-    ).strip()
-    if merging:
-        base = git("rev-parse", "HEAD^{tree}")
-    elif git("branch", "--show-current") == primary:
-        base = git("rev-parse", "HEAD^1^{tree}")
-    else:
-        base = git("merge-base", primary, "HEAD")
+@dataclass(frozen=True)
+class MergeCandidate:
+    repository: Path
+    base: str
+    head: str
+    tree: str
+
+
+@contextmanager
+def merge_candidate(
+    source: str, base_ref: str, head_ref: str
+) -> Iterator[MergeCandidate]:
+    """Fetch and merge in a disposable repository, leaving the caller untouched."""
+    with TemporaryDirectory(prefix="tradingdev-pr-candidate-") as temporary:
+        repository = Path(temporary)
+        environment = execution_environment(repository)
+
+        def candidate_git(*args: str) -> str:
+            result = run_captured(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "-c",
+                    f"core.hooksPath={os.devnull}",
+                    *args,
+                ],
+                # Fetch needs authentication helpers; merge uses project rules.
+                env=environment
+                if args[0] == "fetch"
+                else {
+                    **environment,
+                    "GIT_CONFIG_GLOBAL": os.devnull,
+                    "GIT_CONFIG_SYSTEM": os.devnull,
+                    "GIT_ATTR_NOSYSTEM": "1",
+                },
+                cwd=repository,
+                timeout=120,
+            )
+            if result.returncode:
+                # Fetch diagnostics can include credential-bearing remote URLs.
+                detail = (
+                    " Merge conflicts must be resolved on the PR branch."
+                    if args[0] == "merge-tree"
+                    else ""
+                )
+                raise RuntimeError(f"Candidate git {args[0]} failed.{detail}")
+            return result.stdout.strip()
+
+        candidate_git("init", "--quiet", "--template=")
+        candidate_git(
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-prune",
+            "--no-recurse-submodules",
+            "--no-write-fetch-head",
+            "--",
+            source,
+            f"{base_ref}:refs/check/base",
+            f"{head_ref}:refs/check/head",
+        )
+        base = candidate_git("rev-parse", "refs/check/base^{commit}")
+        head = candidate_git("rev-parse", "refs/check/head^{commit}")
+        tree = candidate_git("merge-tree", "--write-tree", base, head)
+        yield MergeCandidate(repository, base, head, tree)
+
+
+def verify_candidate(candidate: MergeCandidate) -> None:
+    """Always run a fresh review and full suite for an explicit candidate."""
     print("Reviewing code/documentation consistency with Codex...", flush=True)
     run(
         [
             sys.executable,
-            "scripts/review_docs.py",
+            str(Path(__file__).with_name("review_docs.py")),
+            "--repo",
+            str(candidate.repository),
             "--base",
-            base,
+            candidate.base,
             "--tree",
-            tree,
+            candidate.tree,
         ],
-        cwd=Path.cwd(),
+        cwd=Path(__file__).resolve().parents[1],
     )
-    check_snapshot(tree, "full")
-    assert_index_unchanged(tree)
-    if git("diff", "--name-only") or git("ls-files", "--others", "--exclude-standard"):
-        raise RuntimeError("The worktree changed during checks; commit and retry.")
-    if environment_key() != checked_environment:
-        raise RuntimeError("The check environment changed during verification.")
-    save_receipt(tree, "full")
+    check_snapshot(candidate.tree, "full", repo=candidate.repository)
+
+
+def check_full(base_ref: str, head_ref: str) -> None:
+    if git("status", "--porcelain", "--untracked-files=all"):
+        raise RuntimeError("Commit the task stages before running full checks.")
+    base = git("rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}")
+    head = git("rev-parse", "--verify", "--end-of-options", f"{head_ref}^{{commit}}")
+    with merge_candidate(str(Path.cwd()), base, head) as candidate:
+        verify_candidate(candidate)
+        if (
+            git("status", "--porcelain", "--untracked-files=all")
+            or git(
+                "rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}"
+            )
+            != base
+            or git(
+                "rev-parse", "--verify", "--end-of-options", f"{head_ref}^{{commit}}"
+            )
+            != head
+        ):
+            raise RuntimeError("The checkout or compared refs changed during checks.")
+        print(f"Full checks passed. Base: {base} Head: {head} Tree: {candidate.tree}")
 
 
 def check_push() -> None:
@@ -262,27 +255,29 @@ def check_push() -> None:
         ["bash", "scripts/detect-primary-branch.sh"], text=True
     ).strip()
     for line in sys.stdin:
-        _, oid, remote_ref, _ = line.split()
-        if remote_ref != f"refs/heads/{primary}" or set(oid) == {"0"}:
-            continue
-        tree = git("rev-parse", f"{oid}^{{tree}}")
-        if not receipt_matches(tree, "full"):
+        _, _, remote_ref, _ = line.split()
+        if remote_ref == f"refs/heads/{primary}":
             raise RuntimeError(
-                f"No valid full-check receipt for {oid[:12]}; run the full gate first."
+                f"Direct pushes/deletions of {primary} are blocked; use a GitHub PR."
             )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["commit", "merge", "full", "push"])
-    action = parser.parse_args().action
+    parser.add_argument("action", choices=["commit", "full", "push"])
+    parser.add_argument("--base", help="Explicit local comparison base for full checks")
+    parser.add_argument("--head", default="HEAD")
+    args = parser.parse_args()
+    action = args.action
+    if action == "full" and not args.base:
+        parser.error("full requires --base; use scripts/check-pr.sh for a remote PR")
     os.chdir(git("rev-parse", "--show-toplevel"))
     if action == "commit":
         check_commit()
     elif action == "push":
         check_push()
     else:
-        check_full(merging=action == "merge")
+        check_full(args.base, args.head)
 
 
 if __name__ == "__main__":

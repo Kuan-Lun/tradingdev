@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import psutil
 import pytest
-from scripts.process_guard import run_checked
+from scripts.process_guard import run_captured, run_checked
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -53,12 +53,17 @@ def _emergency_cleanup(root: Path) -> None:
                     process.kill()
 
 
-def test_timeout_stops_independent_child_and_allows_leader_teardown() -> None:
+@pytest.mark.parametrize("captured", [False, True])
+def test_timeout_stops_independent_child_and_allows_leader_teardown(
+    captured: bool,
+) -> None:
     with TemporaryDirectory(prefix="tradingdev-process-test-") as directory:
         root = Path(directory)
         code = (
             _SPAWN
             + """\
+print('started', flush=True)
+print('diagnostic', file=sys.stderr, flush=True)
 try:
     time.sleep(60)
 except KeyboardInterrupt:
@@ -66,17 +71,44 @@ except KeyboardInterrupt:
 """
         )
         try:
-            with pytest.raises(subprocess.TimeoutExpired, match="timed out"):
-                run_checked(
+            with pytest.raises(subprocess.TimeoutExpired, match="timed out") as failure:
+                runner = run_captured if captured else run_checked
+                runner(
                     [sys.executable, "-c", code, _CHILD],
                     cwd=root,
                     env=dict(os.environ),
                     timeout=0.5,
                 )
+            if captured:
+                assert failure.value.output == b"started\n"
+                assert failure.value.stderr == b"diagnostic\n"
             assert (root / "teardown.completed").read_text() == "done"
             _assert_stopped(root)
         finally:
             _emergency_cleanup(root)
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("returncode", [0, 7])
+def test_captured_output_preserves_diagnostics_without_pipe_blocking(
+    returncode: int,
+) -> None:
+    with TemporaryDirectory(prefix="tradingdev-process-test-") as directory:
+        root = Path(directory)
+        command = [
+            sys.executable,
+            "-c",
+            "import sys; "
+            "sys.stdout.write('out' * 100000); "
+            "sys.stderr.write('err' * 100000); "
+            f"sys.exit({returncode})",
+        ]
+        result = run_captured(command, cwd=root, env=dict(os.environ), timeout=5)
+        assert result.args == command
+        assert result.returncode == returncode
+        assert result.stdout == "out" * 100000
+        assert result.stderr == "err" * 100000
+        assert list(root.iterdir()) == []
     assert not root.exists()
 
 
