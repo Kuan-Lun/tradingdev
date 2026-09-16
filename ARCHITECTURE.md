@@ -31,6 +31,7 @@ src/tradingdev/
     backtest_service.py
     optimization_service.py
     job_service.py
+    job_config.py
     run_service.py
     artifact_service.py
     feature_request_service.py
@@ -175,7 +176,9 @@ feature requests, data caches, and run artifacts. Each completed run records
 result, config snapshot, strategy source hash, random seed, optional strategy
 source snapshot, dataset fingerprint, and dashboard `pipeline_result` artifacts
 under `workspace/runs/<run_id>/`; that directory is linked from the
-`runs.artifact_dir` column. `app.run_lineage` centralizes config/source/seed
+`runs.artifact_dir` column. `app.job_config` applies request-level market/date
+overrides and writes execution snapshots shared by `JobService` and
+`OptimizationService`. `app.run_lineage` centralizes config/source/seed
 lineage extraction for job and artifact services. CLI pipeline-result cache
 files are stored under `workspace/data/processed/cache` (or
 `$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through `ArtifactService`.
