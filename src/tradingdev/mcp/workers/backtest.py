@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.shared.utils.logger import setup_logger
@@ -29,7 +29,12 @@ def _run_backtest(
         config_path,
         walk_forward,
     )
-    job_store.update_job(job_id, status="downloading_data", pid=os.getpid())
+    handle = WorkerHandle.from_environment()
+    job_store.update_job(
+        job_id,
+        status="downloading_data",
+        **handle.job_fields(),
+    )
 
     try:
         service = BacktestService()

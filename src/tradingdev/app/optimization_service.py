@@ -115,11 +115,20 @@ class OptimizationService:
             test_end=test_end,
             total_combinations=total_combinations,
         )
-        pid = self._process_runner.spawn_module(
-            "tradingdev.mcp.workers.optimization",
-            job_id,
-        )
-        self._job_store.update_job(job_id, pid=pid)
+        try:
+            identity = self._process_runner.spawn_module(
+                "tradingdev.mcp.workers.optimization",
+                job_id,
+            )
+        except BaseException as exc:
+            # Interruptions must not leave a job queued after startup cleanup.
+            self._job_store.update_job(
+                job_id,
+                status="failed",
+                error=f"Worker failed to start: {type(exc).__name__}: {exc}",
+            )
+            raise
+        self._job_store.update_job(job_id, **identity.job_fields())
         return {
             "job_id": job_id,
             "message": (

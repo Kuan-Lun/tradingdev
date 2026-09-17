@@ -5,7 +5,11 @@ TradingDev 讓 LLM 透過標準 MCP 工具協助你撰寫、驗證與研究交�
 
 ## 快速開始
 
-準備 uv 與 Python 3.12 或 3.13，在下載的專案根目錄安裝鎖定版本的依賴：
+準備 uv 與 Python 3.12 或 3.13。背景回測與最佳化需要支援 POSIX 程序群組及
+`waitid(WNOWAIT)` 的系統
+（macOS／Linux）；目前不支援原生 Windows 背景 worker。
+
+在下載的專案根目錄安裝鎖定版本的依賴：
 
 ```bash
 uv sync --locked

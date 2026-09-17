@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING
 
 import anyio
@@ -29,10 +31,10 @@ def _exception_leaves(error: BaseException) -> list[BaseException]:
     return [error]
 
 
-@pytest.mark.parametrize("force_failure", [False, True])
+@pytest.mark.parametrize("exit_mode", ["success", "failure", "timeout"])
 async def test_active_worker_and_files_are_removed_on_context_exit(
     sample_ohlcv_with_kd: pd.DataFrame,
-    force_failure: bool,
+    exit_mode: str,
 ) -> None:
     root: Path | None = None
     worker: psutil.Process | None = None
@@ -76,21 +78,25 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
                         if status["status"] == "pending_confirmation":
                             break
                         await anyio.sleep(0.1)
-                with sqlite3.connect(
-                    workspace.workspace / "tradingdev.sqlite"
+                with closing(
+                    sqlite3.connect(workspace.workspace / "tradingdev.sqlite")
                 ) as connection:
                     row = connection.execute(
-                        "SELECT pid FROM jobs WHERE job_id = ?",
+                        "SELECT pid, payload FROM jobs WHERE job_id = ?",
                         (started["job_id"],),
                     ).fetchone()
                 assert row is not None
                 worker = psutil.Process(row[0])
+                assert json.loads(row[1])["process_create_time"] == worker.create_time()
                 server = psutil.Process(worker.ppid())
                 assert worker_is_alive(worker)
                 assert "tradingdev.mcp.server" in server.cmdline()
                 assert (workspace.workspace / "configs/cleanup_strategy.yaml").exists()
-                if force_failure:
+                if exit_mode == "failure":
                     raise ForcedCleanupError("Exercise failed-test teardown")
+                if exit_mode == "timeout":
+                    with anyio.fail_after(0):
+                        await anyio.sleep_forever()
     except BaseException as error:
         caught = error
 
@@ -99,9 +105,10 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
         raise caught
     assert worker is not None and not worker_is_alive(worker)
     assert server is not None and not worker_is_alive(server)
-    if force_failure:
+    if exit_mode != "success":
         assert caught is not None
         leaves = _exception_leaves(caught)
-        assert len(leaves) == 1 and isinstance(leaves[0], ForcedCleanupError), caught
+        expected = ForcedCleanupError if exit_mode == "failure" else TimeoutError
+        assert len(leaves) == 1 and isinstance(leaves[0], expected), caught
     elif caught is not None:
         raise caught

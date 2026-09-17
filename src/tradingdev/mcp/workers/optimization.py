@@ -1,8 +1,8 @@
 """Subprocess worker that executes a parameter optimization job.
 
-Invoked by the MCP server as a detached subprocess:
-
-    uv run python -m tradingdev.mcp.workers.optimization <job_id>
+Start jobs through the MCP start_optimization tool. Its application service uses
+ProcessRunner to launch a supervisor, which starts this worker and supplies
+TRADINGDEV_WORKER_IDENTITY. Running this module directly is not supported.
 
 The worker reads all configuration from job_store (populated by
 start_optimization), then:
@@ -21,7 +21,6 @@ import argparse
 import inspect
 import json
 import logging
-import os
 import signal
 import time
 from datetime import UTC, datetime
@@ -31,6 +30,7 @@ from typing import Any
 
 from joblib import Parallel, delayed
 
+from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
@@ -164,8 +164,13 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     test_start: str = job["test_start"]
     test_end: str = job["test_end"]
 
-    # --- Phase 1: mark running & record PID ---
-    job_store.update_job(job_id, status="downloading_data", pid=os.getpid())
+    # --- Phase 1: mark running & preserve the supervisor control identity ---
+    handle = WorkerHandle.from_environment()
+    job_store.update_job(
+        job_id,
+        status="downloading_data",
+        **handle.job_fields(),
+    )
 
     # --- Phase 2: load config ---
     try:

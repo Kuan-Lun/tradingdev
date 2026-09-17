@@ -211,7 +211,20 @@ The dashboard reads run metadata and pipeline artifacts through `RunService` /
 - Generated strategies must pass static policy checks before execution.
   `validate_strategy` and `dry_run_strategy` currently execute generated Python
   code during contract checks; sandbox isolation is future work.
-- `cancel_job` marks active jobs as `cancelled` and terminates the worker process
-  when a live PID is known.
+- A detached supervisor owns each background worker's separate process group.
+  Startup captures the supervisor identity before allowing it to spawn a worker;
+  startup failures persist a failed job and its error. Job status checks use the
+  supervisor PID and creation time, including while awaiting confirmation.
+- `cancel_job` and integration-test teardown request cleanup through a unique
+  launch control directory, never by signalling a persisted numeric PID.
+  The supervisor observes exit with POSIX `waitid(WNOWAIT)` and keeps its direct
+  child unreaped until group termination and verification finish. This prevents
+  PID/group reuse between an identity check and `killpg`, and also cleans joblib
+  descendants after the worker leader exits normally or fails.
+- Cancellation marks a job `cancelled` only after cleanup acknowledgement;
+  missing control identity, timeout or cleanup failure returns an error.
+  Supervisors require POSIX process groups and `waitid(WNOWAIT)`. External
+  `SIGKILL` of the supervisor or descendants deliberately creating another
+  session are outside this cleanup guarantee; this is not a sandbox.
 - Runtime cache defaults to `workspace/data/`; `TRADINGDEV_DATA_ROOT` can override
   raw/processed data root.

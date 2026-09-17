@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
+import json
 import os
-import signal
+import shutil
 import sqlite3
 import sys
-import time
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, closing, contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any
 
 import anyio
 import psutil
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+from tradingdev.adapters.execution.process_runner import (
+    WorkerHandle,
+    request_worker_stop,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -118,65 +123,74 @@ class MCPWorkspace:
                         finally:
                             self.stop_workers()
         except BaseException:
-            # Captured on failure before TemporaryDirectory deletes the log.
+            # Capture the failure log before successful workspace cleanup.
             print(log_path.read_text(encoding="utf-8"))
             raise
 
     def stop_workers(self) -> None:
-        """Stop only this workspace's detached worker groups.
-
-        Target individual PIDs from our database; global process enumeration is
-        unavailable in some sandboxes. The MCP server owns/reaps these children,
-        so a zombie already counts as exited while its parent is shutting down.
-        """
+        """Ask workspace supervisors to stop their workers before deleting files."""
         database = self.workspace / "tradingdev.sqlite"
-        if not database.exists():
-            return
-        with sqlite3.connect(database) as connection:
-            pids = connection.execute(
-                "SELECT pid FROM jobs WHERE pid IS NOT NULL"
-            ).fetchall()
-        processes: list[psutil.Process] = []
-        for (pid,) in pids:
+        failures: list[Exception] = []
+        handles: set[WorkerHandle] = set()
+        if database.exists():
             try:
-                process = psutil.Process(pid)
-                command = process.cmdline()
-                # Never signal a reused PID or another workspace's process.
-                if not any("tradingdev.mcp.workers." in item for item in command):
-                    continue
-                if not any(str(self.workspace) in item for item in command) and (
-                    Path(process.cwd()).resolve() != self.root
-                ):
-                    continue
-                if os.getpgid(pid) != pid:
-                    continue
-                processes.append(process)
-            except (psutil.NoSuchProcess, ProcessLookupError):
-                continue
-        for process in processes:
-            self._signal_worker_group(process, signal.SIGTERM)
-        alive = self._wait_for_workers(processes)
-        for process in alive:
-            self._signal_worker_group(process, signal.SIGKILL)
-        alive = self._wait_for_workers(alive)
-        assert not alive, f"Test workers did not exit: {alive}"
+                with closing(sqlite3.connect(database)) as connection:
+                    workers = connection.execute(
+                        "SELECT pid, payload FROM jobs WHERE pid IS NOT NULL"
+                    ).fetchall()
+            except Exception as error:
+                failures.append(error)
+            else:
+                for pid, payload in workers:
+                    try:
+                        record = json.loads(payload)
+                        if not isinstance(record, dict):
+                            raise AssertionError(f"Invalid worker record: PID {pid}")
+                        handle = WorkerHandle.from_job({**record, "pid": pid})
+                        if handle is None:
+                            raise AssertionError(
+                                f"Worker control identity missing or invalid: PID {pid}"
+                            )
+                        handles.add(handle)
+                    except Exception as error:
+                        failures.append(error)
 
-    @staticmethod
-    def _signal_worker_group(process: psutil.Process, sig: signal.Signals) -> None:
-        with suppress(psutil.NoSuchProcess, ProcessLookupError):
-            # is_running checks process creation time to reject reused PIDs.
-            if process.is_running() and os.getpgid(process.pid) == process.pid:
-                os.killpg(process.pid, sig)
+        # A supervisor may have started before identity capture or DB update.
+        # Inspect launch directories too: absence of start is not proof of exit.
+        try:
+            launches = list((self.workspace / ".workers").iterdir())
+        except FileNotFoundError:
+            launches = []
+        except Exception as error:
+            launches = []
+            failures.append(error)
+        for launch in launches:
+            try:
+                start = launch / "start.json"
+                try:
+                    record = json.loads(start.read_text(encoding="utf-8"))
+                except FileNotFoundError as error:
+                    raise AssertionError(
+                        f"Unidentified worker launch; start record missing: {launch}"
+                    ) from error
+                handle = (
+                    WorkerHandle.from_job(record) if isinstance(record, dict) else None
+                )
+                if handle is None or handle.control_id != start.parent.name:
+                    raise AssertionError(f"Invalid worker control record: {start}")
+                handles.add(handle)
+            except Exception as error:
+                failures.append(error)
 
-    @staticmethod
-    def _wait_for_workers(processes: list[psutil.Process]) -> list[psutil.Process]:
-        deadline = time.monotonic() + 5
-        alive = processes
-        while alive and time.monotonic() < deadline:
-            alive = [process for process in alive if worker_is_alive(process)]
-            if alive:
-                time.sleep(0.05)
-        return alive
+        for handle in handles:
+            try:
+                request_worker_stop(self.workspace, handle)
+            except Exception as error:
+                failures.append(error)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise ExceptionGroup("Test worker cleanup failed", failures)
 
 
 def worker_is_alive(process: psutil.Process) -> bool:
@@ -190,14 +204,16 @@ def worker_is_alive(process: psutil.Process) -> bool:
 @contextmanager
 def temporary_mcp_workspace() -> Iterator[MCPWorkspace]:
     # Also used outside pytest; stop detached workers before removing files.
-    directory: str | None = None
+    directory = Path(mkdtemp(prefix="tradingdev-mcp-test-")).resolve()
+    workspace = MCPWorkspace(directory)
     try:
-        with TemporaryDirectory(prefix="tradingdev-mcp-test-") as directory:
-            workspace = MCPWorkspace(Path(directory).resolve())
-            try:
-                yield workspace
-            finally:
-                workspace.stop_workers()
+        yield workspace
     finally:
-        if directory is not None:
-            assert not Path(directory).exists()
+        try:
+            workspace.stop_workers()
+        except Exception as error:
+            raise RuntimeError(
+                f"Worker cleanup failed; temporary directory retained: {directory}"
+            ) from error
+        shutil.rmtree(directory)
+        assert not directory.exists()

@@ -42,6 +42,8 @@ class JobRecord(BaseModel):
     config_path: str | None = None
     job_type: str = "backtest"
     pid: int | None = None
+    process_create_time: float | None = None
+    worker_control_id: str | None = None
     created_at: str
     started_at: str | None = None
     ended_at: str | None = None

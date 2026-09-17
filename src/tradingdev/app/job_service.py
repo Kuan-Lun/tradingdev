@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
-import signal
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tradingdev.adapters.execution.process_runner import ProcessRunner
+from tradingdev.adapters.execution.process_runner import (
+    ProcessIdentity,
+    ProcessRunner,
+    WorkerHandle,
+    request_worker_stop,
+)
 from tradingdev.app.data_service import DataService
 from tradingdev.app.job_config import apply_run_overrides, write_job_config
 from tradingdev.app.job_store import JobStore, get_default_job_store
@@ -127,20 +131,19 @@ class JobService:
             return {"status": "not_found", "error": f"No job with ID: {job_id}"}
 
         status = str(job["status"])
-        if status in {
-            "downloading_data",
-            "running_backtest",
-            "estimating",
-            "optimizing",
-            "testing_oos",
-        } and not self._is_pid_alive(job.get("pid")):
+        if (
+            status in self._ACTIVE_STATUSES
+            and (status != "queued" or job.get("pid") is not None)
+            and not self._is_process_alive(job)
+        ):
             status = "failed"
-            self._job_store.update_job(
-                job_id,
-                status=status,
-                error="Worker process terminated unexpectedly.",
-                ended_at=datetime.now(UTC).isoformat(),
-            )
+            failure = {
+                "status": status,
+                "error": "Worker process terminated unexpectedly.",
+                "ended_at": datetime.now(UTC).isoformat(),
+            }
+            self._job_store.update_job(job_id, **failure)
+            job.update(failure)
 
         created_at = datetime.fromisoformat(str(job["created_at"]))
         elapsed = round((datetime.now(UTC) - created_at).total_seconds(), 1)
@@ -275,15 +278,29 @@ class JobService:
             }
 
         process_terminated = False
-        pid = job.get("pid")
-        if isinstance(pid, int) and self._is_pid_alive(pid):
-            process_terminated, error = self._terminate_pid(pid)
-            if error is not None:
+        handle = WorkerHandle.from_job(job)
+        if handle is None:
+            if status != "queued" or job.get("pid") is not None:
                 return {
                     "success": False,
-                    "error": error,
+                    "error": (
+                        "Worker control identity is unavailable; "
+                        "cannot confirm process cleanup."
+                    ),
                     "status": status,
-                    "pid": pid,
+                    "pid": job.get("pid"),
+                }
+        else:
+            try:
+                process_terminated = request_worker_stop(
+                    self._job_store.workspace.root, handle
+                )
+            except (OSError, ValueError, RuntimeError) as exc:
+                return {
+                    "success": False,
+                    "error": f"Worker cleanup could not be confirmed: {exc}",
+                    "status": status,
+                    "pid": handle.pid,
                 }
 
         self._job_store.update_job(
@@ -347,11 +364,20 @@ class JobService:
         args = [job_id, str(effective_config_path)]
         if walk_forward:
             args.append("--walk-forward")
-        pid = self._process_runner.spawn_module(
-            "tradingdev.mcp.workers.backtest",
-            *args,
-        )
-        self._job_store.update_job(job_id, pid=pid)
+        try:
+            identity = self._process_runner.spawn_module(
+                "tradingdev.mcp.workers.backtest",
+                *args,
+            )
+        except BaseException as exc:
+            # Interruptions must not leave a job queued after startup cleanup.
+            self._job_store.update_job(
+                job_id,
+                status="failed",
+                error=f"Worker failed to start: {type(exc).__name__}: {exc}",
+            )
+            raise
+        self._job_store.update_job(job_id, **identity.job_fields())
         data_msg = (
             "Data already cached locally."
             if data_available
@@ -396,31 +422,15 @@ class JobService:
         path = Path(spec.config_path)
         return (path, "") if path.exists() else (None, f"Config not found: {path}")
 
-    def _is_pid_alive(self, pid: object) -> bool:
-        if not isinstance(pid, int):
-            return False
-        try:
-            os.kill(pid, 0)
-            return True
-        except (ProcessLookupError, PermissionError):
-            return False
+    @staticmethod
+    def _process_identity(job: dict[str, Any]) -> ProcessIdentity | None:
+        return ProcessIdentity.from_values(
+            job.get("pid"), job.get("process_create_time")
+        )
 
-    def _terminate_pid(self, pid: int) -> tuple[bool, str | None]:
-        try:
-            os.killpg(pid, signal.SIGTERM)
-            return True, None
-        except ProcessLookupError:
-            return False, None
-        except PermissionError:
-            return False, f"Permission denied when terminating process group {pid}"
-        except OSError:
-            try:
-                os.kill(pid, signal.SIGTERM)
-                return True, None
-            except ProcessLookupError:
-                return False, None
-            except PermissionError:
-                return False, f"Permission denied when terminating process {pid}"
+    def _is_process_alive(self, job: dict[str, Any]) -> bool:
+        identity = self._process_identity(job)
+        return identity is not None and identity.get_process() is not None
 
     def _default_project_root(self) -> Path:
         configured = os.environ.get("TRADINGDEV_PROJECT_ROOT")

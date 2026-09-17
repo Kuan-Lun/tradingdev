@@ -101,6 +101,9 @@ uv run --no-sync python scripts/git_gate.py full --base main
 
 ## 注意事項
 
+- **測試清理**：若無法確認 worker 已停止，測試會報錯並列出保留的臨時目錄，
+  供確認程序後清理。監督程序需具備程序群組觀察權限；若被外部強制殺死，
+  不會假定其子程序已一併停止。
 - **Git 設定**：安裝器只調整本 repository，設定 `core.hooksPath=.githooks`、
   `branch.<主線>.rebase=false` 與 `pull.ff=only`，讓一般 pull 遇分歧時停止。
   遷移時僅移除唯一值為 `--no-ff` 的 `branch.<主線>.mergeOptions`，
