@@ -47,5 +47,9 @@ Signals use 1 = long, -1 = short, 0 = flat, and must never use data after
 the bar being signalled. Strategy parameters live only in YAML
 strategy.parameters. Generated strategies must remain in workspace/.
 
+Compute standard indicators with tradingdev.domain.indicators (sma, ema,
+rsi, macd, bollinger_bands, atr, adx, stochastic). If you import pandas_ta
+directly, select its output columns by name and pass talib=False.
+
 Always reply in the user's language.
 """

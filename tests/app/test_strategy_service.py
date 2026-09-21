@@ -288,6 +288,12 @@ def test_strategy_service_rejects_non_allowlisted_import(tmp_path: Path) -> None
     assert validated["success"] is False
     codes = [item["code"] for item in validated["diagnostics"]]
     assert "import_not_allowed" in codes
+    rejected = next(
+        item
+        for item in validated["diagnostics"]
+        if item["code"] == "import_not_allowed"
+    )
+    assert "pandas_ta" in rejected["fix"]
 
 
 def test_strategy_service_rejects_invalid_signal_values(tmp_path: Path) -> None:
@@ -330,3 +336,59 @@ def test_strategy_service_rejects_input_mutation(tmp_path: Path) -> None:
     assert validated["success"] is False
     codes = [item["code"] for item in validated["diagnostics"]]
     assert "input_mutated" in codes
+
+
+_PANDAS_TA_CODE = """\
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import pandas_ta as ta
+
+from tradingdev.domain.strategies.base import BaseStrategy
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+
+class PandasTaStrategy(BaseStrategy):
+    def __init__(
+        self,
+        backtest_engine: object | None = None,
+        length: int = 3,
+    ) -> None:
+        self._engine = backtest_engine
+        self._length = length
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        result = df.copy()
+        sma = ta.sma(result["close"], length=self._length, talib=False)
+        result["signal"] = 0
+        result.loc[result["close"] > sma, "signal"] = 1
+        return result
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {"length": self._length}
+"""
+
+_PANDAS_TA_YAML = (
+    _YAML.replace("fixture_strategy", "pandas_ta_strategy")
+    .replace("FixtureStrategy", "PandasTaStrategy")
+    .replace("threshold: 0.0", "length: 3")
+)
+
+
+def test_strategy_service_accepts_pandas_ta_import(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+
+    assert service.save_draft(
+        "pandas_ta_strategy", _PANDAS_TA_CODE, _PANDAS_TA_YAML
+    ).success
+
+    validated = service.validate("pandas_ta_strategy")
+
+    assert validated["success"] is True, validated["diagnostics"]
+    assert validated["status"] == "validated"
+    assert validated["signal_analysis"]["rows"] == 80

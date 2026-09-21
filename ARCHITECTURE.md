@@ -196,7 +196,9 @@ The dashboard reads run metadata and pipeline artifacts through `RunService` /
   standard deviation for Bollinger Bands), and returns NaN-filled series for
   inputs shorter than the window. Statistical features such as realized
   volatility, Parkinson volatility, and return moments stay in pandas/numpy
-  inside `domain/ml/features`.
+  inside `domain/ml/features`. Generated strategies may also import
+  `pandas_ta` directly; the strategy contract requires them to select
+  columns by name and pass `talib=False` as well.
 - Strategy parameters live in YAML `strategy.parameters`.
 - Data requirements live in YAML `data.requirements`.
 - `data.requirements.market.source` selects the market data crawler from the

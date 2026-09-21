@@ -35,8 +35,15 @@ Allowed import roots for generated strategies are intentionally small:
 
 - Python standard library: `__future__`, `collections`, `dataclasses`,
   `datetime`, `enum`, `math`, `statistics`, `typing`, `typing_extensions`.
-- Runtime libraries: `numpy`, `pandas`.
+- Runtime libraries: `numpy`, `pandas`, `pandas_ta`.
 - Project APIs: `tradingdev`.
+
+Prefer `tradingdev.domain.indicators` (`sma`, `ema`, `rsi`, `macd`,
+`bollinger_bands`, `atr`, `adx`, `stochastic`) for standard indicators; it
+selects pandas-ta output by column name and pins `talib=False`. Code that
+imports `pandas_ta` directly must do the same: pandas-ta encodes parameters
+in its column names, so select outputs by name rather than by position, and
+pass `talib=False` so results do not depend on whether TA-Lib is installed.
 
 Recommended imports:
 

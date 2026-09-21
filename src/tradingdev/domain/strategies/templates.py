@@ -19,10 +19,13 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
         "api_reference": (
             "Generated strategies must inherit BaseStrategy, return a DataFrame "
             "with signal values limited to -1, 0, and 1, and avoid mutating the "
-            "input DataFrame. Use tradingdev.domain.indicators for built-in "
-            "indicators and tradingdev.shared.utils.logger for logging. Allowed "
-            "imports are restricted to a small Python/pandas/numpy/tradingdev "
-            "allowlist."
+            "input DataFrame. Use tradingdev.domain.indicators (sma, ema, rsi, "
+            "macd, bollinger_bands, atr, adx, stochastic) for standard "
+            "indicators and tradingdev.shared.utils.logger for logging. "
+            "pandas_ta may be imported directly, but select its output columns "
+            "by name and pass talib=False so results do not depend on the "
+            "environment. Allowed imports are restricted to a small "
+            "Python/pandas/numpy/pandas_ta/tradingdev allowlist."
         ),
         "lifecycle": (
             "save_strategy stores a draft; validate_strategy runs static checks, "
@@ -47,6 +50,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from tradingdev.domain import indicators
 from tradingdev.domain.strategies.base import BaseStrategy
 
 if TYPE_CHECKING:
@@ -70,8 +74,8 @@ class SmaCrossoverStrategy(BaseStrategy):
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
-        fast = result["close"].rolling(self._fast_period).mean()
-        slow = result["close"].rolling(self._slow_period).mean()
+        fast = indicators.sma(result["close"], self._fast_period)
+        slow = indicators.sma(result["close"], self._slow_period)
         fast_prev = fast.shift(1)
         slow_prev = slow.shift(1)
 
