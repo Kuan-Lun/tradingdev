@@ -711,3 +711,43 @@ class TestIndicatorWarmup:
         strategy = GLFTStrategy(config=_make_config(trend_ema_window=200, ema_window=5))
         result = strategy.generate_signals(sample_ohlcv_df)
         assert (result["signal"] == 0).all()
+
+    def test_aggregated_ema_never_uses_a_future_aggregate(self) -> None:
+        """Regression: negative aggregate indices were clipped to the first one."""
+        close = np.arange(100.0, 120.0)
+        ema = GLFTStrategy._compute_ema(close, ema_window=1, agg_minutes=5)
+        assert np.isnan(ema[:4]).all()
+        np.testing.assert_array_equal(ema[4:9], np.full(5, close[4]))
+        np.testing.assert_array_equal(ema[9:14], np.full(5, close[9]))
+
+    def test_aggregated_ema_with_fewer_bars_than_one_aggregate(self) -> None:
+        close = np.arange(100.0, 103.0)
+        ema = GLFTStrategy._compute_ema(close, ema_window=2, agg_minutes=5)
+        assert ema.shape == (3,)
+        assert np.isnan(ema).all()
+
+    @pytest.mark.parametrize("ema_window", [1, 3])
+    def test_aggregated_ema_is_truncation_invariant(self, ema_window: int) -> None:
+        """A prefix of the series must reproduce the prefix of the result."""
+        rng = np.random.default_rng(7)
+        close = 100.0 + np.cumsum(rng.normal(0.0, 0.5, 60))
+        full = GLFTStrategy._compute_ema(close, ema_window=ema_window, agg_minutes=5)
+        for m in (3, 4, 5, 9, 10, 23, 60):
+            partial = GLFTStrategy._compute_ema(
+                close[:m], ema_window=ema_window, agg_minutes=5
+            )
+            np.testing.assert_array_equal(partial, full[:m])
+
+    def test_no_look_ahead_with_aggregated_ema(
+        self,
+        sample_ohlcv_df: pd.DataFrame,
+        assert_no_look_ahead: Callable[..., None],
+    ) -> None:
+        strategy = GLFTStrategy(
+            config=_make_config(ema_window=1, signal_agg_minutes=5),
+        )
+        assert_no_look_ahead(
+            strategy,
+            sample_ohlcv_df,
+            check_points=[3, 4, 5, 20, 45, 99],
+        )

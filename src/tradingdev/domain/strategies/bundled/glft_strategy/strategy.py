@@ -354,8 +354,10 @@ class GLFTStrategy(BaseStrategy):
         When ``agg_minutes > 1``, the close series is resampled to
         N-minute bars (taking the last close in each window), the
         EMA is computed on these resampled values, and the result
-        is mapped back to 1-minute resolution with a 1-period lag
-        to prevent look-ahead bias.
+        is mapped back to 1-minute resolution using only aggregated
+        bars that have already closed. Bars before the first
+        aggregated bar closes, and bars inside the EMA warm-up, are
+        NaN so the strategy stays flat there.
 
         Returns an array of the same length as *close*.
         """
@@ -381,13 +383,15 @@ class GLFTStrategy(BaseStrategy):
 
         # Map back to 1-min resolution.
         # At 1-min bar i, the most recently completed N-min bar
-        # has index k = (i + 1) // ag - 1.
-        # k < 0 for bars before the first complete window;
-        # clipped to 0. The EMA is NaN until ema_window aggregated
-        # bars have completed, so no entries occur during warm-up.
+        # has index k = (i + 1) // ag - 1. k < 0 for bars before the
+        # first window completes; those bars stay NaN so a later
+        # bar's value is never used. The largest k is the last
+        # aggregated index, so no upper bound is needed.
         k_idx = (np.arange(n) + 1) // ag - 1
-        k_idx = np.clip(k_idx, 0, len(agg_ema) - 1)
-        return np.asarray(agg_ema[k_idx], dtype=np.float64)
+        result = np.full(n, np.nan, dtype=np.float64)
+        completed = k_idx >= 0
+        result[completed] = agg_ema[k_idx[completed]]
+        return result
 
     # ------------------------------------------------------------------
     # Volatility estimation

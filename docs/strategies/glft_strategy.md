@@ -142,7 +142,7 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 | `signal_agg_minutes` | 1 | 信號聚合時間（分鐘）；1=不聚合，5=5 分鐘 EMA |
 | `signal_agg_minutes_candidates` | [1] | Grid search 候選值 |
 
-當 `signal_agg_minutes > 1` 時，EMA 在聚合後的 N 分鐘 K 棒上計算，再映射回 1 分鐘解析度（帶 1-period lag 避免前視偏差）。執行仍在 1 分鐘精度。效果：偏離度更大、信號更穩定。
+當 `signal_agg_minutes > 1` 時，EMA 在聚合後的 N 分鐘 K 棒上計算，再映射回 1 分鐘解析度；每根 1 分鐘 bar 只使用已收完的聚合 K 棒，第一根聚合 K 棒收完之前為 NaN，不進場。執行仍在 1 分鐘精度。效果：偏離度更大、信號更穩定。
 
 ### Entry
 
