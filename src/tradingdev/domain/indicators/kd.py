@@ -3,13 +3,13 @@
 from typing import Any
 
 import pandas as pd
-import pandas_ta as ta
 
+from tradingdev.domain import indicators
 from tradingdev.domain.indicators.base import BaseIndicator
 
 
 class KDIndicator(BaseIndicator):
-    """Stochastic Oscillator (%K and %D) using pandas-ta.
+    """Stochastic Oscillator (%K and %D).
 
     Appends ``stoch_k`` and ``stoch_d`` columns to the input DataFrame.
     """
@@ -33,19 +33,18 @@ class KDIndicator(BaseIndicator):
         Returns:
             DataFrame with ``stoch_k`` and ``stoch_d`` columns appended.
         """
-        stoch = ta.stoch(
-            high=df["high"],
-            low=df["low"],
-            close=df["close"],
+        stoch = indicators.stochastic(
+            df["high"],
+            df["low"],
+            df["close"],
             k=self._k_period,
             d=self._d_period,
             smooth_k=self._smooth_k,
         )
 
         result = df.copy()
-        # pandas-ta returns columns like STOCHk_14_3_3, STOCHd_14_3_3
-        result["stoch_k"] = stoch.iloc[:, 0]
-        result["stoch_d"] = stoch.iloc[:, 1]
+        result["stoch_k"] = stoch.k
+        result["stoch_d"] = stoch.d
         return result
 
     def get_parameters(self) -> dict[str, Any]:

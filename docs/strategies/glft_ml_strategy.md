@@ -22,6 +22,7 @@
 2. **GLFT 開倉條件**（與 ML 方向一致時）：
    - 價格偏離 EMA 超過 `min_entry_edge`
    - 偏離方向符合 ML 預測方向
+   - 公允價格 EMA 暖機期內不開倉
 
 3. **平倉條件**（與純 GLFT 相同）：
    - Profit target: 偏離回歸 `profit_target_ratio` 比例

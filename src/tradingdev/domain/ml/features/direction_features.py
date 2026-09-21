@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
 
+from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.technical_features import (
     compute_sma_ratios,
     compute_ta_indicators,
@@ -110,7 +110,7 @@ class DirectionFeatureEngineer:
 
         # --- EMA deviations (directly relevant to GLFT) ---
         for w in _EMA_WINDOWS:
-            ema = close.ewm(span=w, adjust=False).mean()
+            ema = indicators.ema(close, w)
             features[f"ema_dev_{w}"] = (close - ema) / ema
 
         # --- Volatility ---
@@ -129,9 +129,7 @@ class DirectionFeatureEngineer:
             features[f"vol_change_{w}"] = vol_now / vol_prev.replace(0, np.nan) - 1
 
         # --- ATR (normalized) ---
-        atr = ta.atr(high, low, close, length=14)
-        if atr is not None:
-            features["atr_norm_14"] = atr / close
+        features["atr_norm_14"] = indicators.atr(high, low, close, length=14) / close
 
         # --- Volume features ---
         features.update(compute_volume_features(volume, _SMA_WINDOWS))
@@ -139,9 +137,7 @@ class DirectionFeatureEngineer:
         # --- Technical indicators ---
         features.update(compute_ta_indicators(close))
 
-        adx = ta.adx(high, low, close, length=14)
-        if adx is not None:
-            features["adx_14"] = adx.iloc[:, 0]
+        features["adx_14"] = indicators.adx(high, low, close, length=14).adx
 
         # --- Candle microstructure ---
         body = (close - open_).abs()

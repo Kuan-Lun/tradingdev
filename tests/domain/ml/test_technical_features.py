@@ -1,4 +1,4 @@
-"""Tests for the pandas-ta backed technical feature helpers."""
+"""Tests for the feature-level technical indicator helpers."""
 
 import numpy as np
 import pandas as pd
@@ -9,10 +9,9 @@ from tradingdev.domain.ml.features.direction_features import DirectionFeatureEng
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.features.technical_features import (
-    bollinger_bands,
+    compute_sma_ratios,
     compute_ta_indicators,
-    indicator_column,
-    macd_histogram,
+    compute_volume_features,
 )
 
 
@@ -23,103 +22,84 @@ def _named(frame: pd.DataFrame, prefix: str) -> pd.Series:
     return frame[names[0]]
 
 
-def _short_series() -> pd.Series:
-    """Too short for pandas-ta to compute MACD, Bollinger Bands or RSI."""
-    return pd.Series(np.linspace(100.0, 110.0, 10))
+def _expected_indicators(close: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Independent oracle: %B with population std and the MACD histogram."""
+    bands = ta.bbands(close, length=20, ddof=0, talib=False)
+    macd = ta.macd(close, talib=False)
+    return _named(bands, "BBP_"), _named(macd, "MACDh_")
 
 
-class TestIndicatorColumn:
-    def test_selects_unique_prefix(self) -> None:
-        frame = pd.DataFrame({"BBL_20_2.0": [1.0], "BBU_20_2.0": [2.0]})
-        assert indicator_column(frame, "BBU_").iloc[0] == 2.0
+class TestRatioFeatures:
+    def test_sma_ratios(self, sample_ohlcv_df: pd.DataFrame) -> None:
+        close = sample_ohlcv_df["close"].astype(float)
+        features = compute_sma_ratios(close, [7, 14])
+        assert set(features) == {"close_sma_ratio_7", "close_sma_ratio_14"}
+        expected = close / close.rolling(7).mean()
+        np.testing.assert_allclose(
+            features["close_sma_ratio_7"].dropna(), expected.dropna()
+        )
 
-    def test_missing_prefix_raises(self) -> None:
-        frame = pd.DataFrame({"BBL_20_2.0": [1.0]})
-        with pytest.raises(KeyError, match="BBU_"):
-            indicator_column(frame, "BBU_")
-
-    def test_ambiguous_prefix_raises(self) -> None:
-        frame = pd.DataFrame({"BB_1": [1.0], "BB_2": [2.0]})
-        with pytest.raises(KeyError, match="BB_"):
-            indicator_column(frame, "BB_")
-
-
-class TestMacdHistogram:
-    def test_returns_histogram_not_signal_line(
-        self, large_ohlcv_df: pd.DataFrame
-    ) -> None:
-        close = large_ohlcv_df["close"].astype(float)
-        hist = macd_histogram(close)
-        assert hist is not None
-        raw = ta.macd(close)
-        pd.testing.assert_series_equal(hist, _named(raw, "MACDh_"), check_names=False)
-        assert not np.allclose(hist.dropna(), _named(raw, "MACDs_").dropna())
-
-    def test_short_series_returns_none(self) -> None:
-        assert macd_histogram(_short_series()) is None
-
-
-class TestBollingerBands:
-    def test_bands_are_named_and_ordered(self, large_ohlcv_df: pd.DataFrame) -> None:
-        close = large_ohlcv_df["close"].astype(float)
-        bands = bollinger_bands(close, length=20)
-        assert bands is not None
-        lower, middle, upper = bands
-        raw = ta.bbands(close, length=20)
-        pd.testing.assert_series_equal(lower, _named(raw, "BBL_"), check_names=False)
-        pd.testing.assert_series_equal(middle, _named(raw, "BBM_"), check_names=False)
-        pd.testing.assert_series_equal(upper, _named(raw, "BBU_"), check_names=False)
-        valid = lower.notna()
-        assert (lower[valid] <= middle[valid]).all()
-        assert (middle[valid] <= upper[valid]).all()
-
-    def test_short_series_returns_none(self) -> None:
-        assert bollinger_bands(_short_series(), length=20) is None
+    def test_volume_features(self, sample_ohlcv_df: pd.DataFrame) -> None:
+        volume = sample_ohlcv_df["volume"].astype(float)
+        features = compute_volume_features(volume, [7])
+        assert set(features) == {"volume_change", "vol_sma_ratio_7"}
+        expected = volume / volume.rolling(7).mean()
+        np.testing.assert_allclose(
+            features["vol_sma_ratio_7"].dropna(), expected.dropna()
+        )
 
 
 class TestComputeTaIndicators:
-    def test_bb_pctb_matches_pandas_ta_percent_b(
+    def test_bb_pctb_matches_percent_b_with_population_std(
         self, large_ohlcv_df: pd.DataFrame
     ) -> None:
         close = large_ohlcv_df["close"].astype(float)
+        expected_pctb, _ = _expected_indicators(close)
         features = compute_ta_indicators(close)
-        expected = _named(ta.bbands(close, length=20), "BBP_")
-        pd.testing.assert_series_equal(features["bb_pctb"], expected, check_names=False)
+        pd.testing.assert_series_equal(
+            features["bb_pctb"], expected_pctb, check_names=False
+        )
 
     def test_bb_pctb_above_half_when_close_above_middle_band(
         self, large_ohlcv_df: pd.DataFrame
     ) -> None:
         """Regression: positional band selection produced ``1 - %B``."""
         close = large_ohlcv_df["close"].astype(float)
-        bands = bollinger_bands(close, length=20)
-        assert bands is not None
-        _, middle, _ = bands
+        middle = close.rolling(20).mean()
         pctb = compute_ta_indicators(close)["bb_pctb"]
         above = (close > middle) & pctb.notna()
         assert above.any()
         assert (pctb[above] > 0.5).all()
 
-    def test_macd_hist_matches_pandas_ta_histogram(
+    def test_macd_hist_matches_histogram_not_signal(
         self, large_ohlcv_df: pd.DataFrame
     ) -> None:
         close = large_ohlcv_df["close"].astype(float)
+        _, expected_hist = _expected_indicators(close)
         features = compute_ta_indicators(close)
-        expected = _named(ta.macd(close), "MACDh_")
         pd.testing.assert_series_equal(
-            features["macd_hist"], expected, check_names=False
+            features["macd_hist"], expected_hist, check_names=False
         )
+        signal = _named(ta.macd(close, talib=False), "MACDs_")
+        assert not np.allclose(features["macd_hist"].dropna(), signal.dropna())
 
-    def test_short_series_yields_no_indicators(self) -> None:
-        assert compute_ta_indicators(_short_series()) == {}
+    def test_short_series_keeps_keys_with_nan_values(self) -> None:
+        close = pd.Series(np.linspace(100.0, 110.0, 10))
+        features = compute_ta_indicators(close)
+        assert set(features) == {"rsi_14", "macd_hist", "bb_pctb"}
+        for series in features.values():
+            assert len(series) == 10
+            assert series.isna().all()
 
 
 def _expected_by_timestamp(df: pd.DataFrame) -> pd.DataFrame:
     close = df["close"].astype(float)
+    expected_pctb, expected_hist = _expected_indicators(close)
     return pd.DataFrame(
         {
             "timestamp": df["timestamp"],
-            "expected_pctb": _named(ta.bbands(close, length=20), "BBP_").to_numpy(),
-            "expected_hist": _named(ta.macd(close), "MACDh_").to_numpy(),
+            "expected_pctb": expected_pctb.to_numpy(),
+            "expected_hist": expected_hist.to_numpy(),
         }
     )
 

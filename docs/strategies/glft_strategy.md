@@ -51,7 +51,7 @@ half_spread = γ · σ² · τ / 2 + (1/γ) · ln(1 + γ/κ)
 
 由於我們的框架是信號驅動（非限價單），適配方式如下：
 
-1. 使用 **EMA** 作為公允價格 `s(t)` 的估計
+1. 使用 **EMA** 作為公允價格 `s(t)` 的估計；EMA 以前 N 期 SMA 起算，暖機期內公允價格為 NaN，不進場
 2. 計算價格偏離度：`deviation = (close - EMA) / EMA`
 3. 計算正規化 half-spread 作為進場閾值
 4. 利潤目標和止損控制出場
@@ -72,7 +72,7 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 3. `deviation < -threshold` → 做多（價格大幅低於公允價值）
 4. `deviation > threshold` → 做空（價格大幅高於公允價值）
 5. 可選動量防護：要求 deviation 正在收斂（價格回歸 EMA）
-6. 可選趨勢過濾：只順勢開倉
+6. 可選趨勢過濾：只順勢開倉；慢 EMA 暖機期內沒有趨勢估計，不進場
 
 ### 出場邏輯
 
@@ -142,7 +142,7 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 | `signal_agg_minutes` | 1 | 信號聚合時間（分鐘）；1=不聚合，5=5 分鐘 EMA |
 | `signal_agg_minutes_candidates` | [1] | Grid search 候選值 |
 
-當 `signal_agg_minutes > 1` 時，EMA 在聚合後的 N 分鐘 K 棒上計算，再映射回 1 分鐘解析度（帶 1-period lag 避免前視偏差）。執行仍在 1 分鐘精度。效果：偏離度更大、信號更穩定。
+當 `signal_agg_minutes > 1` 時，EMA 在聚合後的 N 分鐘 K 棒上計算，再映射回 1 分鐘解析度；每根 1 分鐘 bar 只使用已收完的聚合 K 棒，第一根聚合 K 棒收完之前為 NaN，不進場。執行仍在 1 分鐘精度。效果：偏離度更大、信號更穩定。
 
 ### Entry
 

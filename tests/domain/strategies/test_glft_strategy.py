@@ -652,3 +652,102 @@ class TestGLFTDynamicSizing:
                 min_position_size=5000.0,
                 position_size=3000.0,
             )
+
+
+# ── Indicator warm-up tests ─────────────────────────────────
+
+
+class TestIndicatorWarmup:
+    def test_compute_ema_is_nan_until_window_completes(self) -> None:
+        close = np.linspace(100.0, 110.0, 50)
+        ema = GLFTStrategy._compute_ema(close, ema_window=10, agg_minutes=1)
+        assert np.isnan(ema[:9]).all()
+        assert np.isfinite(ema[9:]).all()
+
+    def test_compute_ema_aggregated_is_nan_until_enough_bars(self) -> None:
+        close = np.linspace(100.0, 110.0, 120)
+        ema = GLFTStrategy._compute_ema(close, ema_window=5, agg_minutes=5)
+        # Five aggregated 5-minute bars need 25 one-minute bars; bar 24 is the
+        # first whose most recently completed window has a finite EMA.
+        assert np.isnan(ema[:24]).all()
+        assert np.isfinite(ema[24:]).all()
+
+    def test_trend_filter_blocks_entries_while_trend_is_unknown(self) -> None:
+        n = 20
+        close = np.full(n, 99.0)  # below EMA → wants long every bar
+        ema = np.full(n, 100.0)
+        sigma = np.full(n, 0.005)
+
+        blocked, _ = GLFTStrategy._run_glft_state_machine(
+            close=close,
+            ema=ema,
+            sigma=sigma,
+            gamma=0.0,
+            kappa=1000.0,
+            min_hold=1,
+            max_hold=30,
+            trend_dir=np.full(n, np.nan),
+            momentum_guard=False,
+        )
+        assert not blocked.any()
+
+        allowed, _ = GLFTStrategy._run_glft_state_machine(
+            close=close,
+            ema=ema,
+            sigma=sigma,
+            gamma=0.0,
+            kappa=1000.0,
+            min_hold=1,
+            max_hold=30,
+            trend_dir=np.ones(n),
+            momentum_guard=False,
+        )
+        assert allowed.any()
+
+    def test_generate_signals_stays_flat_during_trend_ema_warmup(
+        self, sample_ohlcv_df: pd.DataFrame
+    ) -> None:
+        """A trend EMA longer than the data never warms up, so nothing is entered."""
+        strategy = GLFTStrategy(config=_make_config(trend_ema_window=200, ema_window=5))
+        result = strategy.generate_signals(sample_ohlcv_df)
+        assert (result["signal"] == 0).all()
+
+    def test_aggregated_ema_never_uses_a_future_aggregate(self) -> None:
+        """Regression: negative aggregate indices were clipped to the first one."""
+        close = np.arange(100.0, 120.0)
+        ema = GLFTStrategy._compute_ema(close, ema_window=1, agg_minutes=5)
+        assert np.isnan(ema[:4]).all()
+        np.testing.assert_array_equal(ema[4:9], np.full(5, close[4]))
+        np.testing.assert_array_equal(ema[9:14], np.full(5, close[9]))
+
+    def test_aggregated_ema_with_fewer_bars_than_one_aggregate(self) -> None:
+        close = np.arange(100.0, 103.0)
+        ema = GLFTStrategy._compute_ema(close, ema_window=2, agg_minutes=5)
+        assert ema.shape == (3,)
+        assert np.isnan(ema).all()
+
+    @pytest.mark.parametrize("ema_window", [1, 3])
+    def test_aggregated_ema_is_truncation_invariant(self, ema_window: int) -> None:
+        """A prefix of the series must reproduce the prefix of the result."""
+        rng = np.random.default_rng(7)
+        close = 100.0 + np.cumsum(rng.normal(0.0, 0.5, 60))
+        full = GLFTStrategy._compute_ema(close, ema_window=ema_window, agg_minutes=5)
+        for m in (3, 4, 5, 9, 10, 23, 60):
+            partial = GLFTStrategy._compute_ema(
+                close[:m], ema_window=ema_window, agg_minutes=5
+            )
+            np.testing.assert_array_equal(partial, full[:m])
+
+    def test_no_look_ahead_with_aggregated_ema(
+        self,
+        sample_ohlcv_df: pd.DataFrame,
+        assert_no_look_ahead: Callable[..., None],
+    ) -> None:
+        strategy = GLFTStrategy(
+            config=_make_config(ema_window=1, signal_agg_minutes=5),
+        )
+        assert_no_look_ahead(
+            strategy,
+            sample_ohlcv_df,
+            check_points=[3, 4, 5, 20, 45, 99],
+        )

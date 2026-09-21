@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
 
+from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.technical_features import (
-    bollinger_bands,
     compute_sma_ratios,
     compute_volume_features,
 )
@@ -84,20 +83,16 @@ class RiskFeatureEngineer:
 
         # --- ATR (normalized by close) ---
         for w in _ATR_WINDOWS:
-            atr = ta.atr(high, low, close, length=w)
-            if atr is not None:
-                features[f"atr_norm_{w}"] = atr / close
+            features[f"atr_norm_{w}"] = (
+                indicators.atr(high, low, close, length=w) / close
+            )
 
         # --- Bollinger bandwidth ---
-        bands = bollinger_bands(close, length=20)
-        if bands is not None:
-            lower, _, upper = bands
-            features["bb_width_20"] = (upper - lower) / close
+        bands = indicators.bollinger_bands(close, length=20)
+        features["bb_width_20"] = (bands.upper - bands.lower) / close
 
         # --- ADX (trend strength) ---
-        adx = ta.adx(high, low, close, length=14)
-        if adx is not None:
-            features["adx_14"] = adx.iloc[:, 0]
+        features["adx_14"] = indicators.adx(high, low, close, length=14).adx
 
         # --- Volume anomaly ---
         features.update(compute_volume_features(volume, _SMA_WINDOWS))
