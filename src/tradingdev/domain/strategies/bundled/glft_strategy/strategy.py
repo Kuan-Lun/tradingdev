@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+from tradingdev.domain import indicators
 from tradingdev.domain.optimization.grid_search import tuple_grid
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
@@ -283,20 +284,16 @@ class GLFTStrategy(BaseStrategy):
         )
         sigma = self._compute_volatility(close, high, low, dvol=dvol)
 
-        # Trend filter: slow EMA direction (+1=up, -1=down, 0=flat)
+        # Trend filter: slow EMA direction (+1=up, -1=down, 0=flat,
+        # NaN while the slow EMA is still warming up)
         trend_dir: npt.NDArray[np.floating[Any]] | None = None
         if self._best_trend_ema_window > 0:
             slow_ema = np.asarray(
-                pd.Series(close)
-                .ewm(
-                    span=self._best_trend_ema_window,
-                    adjust=False,
-                )
-                .mean()
-                .values,
+                indicators.ema(pd.Series(close), self._best_trend_ema_window),
+                dtype=np.float64,
             )
             # Trend = sign of slow EMA slope (diff)
-            slope = np.diff(slow_ema, prepend=slow_ema[0])
+            slope = np.diff(slow_ema, prepend=np.nan)
             trend_dir = np.sign(slope)
 
         dyn = self._config.dynamic_sizing
@@ -364,7 +361,8 @@ class GLFTStrategy(BaseStrategy):
         """
         if agg_minutes <= 1:
             return np.asarray(
-                pd.Series(close).ewm(span=ema_window, adjust=False).mean().values,
+                indicators.ema(pd.Series(close), ema_window),
+                dtype=np.float64,
             )
 
         n = len(close)
@@ -377,15 +375,16 @@ class GLFTStrategy(BaseStrategy):
 
         # EMA on resampled closes
         agg_ema = np.asarray(
-            pd.Series(agg_close).ewm(span=ema_window, adjust=False).mean().values,
+            indicators.ema(pd.Series(agg_close), ema_window),
+            dtype=np.float64,
         )
 
         # Map back to 1-min resolution.
         # At 1-min bar i, the most recently completed N-min bar
         # has index k = (i + 1) // ag - 1.
         # k < 0 for bars before the first complete window;
-        # clipped to 0 (uses first EMA value — slight warm-up
-        # inaccuracy, harmless).
+        # clipped to 0. The EMA is NaN until ema_window aggregated
+        # bars have completed, so no entries occur during warm-up.
         k_idx = (np.arange(n) + 1) // ag - 1
         k_idx = np.clip(k_idx, 0, len(agg_ema) - 1)
         return np.asarray(agg_ema[k_idx], dtype=np.float64)
@@ -560,10 +559,14 @@ class GLFTStrategy(BaseStrategy):
                         if want_short and deviation >= prev_dev:
                             want_short = False
 
-                # Apply trend filter
+                # Apply trend filter. NaN means the slow EMA has not
+                # warmed up, so no trend is known and nothing is entered.
                 if trend_dir is not None:
                     td = trend_dir[i]
-                    if td > 0:
+                    if np.isnan(td):
+                        want_long = False
+                        want_short = False
+                    elif td > 0:
                         want_short = False
                     elif td < 0:
                         want_long = False

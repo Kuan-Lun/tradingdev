@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pandas as pd
 
+from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.direction_features import DirectionFeatureEngineer
 from tradingdev.domain.ml.models.autogluon_model import AutoGluonDirectionModel
 from tradingdev.domain.optimization.grid_search import tuple_grid
@@ -379,9 +380,10 @@ class GLFTMLStrategy(BaseStrategy):
         close: npt.NDArray[np.floating[Any]],
         ema_window: int,
     ) -> npt.NDArray[np.floating[Any]]:
-        """Compute EMA on 1-min close."""
+        """Compute EMA on 1-min close; NaN until the window has warmed up."""
         return np.asarray(
-            pd.Series(close).ewm(span=ema_window, adjust=False).mean().values,
+            indicators.ema(pd.Series(close), ema_window),
+            dtype=np.float64,
         )
 
     # ------------------------------------------------------------------

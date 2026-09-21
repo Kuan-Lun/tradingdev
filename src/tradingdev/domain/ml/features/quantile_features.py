@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.technical_features import (
     compute_sma_ratios,
     compute_volume_features,
@@ -129,9 +129,7 @@ class QuantileFeatureEngineer:
         features["close_position"] = (close - low) / full_range
 
         # --- ATR (normalized) ---
-        atr = ta.atr(high, low, close, length=14)
-        if atr is not None:
-            features["atr_14"] = atr / close
+        features["atr_14"] = indicators.atr(high, low, close, length=14) / close
 
         # --- Rolling range (normalized) ---
         for w in [10, 30]:
@@ -146,9 +144,7 @@ class QuantileFeatureEngineer:
         features.update(compute_volume_features(volume, _SMA_WINDOWS))
 
         # --- RSI ---
-        rsi = ta.rsi(close, length=14)
-        if rsi is not None:
-            features["rsi_14"] = rsi
+        features["rsi_14"] = indicators.rsi(close, length=14)
 
         # --- DVOL features (optional) ---
         if "dvol" in df.columns:

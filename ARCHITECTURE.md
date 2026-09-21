@@ -188,6 +188,15 @@ The dashboard reads run metadata and pipeline artifacts through `RunService` /
 ## Domain Contracts
 
 - Strategy signal convention: `1` long, `-1` short, `0` flat.
+- Named technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, ADX,
+  Stochastic) come from `domain/indicators`, the only module that calls
+  pandas-ta. It selects pandas-ta output by column name, pins `talib=False`
+  so results never depend on whether TA-Lib is installed, follows TA-Lib
+  conventions where pandas-ta offers a choice (SMA-seeded EMA, population
+  standard deviation for Bollinger Bands), and returns NaN-filled series for
+  inputs shorter than the window. Statistical features such as realized
+  volatility, Parkinson volatility, and return moments stay in pandas/numpy
+  inside `domain/ml/features`.
 - Strategy parameters live in YAML `strategy.parameters`.
 - Data requirements live in YAML `data.requirements`.
 - `data.requirements.market.source` selects the market data crawler from the

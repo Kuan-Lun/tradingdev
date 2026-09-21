@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
+from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.strategies.base import BaseStrategy
@@ -412,8 +413,8 @@ class SafetyVolumeStrategy(BaseStrategy):
     ) -> npt.NDArray[np.floating[Any]]:
         """SMA crossover direction: fast > slow → long."""
         close = df["close"].astype(float)
-        sma_fast = close.rolling(self._config.sma_fast).mean()
-        sma_slow = close.rolling(self._config.sma_slow).mean()
+        sma_fast = indicators.sma(close, self._config.sma_fast)
+        sma_slow = indicators.sma(close, self._config.sma_slow)
         direction = np.where(sma_fast > sma_slow, 1, -1)
         # NaN region at start → no direction
         nan_mask = np.asarray(sma_slow.isna().values)

@@ -42,6 +42,7 @@ Recommended imports:
 
 ```python
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain import indicators
 from tradingdev.domain.indicators.kd import KDIndicator
 from tradingdev.shared.utils.logger import setup_logger
 ```

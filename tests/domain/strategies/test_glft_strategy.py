@@ -652,3 +652,62 @@ class TestGLFTDynamicSizing:
                 min_position_size=5000.0,
                 position_size=3000.0,
             )
+
+
+# ── Indicator warm-up tests ─────────────────────────────────
+
+
+class TestIndicatorWarmup:
+    def test_compute_ema_is_nan_until_window_completes(self) -> None:
+        close = np.linspace(100.0, 110.0, 50)
+        ema = GLFTStrategy._compute_ema(close, ema_window=10, agg_minutes=1)
+        assert np.isnan(ema[:9]).all()
+        assert np.isfinite(ema[9:]).all()
+
+    def test_compute_ema_aggregated_is_nan_until_enough_bars(self) -> None:
+        close = np.linspace(100.0, 110.0, 120)
+        ema = GLFTStrategy._compute_ema(close, ema_window=5, agg_minutes=5)
+        # Five aggregated 5-minute bars need 25 one-minute bars; bar 24 is the
+        # first whose most recently completed window has a finite EMA.
+        assert np.isnan(ema[:24]).all()
+        assert np.isfinite(ema[24:]).all()
+
+    def test_trend_filter_blocks_entries_while_trend_is_unknown(self) -> None:
+        n = 20
+        close = np.full(n, 99.0)  # below EMA → wants long every bar
+        ema = np.full(n, 100.0)
+        sigma = np.full(n, 0.005)
+
+        blocked, _ = GLFTStrategy._run_glft_state_machine(
+            close=close,
+            ema=ema,
+            sigma=sigma,
+            gamma=0.0,
+            kappa=1000.0,
+            min_hold=1,
+            max_hold=30,
+            trend_dir=np.full(n, np.nan),
+            momentum_guard=False,
+        )
+        assert not blocked.any()
+
+        allowed, _ = GLFTStrategy._run_glft_state_machine(
+            close=close,
+            ema=ema,
+            sigma=sigma,
+            gamma=0.0,
+            kappa=1000.0,
+            min_hold=1,
+            max_hold=30,
+            trend_dir=np.ones(n),
+            momentum_guard=False,
+        )
+        assert allowed.any()
+
+    def test_generate_signals_stays_flat_during_trend_ema_warmup(
+        self, sample_ohlcv_df: pd.DataFrame
+    ) -> None:
+        """A trend EMA longer than the data never warms up, so nothing is entered."""
+        strategy = GLFTStrategy(config=_make_config(trend_ema_window=200, ema_window=5))
+        result = strategy.generate_signals(sample_ohlcv_df)
+        assert (result["signal"] == 0).all()
