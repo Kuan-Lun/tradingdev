@@ -19,10 +19,13 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
         "api_reference": (
             "Generated strategies must inherit BaseStrategy, return a DataFrame "
             "with signal values limited to -1, 0, and 1, and avoid mutating the "
-            "input DataFrame. Use tradingdev.domain.indicators for built-in "
-            "indicators and tradingdev.shared.utils.logger for logging. Allowed "
-            "imports are restricted to a small Python/pandas/numpy/tradingdev "
-            "allowlist."
+            "input DataFrame. Use tradingdev.domain.indicators (sma, ema, rsi, "
+            "macd, bollinger_bands, atr, adx, stochastic) for standard "
+            "indicators and tradingdev.shared.utils.logger for logging. "
+            "pandas_ta may be imported directly, but select its output columns "
+            "by name and pass talib=False so results do not depend on the "
+            "environment. Allowed imports are restricted to a small "
+            "Python/pandas/numpy/pandas_ta/tradingdev allowlist."
         ),
         "lifecycle": (
             "save_strategy stores a draft; validate_strategy runs static checks, "

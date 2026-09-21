@@ -1,6 +1,6 @@
 """Named technical indicators backed by pandas-ta.
 
-This module is the only place in the codebase that calls pandas-ta. Every
+This module is the only place under ``src/`` that calls pandas-ta. Every
 function selects pandas-ta output by column name, never by position, and pins
 ``talib=False`` so results do not depend on whether TA-Lib happens to be
 installed. Inputs shorter than an indicator's window return NaN-filled series
