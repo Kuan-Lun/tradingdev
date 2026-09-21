@@ -44,6 +44,8 @@ selects pandas-ta output by column name and pins `talib=False`. Code that
 imports `pandas_ta` directly must do the same: pandas-ta encodes parameters
 in its column names, so select outputs by name rather than by position, and
 pass `talib=False` so results do not depend on whether TA-Lib is installed.
+Validation checks only the import allowlist; these two rules are part of the
+contract the generated code is expected to follow and are not enforced.
 
 Recommended imports:
 
