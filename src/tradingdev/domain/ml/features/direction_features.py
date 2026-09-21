@@ -13,6 +13,7 @@ import pandas_ta as ta
 
 from tradingdev.domain.ml.features.technical_features import (
     compute_sma_ratios,
+    compute_ta_indicators,
     compute_volume_features,
 )
 from tradingdev.shared.utils.logger import setup_logger
@@ -136,20 +137,7 @@ class DirectionFeatureEngineer:
         features.update(compute_volume_features(volume, _SMA_WINDOWS))
 
         # --- Technical indicators ---
-        rsi = ta.rsi(close, length=14)
-        if rsi is not None:
-            features["rsi_14"] = rsi
-
-        macd_df = ta.macd(close)
-        if macd_df is not None:
-            features["macd_hist"] = macd_df.iloc[:, 2]
-
-        bbands = ta.bbands(close, length=20)
-        if bbands is not None:
-            upper = bbands.iloc[:, 0]
-            lower = bbands.iloc[:, 2]
-            band_width = upper - lower
-            features["bb_pctb"] = (close - lower) / band_width.replace(0, np.nan)
+        features.update(compute_ta_indicators(close))
 
         adx = ta.adx(high, low, close, length=14)
         if adx is not None:

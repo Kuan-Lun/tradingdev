@@ -79,7 +79,7 @@ DVOL 檔案路徑由 `data.requirements.features` 宣告。策略參數只控制
 - **波動度**：rolling std、Parkinson estimator、DVOL
 - **成交量**：volume ratio、rolling volume z-score
 - **時間特徵**：hour/day-of-week cyclical encoding
-- **技術指標**：RSI、Bollinger Band width
+- **技術指標**：RSI、MACD 柱狀圖、Bollinger %B、ADX
 
 ## YAML 配置範例
 

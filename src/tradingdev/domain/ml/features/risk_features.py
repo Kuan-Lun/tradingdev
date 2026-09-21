@@ -7,6 +7,7 @@ import pandas as pd
 import pandas_ta as ta
 
 from tradingdev.domain.ml.features.technical_features import (
+    bollinger_bands,
     compute_sma_ratios,
     compute_volume_features,
 )
@@ -88,10 +89,9 @@ class RiskFeatureEngineer:
                 features[f"atr_norm_{w}"] = atr / close
 
         # --- Bollinger bandwidth ---
-        bbands = ta.bbands(close, length=20)
-        if bbands is not None:
-            upper = bbands.iloc[:, 0]
-            lower = bbands.iloc[:, 2]
+        bands = bollinger_bands(close, length=20)
+        if bands is not None:
+            lower, _, upper = bands
             features["bb_width_20"] = (upper - lower) / close
 
         # --- ADX (trend strength) ---
