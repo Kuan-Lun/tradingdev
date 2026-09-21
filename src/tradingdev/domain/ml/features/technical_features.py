@@ -34,6 +34,54 @@ def compute_volume_features(
     return features
 
 
+def indicator_column(frame: pd.DataFrame, prefix: str) -> pd.Series:
+    """Select the single pandas-ta output column whose name starts with *prefix*.
+
+    pandas-ta encodes parameters in its column names (``BBL_20_2.0_2.0``,
+    ``MACDh_12_26_9``) and the exact suffix changes between releases, so
+    columns are selected by their stable prefix rather than by position.
+    """
+    matches = [
+        str(column) for column in frame.columns if str(column).startswith(prefix)
+    ]
+    if len(matches) != 1:
+        msg = (
+            f"expected exactly one column starting with {prefix!r}, "
+            f"found {matches!r} in {list(frame.columns)!r}"
+        )
+        raise KeyError(msg)
+    return frame[matches[0]]
+
+
+def macd_histogram(close: pd.Series) -> pd.Series | None:
+    """Return the MACD histogram (MACD line minus signal line).
+
+    Returns ``None`` when the series is too short for pandas-ta to compute it.
+    """
+    macd_df = ta.macd(close)
+    if macd_df is None:
+        return None
+    return indicator_column(macd_df, "MACDh_")
+
+
+def bollinger_bands(
+    close: pd.Series,
+    length: int,
+) -> tuple[pd.Series, pd.Series, pd.Series] | None:
+    """Return ``(lower, middle, upper)`` Bollinger Bands.
+
+    Returns ``None`` when the series is too short for pandas-ta to compute them.
+    """
+    bbands = ta.bbands(close, length=length)
+    if bbands is None:
+        return None
+    return (
+        indicator_column(bbands, "BBL_"),
+        indicator_column(bbands, "BBM_"),
+        indicator_column(bbands, "BBU_"),
+    )
+
+
 def compute_ta_indicators(
     close: pd.Series,
 ) -> dict[str, pd.Series]:
@@ -44,14 +92,13 @@ def compute_ta_indicators(
     if rsi is not None:
         features["rsi_14"] = rsi
 
-    macd_df = ta.macd(close)
-    if macd_df is not None:
-        features["macd_hist"] = macd_df.iloc[:, 2]
+    macd_hist = macd_histogram(close)
+    if macd_hist is not None:
+        features["macd_hist"] = macd_hist
 
-    bbands = ta.bbands(close, length=20)
-    if bbands is not None:
-        upper = bbands.iloc[:, 0]
-        lower = bbands.iloc[:, 2]
+    bands = bollinger_bands(close, length=20)
+    if bands is not None:
+        lower, _, upper = bands
         band_width = upper - lower
         features["bb_pctb"] = (close - lower) / band_width.replace(0, float("nan"))
 
