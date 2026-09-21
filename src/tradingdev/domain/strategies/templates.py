@@ -50,7 +50,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from tradingdev.domain import indicators
 from tradingdev.domain.strategies.base import BaseStrategy
 
 if TYPE_CHECKING:
@@ -74,8 +73,8 @@ class SmaCrossoverStrategy(BaseStrategy):
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
-        fast = indicators.sma(result["close"], self._fast_period)
-        slow = indicators.sma(result["close"], self._slow_period)
+        fast = result["close"].rolling(self._fast_period).mean()
+        slow = result["close"].rolling(self._slow_period).mean()
         fast_prev = fast.shift(1)
         slow_prev = slow.shift(1)
 
