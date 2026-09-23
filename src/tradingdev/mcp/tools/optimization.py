@@ -52,6 +52,8 @@ def register(
         """Launch optimization and wait for confirmation after estimating its cost.
 
         Pass the runnable revision_id; omission selects current at submission.
+        The returned manifest_hash pins settings, grid, metric, and date splits.
+        The strategy config must not contain walk-forward validation settings.
         Dates are inclusive UTC calendar days and must satisfy
         train_start < train_end < test_start < test_end, without overlap.
         Grid values override matching YAML parameters; other parameters stay fixed.
@@ -98,6 +100,8 @@ def register(
         """Confirm an existing pending_confirmation job after user accepts its estimate.
 
         Poll get_job_status for progress; this does not create another job.
+        Missing or altered execution manifests return execution_manifest_invalid;
+        submit a new job instead of resuming legacy jobs without a manifest.
         """
         return TypeAdapter(OptimizationConfirmed | JobActionFailed).validate_python(
             job_service.confirm_optimization(job_id)

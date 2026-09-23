@@ -15,6 +15,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.job_store import JobStore
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
+from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardResult
 from tradingdev.shared.utils.json_values import normalize_json_value
@@ -128,10 +129,25 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
         config_path.write_text("strategy:\n  id: cli_fixture\n", encoding="utf-8")
         processed_path = tmp_path / "data.parquet"
         processed_path.write_bytes(b"cache identity fixture")
+        manifest = ExecutionManifest.create(
+            kind="walk_forward",
+            config={
+                "strategy": {"id": "cli_fixture"},
+                "backtest": {
+                    "symbol": "BTC/USDT",
+                    "timeframe": "1h",
+                    "start_date": "2024-01-01",
+                    "end_date": "2024-02-01",
+                    "init_cash": 10000,
+                },
+                "validation": {},
+            },
+        )
         ArtifactService(workspace=workspace, store=store).cache_pipeline_result(
             pipeline=PipelineResult(
                 mode="walk_forward",
-                config_snapshot={"strategy": {"id": "cli_fixture"}},
+                config_snapshot=manifest.config_copy(),
+                execution_manifest=manifest,
             ),
             config_path=config_path,
             processed_path=processed_path,

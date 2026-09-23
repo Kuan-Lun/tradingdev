@@ -59,17 +59,26 @@ def legacy_calls() -> list[ToolCall]:
                 "start_date": "2024-01-01",
                 "end_date": "2024-01-08",
             },
-            {**identity, "job_id": "job-1"},
+            {**identity, "job_id": "job-1", "manifest_hash": "a" * 64},
         ),
         ToolCall(
             "get_job_status",
             {"job_id": "job-1"},
-            {**identity, "status": "done", "run_id": "run-1", "metrics": {}},
+            {
+                **identity,
+                "status": "done",
+                "run_id": "run-1",
+                "metrics": {},
+                "manifest_hash": "a" * 64,
+            },
         ),
         ToolCall(
             "get_run",
             {"run_id": "run-1"},
-            {"success": True, "run": {**identity, "metrics": {}}},
+            {
+                "success": True,
+                "run": {**identity, "metrics": {}, "manifest_hash": "a" * 64},
+            },
         ),
         ToolCall("list_artifacts", {"run_id": "run-1"}, [{"path": "result.json"}]),
     ]

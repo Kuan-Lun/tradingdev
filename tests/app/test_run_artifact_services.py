@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,6 +14,7 @@ from tradingdev.app.job_store import JobStore
 from tradingdev.app.run_lineage import load_config_payload
 from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
+from tradingdev.domain.execution import ExecutionManifest, ManifestError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -183,6 +185,7 @@ backtest:
   timeframe: 1h
   start_date: "2024-01-01"
   end_date: "2024-01-02"
+  init_cash: 10000
 """,
         encoding="utf-8",
     )
@@ -190,8 +193,13 @@ backtest:
     processed_path.write_text("fixture", encoding="utf-8")
 
     service = ArtifactService(workspace=workspace, store=store)
+    manifest = ExecutionManifest.create(
+        kind="backtest", config=load_config_payload(config_path) or {}
+    )
     pipeline = PipelineResult(
-        mode="simple", config_snapshot=load_config_payload(config_path) or {}
+        mode="simple",
+        config_snapshot=manifest.config_copy(),
+        execution_manifest=manifest,
     )
 
     service.cache_pipeline_result(
@@ -205,9 +213,15 @@ backtest:
     run = store.list_runs()[0]
     assert run["source_hash"] == sha256_file(strategy_source)
     assert run["random_seed"] == 11
+    assert run["manifest_hash"] == manifest.manifest_hash
+    assert run["artifact_dir"] == str(workspace.runs / run["run_id"])
+    artifact = service.get_artifact(
+        f"{run['run_id']}:execution_manifest", include_content=True
+    )
+    assert json.loads(artifact["content"]) == manifest.model_dump(mode="json")
 
 
-def test_cli_cache_rejects_config_edits_after_execution(
+def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
@@ -216,23 +230,88 @@ def test_cli_cache_rejects_config_edits_after_execution(
     config_path = tmp_path / "cli.yaml"
     original = {
         "strategy": {"id": "fixture"},
-        "backtest": {"start_date": "2024-01-01", "end_date": "2024-01-31"},
+        "backtest": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "init_cash": 10000,
+        },
     }
-    pipeline = PipelineResult(mode="simple", config_snapshot=original)
-    config_path.write_text(
-        "strategy:\n  id: fixture\nbacktest:\n"
-        "  start_date: '2024-02-01'\n  end_date: '2024-02-29'\n",
-        encoding="utf-8",
+    manifest = ExecutionManifest.create(kind="backtest", config=original)
+    pipeline = PipelineResult(
+        mode="simple",
+        config_snapshot=manifest.config_copy(),
+        execution_manifest=manifest,
     )
+    service = ArtifactService(workspace=workspace, store=store)
+    first = service.cache_pipeline_result(
+        pipeline=pipeline,
+        config_path=config_path,
+        processed_path=tmp_path / "data.parquet",
+        metrics={"total_return": 0.2},
+        strategy_id="fixture",
+    )
+    assert not config_path.exists()
+    changed_config = manifest.config_copy()
+    changed_config["backtest"]["end_date"] = "2024-02-29"
+    changed = ExecutionManifest.create(kind="backtest", config=changed_config)
+    second = service.cache_pipeline_result(
+        pipeline=PipelineResult(
+            mode="simple",
+            config_snapshot=changed.config_copy(),
+            execution_manifest=changed,
+        ),
+        config_path=config_path,
+        processed_path=tmp_path / "data.parquet",
+        metrics={"total_return": 0.3},
+        strategy_id="fixture",
+    )
+    assert first != second
+    assert {run["manifest_hash"] for run in store.list_runs()} == {
+        manifest.manifest_hash,
+        changed.manifest_hash,
+    }
 
-    with pytest.raises(ValueError, match="Config changed after the CLI run"):
+
+@pytest.mark.parametrize("invalid", ["missing", "modified_config", "modified_manifest"])
+def test_cli_cache_rejects_results_without_their_intact_execution_manifest(
+    tmp_path: Path, monkeypatch: MonkeyPatch, invalid: str
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = SQLiteStore(workspace)
+    monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
+    manifest = ExecutionManifest.create(
+        kind="backtest",
+        config={
+            "strategy": {"id": "fixture"},
+            "backtest": {
+                "symbol": "BTC/USDT",
+                "timeframe": "1h",
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-31",
+                "init_cash": 10000,
+            },
+        },
+    )
+    pipeline = PipelineResult(
+        mode="simple",
+        config_snapshot=manifest.config_copy(),
+        execution_manifest=manifest,
+    )
+    if invalid == "missing":
+        pipeline.execution_manifest = None
+    elif invalid == "modified_config":
+        pipeline.config_snapshot["backtest"]["fees"] = 0.05
+    else:
+        manifest.config["random_seed"] = 12345
+    with pytest.raises(ManifestError):
         ArtifactService(workspace=workspace, store=store).cache_pipeline_result(
             pipeline=pipeline,
-            config_path=config_path,
+            config_path=tmp_path / "cli.yaml",
             processed_path=tmp_path / "data.parquet",
             metrics={"total_return": 0.2},
             strategy_id="fixture",
         )
-
     assert store.list_runs() == []
     assert not list(workspace.root.rglob("*.pkl"))

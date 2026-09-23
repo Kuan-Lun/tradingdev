@@ -5,12 +5,10 @@ from __future__ import annotations
 import argparse
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 
 from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
-from tradingdev.shared.utils.config import load_config
 from tradingdev.shared.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -20,16 +18,9 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _run_backtest(
-    job_id: str, config_path: Path, *, walk_forward: bool = False
-) -> None:
+def _run_backtest(job_id: str) -> None:
     """Run a background job and persist metrics."""
-    logger.info(
-        "Worker started: job=%s config=%s walk_forward=%s",
-        job_id,
-        config_path,
-        walk_forward,
-    )
+    logger.info("Worker started: job=%s", job_id)
     handle = WorkerHandle.from_environment()
     job_store.update_job(
         job_id,
@@ -39,17 +30,9 @@ def _run_backtest(
 
     try:
         service = BacktestService()
-        job = job_store.get_job(job_id)
-        raw_config = load_config(config_path)
-        if (
-            job is None
-            or raw_config["strategy"].get("revision_id") != job.get("revision_id")
-            or raw_config["strategy"].get("id") != job.get("strategy_name")
-        ):
-            msg = "Job and execution config refer to different strategy revisions"
-            raise ValueError(msg)
+        manifest = job_store.load_manifest(job_id)
         job_store.update_job(job_id, status="running_backtest")
-        run = service.run_raw_config(raw_config, walk_forward=walk_forward)
+        run = service.run_manifest(manifest)
         job_store.update_job(job_id, data_downloaded=True, dataset_id=run.dataset_id)
         result_path = job_store.save_result(job_id, run.metrics, pipeline=run.pipeline)
         job_store.update_job(
@@ -75,14 +58,8 @@ def main() -> None:
         description="MCP backtest worker (run as subprocess)"
     )
     parser.add_argument("job_id", help="Job ID assigned by MCP server")
-    parser.add_argument("config_path", type=Path, help="Path to YAML config file")
-    parser.add_argument(
-        "--walk-forward",
-        action="store_true",
-        help="Run the config validation section as walk-forward.",
-    )
     args = parser.parse_args()
-    _run_backtest(args.job_id, args.config_path, walk_forward=args.walk_forward)
+    _run_backtest(args.job_id)
 
 
 if __name__ == "__main__":

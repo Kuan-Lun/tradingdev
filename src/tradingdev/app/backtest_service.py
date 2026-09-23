@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from tradingdev.app.data_service import DataService
 from tradingdev.app.job_config import bind_strategy_revision
@@ -20,6 +21,7 @@ from tradingdev.domain.backtest.schemas import (
     ParallelConfig,
     WalkForwardConfig,
 )
+from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
@@ -105,14 +107,43 @@ class BacktestService:
                 runnable or promoted status, or the config's source_path does
                 not match the registered strategy source.
         """
-        run_config = BacktestRunConfig.model_validate(raw_config)
-        if run_config.is_walk_forward and not walk_forward:
+        manifest = self.prepare_execution(
+            raw_config, kind="walk_forward" if walk_forward else "backtest"
+        )
+        return self.run_manifest(manifest)
+
+    def prepare_execution(
+        self,
+        raw_config: dict[str, Any],
+        *,
+        kind: Literal["backtest", "walk_forward", "optimization"],
+        optimization: OptimizationSpec | None = None,
+    ) -> ExecutionManifest:
+        """Bind the strategy and resolve application defaults before execution."""
+        config = deepcopy(raw_config)
+        run_config = BacktestRunConfig.model_validate(config)
+        if run_config.is_walk_forward and kind == "backtest":
             msg = "Config contains validation settings; use start_walk_forward."
             raise ValueError(msg)
-        if walk_forward and not run_config.is_walk_forward:
+        if kind == "walk_forward" and not run_config.is_walk_forward:
             msg = "Config has no validation section for walk-forward."
             raise ValueError(msg)
-        self._ensure_executable(raw_config)
+        self.prepare_strategy(config)
+        config["data"] = self._data_service.execution_config(
+            config, run_config.backtest
+        )
+        return ExecutionManifest.create(
+            kind=kind, config=config, optimization=optimization
+        )
+
+    def run_manifest(self, manifest: ExecutionManifest) -> BacktestRun:
+        """Execute a verified specification without rebuilding its defaults."""
+        manifest.verify()
+        if manifest.kind not in {"backtest", "walk_forward"}:
+            msg = "BacktestService cannot execute an optimization manifest"
+            raise ValueError(msg)
+        raw_config = manifest.config_copy()
+        self.prepare_strategy(raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
         dataset = self._data_service.load(raw_config, bt_cfg)
@@ -121,7 +152,7 @@ class BacktestService:
             raw_config, engine, parallel_cfg
         )
 
-        if walk_forward:
+        if manifest.kind == "walk_forward":
             wf_cfg = WalkForwardConfig(**raw_config["validation"])
             validator = WalkForwardValidator(config=wf_cfg, engine=engine)
             folds = validator.validate(strategy, dataset.frame)
@@ -129,6 +160,7 @@ class BacktestService:
                 mode="walk_forward",
                 fold_results=folds,
                 config_snapshot=raw_config,
+                execution_manifest=manifest,
             )
             return BacktestRun(
                 mode="walk_forward",
@@ -144,6 +176,7 @@ class BacktestService:
             mode="simple",
             backtest_result=result,
             config_snapshot=raw_config,
+            execution_manifest=manifest,
         )
         return BacktestRun(
             mode="simple",
@@ -152,9 +185,6 @@ class BacktestService:
             processed_path=dataset.processed_path,
             dataset_id=dataset.dataset_id,
         )
-
-    def _ensure_executable(self, raw_config: dict[str, Any]) -> None:
-        self.prepare_strategy(raw_config)
 
     def prepare_strategy(
         self,

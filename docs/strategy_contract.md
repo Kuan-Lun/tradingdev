@@ -190,6 +190,15 @@ revision never falls back to current. Submitted jobs, worker configs, completed
 runs and strategy source artifacts remain tied to the selected revision when
 current changes, including during optimization confirmation.
 
+Each submission also fixes an execution manifest containing that strategy
+identity, source hash, effective config with defaults, and any optimization
+search specification. The start response returns its `manifest_hash`, which
+also appears on job status and completed runs. Workers recheck the manifest
+against the submitted job and recheck strategy eligibility before execution.
+Changing a separate runtime YAML after submission does not change the job;
+submit a new job to change execution settings. The run's `config.yaml` is an
+inspection projection, while `manifest.json` is the execution authority.
+
 Runtime symbol, timeframe, and dates are separate from the revision's base
 config. For generated strategies, ordinary backtest and walk-forward execution
 configs must preserve the saved `strategy` mapping in full, including parameters,
@@ -202,9 +211,13 @@ saved config and apply market/date/cost changes outside the `strategy` section.
 Optimization may override only its search parameters, retaining all other base
 parameters and all other saved strategy settings. Validation evidence covers
 the base parameters; it does not certify
-every possible optimization candidate. This revision identity does not freeze
-imported Python dependencies, the engine environment,
-or market data, and is not a full execution manifest. Bundled strategies remain
+every possible optimization candidate. Optimization fixes candidate lists,
+metric, calendar training/test ranges, maximization direction, and confirmation
+policy in the manifest. A config with `validation` settings cannot also request
+optimization; choose walk-forward or supply a config using the optimization
+training/test split alone. The complete request does not freeze imported Python
+dependencies, the engine environment, market data, or RNG state, and therefore
+does not guarantee fully reproducible results. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
 
 Legacy flat source/metadata/config files are not migrated or overwritten. They

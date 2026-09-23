@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 import pytest
 
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService, LoadedDataset
 from tradingdev.app.strategy_service import (
@@ -16,10 +19,9 @@ from tradingdev.app.strategy_service import (
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
+from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from pytest import MonkeyPatch
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
@@ -60,8 +62,9 @@ def _raw_config(**overrides: Any) -> dict[str, Any]:
     return config
 
 
-class _DataServiceStub:
+class _DataServiceStub(DataService):
     def __init__(self, dataset: LoadedDataset) -> None:
+        super().__init__(WorkspacePaths(dataset.processed_path.parent / "workspace"))
         self.dataset = dataset
         self.loads: list[BacktestConfig] = []
 
@@ -108,7 +111,7 @@ class _StrategyLoaderStub:
 
 
 class _GateStub:
-    def __init__(self, source_path: str = "") -> None:
+    def __init__(self, source_path: str) -> None:
         self.resolved: list[str] = []
         self.source_path = source_path
 
@@ -139,10 +142,12 @@ def _service(
     data_service = _DataServiceStub(dataset)
     strategy = _SignalStrategy()
     strategy_loader = _StrategyLoaderStub(strategy)
+    source_path = tmp_path / "fixture.py"
+    source_path.write_text("# fixture strategy\n", encoding="utf-8")
     service = BacktestService(
         data_service=cast("DataService", data_service),
         strategy_loader=cast("StrategyLoader", strategy_loader),
-        strategy_gate=_GateStub(),
+        strategy_gate=_GateStub(str(source_path)),
     )
     return service, data_service, strategy_loader, strategy
 
@@ -162,6 +167,10 @@ def test_run_raw_config_simple_backtest_serializes_metrics(tmp_path: Path) -> No
     assert strategy_loader.parallel_config == ParallelConfig()
     assert "total_return" in run.metrics
     assert "daily_pnl_mean" not in run.metrics
+    manifest = run.pipeline.execution_manifest
+    assert manifest is not None
+    assert manifest.config_copy() == run.pipeline.config_snapshot
+    manifest.verify()
 
 
 def test_run_raw_config_walk_forward_uses_validation_section(tmp_path: Path) -> None:
@@ -184,8 +193,6 @@ def test_run_raw_config_walk_forward_uses_validation_section(tmp_path: Path) -> 
 
 
 def _gate_service(tmp_path: Path) -> StrategyService:
-    from tradingdev.adapters.storage.filesystem import WorkspacePaths
-
     return StrategyService(WorkspacePaths(tmp_path / "workspace"))
 
 
@@ -271,3 +278,153 @@ validation:
 
     with pytest.raises(ValueError, match="start_walk_forward"):
         service.run_config(config_path)
+
+
+def test_prepare_execution_freezes_defaults_without_mutating_input(
+    tmp_path: Path,
+) -> None:
+    service, _data, _loader, _strategy = _service(tmp_path)
+    config = _raw_config()
+    original = deepcopy(config)
+
+    manifest = service.prepare_execution(config, kind="backtest")
+    frozen = manifest.config_copy()
+
+    assert config == original
+    assert frozen["backtest"]["re_entry_after_sl"] is True
+    assert frozen["parallel"] == ParallelConfig().model_dump(mode="json")
+    assert frozen["data"]["requirements"]["market"] == {
+        "source": "binance_vision",
+        "symbol": "BTC/USDT",
+        "timeframe": "1h",
+    }
+    assert frozen["data"]["processed_dir"] == str(
+        tmp_path / "workspace" / "data" / "processed"
+    )
+    assert len(frozen["strategy"]["source_hash"]) == 64
+
+    config["backtest"]["fees"] = 0.9
+    config["strategy"]["parameters"]["new_parameter"] = 42
+    run = service.run_manifest(manifest)
+    assert run.pipeline.config_snapshot["backtest"]["fees"] == 0
+    assert run.pipeline.config_snapshot["strategy"]["parameters"] == {}
+    assert run.pipeline.execution_manifest == manifest
+
+
+def test_manifest_rejects_source_change_before_loading_data(tmp_path: Path) -> None:
+    service, data, _loader, _strategy = _service(tmp_path)
+    manifest = service.prepare_execution(_raw_config(), kind="backtest")
+    (tmp_path / "fixture.py").write_text("# changed\n", encoding="utf-8")
+
+    with pytest.raises(StrategyNotExecutableError, match="source hash"):
+        service.run_manifest(manifest)
+
+    assert data.loads == []
+
+
+def test_walk_forward_manifest_fixes_mode_and_validation_defaults(
+    tmp_path: Path,
+) -> None:
+    service, _data, _loader, _strategy = _service(tmp_path, rows=40)
+    config = _raw_config(validation={"n_splits": 2})
+    manifest = service.prepare_execution(config, kind="walk_forward")
+    config.pop("validation")
+
+    run = service.run_manifest(manifest)
+
+    assert run.mode == "walk_forward"
+    assert len(run.pipeline.fold_results) == 2
+    assert run.pipeline.config_snapshot["validation"]["train_ratio"] == 0.8
+    assert run.pipeline.config_snapshot["validation"]["expanding"] is False
+
+
+def test_run_config_reads_yaml_once_and_keeps_the_resolved_snapshot(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    service, _data, _loader, _strategy = _service(tmp_path)
+    config_path = tmp_path / "run.yaml"
+    reads: list[Path] = []
+
+    def read_once(path: Path) -> dict[str, Any]:
+        reads.append(path)
+        assert len(reads) == 1
+        return _raw_config()
+
+    monkeypatch.setattr("tradingdev.app.backtest_service.load_config", read_once)
+    run = service.run_config(config_path)
+
+    assert reads == [config_path]
+    assert run.pipeline.execution_manifest is not None
+    assert run.pipeline.config_snapshot == (
+        run.pipeline.execution_manifest.config_copy()
+    )
+
+
+def test_prepared_manifest_resolves_data_locations_before_environment_changes(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(tmp_path / "initial-data"))
+    service, _data, _loader, _strategy = _service(tmp_path)
+    config = _raw_config(
+        data={
+            "raw_dir": "relative/raw",
+            "processed_dir": "relative/processed",
+            "requirements": {
+                "market": {"symbol": "BTC/USDT", "timeframe": "1h"},
+                "features": [
+                    {"type": "dvol", "source": "deribit", "column": "dvol"},
+                    {
+                        "type": "custom",
+                        "source": "local",
+                        "column": "sentiment",
+                        "path": "features/sentiment.parquet",
+                    },
+                ],
+            },
+        }
+    )
+    manifest = service.prepare_execution(config, kind="backtest")
+    monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(tmp_path / "later-data"))
+    monkeypatch.chdir(tmp_path.parent)
+
+    run = service.run_manifest(manifest)
+
+    data = run.pipeline.config_snapshot["data"]
+    assert data["raw_dir"] == str(tmp_path / "relative" / "raw")
+    assert data["processed_dir"] == str(tmp_path / "relative" / "processed")
+    dvol, custom = data["requirements"]["features"]
+    assert dvol["path"] == str(
+        tmp_path / "initial-data" / "processed" / "btc_dvol_1h_2024_2024.parquet"
+    )
+    assert dvol["raw_path"] == str(
+        tmp_path / "initial-data" / "processed" / "btc_dvol_1h_2024_2024.csv"
+    )
+    assert custom["path"] == str(tmp_path / "features" / "sentiment.parquet")
+
+
+@pytest.mark.parametrize("use_bundled_yaml", [False, True])
+def test_bundled_manifest_source_is_independent_of_working_directory(
+    tmp_path: Path, monkeypatch: MonkeyPatch, use_bundled_yaml: bool
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    strategies = _gate_service(tmp_path)
+    spec = strategies.resolve_executable("kd_crossover")
+    config = load_config(Path(spec.config_path)) if use_bundled_yaml else _raw_config()
+    if use_bundled_yaml:
+        shadow = tmp_path / config["strategy"]["source_path"]
+        shadow.parent.mkdir(parents=True)
+        shadow.write_text("# unrelated file in the caller's directory\n")
+    else:
+        config["strategy"] = {"id": "kd_crossover"}
+    service = _stub_backtest_service(tmp_path, strategies)
+
+    manifest = service.prepare_execution(config, kind="backtest")
+    source = Path(manifest.config_copy()["strategy"]["source_path"])
+    assert source.is_absolute() and source.is_file()
+    assert (
+        source.read_text(encoding="utf-8")
+        == strategies.get_strategy("kd_crossover")["source_code"]
+    )
+    monkeypatch.chdir(tmp_path.parent)
+    assert service.run_manifest(manifest).pipeline.execution_manifest == manifest

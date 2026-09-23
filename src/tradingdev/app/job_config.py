@@ -31,11 +31,22 @@ def bind_strategy_revision(
         msg = "Config revision_id does not match the selected strategy revision"
         raise StrategyNotExecutableError(msg)
     source = strategy.get("source_path")
+    declared_source = (
+        spec.metadata.get("declared_source_path")
+        if spec.kind == "bundled" and isinstance(spec.metadata, dict)
+        else None
+    )
+    # Bundled YAML may name its package-relative source. Its catalog owns the
+    # mapping to the installed module; a caller's working directory does not.
+    matches_declared_source = (
+        isinstance(declared_source, str) and source == declared_source
+    )
     if spec.kind == "generated" and not source:
         msg = "Generated strategy config requires its revision source_path"
         raise StrategyNotExecutableError(msg)
     if (
         source
+        and not matches_declared_source
         and Path(str(source)).expanduser().resolve()
         != Path(spec.source_path).expanduser().resolve()
     ):
@@ -67,7 +78,17 @@ def bind_strategy_revision(
         if actual != expected:
             msg = "Strategy settings do not match the validated revision config"
             raise StrategyNotExecutableError(msg)
-        strategy["source_hash"] = spec.metadata.source_hash
+        expected_hash = spec.metadata.source_hash
+    else:
+        source_path = Path(spec.source_path).expanduser().resolve()
+        expected_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        strategy["source_path"] = str(source_path)
+        strategy["class_name"] = spec.class_name
+    supplied_hash = strategy.get("source_hash")
+    if supplied_hash is not None and supplied_hash != expected_hash:
+        msg = "Strategy source hash does not match the execution specification"
+        raise StrategyNotExecutableError(msg)
+    strategy["source_hash"] = expected_hash
 
 
 def apply_run_overrides(
@@ -98,13 +119,3 @@ def apply_run_overrides(
             if isinstance(market, dict):
                 market.update(symbol=symbol, timeframe=timeframe)
     return effective_config
-
-
-def write_job_config(run_dir: Path, config: dict[str, Any]) -> Path:
-    """Save the execution snapshot in the job's own artifact directory."""
-    run_dir.mkdir(parents=True, exist_ok=True)
-    path = run_dir / "config.yaml"
-    path.write_text(
-        yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
-    return path

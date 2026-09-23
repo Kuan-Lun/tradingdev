@@ -38,6 +38,7 @@ def register(mcp: FastMCP, service: JobService) -> None:
         """Launch a backtest for a runnable/promoted strategy without validation folds.
 
         Pass the runnable revision_id; omission selects current at submission.
+        The returned manifest_hash identifies the fixed execution settings.
         An empty job_id and code mean no job was created. Otherwise poll
         get_job_status, then use get_run after completion. May download data
         and replace partial caches.
@@ -79,6 +80,7 @@ def register(mcp: FastMCP, service: JobService) -> None:
         """Launch walk-forward for a runnable/promoted strategy with validation config.
 
         Pass the runnable revision_id; omission selects current at submission.
+        The returned manifest_hash identifies the fixed execution settings and folds.
         An empty job_id and code mean no job was created. Otherwise poll
         get_job_status, then use get_run after completion. May download data
         and replace partial caches.

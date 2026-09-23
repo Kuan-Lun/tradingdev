@@ -4,8 +4,8 @@ Start jobs through the MCP start_optimization tool. Its application service uses
 ProcessRunner to launch a supervisor, which starts this worker and supplies
 TRADINGDEV_WORKER_IDENTITY. Running this module directly is not supported.
 
-The worker reads all configuration from job_store (populated by
-start_optimization), then:
+The worker verifies the job's immutable execution manifest (populated by
+start_optimization) and uses it for every phase:
 
 1. Downloads / loads OHLCV data
 2. Runs a single trial combo with a 5-minute timeout
@@ -25,7 +25,6 @@ import signal
 import time
 from datetime import UTC, datetime
 from io import StringIO
-from pathlib import Path
 from typing import Any
 
 from joblib import Parallel, delayed
@@ -34,28 +33,17 @@ from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
-from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.optimization.grid_search import (
     GridSearchResult,
     best_result,
     parameter_grid,
 )
 from tradingdev.domain.strategies.loader import StrategyLoader
-from tradingdev.shared.utils.config import load_config
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
 logger = setup_logger(__name__)
-
-
-# Trial run timeout in seconds
-_TRIAL_TIMEOUT_SECONDS = 300
-
-# Max time to wait for user confirmation (seconds)
-_CONFIRMATION_TIMEOUT_SECONDS = 1800
-
-# Polling interval for confirmation check (seconds)
-_CONFIRMATION_POLL_INTERVAL = 2
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +69,7 @@ class _TrialTimeoutError(Exception):
 
 
 def _trial_timeout_handler(signum: int, frame: Any) -> None:
-    raise _TrialTimeoutError("Trial run exceeded 5-minute timeout")
+    raise _TrialTimeoutError("Trial run exceeded the manifest timeout")
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +81,7 @@ def _evaluate_combo(
     df_json: str,
     param_dict: dict[str, Any],
     metric_name: str,
+    parallel_cfg_dict: dict[str, Any],
 ) -> tuple[dict[str, Any], float, dict[str, Any]]:
     """Evaluate a single parameter combination.
 
@@ -105,6 +94,7 @@ def _evaluate_combo(
         df_json: Training DataFrame serialised as JSON string.
         param_dict: Parameter combination to evaluate.
         metric_name: Target metric to extract.
+        parallel_cfg_dict: Fixed parallel resource policy from the manifest.
 
     Returns:
         (param_dict, target_metric_value, all_serialised_metrics)
@@ -113,7 +103,12 @@ def _evaluate_combo(
 
     df = pd.read_json(StringIO(df_json), orient="split")
     return _run_single_combo(
-        strategy_cfg, BacktestConfig(**bt_cfg_dict), df, param_dict, metric_name
+        strategy_cfg,
+        BacktestConfig(**bt_cfg_dict),
+        df,
+        param_dict,
+        metric_name,
+        ParallelConfig(**parallel_cfg_dict),
     )
 
 
@@ -123,6 +118,7 @@ def _run_single_combo(
     df: Any,
     param_dict: dict[str, Any],
     metric_name: str,
+    parallel_cfg: ParallelConfig,
 ) -> tuple[dict[str, Any], float, dict[str, Any]]:
     """Run a single combo in the main process (for trial run)."""
     service = BacktestService()
@@ -135,7 +131,7 @@ def _run_single_combo(
         {"strategy": effective_strategy}, allow_parameter_overrides=True
     )
     strategy = StrategyLoader().create_from_config(
-        {"strategy": effective_strategy}, engine
+        {"strategy": effective_strategy}, engine, parallel_cfg
     )
 
     signals_df = strategy.generate_signals(df)
@@ -158,15 +154,6 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         logger.error("Job %s not found in store", job_id)
         return
 
-    # Extract optimization parameters from job record
-    config_path = Path(job["config_path"])
-    param_ranges: dict[str, list[Any]] = job["param_ranges"]
-    optimization_metric: str = job["optimization_metric"]
-    train_start: str = job["train_start"]
-    train_end: str = job["train_end"]
-    test_start: str = job["test_start"]
-    test_end: str = job["test_end"]
-
     # --- Phase 1: mark running & preserve the supervisor control identity ---
     handle = WorkerHandle.from_environment()
     job_store.update_job(
@@ -175,20 +162,27 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         **handle.job_fields(),
     )
 
-    # --- Phase 2: load config ---
+    # --- Phase 2: verify and load the sole execution specification ---
     try:
-        raw_config: dict[str, Any] = load_config(config_path)
-        if raw_config["strategy"].get("revision_id") != job.get(
-            "revision_id"
-        ) or raw_config["strategy"].get("id") != job.get("strategy_name"):
-            msg = "Job and execution config refer to different strategy revisions"
+        manifest = job_store.load_manifest(job_id)
+        optimization = manifest.optimization
+        if manifest.kind != "optimization" or optimization is None:
+            msg = "Job requires an optimization execution manifest"
             raise ValueError(msg)
+        raw_config = manifest.config_copy()
         BacktestService().prepare_strategy(raw_config)
-        # The job snapshot includes request overrides and the complete final day.
         bt_cfg = BacktestConfig(**raw_config["backtest"])
+        parallel_cfg = ParallelConfig(**raw_config["parallel"])
     except Exception as exc:
-        _fail(job_id, f"Config error: {exc}")
+        _fail(job_id, f"Execution manifest error: {exc}")
         return
+
+    param_ranges = optimization.param_ranges
+    optimization_metric = optimization.optimization_metric
+    train_start = optimization.train_start.isoformat()
+    train_end = optimization.train_end.isoformat()
+    test_start = optimization.test_start.isoformat()
+    test_end = optimization.test_end.isoformat()
 
     # --- Phase 3: load / download data ---
     try:
@@ -272,7 +266,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
 
     # Set up SIGALRM timeout
     old_handler = signal.signal(signal.SIGALRM, _trial_timeout_handler)
-    signal.alarm(_TRIAL_TIMEOUT_SECONDS)
+    signal.alarm(optimization.trial_timeout_seconds)
     try:
         t0 = time.monotonic()
         trial_result = _run_single_combo(
@@ -281,6 +275,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             train_df,
             first_combo,
             optimization_metric,
+            parallel_cfg,
         )
         time_per_combo = time.monotonic() - t0
     except _TrialTimeoutError:
@@ -290,7 +285,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             job_id,
             status="estimation_timeout",
             error=(
-                f"Trial run exceeded {_TRIAL_TIMEOUT_SECONDS}s timeout. "
+                f"Trial run exceeded {optimization.trial_timeout_seconds}s timeout. "
                 "This strategy is too slow for parameter optimization."
             ),
             ended_at=_now_iso(),
@@ -307,7 +302,10 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         signal.signal(signal.SIGALRM, old_handler)
 
     # Estimate total time
-    n_jobs = min(estimate_n_jobs(train_df), max(total_combinations - 1, 1))
+    n_jobs = min(
+        estimate_n_jobs(train_df, **parallel_cfg.model_dump()),
+        max(total_combinations - 1, 1),
+    )
     # Remaining combos after trial (first already done)
     remaining_count = total_combinations - 1
     estimated_total_seconds = round(
@@ -334,7 +332,10 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     # --- Phase 6: wait for confirmation ---
     confirmation_start = time.monotonic()
     confirmed = False
-    while time.monotonic() - confirmation_start < _CONFIRMATION_TIMEOUT_SECONDS:
+    while (
+        time.monotonic() - confirmation_start
+        < optimization.confirmation_timeout_seconds
+    ):
         current_job = job_store.get_job(job_id)
         if current_job is None:
             logger.error("Job %s disappeared from store", job_id)
@@ -342,13 +343,16 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         if current_job.get("confirmed"):
             confirmed = True
             break
-        time.sleep(_CONFIRMATION_POLL_INTERVAL)
+        time.sleep(optimization.confirmation_poll_interval)
 
     if not confirmed:
         job_store.update_job(
             job_id,
             status="failed",
-            error="No confirmation received within 30 minutes. Job cancelled.",
+            error=(
+                "No confirmation received within "
+                f"{optimization.confirmation_timeout_seconds}s. Job cancelled."
+            ),
             ended_at=_now_iso(),
         )
         logger.warning("Job %s: confirmation timeout", job_id)
@@ -388,6 +392,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
                         train_df_json,
                         combo,
                         optimization_metric,
+                        parallel_cfg.model_dump(),
                     )
                     for combo in batch
                 )
@@ -442,6 +447,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             test_df,
             best_params,
             optimization_metric,
+            parallel_cfg,
         )
     except Exception as exc:
         _fail(job_id, f"Out-of-sample test error: {exc}")
@@ -463,7 +469,10 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             "n_parallel_workers": n_jobs,
         }
         result_path = job_store.save_result(
-            job_id, optimization_result, config_snapshot=raw_config
+            job_id,
+            optimization_result,
+            config_snapshot=raw_config,
+            execution_manifest=manifest,
         )
         job_store.update_job(
             job_id,

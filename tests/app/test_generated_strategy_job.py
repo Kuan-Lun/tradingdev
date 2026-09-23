@@ -138,10 +138,7 @@ def test_generated_strategy_can_start_backtest_job(
     assert runner.calls == [
         (
             "tradingdev.mcp.workers.backtest",
-            (
-                response["job_id"],
-                str(workspace.runs / response["job_id"] / "config.yaml"),
-            ),
+            (response["job_id"],),
         )
     ]
     job = store.get_job(str(response["job_id"]))
@@ -164,8 +161,8 @@ def test_generated_strategy_can_start_backtest_job(
         )
     )
     assert effective_config["backtest"]["symbol"] == "BTC/USDT"
-    assert effective_config["backtest"]["start_date"] == "2024-01-01"
-    assert effective_config["backtest"]["end_date"] == "2024-01-31"
+    assert effective_config["backtest"]["start_date"].startswith("2024-01-01")
+    assert effective_config["backtest"]["end_date"].startswith("2024-01-31")
     assert effective_config["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
 
 
@@ -223,7 +220,7 @@ def test_queued_revision_runs_after_new_draft_is_saved(
     )
     monkeypatch.setattr(DataService, "load", lambda *_args, **_kwargs: dataset)
 
-    backtest._run_backtest(started["job_id"], Path(job["config_path"]))
+    backtest._run_backtest(started["job_id"])
 
     status = jobs.get_job_status(started["job_id"])
     assert status["status"] == "done", status

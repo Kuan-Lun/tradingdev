@@ -96,7 +96,11 @@ def _simple_run(tmp_path: Path) -> BacktestRun:
     )
     return BacktestRun(
         mode="simple",
-        pipeline=PipelineResult(mode="simple", backtest_result=result),
+        pipeline=PipelineResult(
+            mode="simple",
+            backtest_result=result,
+            config_snapshot={"strategy": {"id": "cli_fixture"}},
+        ),
         metrics=result.metrics,
         processed_path=tmp_path / "processed.parquet",
         dataset_id="dataset-cli",
@@ -165,7 +169,11 @@ backtest:
     )
     run = BacktestRun(
         mode="walk_forward",
-        pipeline=PipelineResult(mode="walk_forward", fold_results=[]),
+        pipeline=PipelineResult(
+            mode="walk_forward",
+            fold_results=[],
+            config_snapshot={"strategy": {"id": "cli_walk_forward"}},
+        ),
         metrics={"n_folds": 0},
         processed_path=tmp_path / "processed.parquet",
         dataset_id="dataset-cli",

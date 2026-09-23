@@ -208,16 +208,19 @@ class StrategyService:
 
         if revision_id is not None:
             return None
-        if entry is None or entry.declared_source_path is None:
+        if entry is None:
             return None
         return StrategySpec(
             strategy_id=strategy_id,
             class_name=entry.class_name,
-            source_path=entry.declared_source_path,
+            source_path=str(entry.module_source_path),
             config_path=str(entry.config_path),
             status=StrategyStatus.PROMOTED,
             kind="bundled",
-            metadata={"version": entry.strategy_section.get("version")},
+            metadata={
+                "version": entry.strategy_section.get("version"),
+                "declared_source_path": entry.declared_source_path,
+            },
         )
 
     def resolve_executable(
@@ -475,7 +478,7 @@ class StrategyService:
                     "metadata": {
                         "revision_id": None,
                         "version": strategy.get("version"),
-                        "source_path": entry.declared_source_path,
+                        "source_path": str(entry.module_source_path),
                         "parameters": strategy.get("parameters", {}),
                     },
                     "data_requirements": self._data_requirements(entry.raw_config),

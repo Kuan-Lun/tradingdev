@@ -92,6 +92,7 @@ class SQLiteStore:
                     job_id text not null,
                     strategy_id text not null,
                     revision_id text,
+                    manifest_hash text,
                     config_hash text,
                     source_hash text,
                     random_seed integer,
@@ -130,6 +131,7 @@ class SQLiteStore:
             self._ensure_column(conn, "jobs", "ended_at", "text")
             self._ensure_column(conn, "runs", "source_hash", "text")
             self._ensure_column(conn, "runs", "revision_id", "text")
+            self._ensure_column(conn, "runs", "manifest_hash", "text")
             self._ensure_column(conn, "runs", "random_seed", "integer")
 
     def upsert_job(self, record: dict[str, Any]) -> None:
@@ -213,6 +215,7 @@ class SQLiteStore:
         artifact_dir: Path,
         metrics: dict[str, Any],
         revision_id: str | None = None,
+        manifest_hash: str | None = None,
         config_hash: str | None = None,
         source_hash: str | None = None,
         random_seed: int | None = None,
@@ -229,13 +232,15 @@ class SQLiteStore:
             conn.execute(
                 """
                 insert into runs (
-                    run_id, job_id, strategy_id, revision_id, config_hash, source_hash,
+                    run_id, job_id, strategy_id, revision_id, manifest_hash,
+                    config_hash, source_hash,
                     random_seed, dataset_id, metrics, artifact_dir, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(run_id) do update set
                     job_id=excluded.job_id,
                     strategy_id=excluded.strategy_id,
                     revision_id=excluded.revision_id,
+                    manifest_hash=excluded.manifest_hash,
                     config_hash=excluded.config_hash,
                     source_hash=excluded.source_hash,
                     random_seed=excluded.random_seed,
@@ -248,6 +253,7 @@ class SQLiteStore:
                     job_id,
                     strategy_id,
                     revision_id,
+                    manifest_hash,
                     config_hash,
                     source_hash,
                     random_seed,

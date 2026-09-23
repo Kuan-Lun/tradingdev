@@ -62,13 +62,13 @@ def test_start_walk_forward_uses_bundled_walkforward_config(
     assert runner.calls == [
         (
             "tradingdev.mcp.workers.backtest",
-            (
-                response["job_id"],
-                str(workspace.runs / response["job_id"] / "config.yaml"),
-                "--walk-forward",
-            ),
+            (response["job_id"],),
         )
     ]
+    manifest = job_store.load_manifest(response["job_id"])
+    assert manifest.kind == "walk_forward"
+    assert manifest.manifest_hash == response["manifest_hash"]
+    assert manifest.manifest_hash == job["manifest_hash"]
 
 
 @pytest.mark.parametrize("walk_forward", [False, True])

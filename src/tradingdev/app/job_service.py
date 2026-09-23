@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
+
+from pydantic import ValidationError
 
 from tradingdev.adapters.execution.process_runner import (
     ProcessIdentity,
@@ -14,11 +16,11 @@ from tradingdev.adapters.execution.process_runner import (
     WorkerHandle,
     request_worker_stop,
 )
+from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.job_config import (
     apply_run_overrides,
     bind_strategy_revision,
-    write_job_config,
 )
 from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import (
@@ -26,6 +28,7 @@ from tradingdev.app.strategy_service import (
     StrategyService,
 )
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
+from tradingdev.domain.execution import ManifestError
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
@@ -181,6 +184,7 @@ class JobService:
             "job_type": job.get("job_type", "backtest"),
             "strategy_name": job.get("strategy_name"),
             "revision_id": job.get("revision_id"),
+            "manifest_hash": job.get("manifest_hash"),
             "symbol": job.get("symbol"),
             "timeframe": job.get("timeframe"),
             "start_date": job.get("start_date"),
@@ -253,6 +257,7 @@ class JobService:
                 "status": job["status"],
                 "strategy_name": job.get("strategy_name"),
                 "revision_id": job.get("revision_id"),
+                "manifest_hash": job.get("manifest_hash"),
                 "symbol": job.get("symbol"),
                 "timeframe": job.get("timeframe"),
                 "start_date": job.get("start_date"),
@@ -287,6 +292,14 @@ class JobService:
                 "success": False,
                 "error": f"Job status is '{status}', expected 'pending_confirmation'.",
                 "code": "invalid_job_state",
+            }
+        try:
+            self._job_store.load_manifest(job_id)
+        except (OSError, ValueError) as exc:
+            return {
+                "success": False,
+                "error": f"Execution specification is invalid: {exc}",
+                "code": "execution_manifest_invalid",
             }
         self._job_store.update_job(job_id, confirmed=True)
         return {
@@ -385,7 +398,21 @@ class JobService:
             start_date=start_date,
             end_date=end_date,
         )
-        BacktestRunConfig.model_validate(effective_config)
+        kind: Literal["backtest", "walk_forward"] = (
+            "walk_forward" if walk_forward else "backtest"
+        )
+        try:
+            manifest = BacktestService(
+                data_service=self._data_service,
+                strategy_gate=self._strategy_service,
+            ).prepare_execution(effective_config, kind=kind)
+        except (ManifestError, ValidationError) as exc:
+            return {
+                "job_id": "",
+                "message": str(exc),
+                "data_available": False,
+                "code": "invalid_execution_request",
+            }
 
         data_available = self._data_service.data_available(
             symbol,
@@ -394,9 +421,6 @@ class JobService:
             end_date,
         )
         job_id = uuid4().hex[:12]
-        effective_config_path = write_job_config(
-            self._job_store.workspace.runs / job_id, effective_config
-        )
         self._job_store.create_job(
             job_id=job_id,
             strategy_name=strategy_id,
@@ -405,20 +429,17 @@ class JobService:
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
-            config_path=str(effective_config_path),
+            job_type=kind,
+            manifest=manifest,
         )
         self._job_store.update_job(
             job_id,
-            job_type="walk_forward" if walk_forward else "backtest",
             original_config_path=str(config_path),
         )
-        args = [job_id, str(effective_config_path)]
-        if walk_forward:
-            args.append("--walk-forward")
         try:
             identity = self._process_runner.spawn_module(
                 "tradingdev.mcp.workers.backtest",
-                *args,
+                job_id,
             )
         except BaseException as exc:
             # Interruptions must not leave a job queued after startup cleanup.
@@ -437,6 +458,7 @@ class JobService:
         return {
             "job_id": job_id,
             "revision_id": spec.revision_id,
+            "manifest_hash": manifest.manifest_hash,
             "message": f"Job started. Job ID: {job_id}. {data_msg}",
             "data_available": data_available,
         }

@@ -10,7 +10,6 @@ from tradingdev.adapters.cli.report import format_metrics_report
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.domain.validation.report import format_walk_forward_report
-from tradingdev.shared.utils.config import load_config
 from tradingdev.shared.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -28,12 +27,10 @@ def main() -> None:
     args = parser.parse_args()
 
     t_start = time.monotonic()
-    raw_config = load_config(args.config)
-    strategy_cfg = raw_config["strategy"]
-    logger.info("Strategy: %s", strategy_cfg.get("id"))
-
     service = BacktestService()
     run = service.run_config(args.config, walk_forward=args.walk_forward)
+    strategy_cfg = run.pipeline.config_snapshot["strategy"]
+    logger.info("Strategy: %s", strategy_cfg.get("id"))
     if run.mode == "walk_forward":
         report = format_walk_forward_report(run.pipeline.fold_results)
     else:

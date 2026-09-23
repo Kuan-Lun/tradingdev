@@ -108,3 +108,20 @@ def test_revision_selectors_are_advertised_in_tool_schemas(runtime_root: Path) -
     saved_schema = tools["save_strategy"].outputSchema
     assert saved_schema is not None
     assert "revision_id" in saved_schema["$defs"]["StrategySaveSuccess"]["required"]
+
+
+def test_execution_manifest_hash_is_required_for_accepted_jobs(
+    runtime_root: Path,
+) -> None:
+    server = create_server(WorkspacePaths(runtime_root / "workspace"))
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    for name, contract in (
+        ("start_backtest", "BacktestStarted"),
+        ("start_walk_forward", "BacktestStarted"),
+        ("start_optimization", "OptimizationStarted"),
+    ):
+        schema = tools[name].outputSchema
+        assert schema is not None
+        accepted = schema["$defs"][contract]
+        assert "manifest_hash" in accepted["required"]
+        assert accepted["properties"]["manifest_hash"]["pattern"] == "^[0-9a-f]{64}$"

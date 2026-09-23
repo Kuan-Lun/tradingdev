@@ -26,6 +26,7 @@ class BacktestStarted(ContractModel):
 
     job_id: Annotated[str, Field(min_length=1)]
     revision_id: str | None = None
+    manifest_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     message: str
     data_available: bool
 
@@ -36,7 +37,9 @@ class BacktestRejected(ContractModel):
     job_id: Literal[""]
     message: str
     data_available: Literal[False]
-    code: Literal["strategy_not_executable", "invalid_run_mode"]
+    code: Literal[
+        "strategy_not_executable", "invalid_run_mode", "invalid_execution_request"
+    ]
 
 
 class OptimizationStarted(ContractModel):
@@ -44,6 +47,7 @@ class OptimizationStarted(ContractModel):
 
     job_id: Annotated[str, Field(min_length=1)]
     revision_id: str | None = None
+    manifest_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     message: str
     total_combinations: Annotated[int, Field(gt=0)]
 
@@ -65,6 +69,7 @@ class JobSummary(ContractModel):
     status: JobState
     strategy_name: str | None
     revision_id: str | None = None
+    manifest_hash: str | None = None
     symbol: str | None
     timeframe: str | None
     start_date: str | None
@@ -86,6 +91,7 @@ class JobStatus(ContractModel):
     job_type: str
     strategy_name: str | None
     revision_id: str | None = None
+    manifest_hash: str | None = None
     symbol: str | None
     timeframe: str | None
     start_date: str | None
@@ -133,6 +139,7 @@ class JobActionFailed(ErrorResponse):
         "estimation_timeout",
         "worker_identity_unavailable",
         "worker_cleanup_failed",
+        "execution_manifest_invalid",
     ]
     status: JobState | None = None
     pid: int | None = None

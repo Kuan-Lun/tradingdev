@@ -35,7 +35,10 @@ def read_strategy_snapshot(
     """Read the pinned revision, checking its identity and original digest."""
     strategy = raw.get("strategy", {}) if raw is not None else {}
     revision_id = strategy.get("revision_id") if isinstance(strategy, dict) else None
-    expected_hash: str | None = None
+    expected_hash = strategy.get("source_hash") if isinstance(strategy, dict) else None
+    if expected_hash is not None and not isinstance(expected_hash, str):
+        msg = "Invalid strategy source hash in result configuration"
+        raise StrategyNotExecutableError(msg)
     if revision_id is not None:
         if not isinstance(revision_id, str) or raw is None:
             msg = "Invalid strategy revision in result configuration"
@@ -50,7 +53,7 @@ def read_strategy_snapshot(
     content = source.read_bytes() if source is not None and source.is_file() else None
     digest = hashlib.sha256(content).hexdigest() if content is not None else None
     if expected_hash is not None and digest != expected_hash:
-        msg = "Strategy revision source hash changed before artifact persistence"
+        msg = "Strategy source hash changed before artifact persistence"
         raise StrategyNotExecutableError(msg)
     return StrategySourceSnapshot(revision_id, source, content, digest)
 
