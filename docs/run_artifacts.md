@@ -96,10 +96,24 @@ dashboard rendering, and artifact lookup always read through SQLite first, then
 resolve files from the recorded artifact paths.
 
 Optimization `result.json` includes the best parameters, training metrics and
-out-of-sample metrics, with the same content returned by `get_run`. Parameters
-outside the search grid retain their YAML values; selection uses training
-results, and only the selected parameters are evaluated out of sample.
+out-of-sample metrics. For newly saved results, its parsed JSON matches the
+`metrics` object in the run record returned by `get_run`, not the entire MCP
+response. Parameters outside the search grid retain their YAML values; selection
+uses training results, and only the selected parameters are evaluated out of
+sample.
 
-Non-finite metric values are serialized as JSON `null`, including nested
-optimization metrics. The CLI displays missing or non-finite metrics as `N/A`,
-while keeping finite zero values visible as zero.
+Before writing `result.json` or SQLite `runs.metrics`, metric values are
+recursively normalized: `NaN`, `Infinity`, and `-Infinity` become JSON `null`,
+including values inside nested objects and arrays such as optimization metrics.
+
+Legacy results are also normalized in memory when `JobStore.load_result` reads a
+result file or `SQLiteStore` reads run metrics. These reads do not rewrite the
+stored file or database row. Consequently, `get_run`, `list_runs`, and completed
+`get_job_status` responses expose legacy non-finite metric values as `null`.
+
+In contrast, `get_artifact(include_content=true)` returns the original UTF-8 file
+text without parsing or normalizing its contents. A legacy `result.json` may
+therefore still contain `NaN` or `Infinity` even when result lookup returns `null`;
+the content-equivalence statement above does not apply to these legacy artifacts.
+The CLI displays missing or non-finite metrics as `N/A`, while keeping finite zero
+values visible as zero.

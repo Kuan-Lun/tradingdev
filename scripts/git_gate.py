@@ -14,7 +14,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -152,7 +152,7 @@ class MergeCandidate:
 @contextmanager
 def merge_candidate(
     source: str, base_ref: str, head_ref: str
-) -> Iterator[MergeCandidate]:
+) -> Generator[MergeCandidate, None, None]:
     """Fetch and merge in a disposable repository, leaving the caller untouched."""
     with TemporaryDirectory(prefix="tradingdev-pr-candidate-") as temporary:
         repository = Path(temporary)

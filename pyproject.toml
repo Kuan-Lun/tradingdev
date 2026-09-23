@@ -100,7 +100,9 @@ markers = [
 # No [project.optional-dependencies].dev is maintained to avoid duplication.
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26.0",
     # Markdown checks and explicit formatting share scripts/quality.py.
     "pymarkdownlnt>=0.9.38",
     "pytest>=9.1.1",
+    "types-jsonschema>=4.26.0.20260518",
 ]

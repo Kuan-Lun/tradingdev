@@ -7,6 +7,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, now_iso
+from tradingdev.shared.utils.json_values import normalize_json_object
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -215,6 +216,12 @@ class SQLiteStore:
         dataset_id: str | None = None,
     ) -> None:
         """Insert or replace a completed run."""
+        serialized_metrics = json.dumps(
+            normalize_json_object(metrics),
+            ensure_ascii=False,
+            sort_keys=True,
+            allow_nan=False,
+        )
         with self.connect() as conn:
             conn.execute(
                 """
@@ -240,7 +247,7 @@ class SQLiteStore:
                     source_hash,
                     random_seed,
                     dataset_id,
-                    json.dumps(metrics, ensure_ascii=False, sort_keys=True),
+                    serialized_metrics,
                     str(artifact_dir),
                     now_iso(),
                 ),
@@ -359,6 +366,8 @@ class SQLiteStore:
             value = result.get(key)
             if isinstance(value, str):
                 result[key] = json.loads(value)
+                if key == "metrics" and isinstance(result[key], dict):
+                    result[key] = normalize_json_object(result[key])
         return result
 
     def _ensure_column(

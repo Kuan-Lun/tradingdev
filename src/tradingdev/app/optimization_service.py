@@ -65,7 +65,12 @@ class OptimizationService:
         """Start a parameter optimization worker."""
         config_path, error = self._resolve_strategy_config(strategy_id)
         if config_path is None:
-            return {"job_id": "", "message": error, "total_combinations": 0}
+            return {
+                "job_id": "",
+                "message": error,
+                "total_combinations": 0,
+                "code": "strategy_not_executable",
+            }
         validation_error = self._validate_request(
             param_ranges,
             optimization_metric,
@@ -75,7 +80,12 @@ class OptimizationService:
             test_end,
         )
         if validation_error:
-            return {"job_id": "", "message": validation_error, "total_combinations": 0}
+            return {
+                "job_id": "",
+                "message": validation_error,
+                "total_combinations": 0,
+                "code": "invalid_optimization_request",
+            }
 
         total_combinations = 1
         for values in param_ranges.values():

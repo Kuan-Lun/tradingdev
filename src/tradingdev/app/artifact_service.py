@@ -44,18 +44,27 @@ class ArtifactService:
         """Return artifact metadata and optional text content."""
         artifact = self._store.get_artifact(artifact_id)
         if artifact is None:
-            return {"success": False, "error": f"Unknown artifact: {artifact_id}"}
+            return {
+                "success": False,
+                "error": f"Unknown artifact: {artifact_id}",
+                "code": "artifact_not_found",
+            }
         result: dict[str, Any] = {"success": True, "artifact": artifact}
         path = Path(str(artifact["path"]))
         if include_content:
             if not path.exists():
-                return {"success": False, "error": f"Artifact file missing: {path}"}
+                return {
+                    "success": False,
+                    "error": f"Artifact file missing: {path}",
+                    "code": "artifact_file_missing",
+                }
             try:
                 result["content"] = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 return {
                     "success": False,
                     "error": f"Artifact is not UTF-8 text: {artifact_id}",
+                    "code": "artifact_not_text",
                 }
         return result
 

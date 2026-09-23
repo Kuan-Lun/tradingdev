@@ -81,13 +81,31 @@ TA-Lib 的初始化、暖機期與缺值處理會改變部分指標數值，因�
 
 | 類別 | Tools |
 | ---- | ----- |
-| Strategy | `get_strategy_contract`, `list_strategies`, `get_strategy`, `save_strategy`, `validate_strategy`, `dry_run_strategy` |
-| Data | `list_available_data`, `inspect_dataset`, `ensure_data` |
+| Strategy | `get_strategy_contract`, `list_strategies`, `get_strategy`, `save_strategy`, `validate_strategy`, `dry_run_strategy`, `promote_strategy` |
+| Data | `list_data_sources`, `list_available_data`, `inspect_dataset`, `ensure_data` |
 | Backtest | `start_backtest`, `start_walk_forward` |
 | Optimization | `start_optimization`, `confirm_optimization` |
 | Jobs/Runs | `get_job_status`, `list_jobs`, `cancel_job`, `list_runs`, `get_run`, `compare_runs` |
-| Artifacts | `list_artifacts`, `get_artifact`, `promote_strategy` |
+| Artifacts | `list_artifacts`, `get_artifact` |
 | Requests | `record_feature_request`, `list_feature_requests` |
+
+每個工具都提供具體的 `outputSchema` 與唯讀、破壞性、冪等及外部互動提示。
+客戶端應依 `tools/list` 的 schema 讀取 `structuredContent`：單一物件回覆直接
+位於其根層；清單與成功／失敗聯集回覆放在 `structuredContent.result`。
+從舊版升級時，直接讀取根層 `success`、`job_id` 等欄位的自訂客戶端須相應調整；
+工作區及既有策略、回測資料不會遷移或改寫。
+
+預期的操作失敗保留 `success: false` 或空 `job_id` 等工具原有語意，並提供
+穩定的 `code`；驗證未通過則查看 `diagnostics` 的 `code`、`phase` 與 `fix`。
+`get_job_status` 的 `status: not_found` 表示查無工作；`status: failed` 表示
+找到已失敗的工作。參數格式錯誤、未預期的執行例外或回覆不符合 schema 時，
+MCP 回傳 `isError: true`。不應只依 MCP `isError` 判斷應用操作是否成功。
+
+工具提示描述實際副作用，不是權限檢查或安全隔離。`get_job_status` 可能更新
+失去 worker 的工作狀態；`ensure_data` 可能下載資料並替換不完整快取；
+策略驗證與 dry-run 會執行生成 Python。
+`destructiveHint: false` 代表只做新增；會替換既有狀態或驗證證據的工具也會
+標示為 `true`，不只限於刪除檔案。
 
 最佳化先以 `start_optimization` 試跑並估時，等使用者同意後才呼叫
 `confirm_optimization` 執行完整搜尋；以 `get_job_status`／`get_run` 查詢結果。

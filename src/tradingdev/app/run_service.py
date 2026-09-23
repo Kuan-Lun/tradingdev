@@ -29,7 +29,11 @@ class RunService:
         """Return one completed run."""
         run = self._store.get_run(run_id)
         if run is None:
-            return {"success": False, "error": f"Unknown run: {run_id}"}
+            return {
+                "success": False,
+                "error": f"Unknown run: {run_id}",
+                "code": "run_not_found",
+            }
         return {"success": True, "run": run}
 
     def compare_runs(self, run_ids: list[str]) -> dict[str, Any]:
@@ -38,6 +42,7 @@ class RunService:
             return {
                 "success": False,
                 "error": "compare_runs requires at least two run_ids",
+                "code": "insufficient_runs",
             }
 
         rows = []
@@ -45,7 +50,11 @@ class RunService:
         for run_id in run_ids:
             run = self._store.get_run(run_id)
             if run is None:
-                return {"success": False, "error": f"Unknown run: {run_id}"}
+                return {
+                    "success": False,
+                    "error": f"Unknown run: {run_id}",
+                    "code": "run_not_found",
+                }
             metrics = run.get("metrics", {})
             if isinstance(metrics, dict):
                 metric_names.update(

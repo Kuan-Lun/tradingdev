@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from mcp.types import ToolAnnotations
+from pydantic import JsonValue, TypeAdapter
+
+from tradingdev.app.contracts.jobs import (
+    JobActionFailed,
+    OptimizationConfirmed,
+    OptimizationRejected,
+    OptimizationStarted,
+)
 from tradingdev.mcp.schemas import OptimizationInput
 
 if TYPE_CHECKING:
@@ -20,24 +29,32 @@ def register(
 ) -> None:
     """Register optimization tools."""
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=True,
+        )
+    )
     def start_optimization(
         strategy_id: str,
         symbol: str,
         timeframe: str,
-        param_ranges: dict[str, list[Any]],
+        param_ranges: dict[str, list[JsonValue]],
         optimization_metric: str,
         train_start: str,
         train_end: str,
         test_start: str,
         test_end: str,
-    ) -> dict[str, Any]:
+    ) -> OptimizationStarted | OptimizationRejected:
         """Launch optimization and wait for confirmation after estimating its cost.
 
         Dates are inclusive UTC calendar days and must satisfy
         train_start < train_end < test_start < test_end, without overlap.
         Grid values override matching YAML parameters; other parameters stay fixed.
         Review get_job_status before calling confirm_optimization.
+        May download data and replace partial caches.
         """
         payload = OptimizationInput(
             strategy_id=strategy_id,
@@ -50,7 +67,7 @@ def register(
             test_start=test_start,
             test_end=test_end,
         )
-        return optimization_service.start_optimization(
+        result = optimization_service.start_optimization(
             strategy_id=payload.strategy_id,
             symbol=payload.symbol,
             timeframe=payload.timeframe,
@@ -61,8 +78,23 @@ def register(
             test_start=payload.test_start,
             test_end=payload.test_end,
         )
+        return TypeAdapter(OptimizationStarted | OptimizationRejected).validate_python(
+            result
+        )
 
-    @mcp.tool()
-    def confirm_optimization(job_id: str) -> dict[str, Any]:
-        """Confirm an optimization job after reviewing its estimate."""
-        return job_service.confirm_optimization(job_id)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
+    def confirm_optimization(job_id: str) -> OptimizationConfirmed | JobActionFailed:
+        """Confirm an existing pending_confirmation job after user accepts its estimate.
+
+        Poll get_job_status for progress; this does not create another job.
+        """
+        return TypeAdapter(OptimizationConfirmed | JobActionFailed).validate_python(
+            job_service.confirm_optimization(job_id)
+        )
