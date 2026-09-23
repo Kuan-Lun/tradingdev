@@ -191,11 +191,17 @@ runs and strategy source artifacts remain tied to the selected revision when
 current changes, including during optimization confirmation.
 
 Runtime symbol, timeframe, and dates are separate from the revision's base
-config. For generated strategies, ordinary backtest and walk-forward parameters
-must match that base config; changing them requires saving and checking a new
-revision.
+config. For generated strategies, ordinary backtest and walk-forward execution
+configs must preserve the saved `strategy` mapping in full, including parameters,
+identity, and any descriptive or constructor settings such as `description`,
+`version`, or `fit`. Adding, removing, or changing those fields requires saving
+and checking a new revision, even if identity and parameters are unchanged.
+The comparison excludes the execution-managed `source_hash` and separately
+verifies that `source_path` resolves to the selected revision's source. Copy the
+saved config and apply market/date/cost changes outside the `strategy` section.
 Optimization may override only its search parameters, retaining all other base
-parameters. Validation evidence covers the base parameters; it does not certify
+parameters and all other saved strategy settings. Validation evidence covers
+the base parameters; it does not certify
 every possible optimization candidate. This revision identity does not freeze
 imported Python dependencies, the engine environment,
 or market data, and is not a full execution manifest. Bundled strategies remain

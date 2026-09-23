@@ -167,7 +167,10 @@ uv run python -m tradingdev --config \
 ```
 
 Generated 策略請指定已通過 dry-run 的 revision 所屬 `config.yaml`，
-或包含相同策略身分與參數的執行設定；仍可調整交易對、期間與成本。
+或複製它建立執行設定並完整保留 `strategy` 區段，包括身分、參數、
+`description`、`version`、`fit` 等原有欄位；新增、移除或變更欄位都需要另存並驗證新 revision。
+`source_path` 必須仍指向原 revision 的來源；`source_hash` 由執行流程驗證後填入。
+交易對、期間與成本可在 `strategy` 以外的設定區段調整。
 執行中若修改該設定檔，CLI 會拒絕將結果存入變更後設定的快取。
 
 報表以 `N/A` 表示缺少或沒有有限數值的指標，不代表零。
