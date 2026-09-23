@@ -174,7 +174,11 @@ class StrategySaveFailure(ErrorResponse):
     """A rejected save request with no generated artifact paths."""
 
     code: Literal[
-        "invalid_strategy_id", "syntax_error", "invalid_yaml", "invalid_strategy_config"
+        "invalid_strategy_id",
+        "reserved_strategy_id",
+        "syntax_error",
+        "invalid_yaml",
+        "invalid_strategy_config",
     ]
     message: Literal[""]
     strategy_id: str
