@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import sys
 from contextlib import asynccontextmanager, closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from tempfile import mkdtemp
@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import psutil
+from jsonschema import validate
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -34,12 +35,15 @@ if TYPE_CHECKING:
 class MCPClient:
     session: ClientSession
     instructions: str = ""
+    output_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     async def call(self, name: str, **arguments: Any) -> Any:
         result = await self.session.call_tool(name, arguments)
         assert not result.isError, result.model_dump(mode="json")
         assert result.structuredContent is not None, result
         payload = result.structuredContent
+        assert name in self.output_schemas, f"No advertised outputSchema for {name}"
+        validate(instance=payload, schema=self.output_schemas[name])
         return payload["result"] if set(payload) == {"result"} else payload
 
     async def wait_for_job(self, job_id: str, timeout: float = 120) -> dict[str, Any]:
@@ -119,7 +123,21 @@ class MCPWorkspace:
                         assert initialized.serverInfo.name == "tradingdev"
                         assert "save_strategy" in (initialized.instructions or "")
                         try:
-                            yield MCPClient(session, initialized.instructions or "")
+                            output_schemas: dict[str, dict[str, Any]] = {}
+                            cursor = None
+                            while True:
+                                listed = await session.list_tools(cursor=cursor)
+                                for tool in listed.tools:
+                                    assert tool.outputSchema is not None, tool.name
+                                    output_schemas[tool.name] = tool.outputSchema
+                                cursor = listed.nextCursor
+                                if cursor is None:
+                                    break
+                            yield MCPClient(
+                                session,
+                                initialized.instructions or "",
+                                output_schemas,
+                            )
                         finally:
                             self.stop_workers()
         except BaseException:

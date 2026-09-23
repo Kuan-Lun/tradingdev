@@ -201,6 +201,7 @@ def test_start_optimization_rejects_invalid_request_before_spawning(
         "job_id": "",
         "message": "param_ranges['window'] must be a non-empty list.",
         "total_combinations": 0,
+        "code": "invalid_optimization_request",
     }
     assert job_store.list_all_jobs() == []
     assert runner.calls == []

@@ -153,7 +153,9 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                         assert listed and all(
                             item["kind"] == "bundled" for item in listed
                         )
-                        semantic_error = responses["missing"]["structuredContent"]
+                        missing = responses["missing"]["structuredContent"]
+                        assert set(missing) == {"result"}
+                        semantic_error = missing["result"]
                         assert semantic_error["success"] is False
                         assert "missing-strategy" in semantic_error["error"]
                         assert responses["invalid-schema"]["isError"] is True
@@ -171,9 +173,11 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                     assert len(requests) == 3
                     repaired = json.loads(body["messages"][-1]["content"])
                     assert body["messages"][-1]["tool_call_id"] == "repair"
-                    assert repaired["structuredContent"]["success"] is True
-                    assert repaired["structuredContent"]["strategy_id"] == repaired_id
-                    assert repaired["structuredContent"]["source_code"]
+                    assert set(repaired["structuredContent"]) == {"result"}
+                    repaired_payload = repaired["structuredContent"]["result"]
+                    assert repaired_payload["success"] is True
+                    assert repaired_payload["strategy_id"] == repaired_id
+                    assert repaired_payload["source_code"]
                     return _reply()
 
                 calls = await run_local_model(

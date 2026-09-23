@@ -36,6 +36,7 @@ src/tradingdev/
     artifact_service.py
     feature_request_service.py
     capability_service.py
+    contracts/
     job_store.py
     run_lineage.py
   domain/
@@ -184,6 +185,30 @@ files are stored under `workspace/data/processed/cache` (or
 `$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through `ArtifactService`.
 The dashboard reads run metadata and pipeline artifacts through `RunService` /
 `ArtifactService`.
+
+## MCP Response Contracts
+
+`app/contracts` owns transport-independent Pydantic response DTOs. MCP adapters
+validate service payloads against those DTOs before exposing them, and FastMCP
+derives the advertised output schemas from the tool return annotations. Fixed
+response objects reject undeclared fields; extensible metrics, parameters,
+artifact metadata and unvalidated draft data requirements use explicit JSON
+values. Discovery must remain usable while a draft's configuration is incomplete.
+Internal service dictionaries and
+persisted workspace records are not replaced by this boundary change.
+
+Single model outputs are JSON objects; lists and success/failure unions use the
+SDK's `result` wrapper. Expected application failures have stable codes, while
+strategy validation retains its structured diagnostics. Invalid MCP arguments,
+unexpected exceptions and response-contract violations use MCP error results.
+Tool annotations describe actual side effects, including status reconciliation
+and cache replacement. A false destructive hint promises only additive updates,
+so tools that replace lifecycle state or validation evidence use a true hint.
+These annotations are not authorization or sandbox guarantees.
+
+Real stdio MCP tests validate structured responses against the schemas advertised
+by the running server, including unsuccessful application outcomes. Separate
+model workflows exercise strategy generation, repair, backtesting and lookup.
 
 ## Domain Contracts
 

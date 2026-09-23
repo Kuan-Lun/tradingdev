@@ -70,7 +70,12 @@ class JobService:
         """Start a simple backtest job."""
         config_path, error = self._resolve_strategy_run_config(strategy_id)
         if config_path is None:
-            return {"job_id": "", "message": error, "data_available": False}
+            return {
+                "job_id": "",
+                "message": error,
+                "data_available": False,
+                "code": "strategy_not_executable",
+            }
         raw_config = load_config(config_path)
         run_config = BacktestRunConfig.model_validate(raw_config)
         if run_config.is_walk_forward:
@@ -80,6 +85,7 @@ class JobService:
                     "Config contains validation settings; use start_walk_forward."
                 ),
                 "data_available": False,
+                "code": "invalid_run_mode",
             }
         return self._start_worker(
             strategy_id=strategy_id,
@@ -103,7 +109,12 @@ class JobService:
         """Start a walk-forward job."""
         config_path, error = self._resolve_strategy_run_config(strategy_id)
         if config_path is None:
-            return {"job_id": "", "message": error, "data_available": False}
+            return {
+                "job_id": "",
+                "message": error,
+                "data_available": False,
+                "code": "strategy_not_executable",
+            }
         config_path, error = self._resolve_walk_forward_config(
             strategy_id=strategy_id,
             config_path=config_path,
@@ -113,6 +124,7 @@ class JobService:
                 "job_id": "",
                 "message": error,
                 "data_available": False,
+                "code": "invalid_run_mode",
             }
         return self._start_worker(
             strategy_id=strategy_id,
@@ -128,7 +140,11 @@ class JobService:
         """Return current job status and completed result payload."""
         job = self._job_store.get_job(job_id)
         if job is None:
-            return {"status": "not_found", "error": f"No job with ID: {job_id}"}
+            return {
+                "status": "not_found",
+                "error": f"No job with ID: {job_id}",
+                "code": "job_not_found",
+            }
 
         status = str(job["status"])
         if (
@@ -239,14 +255,23 @@ class JobService:
         """Mark an optimization job as confirmed."""
         job = self._job_store.get_job(job_id)
         if job is None:
-            return {"success": False, "error": f"No job with ID: {job_id}"}
+            return {
+                "success": False,
+                "error": f"No job with ID: {job_id}",
+                "code": "job_not_found",
+            }
         status = str(job["status"])
         if status == "estimation_timeout":
-            return {"success": False, "error": "Trial run timed out."}
+            return {
+                "success": False,
+                "error": "Trial run timed out.",
+                "code": "estimation_timeout",
+            }
         if status != "pending_confirmation":
             return {
                 "success": False,
                 "error": f"Job status is '{status}', expected 'pending_confirmation'.",
+                "code": "invalid_job_state",
             }
         self._job_store.update_job(job_id, confirmed=True)
         return {
@@ -261,19 +286,25 @@ class JobService:
         """Cancel a queued or running background job."""
         job = self._job_store.get_job(job_id)
         if job is None:
-            return {"success": False, "error": f"No job with ID: {job_id}"}
+            return {
+                "success": False,
+                "error": f"No job with ID: {job_id}",
+                "code": "job_not_found",
+            }
 
         status = str(job["status"])
         if status in self._TERMINAL_STATUSES:
             return {
                 "success": False,
                 "error": f"Job is already terminal: {status}",
+                "code": "invalid_job_state",
                 "status": status,
             }
         if status not in self._ACTIVE_STATUSES:
             return {
                 "success": False,
                 "error": f"Job status is not cancellable: {status}",
+                "code": "invalid_job_state",
                 "status": status,
             }
 
@@ -287,6 +318,7 @@ class JobService:
                         "Worker control identity is unavailable; "
                         "cannot confirm process cleanup."
                     ),
+                    "code": "worker_identity_unavailable",
                     "status": status,
                     "pid": job.get("pid"),
                 }
@@ -299,6 +331,7 @@ class JobService:
                 return {
                     "success": False,
                     "error": f"Worker cleanup could not be confirmed: {exc}",
+                    "code": "worker_cleanup_failed",
                     "status": status,
                     "pid": handle.pid,
                 }

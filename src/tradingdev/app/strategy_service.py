@@ -60,6 +60,7 @@ class StrategySaveResult:
     config_path: str
     status: str
     error: str | None = None
+    code: str | None = None
 
 
 class StrategyService:
@@ -98,6 +99,7 @@ class StrategyService:
                 config_path="",
                 status="rejected",
                 error="strategy_id must be lowercase snake_case",
+                code="invalid_strategy_id",
             )
         try:
             ast.parse(code)
@@ -109,6 +111,7 @@ class StrategyService:
                 config_path="",
                 status="rejected",
                 error=f"Python syntax error: {exc}",
+                code="syntax_error",
             )
         try:
             parsed = yaml.safe_load(yaml_config)
@@ -120,6 +123,7 @@ class StrategyService:
                 config_path="",
                 status="rejected",
                 error=f"YAML parse error: {exc}",
+                code="invalid_yaml",
             )
         if not isinstance(parsed, dict):
             return StrategySaveResult(
@@ -129,6 +133,7 @@ class StrategyService:
                 config_path="",
                 status="rejected",
                 error="YAML must be a mapping",
+                code="invalid_strategy_config",
             )
         strategy_section = parsed.get("strategy", {})
         if not isinstance(strategy_section, dict):
@@ -139,6 +144,7 @@ class StrategyService:
                 config_path="",
                 status="rejected",
                 error="YAML strategy section must be a mapping",
+                code="invalid_strategy_config",
             )
         class_name = strategy_section.get("class_name")
         if not isinstance(class_name, str) or not class_name:
@@ -149,6 +155,7 @@ class StrategyService:
                 config_path="",
                 status="rejected",
                 error="YAML missing required field: strategy.class_name",
+                code="invalid_strategy_config",
             )
 
         source_path = self._workspace.generated_strategies / f"{strategy_id}.py"
@@ -237,12 +244,17 @@ class StrategyService:
         """Persist validation status from an external validation worker."""
         metadata = self._load_metadata(strategy_id)
         if metadata is None:
-            return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
+            return {
+                "success": False,
+                "error": f"Unknown strategy: {strategy_id}",
+                "code": "strategy_not_found",
+            }
         if metadata.status not in {StrategyStatus.DRAFT, StrategyStatus.VALIDATED}:
             return {
                 "success": False,
                 "strategy_id": strategy_id,
                 "status": metadata.status.value,
+                "code": "invalid_strategy_status",
                 "error": (
                     "record_validation_status only accepts draft or validated "
                     "strategies."
@@ -273,12 +285,17 @@ class StrategyService:
         """Validate a draft strategy with static checks and a smoke dry run."""
         metadata = self._load_metadata(strategy_id)
         if metadata is None:
-            return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
+            return {
+                "success": False,
+                "error": f"Unknown strategy: {strategy_id}",
+                "code": "strategy_not_found",
+            }
         if metadata.status not in {StrategyStatus.DRAFT, StrategyStatus.VALIDATED}:
             return {
                 "success": False,
                 "strategy_id": strategy_id,
                 "status": metadata.status.value,
+                "code": "invalid_strategy_status",
                 "error": (
                     "validate_strategy only accepts draft or validated strategies. "
                     "Use save_strategy to create a new draft before revalidating "
@@ -311,11 +328,16 @@ class StrategyService:
         """Run a lightweight signal-generation smoke test."""
         metadata = self._load_metadata(strategy_id)
         if metadata is None:
-            return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
+            return {
+                "success": False,
+                "error": f"Unknown strategy: {strategy_id}",
+                "code": "strategy_not_found",
+            }
         if metadata.status != StrategyStatus.VALIDATED:
             return {
                 "success": False,
                 "error": "dry_run_strategy requires validated strategy status",
+                "code": "invalid_strategy_status",
             }
         contract = self._contract_checker.check(
             metadata,
@@ -367,11 +389,16 @@ class StrategyService:
         """Promote a runnable generated strategy."""
         metadata = self._load_metadata(strategy_id)
         if metadata is None:
-            return {"success": False, "error": f"Unknown strategy: {strategy_id}"}
+            return {
+                "success": False,
+                "error": f"Unknown strategy: {strategy_id}",
+                "code": "strategy_not_found",
+            }
         if metadata.status != StrategyStatus.RUNNABLE:
             return {
                 "success": False,
                 "error": "Only runnable strategies can be promoted",
+                "code": "invalid_strategy_status",
             }
         metadata.status = StrategyStatus.PROMOTED
         metadata.updated_at = now_iso()
@@ -460,7 +487,11 @@ class StrategyService:
                     "config_path": str(entry.config_path),
                 },
             }
-        return {"success": False, "error": f"Strategy not found: {strategy_id}"}
+        return {
+            "success": False,
+            "error": f"Strategy not found: {strategy_id}",
+            "code": "strategy_not_found",
+        }
 
     def _metadata_path(self, strategy_id: str) -> Path:
         return self._workspace.generated_strategies / f"{strategy_id}.json"

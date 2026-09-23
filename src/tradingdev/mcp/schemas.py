@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 
 class SaveStrategyInput(BaseModel):
@@ -12,14 +12,6 @@ class SaveStrategyInput(BaseModel):
     code: str
     yaml_config: str
     request_summary: str = ""
-
-
-class ToolResult(BaseModel):
-    """Generic MCP-friendly result."""
-
-    success: bool
-    message: str = ""
-    error: str | None = None
 
 
 class BacktestInput(BaseModel):
@@ -38,7 +30,7 @@ class OptimizationInput(BaseModel):
     strategy_id: str
     symbol: str
     timeframe: str
-    param_ranges: dict[str, list[object]]
+    param_ranges: dict[str, list[JsonValue]]
     optimization_metric: str
     train_start: str
     train_end: str

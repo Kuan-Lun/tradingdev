@@ -67,7 +67,7 @@ def test_server_instances_keep_generated_strategies_in_their_workspace(
         )
         assert isinstance(saved_result, tuple)
         assert isinstance(saved_result[1], dict)
-        assert saved_result[1]["success"] is True
+        assert saved_result[1]["result"]["success"] is True
         first_result = await first.call_tool(
             "get_strategy", {"strategy_id": "isolated_strategy"}
         )
@@ -76,10 +76,10 @@ def test_server_instances_keep_generated_strategies_in_their_workspace(
         )
         assert isinstance(first_result, tuple)
         assert isinstance(first_result[1], dict)
-        assert first_result[1]["success"] is True
+        assert first_result[1]["result"]["success"] is True
         assert isinstance(second_result, tuple)
         assert isinstance(second_result[1], dict)
-        assert second_result[1]["success"] is False
+        assert second_result[1]["result"]["success"] is False
 
     asyncio.run(check())
     assert (first_workspace.generated_strategies / "isolated_strategy.py").is_file()
