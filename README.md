@@ -17,8 +17,9 @@ uv sync --locked
 
 技術指標使用官方 `TA-Lib` Python 套件（`import talib`），由上述命令一併安裝。
 支援平台的 wheel 已包含底層 C 函式庫，不需要另外執行 `brew install ta-lib`。
-目前鎖定的 macOS ARM64 wheel 需要 macOS 14 或更新版本；其他平台或需要從
-原始碼編譯時，請依 [TA-Lib 官方安裝說明](https://github.com/TA-Lib/ta-lib-python#installation-)準備 C 函式庫。
+作業系統最低版本與 CPU 架構需求，以 uv 選用的 wheel 平台標籤為準。
+若沒有相容的 wheel 而需要從原始碼編譯，請依
+[TA-Lib 官方安裝說明](https://github.com/TA-Lib/ta-lib-python#installation-)準備 C 函式庫。
 若要明確使用 Python 3.13，可執行 `uv sync --locked --python 3.13`。
 
 接著依下一節啟動 MCP server，並將它加入你使用的 MCP 客戶端。
@@ -70,6 +71,8 @@ Claude Desktop 範例：
 
 從 pandas-ta 版本升級時，既有生成策略的 `import pandas_ta` 必須改用
 `tradingdev.domain.indicators` 或 `talib`，再重新驗證與 dry-run。
+`indicator_column` 已移除；其匯入與呼叫須改為存取指標回傳物件的具名欄位，
+或直接解包 TA-Lib 的回傳 tuple，詳見[策略契約](docs/strategy_contract.md)。
 SMA／EMA 週期須為 2～100000 的整數；GLFT 趨勢過濾仍可用 0 停用。
 TA-Lib 的初始化、暖機期與缺值處理會改變部分指標數值，因此須重新回測、
 調參與訓練 ML 模型；歷史結果與使用者工作區不會自動改寫。

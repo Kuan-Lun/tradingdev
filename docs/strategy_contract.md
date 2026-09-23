@@ -58,6 +58,9 @@ Periods must be integers other than booleans and at most 100,000. SMA, EMA,
 RSI, ADX, Bollinger Bands, and MACD fast/slow periods require at least 2 bars;
 ATR, MACD signal, and Stochastic periods allow 1. Bollinger Bands expose only
 population standard deviation: the previous `ddof` parameter is removed.
+The `std` argument to `bollinger_bands` must be finite and in the inclusive
+range `0 <= std <= 3e37`. Negative values, values above `3e37`, NaN, and
+positive or negative infinity raise `ValueError`.
 
 Generated strategies may also import `talib` directly. Use its Function API
 with float64 NumPy arrays, unpack multi-output tuples, and restore the input
@@ -67,6 +70,13 @@ histogram` for `MACD`, `upper, middle, lower` for `BBANDS`, and `k, d` for
 The same warm-up and missing-value rules apply. The import allowlist rejects
 `pandas_ta`; existing generated strategies using it must be revised and
 validated again. Static validation does not enforce the numerical rules above.
+
+The public `indicator_column` helper has also been removed. Remove its imports
+and calls, replacing pandas-ta column-name lookups with the facade's named
+result fields, such as `macd(close).histogram` or `bollinger_bands(close).upper`.
+When calling `talib` directly, unpack its output tuples in the order described
+above instead. The facade's result objects expose named fields and are not
+tuples to unpack.
 
 Ruff treats `tradingdev` as first-party code. Separate its imports from
 third-party `numpy`, `pandas`, and `talib` imports with a blank line.
