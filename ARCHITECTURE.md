@@ -190,17 +190,18 @@ The dashboard reads run metadata and pipeline artifacts through `RunService` /
 - Strategy signal convention: `1` long, `-1` short, `0` flat.
 - Named technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, ADX,
   Stochastic) come from `domain/indicators`, the only module under `src/`
-  that calls pandas-ta. It selects pandas-ta output by column name, pins
-  `talib=False` so results never depend on whether TA-Lib is installed,
-  follows TA-Lib conventions where pandas-ta offers a choice (SMA-seeded EMA,
-  population standard deviation for Bollinger Bands), and returns NaN-filled
-  series for inputs shorter than the window. Statistical features such as
-  realized volatility, Parkinson volatility, and return moments stay in
+  that calls the official TA-Lib Python wrapper. It maps TA-Lib's tuple outputs
+  to named results while preserving pandas indexes and native warm-up and NaN
+  propagation. Bollinger Bands use population standard deviation; multi-series
+  inputs require identical lengths and indexes, and infinite inputs are
+  rejected. Strategies keep signals flat until all required indicator values
+  are finite, without backfilling from future data. Statistical features such
+  as realized volatility, Parkinson volatility, and return moments stay in
   pandas/numpy inside `domain/ml/features`. Generated strategies in a user
-  workspace may also import `pandas_ta` directly; the strategy contract asks
-  them to select columns by name and pass `talib=False` as well, but
-  validation only checks the import allowlist and does not enforce those two
-  rules.
+  workspace may also import `talib` directly; the strategy contract describes
+  its Function API tuple order and requires the same warm-up and NaN handling.
+  Static validation accepts `talib`, rejects the removed `pandas_ta` import,
+  and does not enforce those numerical rules.
 - Strategy parameters live in YAML `strategy.parameters`.
 - Data requirements live in YAML `data.requirements`.
 - `data.requirements.market.source` selects the market data crawler from the

@@ -224,6 +224,25 @@ async def test_rejected_drafts_diagnostics_and_repair(
         assert not rejected["success"] and rejected["status"] == "draft"
         assert "banned_import" in {item["code"] for item in rejected["diagnostics"]}
         assert not marker.exists(), "Rejected code must never be imported"
+        removed_import = code.replace(
+            "from __future__ import annotations",
+            "from __future__ import annotations\n\nimport pandas_ta",
+        )
+        await client.call(
+            "save_strategy",
+            strategy_id=STRATEGY_ID,
+            code=removed_import,
+            yaml_config=config_text,
+        )
+        rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
+        assert not rejected["success"] and rejected["status"] == "draft"
+        import_diagnostic = next(
+            item
+            for item in rejected["diagnostics"]
+            if item["code"] == "import_not_allowed"
+        )
+        assert import_diagnostic["message"] == "import not allowed: pandas_ta"
+        assert "talib" in import_diagnostic["fix"]
         bad_signal = code.replace('result["signal"] = 0', 'result["signal"] = 7')
         await client.call(
             "save_strategy",

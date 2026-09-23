@@ -5,14 +5,14 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
+import pytest
+
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.strategy_service import StrategyService
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 _STRATEGY_CODE = """\
 from __future__ import annotations
@@ -268,14 +268,20 @@ def test_strategy_service_validate_reports_syntax_errors(tmp_path: Path) -> None
     assert [item["code"] for item in validated["diagnostics"]] == ["syntax_error"]
 
 
-def test_strategy_service_rejects_non_allowlisted_import(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "import_source",
+    ["import pandas_ta as ta", "from pandas_ta import sma"],
+)
+def test_strategy_service_rejects_removed_pandas_ta_import(
+    tmp_path: Path, import_source: str
+) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
     service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
 
     code = _STRATEGY_CODE.replace(
         "import pandas as pd",
-        "import talib\n\nimport pandas as pd",
+        f"{import_source}\n\nimport pandas as pd",
     )
     assert service.save_draft(
         "bad_import_strategy",
@@ -293,7 +299,9 @@ def test_strategy_service_rejects_non_allowlisted_import(tmp_path: Path) -> None
         for item in validated["diagnostics"]
         if item["code"] == "import_not_allowed"
     )
-    assert "pandas_ta" in rejected["fix"]
+    assert rejected["message"] == "import not allowed: pandas_ta"
+    assert "talib" in rejected["fix"]
+    assert "tradingdev.domain.indicators" in rejected["fix"]
 
 
 def test_strategy_service_rejects_invalid_signal_values(tmp_path: Path) -> None:
@@ -338,20 +346,18 @@ def test_strategy_service_rejects_input_mutation(tmp_path: Path) -> None:
     assert "input_mutated" in codes
 
 
-_PANDAS_TA_CODE = """\
+_TALIB_CODE = """\
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import pandas_ta as ta
+import pandas as pd
+import talib
 
 from tradingdev.domain.strategies.base import BaseStrategy
 
-if TYPE_CHECKING:
-    import pandas as pd
 
-
-class PandasTaStrategy(BaseStrategy):
+class TalibStrategy(BaseStrategy):
     def __init__(
         self,
         backtest_engine: object | None = None,
@@ -362,7 +368,9 @@ class PandasTaStrategy(BaseStrategy):
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
-        sma = ta.sma(result["close"], length=self._length, talib=False)
+        close = result["close"].to_numpy(dtype=float)
+        _upper, middle, _lower = talib.BBANDS(close, timeperiod=self._length)
+        sma = pd.Series(middle, index=result.index)
         result["signal"] = 0
         result.loc[result["close"] > sma, "signal"] = 1
         return result
@@ -371,24 +379,35 @@ class PandasTaStrategy(BaseStrategy):
         return {"length": self._length}
 """
 
-_PANDAS_TA_YAML = (
-    _YAML.replace("fixture_strategy", "pandas_ta_strategy")
-    .replace("FixtureStrategy", "PandasTaStrategy")
+_TALIB_YAML = (
+    _YAML.replace("fixture_strategy", "talib_strategy")
+    .replace("FixtureStrategy", "TalibStrategy")
     .replace("threshold: 0.0", "length: 3")
 )
 
 
-def test_strategy_service_accepts_pandas_ta_import(tmp_path: Path) -> None:
+def test_strategy_service_validates_and_dry_runs_direct_talib_strategy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MYPY_CACHE_DIR", str(tmp_path / "mypy-cache"))
+    monkeypatch.setenv("RUFF_CACHE_DIR", str(tmp_path / "ruff-cache"))
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
-    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
 
-    assert service.save_draft(
-        "pandas_ta_strategy", _PANDAS_TA_CODE, _PANDAS_TA_YAML
-    ).success
+    assert service.save_draft("talib_strategy", _TALIB_CODE, _TALIB_YAML).success
 
-    validated = service.validate("pandas_ta_strategy")
+    validated = service.validate("talib_strategy")
 
     assert validated["success"] is True, validated["diagnostics"]
     assert validated["status"] == "validated"
     assert validated["signal_analysis"]["rows"] == 80
+    assert validated["signal_analysis"]["signal_distribution"] == {"1": 78, "0": 2}
+
+    dry_run = service.dry_run("talib_strategy")
+
+    assert dry_run["success"] is True, dry_run["diagnostics"]
+    assert dry_run["status"] == "runnable"
+    assert dry_run["signal_analysis"]["rows"] == 240
+    assert dry_run["signal_analysis"]["nan_count"] == 0
+    assert dry_run["signal_analysis"]["transition_count"] > 0

@@ -48,8 +48,13 @@ the bar being signalled. Strategy parameters live only in YAML
 strategy.parameters. Generated strategies must remain in workspace/.
 
 Compute standard indicators with tradingdev.domain.indicators (sma, ema,
-rsi, macd, bollinger_bands, atr, adx, stochastic). If you import pandas_ta
-directly, select its output columns by name and pass talib=False.
+rsi, macd, bollinger_bands, atr, adx, stochastic), backed by TA-Lib. Preserve
+TA-Lib's warm-up and NaN behavior: keep signals flat until all required values
+are finite, and never backfill indicators from future rows. Direct talib
+imports are allowed; pass float64 NumPy arrays to its Function API, unpack
+multi-output tuples (MACD: line, signal, histogram; BBANDS: upper, middle,
+lower; STOCH: k, d), and align output arrays with the input index. pandas_ta
+imports are no longer supported.
 
 Always reply in the user's language.
 """

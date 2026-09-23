@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.strategies.contract import SignalContractChecker
@@ -126,6 +127,41 @@ def test_loader_rejects_legacy_bundled_strategy_id() -> None:
 
     with pytest.raises(ValueError, match="Bundled strategy id 'kd_strategy'"):
         StrategyLoader().create_from_config(raw_config, engine)
+
+
+@pytest.mark.parametrize(
+    ("strategy_directory", "field", "value", "error_location"),
+    [
+        ("glft_strategy", "trend_ema_candidates", [0, 1], ("trend_ema_candidates", 1)),
+        (
+            "glft_ml_strategy",
+            "ema_window_candidates",
+            [15, 1],
+            ("ema_window_candidates", 1),
+        ),
+        ("safety_volume_strategy", "sma_fast", 1, ("sma_fast",)),
+    ],
+)
+def test_bundled_invalid_periods_fail_when_loading_without_execution(
+    tmp_path: Path,
+    strategy_directory: str,
+    field: str,
+    value: object,
+    error_location: tuple[str | int, ...],
+) -> None:
+    config_path = (
+        Path("src/tradingdev/domain/strategies/bundled")
+        / strategy_directory
+        / "config.yaml"
+    )
+    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw_config["strategy"]["parameters"][field] = value
+    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+
+    with pytest.raises(ValidationError) as exc_info:
+        loader.create_from_config(raw_config, engine=None)
+
+    assert exc_info.value.errors()[0]["loc"] == error_location
 
 
 def test_generated_parameters_match_contract_and_execution(

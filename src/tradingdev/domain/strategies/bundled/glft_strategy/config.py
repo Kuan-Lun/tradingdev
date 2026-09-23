@@ -1,10 +1,13 @@
 """Configuration models for the bundled GLFT strategy."""
 
-from __future__ import annotations
-
 from typing import Literal, Self
 
 from pydantic import BaseModel, field_validator, model_validator
+
+from tradingdev.domain.strategies.bundled.indicator_parameters import (
+    MovingAveragePeriod,
+    TrendEMAPeriod,
+)
 
 
 class GLFTStrategyConfig(BaseModel):
@@ -12,14 +15,14 @@ class GLFTStrategyConfig(BaseModel):
 
     gamma: float = 500.0
     kappa: float = 1000.0
-    ema_window: int = 21
+    ema_window: MovingAveragePeriod = 21
     vol_window: int = 30
     vol_type: Literal["realized", "parkinson", "implied"] = "realized"
     min_holding_bars: int = 5
     max_holding_bars: int = 30
     gamma_candidates: list[float] = [0.0, 200.0, 500.0, 1000.0]
     kappa_candidates: list[float] = [500.0, 1000.0, 5000.0]
-    ema_window_candidates: list[int] = [10, 21, 50]
+    ema_window_candidates: list[MovingAveragePeriod] = [10, 21, 50]
     max_holding_bars_candidates: list[int] = [30]
     vol_window_candidates: list[int] = [30]
     target_metric: str = "total_return"
@@ -28,8 +31,8 @@ class GLFTStrategyConfig(BaseModel):
     fee_rate: float = 0.0006
     min_entry_edge: float = 0.0012
     min_entry_edge_candidates: list[float] = [0.0012, 0.0015, 0.002, 0.003]
-    trend_ema_window: int = 0
-    trend_ema_candidates: list[int] = [0]
+    trend_ema_window: TrendEMAPeriod = 0
+    trend_ema_candidates: list[TrendEMAPeriod] = [0]
     profit_target_ratio: float = 1.0
     profit_target_ratio_candidates: list[float] = [0.5, 0.75, 1.0]
     strategy_sl: float = 0.005

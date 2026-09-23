@@ -1,10 +1,11 @@
 """Configuration models for the bundled safety-volume strategy."""
 
-from __future__ import annotations
-
 from pydantic import BaseModel
 
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
+from tradingdev.domain.strategies.bundled.indicator_parameters import (
+    MovingAveragePeriod,
+)
 
 
 class SafetyVolumeStrategyConfig(BaseModel):
@@ -18,8 +19,8 @@ class SafetyVolumeStrategyConfig(BaseModel):
     fee_rate: float = 0.0011
     use_ml_direction: bool = False
     direction_model: XGBoostModelConfig = XGBoostModelConfig()
-    sma_fast: int = 5
-    sma_slow: int = 20
+    sma_fast: MovingAveragePeriod = 5
+    sma_slow: MovingAveragePeriod = 20
     min_holding_bars: int = 5
     max_holding_bars: int = 30
     lookback_candidates: list[int] = [360, 720, 1440]
