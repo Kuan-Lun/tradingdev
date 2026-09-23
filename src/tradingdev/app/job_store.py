@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, ConfigDict
 
 from tradingdev.adapters.storage.filesystem import (
@@ -20,8 +21,9 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_lineage import (
     extract_random_seed,
     load_config_payload,
-    resolve_strategy_source,
+    read_strategy_snapshot,
 )
+from tradingdev.app.strategy_service import StrategyNotExecutableError
 from tradingdev.shared.utils.json_values import normalize_json_object
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ class JobRecord(BaseModel):
     job_id: str
     status: str
     strategy_name: str | None = None
+    revision_id: str | None = None
     symbol: str | None = None
     timeframe: str | None = None
     start_date: str | None = None
@@ -85,6 +88,7 @@ class JobStore:
         *,
         job_id: str,
         strategy_name: str | None = None,
+        revision_id: str | None = None,
         symbol: str | None = None,
         timeframe: str | None = None,
         start_date: str | None = None,
@@ -100,6 +104,7 @@ class JobStore:
             status="queued",
             job_type=job_type,
             strategy_name=strategy_name,
+            revision_id=revision_id,
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
@@ -157,10 +162,38 @@ class JobStore:
         metrics: dict[str, Any],
         *,
         pipeline: Any | None = None,
+        config_snapshot: dict[str, Any] | None = None,
     ) -> Path:
         """Serialize metrics to a run artifact and record run metadata."""
         safe = normalize_json_object(metrics)
 
+        job = self.get_job(job_id)
+        config_path = _resolve_optional_path(job.get("config_path")) if job else None
+        config_payload = (
+            pipeline.config_snapshot
+            if pipeline is not None
+            else config_snapshot
+            if config_snapshot is not None
+            else load_config_payload(config_path)
+            if config_path is not None
+            else None
+        )
+        source = read_strategy_snapshot(
+            config_payload,
+            self._workspace,
+            strategy_id=str((job or {}).get("strategy_name") or ""),
+        )
+        if job is not None and job.get("revision_id") != source.revision_id:
+            msg = "Job and result configuration refer to different revisions"
+            raise StrategyNotExecutableError(msg)
+        config_content = (
+            yaml.safe_dump(config_payload, sort_keys=False, allow_unicode=True)
+            if config_payload is not None
+            else None
+        )
+        config_hash = (
+            sha256_text(config_content) if config_content is not None else None
+        )
         run_dir = self._workspace.runs / job_id
         run_dir.mkdir(parents=True, exist_ok=True)
         result_path = run_dir / "result.json"
@@ -169,21 +202,9 @@ class JobStore:
             encoding="utf-8",
         )
 
-        job = self.get_job(job_id)
         if job is not None:
-            config_path = _resolve_optional_path(job.get("config_path"))
-            config_hash = (
-                sha256_file(config_path)
-                if config_path is not None and config_path.is_file()
-                else None
-            )
-            config_payload = load_config_payload(config_path) if config_path else None
-            strategy_source = resolve_strategy_source(config_payload)
-            source_hash = (
-                sha256_file(strategy_source)
-                if strategy_source is not None and strategy_source.exists()
-                else None
-            )
+            strategy_source = source.path
+            source_hash = source.source_hash
             random_seed = extract_random_seed(config_payload)
             dataset_fingerprint = self._dataset_fingerprint(job)
             # Current execution creates one run per job, so run_id is job_id.
@@ -193,6 +214,7 @@ class JobStore:
                 run_id=job_id,
                 job_id=job_id,
                 strategy_id=str(job.get("strategy_name", "")),
+                revision_id=source.revision_id,
                 artifact_dir=run_dir,
                 metrics=safe,
                 config_hash=config_hash,
@@ -208,30 +230,24 @@ class JobStore:
                 sha256=sha256_file(result_path),
                 metadata={"job_id": job_id},
             )
-            if config_path is not None and config_path.is_file():
-                config_snapshot = run_dir / "config.yaml"
-                config_snapshot.write_text(
-                    config_path.read_text(encoding="utf-8"),
-                    encoding="utf-8",
-                )
+            if config_content is not None:
+                snapshot_path = run_dir / "config.yaml"
+                snapshot_path.write_bytes(config_content.encode("utf-8"))
                 self._store.create_artifact(
                     artifact_id=f"{job_id}:config_snapshot",
                     run_id=job_id,
                     artifact_type="config_snapshot",
-                    path=config_snapshot,
-                    sha256=sha256_file(config_snapshot),
+                    path=snapshot_path,
+                    sha256=sha256_file(snapshot_path),
                     metadata={
                         "job_id": job_id,
                         "source_path": str(config_path),
                         "config_hash": config_hash,
                     },
                 )
-                if strategy_source is not None and strategy_source.exists():
+                if strategy_source is not None and source.content is not None:
                     strategy_snapshot = run_dir / "strategy.py"
-                    strategy_snapshot.write_text(
-                        strategy_source.read_text(encoding="utf-8"),
-                        encoding="utf-8",
-                    )
+                    strategy_snapshot.write_bytes(source.content)
                     self._store.create_artifact(
                         artifact_id=f"{job_id}:strategy_source",
                         run_id=job_id,
@@ -242,6 +258,7 @@ class JobStore:
                             "job_id": job_id,
                             "source_path": str(strategy_source),
                             "source_hash": source_hash,
+                            "revision_id": source.revision_id,
                         },
                     )
             fingerprint_path = run_dir / "dataset_fingerprint.json"
@@ -343,11 +360,13 @@ def create_job(
     config_path: str | None = None,
     job_type: str = "backtest",
     extra_payload: dict[str, Any] | None = None,
+    revision_id: str | None = None,
 ) -> dict[str, Any]:
     """Create a new job record in the default store."""
     return get_default_job_store().create_job(
         job_id=job_id,
         strategy_name=strategy_name,
+        revision_id=revision_id,
         symbol=symbol,
         timeframe=timeframe,
         start_date=start_date,
@@ -378,12 +397,14 @@ def save_result(
     metrics: dict[str, Any],
     *,
     pipeline: Any | None = None,
+    config_snapshot: dict[str, Any] | None = None,
 ) -> Path:
     """Persist a result in the default store."""
     return get_default_job_store().save_result(
         job_id,
         metrics,
         pipeline=pipeline,
+        config_snapshot=config_snapshot,
     )
 
 

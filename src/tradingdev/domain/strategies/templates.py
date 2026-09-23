@@ -35,7 +35,12 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
             "numpy, pandas, and talib imports with a blank line."
         ),
         "lifecycle": (
-            "save_strategy stores a draft; validate_strategy runs static checks, "
+            "save_strategy creates an immutable source/config revision and returns "
+            "revision_id. Pass that revision_id to validate_strategy, "
+            "dry_run_strategy, promote_strategy, get_strategy, and execution tools. "
+            "Saving a repair creates a new draft revision; earlier revisions and "
+            "their validation evidence remain available. Omitting revision_id "
+            "selects current once per operation. validate_strategy runs static checks, "
             "restricted import checks, ruff, mypy, inheritance checks, and the "
             "shared signal-contract gate on a short fixture with structured "
             "diagnostics; dry_run_strategy accepts only validated strategies and "
@@ -111,7 +116,6 @@ strategy:
   id: "sma_crossover"
   version: "0.1.0"
   class_name: "SmaCrossoverStrategy"
-  source_path: "workspace/generated_strategies/sma_crossover.py"
   description: "Simple moving-average crossover"
   parameters:
     fast_period: 10

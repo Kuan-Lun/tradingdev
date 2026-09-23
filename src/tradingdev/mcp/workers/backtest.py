@@ -10,6 +10,7 @@ from pathlib import Path
 from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
+from tradingdev.shared.utils.config import load_config
 from tradingdev.shared.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -38,8 +39,17 @@ def _run_backtest(
 
     try:
         service = BacktestService()
+        job = job_store.get_job(job_id)
+        raw_config = load_config(config_path)
+        if (
+            job is None
+            or raw_config["strategy"].get("revision_id") != job.get("revision_id")
+            or raw_config["strategy"].get("id") != job.get("strategy_name")
+        ):
+            msg = "Job and execution config refer to different strategy revisions"
+            raise ValueError(msg)
         job_store.update_job(job_id, status="running_backtest")
-        run = service.run_config(config_path, walk_forward=walk_forward)
+        run = service.run_raw_config(raw_config, walk_forward=walk_forward)
         job_store.update_job(job_id, data_downloaded=True, dataset_id=run.dataset_id)
         result_path = job_store.save_result(job_id, run.metrics, pipeline=run.pipeline)
         job_store.update_job(

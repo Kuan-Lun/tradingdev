@@ -34,7 +34,9 @@ class Scenario:
 YAML backtest 設定 BTC/USDT、1h、2024-01-01 至 2024-01-08、init_cash=10000、
 mode=signal、fees=0、slippage=0、random_seed=42。data.requirements.features 為空。
 完成 save_strategy、validate_strategy、dry_run_strategy；若有錯誤請讀取診斷修正，
-直到 runnable。不 promote。接著你必須親自透過 MCP start_backtest 啟動這個策略，
+每次 save 取得的新 revision_id 必須傳給 validate、dry-run 與 start_backtest，
+確認各工具回覆的 revision_id 一致，直到 runnable。不 promote。
+接著你必須親自透過 MCP start_backtest 啟動這個策略，
 symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
 本次行情已預先放入後端快取，不下載行情、不使用外部資料。
 持續 get_job_status 查詢直到 done，再以回傳的 run_id 呼叫 get_run，

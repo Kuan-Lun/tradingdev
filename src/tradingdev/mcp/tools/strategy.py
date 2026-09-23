@@ -77,9 +77,10 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
     )
     def get_strategy(
         strategy_id: str,
+        revision_id: str | None = None,
     ) -> BundledStrategyResponse | GeneratedStrategyResponse | ErrorResponse:
-        """Read a known strategy's source, YAML, and evidence before editing it."""
-        response = service.get_strategy(strategy_id)
+        """Read source, YAML, and evidence; omitted revision_id selects current once."""
+        response = service.get_strategy(strategy_id, revision_id=revision_id)
         if not response["success"]:
             return ErrorResponse.model_validate(response)
         if response["kind"] == "bundled":
@@ -100,7 +101,7 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
         yaml_config: str,
         request_summary: str = "",
     ) -> StrategySaveSuccess | StrategySaveFailure:
-        """Save or replace generated source and YAML as a draft, then validate it."""
+        """Save a draft revision; use its revision_id for checks and execution."""
         payload = SaveStrategyInput(
             strategy_id=strategy_id,
             code=code,
@@ -118,6 +119,7 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
             "message": "Draft strategy saved." if saved.success else "",
             "error": saved.error,
             "strategy_id": saved.strategy_id,
+            "revision_id": saved.revision_id,
             "py_path": saved.source_path,
             "yaml_path": saved.config_path,
             "status": saved.status,
@@ -136,6 +138,7 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
     )
     def validate_strategy(
         strategy_id: str,
+        revision_id: str | None = None,
     ) -> (
         StrategyValidationSuccess
         | StrategyValidationFailure
@@ -144,9 +147,10 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
     ):
         """Check a draft or validated strategy; repair diagnostics or dry-run next.
 
+        Pass the revision_id returned by save_strategy to bind the evidence.
         The smoke check executes generated Python without a security sandbox.
         """
-        response = service.validate(strategy_id)
+        response = service.validate(strategy_id, revision_id=revision_id)
         if "error" in response:
             if "status" in response:
                 return StrategyStateError.model_validate(response)
@@ -165,14 +169,23 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
     )
     def dry_run_strategy(
         strategy_id: str,
-    ) -> StrategyDryRunSuccess | StrategyDryRunFailure | ErrorResponse:
+        revision_id: str | None = None,
+    ) -> (
+        StrategyDryRunSuccess
+        | StrategyDryRunFailure
+        | StrategyStateError
+        | ErrorResponse
+    ):
         """Check a validated strategy on a longer fixture before backtesting.
 
+        Use the revision_id that passed validation.
         This executes generated Python without a security sandbox. Repair any
         diagnostics through save_strategy and validation before trying again.
         """
-        response = service.dry_run(strategy_id)
+        response = service.dry_run(strategy_id, revision_id=revision_id)
         if "error" in response:
+            if "status" in response:
+                return StrategyStateError.model_validate(response)
             return ErrorResponse.model_validate(response)
         if response["success"]:
             return StrategyDryRunSuccess.model_validate(response)
@@ -188,9 +201,12 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
     )
     def promote_strategy(
         strategy_id: str,
-    ) -> StrategyPromoteSuccess | ErrorResponse:
-        """Promote a generated strategy only after dry-run marks it runnable."""
-        response = service.promote(strategy_id)
+        revision_id: str | None = None,
+    ) -> StrategyPromoteSuccess | StrategyStateError | ErrorResponse:
+        """Promote the selected revision only after dry-run marks it runnable."""
+        response = service.promote(strategy_id, revision_id=revision_id)
         if not response["success"]:
+            if "status" in response:
+                return StrategyStateError.model_validate(response)
             return ErrorResponse.model_validate(response)
         return StrategyPromoteSuccess.model_validate(response)

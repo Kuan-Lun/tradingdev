@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import pickle
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
@@ -14,8 +17,7 @@ from tradingdev.adapters.storage.filesystem import (
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_lineage import (
     extract_random_seed,
-    load_config_payload,
-    resolve_strategy_source,
+    read_strategy_snapshot,
 )
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.shared.utils.cache import cache_dir, compute_cache_key
@@ -109,7 +111,22 @@ class ArtifactService:
         strategy_id: str,
     ) -> Path:
         """Persist a CLI pipeline result and track it as a SQLite artifact."""
-        key = compute_cache_key(config_path, processed_path)
+        config_payload = pipeline.config_snapshot
+        source = read_strategy_snapshot(
+            config_payload, self._workspace, strategy_id=strategy_id
+        )
+        disk_content = config_path.read_bytes()
+        disk_config = yaml.safe_load(disk_content)
+        executed_config = deepcopy(config_payload)
+        for config in (disk_config, executed_config):
+            if isinstance(config, dict) and isinstance(config.get("strategy"), dict):
+                config["strategy"].pop("source_hash", None)
+        if disk_config != executed_config:
+            msg = "Config changed after the CLI run; result cannot be cached"
+            raise ValueError(msg)
+        key = compute_cache_key(
+            config_path, processed_path, config_content=disk_content
+        )
         directory = cache_dir()
         directory.mkdir(parents=True, exist_ok=True)
         cache_path = directory / f"{key}.pkl"
@@ -117,13 +134,8 @@ class ArtifactService:
             pickle.dump(pipeline, handle)
 
         run_id = f"cli_{key}"
-        config_hash = sha256_file(config_path) if config_path.exists() else None
-        config_payload = load_config_payload(config_path)
-        strategy_source = resolve_strategy_source(config_payload)
-        source_hash = (
-            sha256_file(strategy_source)
-            if strategy_source is not None and strategy_source.exists()
-            else None
+        config_hash = sha256_text(
+            yaml.safe_dump(config_payload, sort_keys=False, allow_unicode=True)
         )
         dataset_id = (
             sha256_file(processed_path)
@@ -134,10 +146,11 @@ class ArtifactService:
             run_id=run_id,
             job_id=run_id,
             strategy_id=strategy_id,
+            revision_id=source.revision_id,
             artifact_dir=directory,
             metrics=metrics,
             config_hash=config_hash,
-            source_hash=source_hash,
+            source_hash=source.source_hash,
             random_seed=extract_random_seed(config_payload),
             dataset_id=dataset_id,
         )

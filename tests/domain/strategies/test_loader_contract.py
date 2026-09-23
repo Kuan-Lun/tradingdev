@@ -10,6 +10,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from tradingdev.adapters.storage.filesystem import sha256_file
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.strategies.contract import SignalContractChecker
 from tradingdev.domain.strategies.loader import StrategyLoader
@@ -53,6 +54,7 @@ def generated_config(tmp_path: Path) -> dict[str, Any]:
     return {
         "strategy": {
             "id": "parameter_strategy",
+            "revision_id": "7a6e07f0fdb8408ba986c18653ff9365",
             "class_name": "ParameterStrategy",
             "source_path": str(source),
             "parameters": {"threshold": 101.0, "direction": -1},
@@ -66,14 +68,15 @@ def _contract_metadata(tmp_path: Path, raw: dict[str, Any]) -> StrategyMetadata:
     strategy_cfg = raw["strategy"]
     return StrategyMetadata(
         strategy_id=strategy_cfg["id"],
+        revision_id=strategy_cfg["revision_id"],
         class_name=strategy_cfg["class_name"],
         status="draft",
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
         source_path=strategy_cfg["source_path"],
         config_path=str(config_path),
-        source_hash="fixture",
-        config_hash="fixture",
+        source_hash=sha256_file(Path(strategy_cfg["source_path"])),
+        config_hash=sha256_file(config_path),
     )
 
 
@@ -246,7 +249,7 @@ def test_loader_honors_workspace_environment_and_explicit_override(
         loader.create_from_config(generated_config, engine=None)
 
 
-@pytest.mark.parametrize("field", ["id", "class_name", "source_path"])
+@pytest.mark.parametrize("field", ["id", "revision_id", "class_name", "source_path"])
 def test_contract_rejects_config_pointing_at_another_strategy(
     tmp_path: Path,
     generated_config: dict[str, Any],
@@ -257,6 +260,7 @@ def test_contract_rejects_config_pointing_at_another_strategy(
     Path(metadata.config_path).write_text(
         yaml.safe_dump(generated_config), encoding="utf-8"
     )
+    metadata.config_hash = sha256_file(Path(metadata.config_path))
 
     checked = SignalContractChecker(
         StrategyLoader(workspace_root=tmp_path / "workspace")
@@ -289,3 +293,32 @@ def test_loader_reads_latest_source_after_same_size_same_timestamp_rewrite(
 
     assert second.get_parameters()["threshold"] == 999999999
     assert not (source.parent / "__pycache__").exists()
+
+
+def test_loader_rejects_modified_source_with_pinned_hash(
+    tmp_path: Path, generated_config: dict[str, Any]
+) -> None:
+    source = Path(generated_config["strategy"]["source_path"])
+    generated_config["strategy"]["source_hash"] = sha256_file(source)
+    source.write_text(
+        _PARAMETERIZED_CODE + "\nraise AssertionError('must not execute')\n"
+    )
+    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+
+    with pytest.raises(ValueError, match="revision source has changed"):
+        loader.create_from_config(generated_config, engine=None)
+
+
+def test_contract_rejects_changed_config_bytes(
+    tmp_path: Path, generated_config: dict[str, Any]
+) -> None:
+    metadata = _contract_metadata(tmp_path, generated_config)
+    generated_config["strategy"]["parameters"]["threshold"] = 9999.0
+    Path(metadata.config_path).write_text(yaml.safe_dump(generated_config))
+
+    checked = SignalContractChecker(
+        StrategyLoader(workspace_root=tmp_path / "workspace")
+    ).check(metadata, fixture_rows=80)
+
+    assert len(checked["diagnostics"]) == 1
+    assert "configuration has changed" in checked["diagnostics"][0].message

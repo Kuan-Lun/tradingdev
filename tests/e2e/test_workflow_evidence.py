@@ -12,6 +12,7 @@ from tests.e2e.test_llm_workflows import assert_workflow
 def _repair_evidence() -> list[ToolCall]:
     strategy_id = SCENARIOS["repair"].strategy_id
     target = {"strategy_id": strategy_id}
+    versioned = {**target, "revision_id": "revision_a"}
     metrics = {"total_return": 0.25}
     return [
         ToolCall("get_strategy_contract", {}, {"lifecycle": "fixture"}),
@@ -21,29 +22,53 @@ def _repair_evidence() -> list[ToolCall]:
             target,
             {"success": False, "diagnostics": [{"code": "invalid_signal_values"}]},
         ),
-        ToolCall("save_strategy", target, {"success": True, "status": "draft"}),
-        ToolCall("validate_strategy", target, {"success": True, "status": "validated"}),
-        ToolCall("dry_run_strategy", target, {"success": True, "status": "runnable"}),
+        ToolCall(
+            "save_strategy",
+            target,
+            {"success": True, "status": "draft", "revision_id": "revision_a"},
+        ),
+        ToolCall(
+            "validate_strategy",
+            versioned,
+            {"success": True, "status": "validated", "revision_id": "revision_a"},
+        ),
+        ToolCall(
+            "dry_run_strategy",
+            versioned,
+            {"success": True, "status": "runnable", "revision_id": "revision_a"},
+        ),
         ToolCall(
             "start_backtest",
             {
-                **target,
+                **versioned,
                 "symbol": "BTC/USDT",
                 "timeframe": "1h",
                 "start_date": "2024-01-01",
                 "end_date": "2024-01-08",
             },
-            {"job_id": "job"},
+            {"job_id": "job", "revision_id": "revision_a"},
         ),
         ToolCall(
             "get_job_status",
             {"job_id": "job"},
-            {"status": "done", "run_id": "run", "metrics": metrics},
+            {
+                "status": "done",
+                "run_id": "run",
+                "metrics": metrics,
+                "revision_id": "revision_a",
+            },
         ),
         ToolCall(
             "get_run",
             {"run_id": "run"},
-            {"success": True, "run": {"strategy_id": strategy_id, "metrics": metrics}},
+            {
+                "success": True,
+                "run": {
+                    "strategy_id": strategy_id,
+                    "metrics": metrics,
+                    "revision_id": "revision_a",
+                },
+            },
         ),
         ToolCall("list_artifacts", {"run_id": "run"}, [{"artifact_id": "artifact"}]),
     ]
@@ -174,3 +199,14 @@ def test_repair_order_failure_explains_read_diagnose_save_sequence() -> None:
     assert "strategy_id='llm_repair'" in str(error.value)
     assert "get_strategy must precede validate_strategy" in str(error.value)
     assert "precede successful save_strategy" in str(error.value)
+
+
+@pytest.mark.parametrize("event_index", [4, 5, 6, 7, 8])
+def test_mixed_revisions_cannot_supply_workflow_evidence(event_index: int) -> None:
+    calls = _repair_evidence()
+    if event_index == 8:
+        calls[event_index].result["run"]["revision_id"] = "revision_b"
+    else:
+        calls[event_index].result["revision_id"] = "revision_b"
+    with pytest.raises(AssertionError):
+        assert_workflow(calls, SCENARIOS["repair"])

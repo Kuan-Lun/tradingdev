@@ -58,11 +58,15 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
     return code, config_text, dict(saved)
 
 
-async def make_runnable(client: MCPClient) -> None:
-    validated = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
+async def make_runnable(client: MCPClient, revision_id: str | None = None) -> None:
+    validated = await client.call(
+        "validate_strategy", strategy_id=STRATEGY_ID, revision_id=revision_id
+    )
     assert validated["success"], json.dumps(validated, indent=2)
     assert validated["status"] == "validated"
-    dry_run = await client.call("dry_run_strategy", strategy_id=STRATEGY_ID)
+    dry_run = await client.call(
+        "dry_run_strategy", strategy_id=STRATEGY_ID, revision_id=revision_id
+    )
     assert dry_run["success"], json.dumps(dry_run, indent=2)
     assert dry_run["status"] == "runnable"
     assert dry_run["signal_analysis"]["rows"] == 240
@@ -106,8 +110,12 @@ async def test_generated_strategy_full_mcp_workflow(
         ]
         assert not (await client.call("start_backtest", **RUN_ARGUMENTS))["job_id"]
         assert await client.call("list_jobs") == []
-        await make_runnable(client)
-        promoted = await client.call("promote_strategy", strategy_id=STRATEGY_ID)
+        await make_runnable(client, saved["revision_id"])
+        promoted = await client.call(
+            "promote_strategy",
+            strategy_id=STRATEGY_ID,
+            revision_id=saved["revision_id"],
+        )
         assert promoted["success"] and promoted["status"] == "promoted"
         assert "binance_vision" in await client.call("list_data_sources")
         data = await client.call(
@@ -116,14 +124,19 @@ async def test_generated_strategy_full_mcp_workflow(
         )
         assert data["success"] and data["rows"] > 0
         assert data["processed_path"] == str(cache_path)
-        started = await client.call("start_backtest", **RUN_ARGUMENTS)
+        started = await client.call(
+            "start_backtest", **RUN_ARGUMENTS, revision_id=saved["revision_id"]
+        )
+        assert started["revision_id"] == saved["revision_id"]
         assert started["job_id"] and started["data_available"], started
         completed = await client.wait_for_job(started["job_id"])
         assert completed["status"] == "done", completed
+        assert completed["revision_id"] == saved["revision_id"]
         assert completed["metrics"]["total_trades"] > 0
         run_id = completed["run_id"]
         run = (await client.call("get_run", run_id=run_id))["run"]
         assert run["strategy_id"] == STRATEGY_ID
+        assert run["revision_id"] == saved["revision_id"]
         assert run["metrics"] == completed["metrics"]
         artifacts = await client.call("list_artifacts", run_id=run_id)
         by_type = {item["artifact_type"]: item for item in artifacts}
@@ -150,6 +163,7 @@ async def test_generated_strategy_full_mcp_workflow(
             include_content=True,
         )
         effective = yaml.safe_load(config_artifact["content"])
+        assert effective["strategy"]["revision_id"] == saved["revision_id"]
         assert effective["strategy"]["parameters"] == {
             "fast_period": 3,
             "slow_period": 8,
@@ -168,7 +182,7 @@ async def test_generated_strategy_full_mcp_workflow(
         assert inspection["market_available"]
         assert inspection["market"]["rows"] == len(sample_ohlcv_with_kd)
 
-    # Persist across MCP sessions; draft revisions invalidate prior approval.
+    # Persist across MCP sessions; a new draft does not inherit old approval.
     async with mcp_workspace.connect() as client:
         assert (await client.call("get_job_status", job_id=started["job_id"]))[
             "status"
@@ -184,6 +198,19 @@ async def test_generated_strategy_full_mcp_workflow(
             yaml_config=config_text,
         )
         assert revision["status"] == "draft"
+        assert revision["revision_id"] != saved["revision_id"]
+        old = await client.call(
+            "get_strategy", strategy_id=STRATEGY_ID, revision_id=saved["revision_id"]
+        )
+        assert old["metadata"]["status"] == "promoted"
+        assert old["source_code"] == code
+        rerun = await client.call(
+            "start_backtest", **RUN_ARGUMENTS, revision_id=saved["revision_id"]
+        )
+        rerun_done = await client.wait_for_job(rerun["job_id"])
+        assert rerun_done["status"] == "done"
+        assert rerun_done["revision_id"] == saved["revision_id"]
+        assert rerun_done["metrics"] == completed["metrics"]
         assert not (await client.call("start_backtest", **RUN_ARGUMENTS))["job_id"]
         assert Path(by_type["strategy_source"]["path"]).read_text() == code
 
@@ -265,15 +292,17 @@ async def test_rejected_drafts_diagnostics_and_repair(
             item["code"] for item in rejected["diagnostics"]
         }
         assert all(item.get("fix") for item in rejected["diagnostics"])
-        await client.call(
+        repaired = await client.call(
             "save_strategy", strategy_id=STRATEGY_ID, code=code, yaml_config=config_text
         )
-        await make_runnable(client)
+        await make_runnable(client, repaired["revision_id"])
+        metadata_path = Path(repaired["py_path"]).parent / "metadata.json"
+        assert json.loads(metadata_path.read_text())["status"] == "runnable"
         assert (
-            json.loads(Path(saved["py_path"]).with_suffix(".json").read_text())[
+            json.loads((Path(saved["py_path"]).parent / "metadata.json").read_text())[
                 "status"
             ]
-            == "runnable"
+            == "draft"
         )
 
 

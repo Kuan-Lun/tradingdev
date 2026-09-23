@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from tradingdev.app.data_service import DataService
+from tradingdev.app.job_config import bind_strategy_revision
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
     StrategyService,
@@ -26,6 +26,8 @@ from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
     from tradingdev.domain.strategies.schemas import StrategySpec
 
@@ -33,7 +35,9 @@ if TYPE_CHECKING:
 class StrategyExecutionGate(Protocol):
     """Narrow interface for the strategy lifecycle execution gate."""
 
-    def resolve_executable(self, strategy_id: str) -> StrategySpec:
+    def resolve_executable(
+        self, strategy_id: str, revision_id: str | None = None
+    ) -> StrategySpec:
         """Return the spec for an executable strategy or raise."""
         ...
 
@@ -86,13 +90,6 @@ class BacktestService:
     ) -> BacktestRun:
         """Run a YAML config as simple backtest or walk-forward validation."""
         raw_config: dict[str, Any] = load_config(config_path)
-        run_config = BacktestRunConfig.model_validate(raw_config)
-        if run_config.is_walk_forward and not walk_forward:
-            msg = "Config contains validation settings; use start_walk_forward."
-            raise ValueError(msg)
-        if walk_forward and not run_config.is_walk_forward:
-            msg = "Config has no validation section for walk-forward."
-            raise ValueError(msg)
         return self.run_raw_config(raw_config, walk_forward=walk_forward)
 
     def run_raw_config(
@@ -108,6 +105,13 @@ class BacktestService:
                 runnable or promoted status, or the config's source_path does
                 not match the registered strategy source.
         """
+        run_config = BacktestRunConfig.model_validate(raw_config)
+        if run_config.is_walk_forward and not walk_forward:
+            msg = "Config contains validation settings; use start_walk_forward."
+            raise ValueError(msg)
+        if walk_forward and not run_config.is_walk_forward:
+            msg = "Config has no validation section for walk-forward."
+            raise ValueError(msg)
         self._ensure_executable(raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
@@ -150,6 +154,15 @@ class BacktestService:
         )
 
     def _ensure_executable(self, raw_config: dict[str, Any]) -> None:
+        self.prepare_strategy(raw_config)
+
+    def prepare_strategy(
+        self,
+        raw_config: dict[str, Any],
+        *,
+        allow_parameter_overrides: bool = False,
+    ) -> None:
+        """Validate a pinned strategy before backtest or optimization loading."""
         strategy_cfg = raw_config.get("strategy")
         if not isinstance(strategy_cfg, dict):
             msg = "strategy config must be a mapping"
@@ -158,27 +171,14 @@ class BacktestService:
         if not isinstance(strategy_id, str) or not strategy_id:
             msg = "strategy.id is required"
             raise ValueError(msg)
-        spec = self._strategy_gate.resolve_executable(strategy_id)
-
-        declared = strategy_cfg.get("source_path")
-        if (
-            isinstance(declared, str)
-            and declared
-            and spec.source_path
-            and self._resolve_path(declared) != self._resolve_path(spec.source_path)
-        ):
-            msg = (
-                f"Config source_path {declared!r} does not match the "
-                f"registered source for strategy {strategy_id!r}"
-            )
+        revision_id = strategy_cfg.get("revision_id")
+        if revision_id is not None and not isinstance(revision_id, str):
+            msg = "strategy.revision_id must be a string"
             raise StrategyNotExecutableError(msg)
-
-    @staticmethod
-    def _resolve_path(value: str) -> Path:
-        path = Path(value).expanduser()
-        if not path.is_absolute():
-            path = Path.cwd() / path
-        return path.resolve()
+        spec = self._strategy_gate.resolve_executable(strategy_id, revision_id)
+        bind_strategy_revision(
+            raw_config, spec, allow_parameter_overrides=allow_parameter_overrides
+        )
 
     def create_engine(self, config: BacktestConfig) -> BaseBacktestEngine:
         """Create a backtest engine from config."""

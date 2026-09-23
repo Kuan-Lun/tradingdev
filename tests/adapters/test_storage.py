@@ -187,3 +187,43 @@ def test_sqlite_store_persists_job_run_and_artifact_lookup(tmp_path: Path) -> No
     assert run["source_hash"] == "source-a"
     assert run["random_seed"] == 42
     assert artifact["metadata"]["job_id"] == "job_a"
+
+
+def test_sqlite_store_adds_nullable_revision_to_existing_runs(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    workspace.ensure()
+    with sqlite3.connect(workspace.root / "tradingdev.sqlite") as conn:
+        conn.executescript("""
+            create table runs (
+                run_id text primary key,
+                job_id text not null,
+                strategy_id text not null,
+                config_hash text,
+                source_hash text,
+                random_seed integer,
+                dataset_id text,
+                metrics text,
+                artifact_dir text not null,
+                created_at text not null
+            );
+            insert into runs values (
+                'legacy', 'legacy', 'fixture', null, null, null, null,
+                '{"total_return": 0.5}', '/legacy', '2024-01-01'
+            );
+        """)
+
+    store = SQLiteStore(workspace)
+    legacy = store.get_run("legacy")
+    assert legacy is not None
+    assert legacy["revision_id"] is None
+    assert legacy["metrics"] == {"total_return": 0.5}
+    store.create_run(
+        run_id="versioned",
+        job_id="versioned",
+        strategy_id="fixture",
+        revision_id="revision-a",
+        artifact_dir=workspace.runs / "versioned",
+        metrics={"total_return": 0.6},
+    )
+    versioned = store.get_run("versioned")
+    assert versioned is not None and versioned["revision_id"] == "revision-a"

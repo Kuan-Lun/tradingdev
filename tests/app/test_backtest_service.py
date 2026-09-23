@@ -112,11 +112,14 @@ class _GateStub:
         self.resolved: list[str] = []
         self.source_path = source_path
 
-    def resolve_executable(self, strategy_id: str) -> StrategySpec:
+    def resolve_executable(
+        self, strategy_id: str, revision_id: str | None = None
+    ) -> StrategySpec:
         self.resolved.append(strategy_id)
         return StrategySpec(
             strategy_id=strategy_id,
             class_name="Fixture",
+            kind="bundled",
             source_path=self.source_path,
             config_path="",
             status=StrategyStatus.RUNNABLE,

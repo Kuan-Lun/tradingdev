@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from tradingdev.adapters.execution.process_runner import (
@@ -15,7 +15,11 @@ from tradingdev.adapters.execution.process_runner import (
     request_worker_stop,
 )
 from tradingdev.app.data_service import DataService
-from tradingdev.app.job_config import apply_run_overrides, write_job_config
+from tradingdev.app.job_config import (
+    apply_run_overrides,
+    bind_strategy_revision,
+    write_job_config,
+)
 from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
@@ -23,6 +27,9 @@ from tradingdev.app.strategy_service import (
 )
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.shared.utils.config import load_config
+
+if TYPE_CHECKING:
+    from tradingdev.domain.strategies.schemas import StrategySpec
 
 
 class JobService:
@@ -66,16 +73,18 @@ class JobService:
         timeframe: str,
         start_date: str,
         end_date: str,
+        revision_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a simple backtest job."""
-        config_path, error = self._resolve_strategy_run_config(strategy_id)
-        if config_path is None:
+        spec, error = self._resolve_strategy_run_config(strategy_id, revision_id)
+        if spec is None:
             return {
                 "job_id": "",
                 "message": error,
                 "data_available": False,
                 "code": "strategy_not_executable",
             }
+        config_path = Path(spec.config_path)
         raw_config = load_config(config_path)
         run_config = BacktestRunConfig.model_validate(raw_config)
         if run_config.is_walk_forward:
@@ -95,6 +104,7 @@ class JobService:
             end_date=end_date,
             config_path=config_path,
             walk_forward=False,
+            spec=spec,
         )
 
     def start_walk_forward(
@@ -105,10 +115,11 @@ class JobService:
         timeframe: str,
         start_date: str,
         end_date: str,
+        revision_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a walk-forward job."""
-        config_path, error = self._resolve_strategy_run_config(strategy_id)
-        if config_path is None:
+        spec, error = self._resolve_strategy_run_config(strategy_id, revision_id)
+        if spec is None:
             return {
                 "job_id": "",
                 "message": error,
@@ -117,7 +128,8 @@ class JobService:
             }
         config_path, error = self._resolve_walk_forward_config(
             strategy_id=strategy_id,
-            config_path=config_path,
+            config_path=Path(spec.config_path),
+            allow_fallback=spec.kind == "bundled",
         )
         if config_path is None:
             return {
@@ -134,6 +146,7 @@ class JobService:
             end_date=end_date,
             config_path=config_path,
             walk_forward=True,
+            spec=spec,
         )
 
     def get_job_status(self, job_id: str) -> dict[str, Any]:
@@ -167,6 +180,7 @@ class JobService:
             "status": status,
             "job_type": job.get("job_type", "backtest"),
             "strategy_name": job.get("strategy_name"),
+            "revision_id": job.get("revision_id"),
             "symbol": job.get("symbol"),
             "timeframe": job.get("timeframe"),
             "start_date": job.get("start_date"),
@@ -238,6 +252,7 @@ class JobService:
                 "job_type": job.get("job_type", "backtest"),
                 "status": job["status"],
                 "strategy_name": job.get("strategy_name"),
+                "revision_id": job.get("revision_id"),
                 "symbol": job.get("symbol"),
                 "timeframe": job.get("timeframe"),
                 "start_date": job.get("start_date"),
@@ -359,8 +374,10 @@ class JobService:
         end_date: str,
         config_path: Path,
         walk_forward: bool,
+        spec: StrategySpec,
     ) -> dict[str, Any]:
         raw_config = load_config(config_path)
+        bind_strategy_revision(raw_config, spec)
         effective_config = apply_run_overrides(
             raw_config,
             symbol=symbol,
@@ -383,6 +400,7 @@ class JobService:
         self._job_store.create_job(
             job_id=job_id,
             strategy_name=strategy_id,
+            revision_id=spec.revision_id,
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
@@ -418,6 +436,7 @@ class JobService:
         )
         return {
             "job_id": job_id,
+            "revision_id": spec.revision_id,
             "message": f"Job started. Job ID: {job_id}. {data_msg}",
             "data_available": data_available,
         }
@@ -427,6 +446,7 @@ class JobService:
         *,
         strategy_id: str,
         config_path: Path,
+        allow_fallback: bool,
     ) -> tuple[Path | None, str]:
         raw_config = load_config(config_path)
         run_config = BacktestRunConfig.model_validate(raw_config)
@@ -434,7 +454,7 @@ class JobService:
             return config_path, ""
 
         fallback = config_path.with_name("walkforward_config.yaml")
-        if fallback.exists():
+        if allow_fallback and fallback.exists():
             fallback_raw = load_config(fallback)
             fallback_run_config = BacktestRunConfig.model_validate(fallback_raw)
             fallback_strategy = fallback_raw.get("strategy", {})
@@ -447,13 +467,15 @@ class JobService:
                 return fallback, ""
         return None, "Config has no validation section for walk-forward."
 
-    def _resolve_strategy_run_config(self, strategy_id: str) -> tuple[Path | None, str]:
+    def _resolve_strategy_run_config(
+        self, strategy_id: str, revision_id: str | None
+    ) -> tuple[StrategySpec | None, str]:
         try:
-            spec = self._strategy_service.resolve_executable(strategy_id)
+            spec = self._strategy_service.resolve_executable(strategy_id, revision_id)
         except StrategyNotExecutableError as exc:
             return None, str(exc)
         path = Path(spec.config_path)
-        return (path, "") if path.exists() else (None, f"Config not found: {path}")
+        return (spec, "") if path.exists() else (None, f"Config not found: {path}")
 
     @staticmethod
     def _process_identity(job: dict[str, Any]) -> ProcessIdentity | None:

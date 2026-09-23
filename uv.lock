@@ -4034,6 +4034,7 @@ source = { editable = "." }
 dependencies = [
     { name = "autogluon-tabular", extra = ["all"] },
     { name = "ccxt" },
+    { name = "filelock" },
     { name = "httpx" },
     { name = "mcp", extra = ["cli"] },
     { name = "mypy" },
@@ -4070,6 +4071,7 @@ dev = [
 requires-dist = [
     { name = "autogluon-tabular", extras = ["all"], specifier = ">=1.5.0" },
     { name = "ccxt", specifier = ">=4.5.64" },
+    { name = "filelock", specifier = ">=3.29.5" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.28.1" },
     { name = "mypy", specifier = ">=2.1.0" },

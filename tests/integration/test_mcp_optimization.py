@@ -83,7 +83,9 @@ async def _save_runnable(client: MCPClient) -> dict[str, Any]:
     )
     assert saved["success"], saved
     for tool in ("validate_strategy", "dry_run_strategy"):
-        checked = await client.call(tool, strategy_id=STRATEGY_ID)
+        checked = await client.call(
+            tool, strategy_id=STRATEGY_ID, revision_id=saved["revision_id"]
+        )
         assert checked["success"], checked
     return dict(saved)
 
@@ -112,6 +114,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         overlapping = await client.call(
             "start_optimization",
             strategy_id=STRATEGY_ID,
+            revision_id=saved["revision_id"],
             symbol="BTC/USDT",
             timeframe="1h",
             param_ranges={"direction": [-1, 0, 1]},
@@ -127,6 +130,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         started = await client.call(
             "start_optimization",
             strategy_id=STRATEGY_ID,
+            revision_id=saved["revision_id"],
             symbol="BTC/USDT",
             timeframe="1h",
             param_ranges={"direction": [-1, 0, 1]},
@@ -138,7 +142,17 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         )
         job_id = started["job_id"]
         assert job_id and started["total_combinations"] == 3, started
+        assert started["revision_id"] == saved["revision_id"]
         pending = await _wait_for_confirmation(client, job_id)
+        assert pending["revision_id"] == saved["revision_id"]
+        replacement = await client.call(
+            "save_strategy",
+            strategy_id=STRATEGY_ID,
+            code=STRATEGY_CODE.replace("= self._direction", "= -self._direction"),
+            yaml_config=Path(saved["yaml_path"]).read_text(),
+        )
+        assert replacement["revision_id"] != saved["revision_id"]
+        assert replacement["status"] == "draft"
         assert pending["total_combinations"] == 3
         assert 1 <= pending["n_parallel_workers"] <= 2
         assert pending["time_per_combo"] >= 0
@@ -157,6 +171,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert confirmed["success"], confirmed
         completed = await client.wait_for_job(job_id, timeout=180)
         assert completed["status"] == "done", json.dumps(completed, indent=2)
+        assert completed["revision_id"] == saved["revision_id"]
         assert completed["best_params"] == {"direction": 1}
         assert completed["optimization_metric"] == "total_return"
         assert completed["total_combinations"] == 3
@@ -176,6 +191,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert not (await client.call("confirm_optimization", job_id=job_id))["success"]
         run = (await client.call("get_run", run_id=completed["run_id"]))["run"]
         assert run["strategy_id"] == STRATEGY_ID
+        assert run["revision_id"] == saved["revision_id"]
         assert run["dataset_id"].startswith("BTC/USDT:1h:2024-01-01:2024-01-07:")
         result = run["metrics"]
         assert result["best_params"] == completed["best_params"]
@@ -198,6 +214,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         effective = yaml.safe_load(
             Path(artifacts["config_snapshot"]["path"]).read_text()
         )
+        assert effective["strategy"]["revision_id"] == saved["revision_id"]
+        assert Path(artifacts["strategy_source"]["path"]).read_text() == STRATEGY_CODE
         assert effective["backtest"]["symbol"] == "BTC/USDT"
         assert effective["backtest"]["timeframe"] == "1h"
         assert effective["backtest"]["end_date"] == "2024-01-07T23:59:59.999999"

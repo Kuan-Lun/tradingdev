@@ -126,7 +126,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                                 _call(call_id="list"),
                                 _call(
                                     "get_strategy",
-                                    '{"strategy_id": "missing-strategy"}',
+                                    '{"strategy_id": "missing_strategy"}',
                                     "missing",
                                 ),
                                 _call("get_strategy", "{}", "invalid-schema"),
@@ -157,7 +157,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                         assert set(missing) == {"result"}
                         semantic_error = missing["result"]
                         assert semantic_error["success"] is False
-                        assert "missing-strategy" in semantic_error["error"]
+                        assert "missing_strategy" in semantic_error["error"]
                         assert responses["invalid-schema"]["isError"] is True
                         assert responses["invalid-schema"]["content"]
                         repaired_id = listed[0]["strategy_id"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,7 +44,11 @@ class SignalContractChecker:
         diagnostics: list[StrategyDiagnostic] = []
         try:
             config_path = Path(metadata.config_path)
-            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            config_bytes = config_path.read_bytes()
+            if hashlib.sha256(config_bytes).hexdigest() != metadata.config_hash:
+                msg = "Strategy revision configuration has changed"
+                raise ValueError(msg)
+            raw = yaml.safe_load(config_bytes)
             if not isinstance(raw, dict):
                 msg = "YAML config must be a mapping"
                 raise ValueError(msg)
@@ -53,12 +58,14 @@ class SignalContractChecker:
                 raise ValueError(msg)
             for field, expected in (
                 ("id", metadata.strategy_id),
+                ("revision_id", metadata.revision_id),
                 ("class_name", metadata.class_name),
                 ("source_path", metadata.source_path),
             ):
                 if strategy_cfg.get(field) != expected:
                     msg = f"strategy.{field} does not match saved strategy metadata"
                     raise ValueError(msg)
+            strategy_cfg["source_hash"] = metadata.source_hash
             strategy = self._loader.create_from_config(raw, engine=None)
             if not isinstance(strategy, BaseStrategy):
                 diagnostics.append(

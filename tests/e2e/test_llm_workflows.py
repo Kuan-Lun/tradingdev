@@ -91,6 +91,38 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 and call.arguments.get("strategy_id") == scenario.strategy_id
             ),
         )
+    revision_id = calls[previous].result.get("revision_id")
+    assert isinstance(revision_id, str) and revision_id, (
+        "Dry-run must identify revision_id"
+    )
+    require_index(
+        f"save_strategy returning revision_id={revision_id!r} before dry-run",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index < previous
+            and call.name == "save_strategy"
+            and call.result
+            and call.arguments.get("strategy_id") == scenario.strategy_id
+            and call.result.get("success")
+            and call.result.get("revision_id") == revision_id
+        ),
+    )
+    for name in ("validate_strategy", "dry_run_strategy"):
+        require_index(
+            f"{name} explicitly checking revision_id={revision_id!r}",
+            (
+                index
+                for index, call in enumerate(calls)
+                if save_index < index <= previous
+                and call.name == name
+                and call.result
+                and call.arguments.get("strategy_id") == scenario.strategy_id
+                and call.arguments.get("revision_id") == revision_id
+                and call.result.get("success")
+                and call.result.get("revision_id") == revision_id
+            ),
+        )
     start_index = require_index(
         f"start_backtest for {target} returning a nonempty job_id "
         "after successful dry_run_strategy",
@@ -106,6 +138,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     started = calls[start_index]
     expected_arguments = {
         "strategy_id": scenario.strategy_id,
+        "revision_id": revision_id,
         "symbol": "BTC/USDT",
         "timeframe": "1h",
         "start_date": "2024-01-01",
@@ -115,6 +148,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         f"start_backtest arguments differ for {target}: "
         f"expected {expected_arguments!r}; got {started.arguments!r}"
     )
+    assert started.result["revision_id"] == revision_id
     job_id = started.result["job_id"]
     done_index = require_index(
         f"get_job_status(job_id={job_id!r}) returning status='done' "
@@ -130,6 +164,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         ),
     )
     done = calls[done_index]
+    assert done.result["revision_id"] == revision_id
     run_id = done.result["run_id"]
     queried_index = require_index(
         f"get_run(run_id={run_id!r}) returning a result after "
@@ -144,6 +179,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         ),
     )
     queried = calls[queried_index]
+    assert queried.result["run"]["revision_id"] == revision_id
     assert queried.result["success"], (
         f"get_run(run_id={run_id!r}) did not return success=True: {queried.result!r}"
     )

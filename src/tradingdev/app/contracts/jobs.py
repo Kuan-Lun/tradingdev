@@ -25,6 +25,7 @@ class BacktestStarted(ContractModel):
     """A worker was accepted; poll job status before reading a completed run."""
 
     job_id: Annotated[str, Field(min_length=1)]
+    revision_id: str | None = None
     message: str
     data_available: bool
 
@@ -42,6 +43,7 @@ class OptimizationStarted(ContractModel):
     """An estimation worker was accepted; full search requires confirmation."""
 
     job_id: Annotated[str, Field(min_length=1)]
+    revision_id: str | None = None
     message: str
     total_combinations: Annotated[int, Field(gt=0)]
 
@@ -62,6 +64,7 @@ class JobSummary(ContractModel):
     job_type: str
     status: JobState
     strategy_name: str | None
+    revision_id: str | None = None
     symbol: str | None
     timeframe: str | None
     start_date: str | None
@@ -82,6 +85,7 @@ class JobStatus(ContractModel):
     status: JobState
     job_type: str
     strategy_name: str | None
+    revision_id: str | None = None
     symbol: str | None
     timeframe: str | None
     start_date: str | None

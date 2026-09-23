@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import anyio
@@ -14,8 +15,6 @@ import pytest
 from tests.integration.mcp_harness import temporary_mcp_workspace, worker_is_alive
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pandas as pd
 
 pytestmark = [pytest.mark.integration, pytest.mark.anyio]
@@ -91,7 +90,8 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
                 server = psutil.Process(worker.ppid())
                 assert worker_is_alive(worker)
                 assert "tradingdev.mcp.server" in server.cmdline()
-                assert (workspace.workspace / "configs/cleanup_strategy.yaml").exists()
+                assert Path(saved["yaml_path"]).is_file()
+                assert Path(saved["py_path"]).is_file()
                 if exit_mode == "failure":
                     raise ForcedCleanupError("Exercise failed-test teardown")
                 if exit_mode == "timeout":
