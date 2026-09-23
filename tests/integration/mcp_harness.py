@@ -19,6 +19,7 @@ import psutil
 from jsonschema import validate
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import PaginatedRequestParams
 
 from tradingdev.adapters.execution.process_runner import (
     WorkerHandle,
@@ -26,7 +27,7 @@ from tradingdev.adapters.execution.process_runner import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncGenerator, Generator
 
     import pandas as pd
 
@@ -105,7 +106,7 @@ class MCPWorkspace:
         return env
 
     @asynccontextmanager
-    async def connect(self) -> AsyncIterator[MCPClient]:
+    async def connect(self) -> AsyncGenerator[MCPClient, None]:
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "tradingdev.mcp.server"],
@@ -126,7 +127,9 @@ class MCPWorkspace:
                             output_schemas: dict[str, dict[str, Any]] = {}
                             cursor = None
                             while True:
-                                listed = await session.list_tools(cursor=cursor)
+                                listed = await session.list_tools(
+                                    params=PaginatedRequestParams(cursor=cursor)
+                                )
                                 for tool in listed.tools:
                                     assert tool.outputSchema is not None, tool.name
                                     output_schemas[tool.name] = tool.outputSchema
@@ -220,7 +223,7 @@ def worker_is_alive(process: psutil.Process) -> bool:
 
 
 @contextmanager
-def temporary_mcp_workspace() -> Iterator[MCPWorkspace]:
+def temporary_mcp_workspace() -> Generator[MCPWorkspace, None, None]:
     # Also used outside pytest; stop detached workers before removing files.
     directory = Path(mkdtemp(prefix="tradingdev-mcp-test-")).resolve()
     workspace = MCPWorkspace(directory)

@@ -6,8 +6,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from jsonschema import Draft202012Validator, ValidationError, validate
+from mcp import ClientSession
 
 if TYPE_CHECKING:
+    from mcp.types import ListToolsResult, PaginatedRequestParams
+
     from tests.integration.mcp_harness import MCPWorkspace
 
 pytestmark = [pytest.mark.integration, pytest.mark.anyio]
@@ -57,6 +60,41 @@ def _assert_constrained_objects(node: object, location: str) -> None:
     elif isinstance(node, list):
         for index, value in enumerate(node):
             _assert_constrained_objects(value, f"{location}/{index}")
+
+
+async def test_discovery_collects_output_schemas_across_pages(
+    mcp_workspace: MCPWorkspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_list_tools = ClientSession.list_tools
+    cursors: list[str | None] = []
+    expected_names: set[str] = set()
+
+    async def paginated_tools(
+        session: ClientSession, *, params: PaginatedRequestParams
+    ) -> ListToolsResult:
+        # Use real server schemas, split into pages at the client boundary.
+        # The replacement accepts only the SDK's supported pagination API.
+        result = await original_list_tools(session)
+        expected_names.update(tool.name for tool in result.tools)
+        cursors.append(params.cursor)
+        assert params.cursor in {None, "next-page"}
+        midpoint = len(result.tools) // 2
+        assert midpoint > 0
+        first_page = params.cursor is None
+        return result.model_copy(
+            update={
+                "tools": result.tools[:midpoint]
+                if first_page
+                else result.tools[midpoint:],
+                "nextCursor": "next-page" if first_page else None,
+            }
+        )
+
+    monkeypatch.setattr(ClientSession, "list_tools", paginated_tools)
+    async with mcp_workspace.connect() as client:
+        assert cursors == [None, "next-page"]
+        assert client.output_schemas.keys() == expected_names
+        assert await client.call("list_jobs") == []
 
 
 async def test_all_tools_advertise_constrained_output_schemas_and_hints(
