@@ -1,7 +1,11 @@
 # Strategy Contract
 
 Generated strategies are runtime artifacts managed by MCP. They are saved under
-`workspace/generated_strategies/` and paired with YAML under `workspace/configs/`.
+`workspace/generated_strategies/<strategy_id>/revisions/<revision_id>/` with
+`strategy.py`, `config.yaml`, and `metadata.json`. Source and base config are
+immutable through the service; metadata records the selected revision's lifecycle
+and validation evidence. `current.json` in the strategy directory points to the
+most recently saved revision.
 Bundled strategies are engineering-maintained code under
 `src/tradingdev/domain/strategies/bundled/`.
 
@@ -27,9 +31,10 @@ Generated code must:
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
 the constructor cannot accept fail validation. `backtest_engine` is injected by
-the application and cannot be overridden in YAML. Saving a revised draft loads
-the latest source, including same-size edits made within one filesystem timestamp
-interval.
+the application and cannot be overridden in YAML. Saving a revised draft
+creates a new revision and loads that source, including
+same-size edits made within one filesystem timestamp interval. An existing
+revision is never replaced by a later save.
 
 Allowed import roots for generated strategies are intentionally small:
 
@@ -97,7 +102,6 @@ strategy:
   id: "sma_crossover"
   version: "0.1.0"
   class_name: "SmaCrossoverStrategy"
-  source_path: "workspace/generated_strategies/sma_crossover.py"
   parameters:
     fast_period: 10
     slow_period: 30
@@ -127,6 +131,11 @@ data:
     features: []
 ```
 
+`save_strategy` assigns `strategy.id`, `strategy.revision_id`, and
+`strategy.source_path` to the saved revision. These identity fields are managed
+by the service; callers need not supply them. `strategy.version` remains optional
+descriptive configuration, not the execution revision identifier.
+
 Feature sources are explicit:
 
 ```yaml
@@ -148,21 +157,54 @@ data:
 
 ## Lifecycle
 
-1. `save_strategy`: writes draft source, config, and metadata.
+1. `save_strategy`: writes a new draft source/config revision and metadata,
+   returns its `revision_id`, and updates the current pointer. Even an identical
+   save creates a new revision; it does not inherit validation evidence.
 2. `validate_strategy`: runs syntax, static policy, restricted import checks,
    ruff, mypy, inheritance, constructor, and the shared signal-contract gate on
-   a short fixture. It returns structured diagnostics with `level`, `code`,
-   `phase`, `message`, and optional `fix`.
+   a short fixture for the selected revision. It returns that `revision_id` and
+   structured diagnostics with `level`, `code`, `phase`, `message`, and optional
+   `fix`.
 3. `dry_run_strategy`: accepts only `validated` strategies, re-runs the same
    signal-contract gate on a longer fixture, returns `signal_analysis`, and
    marks the strategy runnable when it passes.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
-5. `start_backtest` / `start_walk_forward`: execute only runnable or promoted
-   generated strategies, and promoted bundled strategies. The gate is enforced
+5. `start_backtest` / `start_walk_forward` / `start_optimization`: execute only
+   runnable or promoted generated strategies, and promoted bundled strategies.
+   The gate is enforced
    again at execution time inside `BacktestService`, so the CLI and subprocess
    workers cannot bypass the lifecycle, and the config's `source_path` must
-   match the registered strategy source.
+   match the selected revision's source.
+
+Pass the `revision_id` returned by saving to get, validate, dry-run, promote,
+and execution tools. Omitting it selects current once at the start of that
+operation. Validation and dry-run persist evidence to that selected revision,
+even if another save changes current while checks are running. A new draft B
+does not revoke revision A's evidence, and B cannot inherit it.
+
+Generated execution requires matching source/config hashes and successful
+validation and dry-run records for the selected revision. Editing revision files
+directly invalidates them; repair through a new save. An unknown explicit
+revision never falls back to current. Submitted jobs, worker configs, completed
+runs and strategy source artifacts remain tied to the selected revision when
+current changes, including during optimization confirmation.
+
+Runtime symbol, timeframe, and dates are separate from the revision's base
+config. For generated strategies, ordinary backtest and walk-forward parameters
+must match that base config; changing them requires saving and checking a new
+revision.
+Optimization may override only its search parameters, retaining all other base
+parameters. Validation evidence covers the base parameters; it does not certify
+every possible optimization candidate. This revision identity does not freeze
+imported Python dependencies, the engine environment,
+or market data, and is not a full execution manifest. Bundled strategies remain
+Git-managed and promoted with `revision_id: null`.
+
+Legacy flat source/metadata/config files are not migrated or overwritten. They
+cannot execute using their old lifecycle state; save their source and YAML again
+and validate/dry-run the newly returned revision. Historical run records with no
+revision retain `revision_id: null`.
 
 ## Security Model
 

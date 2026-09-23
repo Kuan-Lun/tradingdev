@@ -15,6 +15,13 @@ workspace/
       stop
       finished.json
   generated_strategies/
+    <strategy_id>/
+      current.json
+      revisions/
+        <revision_id>/
+          strategy.py
+          config.yaml
+          metadata.json
   configs/
   data/
     raw/
@@ -39,13 +46,16 @@ workspace/
   and `worker_control_id`, its unique launch token. The PID belongs to the
   supervisor, not the strategy-executing child.
 - `runs`: completed run metadata, metrics JSON, config hash, source hash,
-  random seed, dataset id, and artifact directory.
+  random seed, dataset id, artifact directory, and selected `revision_id`.
 - `artifacts`: run and non-run artifact metadata, path, sha256, and metadata JSON.
 - `events`: job-scoped structured events.
 
 `job_id` and `run_id` are currently the same for completed backtest and
 optimization jobs. `get_job_status(job_id)` returns the `run_id` once a run is
-done.
+done. Generated strategy jobs and runs carry their selected `revision_id`;
+bundled strategies and historical records without revision identity expose
+`null`. A later save changes only the current pointer and does not change the
+revision used by an existing job or completed run.
 
 `.workers/<launch_token>` stores the startup identity, worker startup response,
 optional cancellation request (`stop`), and final cleanup acknowledgement. These
@@ -70,30 +80,54 @@ includes the same error persisted in the database. Spawn failures also persist
 - `promote_strategy`: generated strategy artifact promotion.
 - `record_feature_request`: structured unsupported feature requests.
 
-Each completed run writes files under `workspace/runs/<run_id>/` and records
+The generated revision's `config.yaml` holds its base settings;
+`runs/<run_id>/config.yaml` holds effective execution settings and includes
+`strategy.revision_id`. Runtime market/date or optimization parameter overrides
+do not rewrite the base revision. Generated backtest and walk-forward parameters
+must match the base revision; only optimization search parameters can vary.
+Revision identity does not freeze imported
+Python dependencies or market data and is not a complete execution manifest.
+
+Each completed background job writes files under `workspace/runs/<run_id>/` and records
 matching SQLite metadata:
 
 - `result.json`: serialized metrics, stored as `result_json`.
 - `config.yaml`: effective config snapshot used for the run, stored as
-  `config_snapshot` with `config_hash`. For MCP-launched backtest and
+  `config_snapshot` with `config_hash`. Backtest/walk-forward snapshots come
+  from the executed `PipelineResult.config_snapshot`; optimization supplies
+  the config held by its worker. Completion does not reload a potentially
+  changed config file for these execution paths. For MCP-launched backtest and
   walk-forward and optimization jobs this snapshot includes the symbol, timeframe,
   and date range supplied to the start tool. Optimization includes the entire
   final calendar day; ordinary backtest bounds remain timestamps.
 - `strategy.py`: generated or bundled strategy source snapshot when
   `strategy.source_path` is available, stored as `strategy_source` with
-  source hash metadata. The same hash is indexed in `runs.source_hash` for
+  source hash metadata. Generated source snapshots come from the selected
+  immutable revision, not whichever revision is current at completion.
+  The same hash is indexed in `runs.source_hash` for
   direct SQL lookup.
 - `dataset_fingerprint.json`: dataset id, symbol, timeframe, date range, and a
   fingerprint hash, stored as `dataset_fingerprint`.
 - `pipeline_result.pkl`: full `PipelineResult` for dashboard rendering, stored
   as `pipeline_result` for completed backtest and walk-forward jobs.
 
-The SQLite `runs.artifact_dir` value must match the corresponding
-`workspace/runs/<run_id>/` directory. `runs.random_seed` records an explicit
+For background jobs, SQLite `runs.artifact_dir` must match the corresponding
+`workspace/runs/<run_id>/` directory. `runs.config_hash` is the SHA-256 of the
+serialized effective config snapshot, not the hash of the immutable revision's
+base config. `runs.random_seed` records an explicit
 top-level/backtest `random_seed`, or the unique `random_seed`/`random_state`/
 `seed` value found under `strategy.parameters` when one exists. Run comparison,
 dashboard rendering, and artifact lookup always read through SQLite first, then
 resolve files from the recorded artifact paths.
+
+CLI runs instead store their `pipeline_result` cache under
+`workspace/data/processed/cache` (or `$TRADINGDEV_DATA_ROOT/processed/cache`),
+with that directory as `runs.artifact_dir`. Their config snapshot is embedded in
+the pipeline result. The run's config hash and revision identity come from this
+executed snapshot. Before caching, the CLI checks the requested config against
+the executed config (excluding the service-managed `source_hash`); a change to
+strategy identity, dates, costs, or other settings rejects caching. It does not
+associate an old result with a changed config, even for the same revision.
 
 Optimization `result.json` includes the best parameters, training metrics and
 out-of-sample metrics. For newly saved results, its parsed JSON matches the
