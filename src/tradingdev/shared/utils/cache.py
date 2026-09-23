@@ -112,10 +112,12 @@ def _code_fingerprint() -> str:
 def compute_cache_key(
     config_path: Path,
     processed_path: Path,
+    *,
+    config_content: bytes | None = None,
 ) -> str:
     """Compute a SHA-256 cache key from config + data + code state."""
     h = hashlib.sha256()
-    h.update(config_path.read_bytes())
+    h.update(config_path.read_bytes() if config_content is None else config_content)
     if processed_path.exists():
         stat = processed_path.stat()
         h.update(f"{stat.st_mtime}:{stat.st_size}".encode())

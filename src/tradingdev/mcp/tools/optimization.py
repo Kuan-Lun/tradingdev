@@ -47,9 +47,11 @@ def register(
         train_end: str,
         test_start: str,
         test_end: str,
+        revision_id: str | None = None,
     ) -> OptimizationStarted | OptimizationRejected:
         """Launch optimization and wait for confirmation after estimating its cost.
 
+        Pass the runnable revision_id; omission selects current at submission.
         Dates are inclusive UTC calendar days and must satisfy
         train_start < train_end < test_start < test_end, without overlap.
         Grid values override matching YAML parameters; other parameters stay fixed.
@@ -58,6 +60,7 @@ def register(
         """
         payload = OptimizationInput(
             strategy_id=strategy_id,
+            revision_id=revision_id,
             symbol=symbol,
             timeframe=timeframe,
             param_ranges=param_ranges,
@@ -69,6 +72,7 @@ def register(
         )
         result = optimization_service.start_optimization(
             strategy_id=payload.strategy_id,
+            revision_id=payload.revision_id,
             symbol=payload.symbol,
             timeframe=payload.timeframe,
             param_ranges=payload.param_ranges,

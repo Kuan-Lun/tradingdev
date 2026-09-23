@@ -147,11 +147,14 @@ async def _complete_workflow(
         )
         assert saved["success"], saved
         for name in ("validate_strategy", "dry_run_strategy"):
-            result = await call(name, strategy_id=scenario.strategy_id)
+            result = await call(
+                name, strategy_id=scenario.strategy_id, revision_id=saved["revision_id"]
+            )
             assert result["success"], result
         started = await call(
             "start_backtest",
             strategy_id=scenario.strategy_id,
+            revision_id=saved["revision_id"],
             symbol="BTC/USDT",
             timeframe="1h",
             start_date="2024-01-01",
@@ -202,7 +205,7 @@ def test_workflow_verifier_rejects_incorrect_signals(
     assert corrupted != original
     try:
         source.write_text(corrupted, encoding="utf-8")
-        with pytest.raises(AssertionError, match="Series values are different"):
+        with pytest.raises(AssertionError, match="content mismatch"):
             completed_workflow.verify()
     finally:
         source.write_text(original, encoding="utf-8")
@@ -218,7 +221,7 @@ def test_workflow_verifier_rejects_incorrect_yaml_parameters(
     config["strategy"]["parameters"][first_parameter] += 1
     try:
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-        with pytest.raises(AssertionError, match="scenario.parameters"):
+        with pytest.raises(AssertionError, match="content mismatch"):
             completed_workflow.verify()
     finally:
         config_path.write_text(original, encoding="utf-8")

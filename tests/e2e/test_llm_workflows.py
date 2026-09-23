@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -15,6 +16,7 @@ from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from tests.integration.mcp_harness import MCPWorkspace
 
@@ -37,6 +39,45 @@ async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None
             yaml_config=yaml.safe_dump(config),
         )
         assert saved["success"] and saved["status"] == "draft", saved
+
+
+async def seed_legacy_strategy(
+    workspace: MCPWorkspace, scenario: Scenario
+) -> dict[Path, bytes]:
+    """Create untouched pre-revision files solely inside the test workspace."""
+    async with workspace.connect() as client:
+        contract = await client.call("get_strategy_contract")
+    generated = workspace.workspace / "generated_strategies"
+    configs = workspace.workspace / "configs"
+    generated.mkdir(parents=True, exist_ok=True)
+    configs.mkdir(parents=True, exist_ok=True)
+    source = generated / f"{scenario.strategy_id}.py"
+    config_path = configs / f"{scenario.strategy_id}.yaml"
+    config = yaml.safe_load(contract["example_yaml_config"])
+    config["strategy"].update(
+        id=scenario.strategy_id,
+        parameters=scenario.parameters,
+        source_path=str(source),
+    )
+    metadata = {
+        "strategy_id": scenario.strategy_id,
+        "class_name": config["strategy"]["class_name"],
+        "status": "runnable",
+        "source_path": str(source),
+        "config_path": str(config_path),
+        "validation": {"success": True},
+        "dry_run": {"success": True},
+    }
+    originals = {
+        source: contract["example_strategy_code"].encode("utf-8"),
+        config_path: yaml.safe_dump(config).encode("utf-8"),
+        generated / f"{scenario.strategy_id}.json": json.dumps(metadata).encode(
+            "utf-8"
+        ),
+    }
+    for path, content in originals.items():
+        path.write_bytes(content)
+    return originals
 
 
 def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
@@ -72,6 +113,55 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         f"Invalid MCP step order for {target}: get_strategy_contract must precede "
         f"the first successful save_strategy (events {contract_index}, {save_index})"
     )
+    if scenario.legacy:
+        legacy_identity = {
+            "strategy_id": scenario.strategy_id,
+            "revision_id": None,
+            "kind": "legacy",
+            "status": "revision_required",
+            "code": "strategy_revision_required",
+        }
+        list_index = require_index(
+            f"list_strategies identifying {target} as legacy/revision_required",
+            (
+                index
+                for index, call in enumerate(calls)
+                if call.name == "list_strategies"
+                and isinstance(call.result, list)
+                and any(
+                    all(
+                        item.get(key) == value for key, value in legacy_identity.items()
+                    )
+                    for item in call.result
+                )
+            ),
+        )
+        read_index = require_index(
+            f"get_strategy({target}) returning legacy source/config before resaving",
+            (
+                index
+                for index, call in enumerate(calls)
+                if call.name == "get_strategy"
+                and call.arguments.get("strategy_id") == scenario.strategy_id
+                and call.result
+                and call.result.get("success") is True
+                and all(
+                    call.result.get(key) == value
+                    for key, value in legacy_identity.items()
+                )
+                and call.result.get("source_code")
+                and call.result.get("yaml_config")
+            ),
+        )
+        assert list_index < read_index < save_index, (
+            f"Invalid MCP legacy recovery order for {target}: "
+            "discovery and source/config "
+            "retrieval must precede successful save_strategy "
+            f"(events {list_index}, {read_index}, {save_index})"
+        )
+        assert calls[save_index].result.get("status") == "draft", (
+            "Resaving a legacy strategy must create a draft without inherited evidence"
+        )
     previous = save_index
     for name, status in (
         ("validate_strategy", "validated"),
@@ -91,6 +181,38 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 and call.arguments.get("strategy_id") == scenario.strategy_id
             ),
         )
+    revision_id = calls[previous].result.get("revision_id")
+    assert isinstance(revision_id, str) and revision_id, (
+        "Dry-run must identify revision_id"
+    )
+    require_index(
+        f"save_strategy returning revision_id={revision_id!r} before dry-run",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index < previous
+            and call.name == "save_strategy"
+            and call.result
+            and call.arguments.get("strategy_id") == scenario.strategy_id
+            and call.result.get("success")
+            and call.result.get("revision_id") == revision_id
+        ),
+    )
+    for name in ("validate_strategy", "dry_run_strategy"):
+        require_index(
+            f"{name} explicitly checking revision_id={revision_id!r}",
+            (
+                index
+                for index, call in enumerate(calls)
+                if save_index < index <= previous
+                and call.name == name
+                and call.result
+                and call.arguments.get("strategy_id") == scenario.strategy_id
+                and call.arguments.get("revision_id") == revision_id
+                and call.result.get("success")
+                and call.result.get("revision_id") == revision_id
+            ),
+        )
     start_index = require_index(
         f"start_backtest for {target} returning a nonempty job_id "
         "after successful dry_run_strategy",
@@ -106,6 +228,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     started = calls[start_index]
     expected_arguments = {
         "strategy_id": scenario.strategy_id,
+        "revision_id": revision_id,
         "symbol": "BTC/USDT",
         "timeframe": "1h",
         "start_date": "2024-01-01",
@@ -115,6 +238,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         f"start_backtest arguments differ for {target}: "
         f"expected {expected_arguments!r}; got {started.arguments!r}"
     )
+    assert started.result["revision_id"] == revision_id
     job_id = started.result["job_id"]
     done_index = require_index(
         f"get_job_status(job_id={job_id!r}) returning status='done' "
@@ -130,6 +254,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         ),
     )
     done = calls[done_index]
+    assert done.result["revision_id"] == revision_id
     run_id = done.result["run_id"]
     queried_index = require_index(
         f"get_run(run_id={run_id!r}) returning a result after "
@@ -144,6 +269,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         ),
     )
     queried = calls[queried_index]
+    assert queried.result["run"]["revision_id"] == revision_id
     assert queried.result["success"], (
         f"get_run(run_id={run_id!r}) did not return success=True: {queried.result!r}"
     )
@@ -211,10 +337,13 @@ def test_llm_authors_backtests_and_queries_results(
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())
+        legacy_files: dict[Path, bytes] = {}
 
         async def run() -> list[ToolCall]:
             if scenario.repair:
                 await seed_broken_draft(workspace, scenario)
+            if scenario.legacy:
+                legacy_files.update(await seed_legacy_strategy(workspace, scenario))
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
@@ -236,6 +365,10 @@ def test_llm_authors_backtests_and_queries_results(
         calls = asyncio.run(run())
         try:
             assert_workflow(calls, scenario)
+            for path, original in legacy_files.items():
+                assert path.read_bytes() == original, (
+                    f"Legacy recovery modified the original file: {path.name}"
+                )
         except (AssertionError, StopIteration, ValueError) as exc:
             pytest.fail(
                 f"Incomplete {provider}/{scenario.name} workflow: {exc}\n{calls!r}"

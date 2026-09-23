@@ -13,6 +13,7 @@ class RunRecord(ContractModel):
     run_id: str
     job_id: str
     strategy_id: str
+    revision_id: str | None = None
     config_hash: str | None
     source_hash: str | None
     random_seed: int | None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.util
 import inspect
@@ -88,7 +89,13 @@ class StrategyLoader:
         source_value = self._required_strategy_string(strategy_cfg, "source_path")
         source_path = Path(str(source_value))
         self._reject_unknown_bundled_source(strategy_id, strategy_cfg, bundled)
-        module = self._load_module(self._resolve_generated_source(source_path))
+        source_hash = strategy_cfg.get("source_hash")
+        if source_hash is not None and not isinstance(source_hash, str):
+            msg = "strategy.source_hash must be a string"
+            raise ValueError(msg)
+        module = self._load_module(
+            self._resolve_generated_source(source_path), source_hash=source_hash
+        )
         cls = getattr(module, class_name, None)
         if cls is None:
             msg = f"Class {class_name!r} not found"
@@ -246,7 +253,9 @@ class StrategyLoader:
             raise FileNotFoundError(msg)
         return resolved
 
-    def _load_module(self, source_path: Path) -> ModuleType:
+    def _load_module(
+        self, source_path: Path, *, source_hash: str | None = None
+    ) -> ModuleType:
         spec = importlib.util.spec_from_file_location(
             f"_tradingdev_generated_{source_path.stem}",
             source_path,
@@ -258,6 +267,15 @@ class StrategyLoader:
         # LLM repair loops can rewrite same-size source within one timestamp
         # unit. Read and compile the current source directly so a stale .pyc
         # never changes which revision gets validated or executed.
-        code = compile(source_path.read_bytes(), str(source_path), "exec")
+        source = source_path.read_bytes()
+        if (
+            source_hash is not None
+            and hashlib.sha256(source).hexdigest() != source_hash
+        ):
+            msg = (
+                "Strategy revision source has changed; save and validate a new revision"
+            )
+            raise ValueError(msg)
+        code = compile(source, str(source_path), "exec")
         exec(code, module.__dict__)  # noqa: S102
         return module

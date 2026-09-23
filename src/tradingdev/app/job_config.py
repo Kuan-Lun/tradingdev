@@ -2,13 +2,72 @@
 
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from tradingdev.app.strategy_service import StrategyNotExecutableError
+from tradingdev.domain.strategies.schemas import StrategyMetadata
+
 if TYPE_CHECKING:
-    from pathlib import Path
+    from tradingdev.domain.strategies.schemas import StrategySpec
+
+
+def bind_strategy_revision(
+    config: dict[str, Any],
+    spec: StrategySpec,
+    *,
+    allow_parameter_overrides: bool = False,
+) -> None:
+    """Check execution identity and bind its trusted source digest in place."""
+    strategy = config.get("strategy")
+    if not isinstance(strategy, dict) or strategy.get("id") != spec.strategy_id:
+        msg = "Config strategy.id does not match the selected strategy"
+        raise StrategyNotExecutableError(msg)
+    if strategy.get("revision_id") != spec.revision_id:
+        msg = "Config revision_id does not match the selected strategy revision"
+        raise StrategyNotExecutableError(msg)
+    source = strategy.get("source_path")
+    if spec.kind == "generated" and not source:
+        msg = "Generated strategy config requires its revision source_path"
+        raise StrategyNotExecutableError(msg)
+    if (
+        source
+        and Path(str(source)).expanduser().resolve()
+        != Path(spec.source_path).expanduser().resolve()
+    ):
+        msg = "Config source_path does not match the selected strategy revision"
+        raise StrategyNotExecutableError(msg)
+    class_name = strategy.get("class_name")
+    if class_name is not None and class_name != spec.class_name:
+        msg = "Config class_name does not match the selected strategy revision"
+        raise StrategyNotExecutableError(msg)
+    if spec.kind == "generated":
+        if not spec.revision_id or not isinstance(spec.metadata, StrategyMetadata):
+            msg = "Generated strategy requires a verified revision"
+            raise StrategyNotExecutableError(msg)
+        if class_name != spec.class_name:
+            msg = "Generated strategy config requires its revision class_name"
+            raise StrategyNotExecutableError(msg)
+        base_content = Path(spec.config_path).read_bytes()
+        if hashlib.sha256(base_content).hexdigest() != spec.metadata.config_hash:
+            msg = "Strategy revision config hash changed before execution"
+            raise StrategyNotExecutableError(msg)
+        base_strategy = yaml.safe_load(base_content)["strategy"]
+        ignored = {"source_hash", "source_path"}
+        if allow_parameter_overrides:
+            ignored.add("parameters")
+        actual = {key: value for key, value in strategy.items() if key not in ignored}
+        expected = {
+            key: value for key, value in base_strategy.items() if key not in ignored
+        }
+        if actual != expected:
+            msg = "Strategy settings do not match the validated revision config"
+            raise StrategyNotExecutableError(msg)
+        strategy["source_hash"] = spec.metadata.source_hash
 
 
 def apply_run_overrides(

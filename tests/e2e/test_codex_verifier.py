@@ -51,11 +51,11 @@ class FixtureStrategy(BaseStrategy):
 '''
 
 
-def _fixture_strategy(root: Path) -> Path:
+def _fixture_strategy(root: Path, code: str = _CODE) -> Path:
     workspace = WorkspacePaths(root / "workspace")
     saved = StrategyService(workspace).save_draft(
         "codex_sma_integration",
-        _CODE,
+        code,
         yaml.safe_dump(
             {
                 "strategy": {
@@ -67,9 +67,19 @@ def _fixture_strategy(root: Path) -> Path:
         ),
     )
     assert saved.success
-    metadata_path = workspace.generated_strategies / "codex_sma_integration.json"
+    metadata_path = Path(saved.source_path).parent / "metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["status"] = "runnable"
+    # Deliberately seed trusted fixture evidence to isolate verifier cleanup.
+    evidence = {
+        "revision_id": saved.revision_id,
+        "checked_at": metadata["created_at"],
+        "success": True,
+        "diagnostics": [],
+        "signal_analysis": {},
+    }
+    metadata["validation"] = evidence
+    metadata["dry_run"] = evidence
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     return Path(saved.source_path)
 
@@ -93,14 +103,13 @@ def test_verifier_terminates_hanging_generated_code_and_removes_artifacts(
         root = Path(temporary)
         for key, value in runtime_environment(root).items():
             monkeypatch.setenv(key, value)
-        source = _fixture_strategy(root)
         marker = root / "verifier.pid"
-        source.write_text(
+        _fixture_strategy(
+            root,
             _CODE
             + "\nimport os\nfrom pathlib import Path\n"
             + f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
             + "while True:\n    pass\n",
-            encoding="utf-8",
         )
         group_signals: list[int] = []
 

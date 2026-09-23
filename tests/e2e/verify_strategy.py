@@ -28,7 +28,8 @@ def verify(root: Path) -> None:
     spec = service.resolve_executable("codex_sma_integration")
     assert spec.status.value == "runnable"
     assert Path(spec.source_path).is_relative_to(workspace.generated_strategies)
-    assert Path(spec.config_path).is_relative_to(workspace.configs)
+    assert Path(spec.config_path).parent == Path(spec.source_path).parent
+    assert spec.revision_id
     raw_config = load_config(Path(spec.config_path))
     parameters = raw_config["strategy"]["parameters"]
     assert parameters["fast_period"] == 5
@@ -104,6 +105,7 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     assert len(runs) == 1, runs
     run = runs[0]
     assert run["strategy_id"] == scenario.strategy_id
+    assert run["revision_id"] == spec.revision_id
     # Ordinary backtests treat end_date as a timestamp (midnight here).
     selected = frame.loc[
         frame["timestamp"] <= pd.Timestamp("2024-01-08", tz="UTC")
@@ -133,6 +135,7 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     )
     snapshot = load_config(Path(by_type["config_snapshot"]["path"]))
     assert snapshot["strategy"]["parameters"] == scenario.parameters
+    assert snapshot["strategy"]["revision_id"] == spec.revision_id
 
 
 if __name__ == "__main__":

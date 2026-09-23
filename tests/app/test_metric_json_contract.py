@@ -113,7 +113,12 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
         monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
         monkeypatch.setattr("tradingdev.shared.utils.cache.CACHE_DIR", None)
 
-        def cache_key(_config: Path, _processed: Path) -> str:
+        def cache_key(
+            _config: Path,
+            _processed: Path,
+            *,
+            config_content: bytes | None = None,
+        ) -> str:
             return "metric-contract"
 
         monkeypatch.setattr(
@@ -124,7 +129,10 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
         processed_path = tmp_path / "data.parquet"
         processed_path.write_bytes(b"cache identity fixture")
         ArtifactService(workspace=workspace, store=store).cache_pipeline_result(
-            pipeline=PipelineResult(mode="walk_forward"),
+            pipeline=PipelineResult(
+                mode="walk_forward",
+                config_snapshot={"strategy": {"id": "cli_fixture"}},
+            ),
             config_path=config_path,
             processed_path=processed_path,
             metrics=metrics,

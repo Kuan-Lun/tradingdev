@@ -131,6 +131,9 @@ def _run_single_combo(
         **strategy_cfg,
         "parameters": {**strategy_cfg.get("parameters", {}), **param_dict},
     }
+    service.prepare_strategy(
+        {"strategy": effective_strategy}, allow_parameter_overrides=True
+    )
     strategy = StrategyLoader().create_from_config(
         {"strategy": effective_strategy}, engine
     )
@@ -175,6 +178,12 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     # --- Phase 2: load config ---
     try:
         raw_config: dict[str, Any] = load_config(config_path)
+        if raw_config["strategy"].get("revision_id") != job.get(
+            "revision_id"
+        ) or raw_config["strategy"].get("id") != job.get("strategy_name"):
+            msg = "Job and execution config refer to different strategy revisions"
+            raise ValueError(msg)
+        BacktestService().prepare_strategy(raw_config)
         # The job snapshot includes request overrides and the complete final day.
         bt_cfg = BacktestConfig(**raw_config["backtest"])
     except Exception as exc:
@@ -453,7 +462,9 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             "time_per_combo": round(time_per_combo, 2),
             "n_parallel_workers": n_jobs,
         }
-        result_path = job_store.save_result(job_id, optimization_result)
+        result_path = job_store.save_result(
+            job_id, optimization_result, config_snapshot=raw_config
+        )
         job_store.update_job(
             job_id,
             status="done",

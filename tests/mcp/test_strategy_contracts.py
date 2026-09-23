@@ -205,17 +205,21 @@ def test_save_rejections_preserve_context_and_report_specific_codes(
 
 def test_validation_diagnostics_remain_a_completed_check_result(tmp_path: Path) -> None:
     server, service = _server(tmp_path)
-    _save(service)
-    spec = service.load("contract_strategy")
-    assert spec is not None
-    Path(spec.source_path).write_text("def broken(:\n", encoding="utf-8")
+    contract = strategy_contract_payload(_PACKAGE_ROOT)
+    saved = service.save_draft(
+        "contract_strategy",
+        "import os\n",
+        contract["example_yaml_config"],
+    )
+    assert saved.success
 
     result = _call(server, "validate_strategy", {"strategy_id": "contract_strategy"})
     response = StrategyValidationFailure.model_validate(result)
 
     assert response.success is False
     assert response.status == "draft"
-    assert response.diagnostics[0].code == "syntax_error"
+    assert response.diagnostics[0].code == "banned_import"
+    assert response.revision_id == saved.revision_id
     assert "error" not in result
     assert "code" not in result
 
@@ -282,3 +286,84 @@ def test_strategy_tool_annotations_describe_actual_effects(tmp_path: Path) -> No
         for model_schema in definitions.values():
             if isinstance(model_schema, dict) and model_schema.get("type") == "object":
                 assert model_schema.get("additionalProperties") is False
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["get_strategy", "validate_strategy", "dry_run_strategy", "promote_strategy"],
+)
+def test_explicit_missing_revision_never_selects_current(
+    tmp_path: Path, tool_name: str
+) -> None:
+    server, service = _server(tmp_path)
+    _save(service)
+    result = _call(
+        server,
+        tool_name,
+        {
+            "strategy_id": "contract_strategy",
+            "revision_id": "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa",
+        },
+    )
+    assert result["success"] is False
+    assert result["code"] == "strategy_not_found"
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["get_strategy", "validate_strategy", "dry_run_strategy", "promote_strategy"],
+)
+def test_revision_tampering_is_a_structured_failure(
+    tmp_path: Path, tool_name: str
+) -> None:
+    server, service = _server(tmp_path)
+    _save(service)
+    spec = service.load("contract_strategy")
+    assert spec is not None
+    Path(spec.source_path).write_text("def broken(:\n", encoding="utf-8")
+    result = _call(
+        server,
+        tool_name,
+        {"strategy_id": "contract_strategy", "revision_id": spec.revision_id},
+    )
+    assert result["success"] is False
+    assert result["code"] == "strategy_revision_invalid"
+
+
+def test_checking_an_older_revision_does_not_approve_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server, service = _server(tmp_path)
+    contract = strategy_contract_payload(_PACKAGE_ROOT)
+    saved = _call(
+        server,
+        "save_strategy",
+        {
+            "strategy_id": "contract_strategy",
+            "code": contract["example_strategy_code"],
+            "yaml_config": contract["example_yaml_config"],
+        },
+    )
+    old = {"strategy_id": "contract_strategy", "revision_id": saved["revision_id"]}
+    _save(service)
+
+    def quality_diagnostics(_path: Path) -> list[StrategyDiagnostic]:
+        return []
+
+    monkeypatch.setattr(service, "_quality_gate_diagnostics", quality_diagnostics)
+    for tool in ("validate_strategy", "dry_run_strategy", "promote_strategy"):
+        result = _call(server, tool, old)
+        assert result["success"] is True
+        assert result["revision_id"] == saved["revision_id"]
+    current = GeneratedStrategyResponse.model_validate(
+        _call(server, "get_strategy", {"strategy_id": "contract_strategy"})
+    )
+    assert current.revision_id != saved["revision_id"]
+    assert current.metadata.status == "draft"
+    checked = GeneratedStrategyResponse.model_validate(
+        _call(server, "get_strategy", old)
+    )
+    assert checked.metadata.validation is not None
+    assert checked.metadata.dry_run is not None
+    assert checked.metadata.validation.revision_id == saved["revision_id"]
+    assert checked.metadata.dry_run.revision_id == saved["revision_id"]

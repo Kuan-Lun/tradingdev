@@ -82,5 +82,29 @@ def test_server_instances_keep_generated_strategies_in_their_workspace(
         assert second_result[1]["result"]["success"] is False
 
     asyncio.run(check())
-    assert (first_workspace.generated_strategies / "isolated_strategy.py").is_file()
-    assert not (second_workspace.generated_strategies / "isolated_strategy.py").exists()
+    assert list(
+        (first_workspace.generated_strategies / "isolated_strategy" / "revisions").glob(
+            "*/strategy.py"
+        )
+    )
+    assert not (second_workspace.generated_strategies / "isolated_strategy").exists()
+
+
+def test_revision_selectors_are_advertised_in_tool_schemas(runtime_root: Path) -> None:
+    server = create_server(WorkspacePaths(runtime_root / "workspace"))
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    for name in (
+        "get_strategy",
+        "validate_strategy",
+        "dry_run_strategy",
+        "promote_strategy",
+        "start_backtest",
+        "start_walk_forward",
+        "start_optimization",
+    ):
+        schema = tools[name].inputSchema
+        assert "revision_id" in schema["properties"]
+        assert "revision_id" not in schema.get("required", [])
+    saved_schema = tools["save_strategy"].outputSchema
+    assert saved_schema is not None
+    assert "revision_id" in saved_schema["$defs"]["StrategySaveSuccess"]["required"]

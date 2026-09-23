@@ -44,6 +44,7 @@ class SignalAnalysisResponse(ContractModel):
 class StrategyValidationRecord(ContractModel):
     """Persisted evidence of a validation or dry-run attempt."""
 
+    revision_id: str
     checked_at: str
     success: bool
     diagnostics: list[StrategyDiagnosticResponse]
@@ -54,6 +55,7 @@ class GeneratedStrategyMetadata(ContractModel):
     """Known persisted metadata fields exposed for generated strategies."""
 
     strategy_id: str
+    revision_id: str
     class_name: str
     artifact_type: Literal["generated_strategy"]
     status: StrategyStatus
@@ -71,6 +73,7 @@ class GeneratedStrategyMetadata(ContractModel):
 class StrategyRecentRun(ContractModel):
     """A recent run with extensible JSON metrics."""
 
+    revision_id: str | None
     run_id: str
     job_id: str
     created_at: str
@@ -81,6 +84,7 @@ class StrategyRecentRun(ContractModel):
 class BundledStrategySummaryMetadata(ContractModel):
     """Version, source, and configurable parameters of a bundled strategy."""
 
+    revision_id: None
     version: str | None
     source_path: str | None
     parameters: dict[str, JsonValue]
@@ -90,6 +94,7 @@ class BundledStrategySummary(ContractModel):
     """One bundled strategy discovery entry."""
 
     strategy_id: str
+    revision_id: None
     class_name: str
     description: str
     kind: Literal["bundled"]
@@ -106,6 +111,7 @@ class GeneratedStrategySummary(ContractModel):
     """One generated strategy discovery entry."""
 
     strategy_id: str
+    revision_id: str
     class_name: str
     kind: Literal["generated"]
     status: StrategyStatus
@@ -121,9 +127,29 @@ class GeneratedStrategySummary(ContractModel):
 class BundledStrategySourceMetadata(ContractModel):
     """Paths and execution status of a bundled source artifact."""
 
+    revision_id: None
     status: Literal["promoted"]
     source_path: str
     config_path: str
+
+
+class LegacyStrategySummary(ContractModel):
+    """A discoverable flat strategy that must be resaved before any checks or run."""
+
+    strategy_id: str
+    revision_id: None
+    kind: Literal["legacy"]
+    status: Literal["revision_required"]
+    code: Literal["strategy_revision_required"]
+    message: str
+
+
+class LegacyStrategyResponse(LegacyStrategySummary):
+    """Read-only recovery material, without inherited validation evidence."""
+
+    success: Literal[True]
+    source_code: str
+    yaml_config: str
 
 
 class BundledStrategyResponse(ContractModel):
@@ -131,6 +157,7 @@ class BundledStrategyResponse(ContractModel):
 
     success: Literal[True]
     strategy_id: str
+    revision_id: None
     kind: Literal["bundled"]
     source_code: str
     yaml_config: str
@@ -142,6 +169,7 @@ class GeneratedStrategyResponse(ContractModel):
 
     success: Literal[True]
     strategy_id: str
+    revision_id: str
     kind: Literal["generated"]
     source_code: str
     yaml_config: str
@@ -155,6 +183,7 @@ class StrategySaveSuccess(ContractModel):
     message: str
     error: None
     strategy_id: str
+    revision_id: str
     py_path: str
     yaml_path: str
     status: Literal["draft"]
@@ -164,10 +193,15 @@ class StrategySaveFailure(ErrorResponse):
     """A rejected save request with no generated artifact paths."""
 
     code: Literal[
-        "invalid_strategy_id", "syntax_error", "invalid_yaml", "invalid_strategy_config"
+        "invalid_strategy_id",
+        "reserved_strategy_id",
+        "syntax_error",
+        "invalid_yaml",
+        "invalid_strategy_config",
     ]
     message: Literal[""]
     strategy_id: str
+    revision_id: None
     py_path: Literal[""]
     yaml_path: Literal[""]
     status: Literal["rejected"]
@@ -178,6 +212,7 @@ class StrategyStateError(ErrorResponse):
 
     code: Literal["invalid_strategy_status"]
     strategy_id: str
+    revision_id: str
     status: StrategyStatus
 
 
@@ -185,6 +220,7 @@ class StrategyCheckResult(ContractModel):
     """Evidence produced by a completed validation or dry-run check."""
 
     strategy_id: str
+    revision_id: str
     diagnostics: list[StrategyDiagnosticResponse]
     signal_analysis: SignalAnalysisResponse
 
@@ -222,4 +258,5 @@ class StrategyPromoteSuccess(ContractModel):
 
     success: Literal[True]
     strategy_id: str
+    revision_id: str
     status: Literal["promoted"]

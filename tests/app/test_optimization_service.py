@@ -30,7 +30,9 @@ class _StrategyServiceStub:
     def __init__(self, metadata: dict[str, Any]) -> None:
         self.metadata = metadata
 
-    def resolve_executable(self, strategy_id: str) -> StrategySpec:
+    def resolve_executable(
+        self, strategy_id: str, revision_id: str | None = None
+    ) -> StrategySpec:
         status = StrategyStatus(str(self.metadata["status"]))
         if status not in _EXECUTABLE:
             msg = (
@@ -41,6 +43,7 @@ class _StrategyServiceStub:
         return StrategySpec(
             strategy_id=strategy_id,
             class_name="Fixture",
+            kind="bundled",
             source_path="",
             config_path=str(self.metadata["config_path"]),
             status=status,

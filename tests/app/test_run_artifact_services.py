@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.job_store import JobStore
+from tradingdev.app.run_lineage import load_config_payload
 from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 
@@ -105,7 +108,11 @@ backtest:
         dataset_id="dataset-fixture",
     )
 
-    pipeline = PipelineResult(mode="simple", config_snapshot={"strategy": {}})
+    pipeline = PipelineResult(
+        mode="simple", config_snapshot=load_config_payload(config_path) or {}
+    )
+    # Persistence must retain what ran, even if the input file changed meanwhile.
+    config_path.write_text("strategy:\n  id: different_strategy\n", encoding="utf-8")
     result_path = job_store.save_result(
         "job_lineage",
         {"total_return": 0.1},
@@ -183,7 +190,9 @@ backtest:
     processed_path.write_text("fixture", encoding="utf-8")
 
     service = ArtifactService(workspace=workspace, store=store)
-    pipeline = PipelineResult(mode="simple", config_snapshot={})
+    pipeline = PipelineResult(
+        mode="simple", config_snapshot=load_config_payload(config_path) or {}
+    )
 
     service.cache_pipeline_result(
         pipeline=pipeline,
@@ -196,3 +205,34 @@ backtest:
     run = store.list_runs()[0]
     assert run["source_hash"] == sha256_file(strategy_source)
     assert run["random_seed"] == 11
+
+
+def test_cli_cache_rejects_config_edits_after_execution(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = SQLiteStore(workspace)
+    monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
+    config_path = tmp_path / "cli.yaml"
+    original = {
+        "strategy": {"id": "fixture"},
+        "backtest": {"start_date": "2024-01-01", "end_date": "2024-01-31"},
+    }
+    pipeline = PipelineResult(mode="simple", config_snapshot=original)
+    config_path.write_text(
+        "strategy:\n  id: fixture\nbacktest:\n"
+        "  start_date: '2024-02-01'\n  end_date: '2024-02-29'\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Config changed after the CLI run"):
+        ArtifactService(workspace=workspace, store=store).cache_pipeline_result(
+            pipeline=pipeline,
+            config_path=config_path,
+            processed_path=tmp_path / "data.parquet",
+            metrics={"total_return": 0.2},
+            strategy_id="fixture",
+        )
+
+    assert store.list_runs() == []
+    assert not list(workspace.root.rglob("*.pkl"))

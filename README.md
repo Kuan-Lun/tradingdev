@@ -59,12 +59,31 @@ Claude Desktop 範例：
 
 1. `list_strategies`：先檢查 bundled/generated strategy。
 2. `get_strategy_contract`：取得 LLM 產生策略必須遵守的 Python/YAML 契約。
-3. `save_strategy`：只把 generated strategy 存成 draft。
+3. `save_strategy`：建立新 draft revision，保留回傳的 `revision_id`。
 4. `validate_strategy`：跑 syntax、static policy、ruff、mypy、繼承與 signal
-   contract 檢查。
-5. `dry_run_strategy`：只接受 validated strategy，通過後升為 runnable。
-6. `start_backtest` 或 `start_walk_forward`：只接受 runnable/promoted strategy。
+   contract 檢查；傳入剛保存的 `revision_id`。
+5. `dry_run_strategy`：傳入相同 `revision_id`，只接受 validated revision，
+   通過後升為 runnable。
+6. `start_backtest` 或 `start_walk_forward`：傳入相同 `revision_id`，
+   只接受 runnable/promoted revision。
 7. `get_job_status`、`list_runs`、`compare_runs`、`list_artifacts` 查詢結果。
+
+`get_strategy`、驗證、dry-run、promote 與三種執行工具都接受 `revision_id`。
+省略時，每次操作只選取一次當前 revision；已建立的工作固定使用選定版本。
+修正策略須重新 `save_strategy`，新 revision 從 draft 開始；舊版本與驗證證據保留，
+可用其 `revision_id` 查詢或執行。job、run 與策略回覆會帶回所選版本。
+Generated 策略的一般回測與 walk-forward 參數必須與該 revision 的基礎設定相同；
+調整參數須另存並驗證新 revision。最佳化可覆寫搜尋範圍內的參數，其餘保留基礎值。
+Bundled 策略仍由 Git 管理，`revision_id` 為 `null`。
+
+舊版 `generated_strategies/<id>.py`／`<id>.json` 與 `configs/<id>.yaml`
+不會自動遷移或改寫。`list_strategies` 會列為 `kind: legacy`、
+`status: revision_required`，不影響其他策略的探索；以 `get_strategy` 讀取原程式與
+YAML，再明確透過 `save_strategy` 保存並完成 validate 與 dry-run。
+舊的 runnable/promoted 狀態不能替新 revision 授權；保存後清單改列新版本，
+舊檔仍保留。若原程式或 YAML 缺失、無法讀取，請還原檔案或提供替代內容再保存。
+若舊策略與 bundled 策略同名，預設查詢與執行選擇 bundled；請用
+`get_strategy(strategy_id, legacy=true)` 讀取舊內容，改用另一個未保留的 ID 保存。
 
 `inspect_dataset(config_path)` 可在執行前檢查策略需要的行情、特徵資料、
 檔案位置與缺值狀態。
@@ -121,9 +140,11 @@ MCP 回傳 `isError: true`。不應只依 MCP `isError` 判斷應用操作是否
 - 內建策略設定：
   `src/tradingdev/domain/strategies/bundled/<strategy>/config.yaml`
 - 透過 MCP 產生的策略：
-  `workspace/generated_strategies/<strategy_id>.py`
+  `workspace/generated_strategies/<strategy_id>/revisions/<revision_id>/strategy.py`
 - 生成策略的設定：
-  `workspace/configs/<strategy_id>.yaml`
+  同一 revision 目錄的 `config.yaml`；`metadata.json` 保存狀態與驗證證據。
+- 生成策略的當前版本指標：
+  `workspace/generated_strategies/<strategy_id>/current.json`
 - 行情資料快取：
   `workspace/data/raw/` 與 `workspace/data/processed/`
 - 工作狀態與執行結果索引：
@@ -144,6 +165,13 @@ MCP 回傳 `isError: true`。不應只依 MCP `isError` 判斷應用操作是否
 uv run python -m tradingdev --config \
   src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml
 ```
+
+Generated 策略請指定已通過 dry-run 的 revision 所屬 `config.yaml`，
+或複製它建立執行設定並完整保留 `strategy` 區段，包括身分、參數、
+`description`、`version`、`fit` 等原有欄位；新增、移除或變更欄位都需要另存並驗證新 revision。
+`source_path` 必須仍指向原 revision 的來源；`source_hash` 由執行流程驗證後填入。
+交易對、期間與成本可在 `strategy` 以外的設定區段調整。
+執行中若修改該設定檔，CLI 會拒絕將結果存入變更後設定的快取。
 
 報表以 `N/A` 表示缺少或沒有有限數值的指標，不代表零。
 

@@ -107,10 +107,17 @@ stateDiagram-v2
     running --> failed
 ```
 
-Generated strategies must live in `workspace/generated_strategies/`.
+Generated source and base config are immutable revisions under
+`workspace/generated_strategies/<id>/revisions/<revision_id>/`. Each save writes
+`strategy.py`, `config.yaml`, and `metadata.json`, then updates the strategy's
+`current.json` pointer. Revision identity is a fresh UUID for every save, even
+when source and config are unchanged. The lifecycle diagram applies to each
+revision separately; saving B does not reset or inherit A's evidence.
 `StrategyService` persists generated strategy metadata as typed
 `StrategyMetadata` / `ValidationResult` models and owns every lifecycle
-transition, including `promote`. `validate_strategy` and `dry_run_strategy`
+transition, including `promote`. Validation records contain their revision ID,
+and checks write evidence back to the revision selected before execution.
+`validate_strategy` and `dry_run_strategy`
 share one `SignalContractChecker` (`domain/strategies/contract.py`) run at two
 fixture depths. Bundled strategies live next to their git-versioned configs and
 parameter config models under
@@ -119,10 +126,28 @@ through `BundledStrategyCatalog`.
 
 Execution is gated in the application layer: `BacktestService.run_raw_config`
 resolves the strategy through `StrategyService.resolve_executable`, which
-rejects anything that is not runnable or promoted and verifies that the
-config's `source_path` matches the registered source. `JobService` and
-`OptimizationService` use the same gate, so MCP jobs, the CLI, and subprocess
-workers all pass through one check.
+rejects anything that is not runnable or promoted, requires successful validation
+and dry-run evidence for the same revision, checks source/base-config integrity,
+and verifies that the effective config's source identity matches that revision.
+`JobService` and `OptimizationService` use the same gate, so MCP jobs, the CLI,
+and subprocess
+workers all pass through one check. An optional `revision_id` selects an older
+revision explicitly; otherwise current is resolved once before submission.
+Job payloads and effective configs carry the selected revision through workers,
+optimization confirmation and result persistence. Bundled strategies remain
+Git-managed and have no generated revision identity (`revision_id: null`).
+
+The revision binds source and base config. Execution may override request
+dates/market inputs; generated backtest and walk-forward parameters must match
+the base revision. Optimization may vary its search parameters while retaining
+other base parameters. It does not freeze Python dependencies, data, or the
+engine environment, and does not constitute a complete
+execution manifest. Legacy flat generated files are left untouched and require
+resaving and validation before execution; no compatibility execution path
+trusts their previous lifecycle status. Discovery lists legacy filenames as typed
+`legacy` entries requiring a revision, independently of current revision loading.
+The source query can read their fixed source/config locations for explicit
+resaving, without trusting legacy metadata paths or validation evidence.
 
 `app/job_config.py` applies request overrides and writes effective config snapshots
 for both backtest and optimization jobs. Optimization trials and parallel search
@@ -173,7 +198,7 @@ classDiagram
 SQLite stores metadata. The `jobs` table keeps generic job lifecycle columns;
 backtest-specific values such as strategy, symbol, timeframe, date range, and
 config path are optional payload fields. Filesystem stores generated code/config,
-feature requests, data caches, and run artifacts. Each completed run records
+feature requests, data caches, and run artifacts. Each completed background job records
 result, config snapshot, strategy source hash, random seed, optional strategy
 source snapshot, dataset fingerprint, and dashboard `pipeline_result` artifacts
 under `workspace/runs/<run_id>/`; that directory is linked from the
@@ -183,6 +208,9 @@ overrides and writes execution snapshots shared by `JobService` and
 lineage extraction for job and artifact services. CLI pipeline-result cache
 files are stored under `workspace/data/processed/cache` (or
 `$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through `ArtifactService`.
+Job and CLI run config hashes describe the serialized executed config snapshot.
+CLI caching rejects a config file that no longer matches the executed snapshot;
+background jobs persist their in-memory execution snapshot at completion.
 The dashboard reads run metadata and pipeline artifacts through `RunService` /
 `ArtifactService`.
 
@@ -208,7 +236,8 @@ These annotations are not authorization or sandbox guarantees.
 
 Real stdio MCP tests validate structured responses against the schemas advertised
 by the running server, including unsuccessful application outcomes. Separate
-model workflows exercise strategy generation, repair, backtesting and lookup.
+model workflows exercise strategy generation, repair, legacy source recovery,
+backtesting and lookup.
 
 ## Domain Contracts
 

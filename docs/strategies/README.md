@@ -14,5 +14,8 @@
 
 Bundled config 使用 `strategy.id`、`strategy.class_name`、`strategy.source_path`
 與 `data.requirements` schema。Generated strategies 不放在此目錄；它們由 MCP
-lifecycle 管理，位於 `workspace/generated_strategies/` 與 `workspace/configs/`，
-狀態流程為 `draft → validated → runnable → promoted`。
+lifecycle 管理，每次保存都在
+`workspace/generated_strategies/<strategy_id>/revisions/<revision_id>/` 建立
+`strategy.py`、`config.yaml` 與 `metadata.json`。每個 revision 分別保存驗證證據與
+`draft → validated → runnable → promoted` 狀態，新版本不繼承舊版本的執行資格。
+`workspace/configs/<id>.yaml` 僅為舊格式策略的恢復讀取位置；舊檔須明確另存並重新驗證。

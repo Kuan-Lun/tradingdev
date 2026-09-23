@@ -18,6 +18,7 @@ class BacktestInput(BaseModel):
     """Input contract for starting a backtest-like job."""
 
     strategy_id: str
+    revision_id: str | None = None
     symbol: str
     timeframe: str
     start_date: str
@@ -28,6 +29,7 @@ class OptimizationInput(BaseModel):
     """Input contract for starting parameter optimization."""
 
     strategy_id: str
+    revision_id: str | None = None
     symbol: str
     timeframe: str
     param_ranges: dict[str, list[JsonValue]]

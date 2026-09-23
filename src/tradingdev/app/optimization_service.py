@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
-from tradingdev.app.job_config import apply_run_overrides, write_job_config
+from tradingdev.app.job_config import (
+    apply_run_overrides,
+    bind_strategy_revision,
+    write_job_config,
+)
 from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
@@ -16,6 +20,9 @@ from tradingdev.app.strategy_service import (
 )
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.shared.utils.config import load_config
+
+if TYPE_CHECKING:
+    from tradingdev.domain.strategies.schemas import StrategySpec
 
 
 class OptimizationService:
@@ -61,10 +68,11 @@ class OptimizationService:
         train_end: str,
         test_start: str,
         test_end: str,
+        revision_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a parameter optimization worker."""
-        config_path, error = self._resolve_strategy_config(strategy_id)
-        if config_path is None:
+        spec, error = self._resolve_strategy_config(strategy_id, revision_id)
+        if spec is None:
             return {
                 "job_id": "",
                 "message": error,
@@ -91,8 +99,11 @@ class OptimizationService:
         for values in param_ranges.values():
             total_combinations *= len(values)
 
+        config_path = Path(spec.config_path)
+        raw_config = load_config(config_path)
+        bind_strategy_revision(raw_config, spec)
         effective_config = apply_run_overrides(
-            load_config(config_path),
+            raw_config,
             symbol=symbol,
             timeframe=timeframe,
             start_date=train_start,
@@ -107,6 +118,7 @@ class OptimizationService:
         self._job_store.create_job(
             job_id=job_id,
             strategy_name=strategy_id,
+            revision_id=spec.revision_id,
             symbol=symbol,
             timeframe=timeframe,
             start_date=train_start,
@@ -141,6 +153,7 @@ class OptimizationService:
         self._job_store.update_job(job_id, **identity.job_fields())
         return {
             "job_id": job_id,
+            "revision_id": spec.revision_id,
             "message": (
                 f"Optimization started. {total_combinations} parameter combinations. "
                 "A trial run will estimate total time; use get_job_status() to check."
@@ -148,13 +161,15 @@ class OptimizationService:
             "total_combinations": total_combinations,
         }
 
-    def _resolve_strategy_config(self, strategy_id: str) -> tuple[Path | None, str]:
+    def _resolve_strategy_config(
+        self, strategy_id: str, revision_id: str | None
+    ) -> tuple[StrategySpec | None, str]:
         try:
-            spec = self._strategy_service.resolve_executable(strategy_id)
+            spec = self._strategy_service.resolve_executable(strategy_id, revision_id)
         except StrategyNotExecutableError as exc:
             return None, str(exc)
         path = Path(spec.config_path)
-        return (path, "") if path.exists() else (None, f"Config not found: {path}")
+        return (spec, "") if path.exists() else (None, f"Config not found: {path}")
 
     def _validate_request(
         self,

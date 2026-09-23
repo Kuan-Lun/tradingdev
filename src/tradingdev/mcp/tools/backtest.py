@@ -33,15 +33,18 @@ def register(mcp: FastMCP, service: JobService) -> None:
         timeframe: str,
         start_date: str,
         end_date: str,
+        revision_id: str | None = None,
     ) -> BacktestStarted | BacktestRejected:
         """Launch a backtest for a runnable/promoted strategy without validation folds.
 
+        Pass the runnable revision_id; omission selects current at submission.
         An empty job_id and code mean no job was created. Otherwise poll
         get_job_status, then use get_run after completion. May download data
         and replace partial caches.
         """
         payload = BacktestInput(
             strategy_id=strategy_id,
+            revision_id=revision_id,
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
@@ -49,6 +52,7 @@ def register(mcp: FastMCP, service: JobService) -> None:
         )
         result = service.start_backtest(
             strategy_id=payload.strategy_id,
+            revision_id=payload.revision_id,
             symbol=payload.symbol,
             timeframe=payload.timeframe,
             start_date=payload.start_date,
@@ -70,15 +74,18 @@ def register(mcp: FastMCP, service: JobService) -> None:
         timeframe: str,
         start_date: str,
         end_date: str,
+        revision_id: str | None = None,
     ) -> BacktestStarted | BacktestRejected:
         """Launch walk-forward for a runnable/promoted strategy with validation config.
 
+        Pass the runnable revision_id; omission selects current at submission.
         An empty job_id and code mean no job was created. Otherwise poll
         get_job_status, then use get_run after completion. May download data
         and replace partial caches.
         """
         payload = BacktestInput(
             strategy_id=strategy_id,
+            revision_id=revision_id,
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
@@ -86,6 +93,7 @@ def register(mcp: FastMCP, service: JobService) -> None:
         )
         result = service.start_walk_forward(
             strategy_id=payload.strategy_id,
+            revision_id=payload.revision_id,
             symbol=payload.symbol,
             timeframe=payload.timeframe,
             start_date=payload.start_date,
