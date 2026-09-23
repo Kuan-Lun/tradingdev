@@ -177,9 +177,9 @@ def _import_diagnostics(root: str, line: int) -> list[StrategyDiagnostic]:
                 message=f"import not allowed: {root}",
                 line=line,
                 fix=(
-                    "Use pandas, numpy, talib, typing, math, datetime, or "
-                    "tradingdev strategy APIs only; prefer "
-                    "tradingdev.domain.indicators for standard indicators."
+                    "Allowed import roots: "
+                    f"{', '.join(sorted(_ALLOWED_IMPORT_ROOTS))}. "
+                    "Prefer tradingdev.domain.indicators for standard indicators."
                 ),
             )
         ]

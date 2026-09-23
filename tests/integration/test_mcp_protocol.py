@@ -243,6 +243,15 @@ async def test_rejected_drafts_diagnostics_and_repair(
         )
         assert import_diagnostic["message"] == "import not allowed: pandas_ta"
         assert "talib" in import_diagnostic["fix"]
+        for root in (
+            "__future__",
+            "collections",
+            "dataclasses",
+            "enum",
+            "statistics",
+            "typing_extensions",
+        ):
+            assert root in import_diagnostic["fix"]
         bad_signal = code.replace('result["signal"] = 0', 'result["signal"] = 7')
         await client.call(
             "save_strategy",

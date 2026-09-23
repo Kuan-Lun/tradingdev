@@ -34,8 +34,8 @@ interval.
 Allowed import roots for generated strategies are intentionally small:
 
 - Python standard library: `__future__`, `collections`, `dataclasses`,
-  `datetime`, `enum`, `math`, `statistics`, `typing`, `typing_extensions`.
-- Runtime libraries: `numpy`, `pandas`, `talib`.
+  `datetime`, `enum`, `math`, `statistics`, `typing`.
+- Runtime libraries: `numpy`, `pandas`, `talib`, `typing_extensions`.
 - Project APIs: `tradingdev`.
 
 Prefer `tradingdev.domain.indicators` (`sma`, `ema`, `rsi`, `macd`,
