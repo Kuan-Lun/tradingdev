@@ -144,7 +144,10 @@ other base parameters. It does not freeze Python dependencies, data, or the
 engine environment, and does not constitute a complete
 execution manifest. Legacy flat generated files are left untouched and require
 resaving and validation before execution; no compatibility execution path
-trusts their previous lifecycle status.
+trusts their previous lifecycle status. Discovery lists legacy filenames as typed
+`legacy` entries requiring a revision, independently of current revision loading.
+The source query can read their fixed source/config locations for explicit
+resaving, without trusting legacy metadata paths or validation evidence.
 
 `app/job_config.py` applies request overrides and writes effective config snapshots
 for both backtest and optimization jobs. Optimization trials and parallel search
@@ -233,7 +236,8 @@ These annotations are not authorization or sandbox guarantees.
 
 Real stdio MCP tests validate structured responses against the schemas advertised
 by the running server, including unsuccessful application outcomes. Separate
-model workflows exercise strategy generation, repair, backtesting and lookup.
+model workflows exercise strategy generation, repair, legacy source recovery,
+backtesting and lookup.
 
 ## Domain Contracts
 

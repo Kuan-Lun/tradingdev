@@ -202,9 +202,28 @@ or market data, and is not a full execution manifest. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
 
 Legacy flat source/metadata/config files are not migrated or overwritten. They
-cannot execute using their old lifecycle state; save their source and YAML again
-and validate/dry-run the newly returned revision. Historical run records with no
-revision retain `revision_id: null`.
+cannot execute using their old lifecycle state. `list_strategies` discovers
+root-level `<id>.json` names separately from current revisions, without parsing
+legacy metadata or blocking bundled/current strategies. These entries have
+`kind: legacy`, `status: revision_required`, `revision_id: null`, and
+`code: strategy_revision_required`, with explicit resaving instructions.
+`get_strategy(id)` reads the fixed `generated_strategies/<id>.py` and
+`configs/<id>.yaml` locations as source/YAML recovery material; it does not follow
+paths or trust lifecycle evidence from legacy metadata. Missing, unreadable,
+non-UTF-8, or symlinked source/config files return `strategy_revision_invalid`;
+their legacy entry remains discoverable. Restore the files or provide replacement
+content to `save_strategy`, then validate/dry-run the newly returned revision.
+Validate, dry-run, and promote reject legacy entries with
+`strategy_revision_required`; execution still rejects them as non-executable.
+A saved current revision supersedes its legacy discovery entry, leaving the old
+files untouched. Explicit revision lookups never fall back to legacy files.
+If a legacy entry shares a bundled ID, discovery lists both kinds and default
+source lookup/execution selects bundled. Read the legacy source explicitly with
+`get_strategy(strategy_id, legacy=true)` and save it under a different,
+non-reserved ID; saving over bundled IDs returns `reserved_strategy_id`.
+The explicit legacy query never falls back to bundled/current, and combining it
+with `revision_id` returns `strategy_revision_invalid`.
+Historical run records with no revision retain `revision_id: null`.
 
 ## Security Model
 

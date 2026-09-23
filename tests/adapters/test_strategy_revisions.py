@@ -224,13 +224,40 @@ def test_legacy_metadata_is_reported_without_migration(tmp_path: Path) -> None:
     store = StrategyRevisionStore(workspace)
     with pytest.raises(UnsupportedStrategyRevisionError, match="save.*explicitly"):
         store.load("fixture")
-    with pytest.raises(UnsupportedStrategyRevisionError):
-        store.list_current()
+    assert store.list_current() == []
+    assert store.list_legacy_ids() == ["fixture"]
     assert legacy.read_text() == content
     assert not (workspace.generated_strategies / "fixture").exists()
     replacement = store.create("fixture", "new source", _config())
     assert store.load("fixture") == replacement
+    assert store.list_current() == [replacement]
+    assert store.list_legacy_ids() == []
     assert legacy.read_text() == content
+
+
+@pytest.mark.parametrize("location", ["source", "config", "config_directory"])
+def test_legacy_recovery_rejects_symlinked_paths(tmp_path: Path, location: str) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    workspace.ensure()
+    source = workspace.generated_strategies / "fixture.py"
+    config = workspace.configs / "fixture.yaml"
+    source.write_text("original source")
+    config.write_text("original config")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if location == "config_directory":
+        config.unlink()
+        workspace.configs.rmdir()
+        workspace.configs.symlink_to(outside, target_is_directory=True)
+    else:
+        path = source if location == "source" else config
+        path.unlink()
+        target = outside / "untrusted"
+        target.write_text("must not be read")
+        path.symlink_to(target)
+    store = StrategyRevisionStore(workspace)
+    with pytest.raises(StrategyRevisionIntegrityError, match="path leaves workspace"):
+        store.read_legacy_source("fixture")
 
 
 def test_revision_is_complete_before_current_pointer_changes(

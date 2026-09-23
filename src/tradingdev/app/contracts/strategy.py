@@ -133,6 +133,25 @@ class BundledStrategySourceMetadata(ContractModel):
     config_path: str
 
 
+class LegacyStrategySummary(ContractModel):
+    """A discoverable flat strategy that must be resaved before any checks or run."""
+
+    strategy_id: str
+    revision_id: None
+    kind: Literal["legacy"]
+    status: Literal["revision_required"]
+    code: Literal["strategy_revision_required"]
+    message: str
+
+
+class LegacyStrategyResponse(LegacyStrategySummary):
+    """Read-only recovery material, without inherited validation evidence."""
+
+    success: Literal[True]
+    source_code: str
+    yaml_config: str
+
+
 class BundledStrategyResponse(ContractModel):
     """Source and configuration for a bundled strategy."""
 

@@ -188,7 +188,12 @@ class StrategyService:
         self, strategy_id: str, revision_id: str | None = None
     ) -> StrategySpec | None:
         """Load a bundled or generated strategy spec."""
-        metadata = self._revisions.load(strategy_id, revision_id)
+        entry = self._catalog.get(strategy_id) if revision_id is None else None
+        metadata = (
+            None
+            if entry is not None
+            else self._revisions.load(strategy_id, revision_id)
+        )
         if metadata is not None:
             return StrategySpec(
                 strategy_id=metadata.strategy_id,
@@ -203,7 +208,6 @@ class StrategyService:
 
         if revision_id is not None:
             return None
-        entry = self._catalog.get(strategy_id)
         if entry is None or entry.declared_source_path is None:
             return None
         return StrategySpec(
@@ -455,7 +459,7 @@ class StrategyService:
         }
 
     def list_strategies(self) -> list[dict[str, Any]]:
-        """List bundled and generated strategies."""
+        """List bundled, revisioned, and legacy strategies requiring resaving."""
         items: list[dict[str, Any]] = []
         for entry in self._catalog.entries():
             strategy = entry.strategy_section
@@ -494,14 +498,57 @@ class StrategyService:
                     "recent_runs": self._recent_runs(metadata.strategy_id),
                 }
             )
+        items.extend(
+            self._legacy_summary(strategy_id)
+            for strategy_id in self._revisions.list_legacy_ids()
+        )
         return items
 
+    def _legacy_summary(self, strategy_id: str) -> dict[str, Any]:
+        reserved = self._catalog.get(strategy_id) is not None
+        read_step = "get_strategy(legacy=true)" if reserved else "get_strategy"
+        save_step = (
+            "save_strategy using a different, non-reserved strategy_id"
+            if reserved
+            else "save_strategy"
+        )
+        return {
+            "strategy_id": strategy_id,
+            "revision_id": None,
+            "kind": "legacy",
+            "status": "revision_required",
+            "code": "strategy_revision_required",
+            "message": (
+                f"Read source/config with {read_step}, then explicitly {save_step} "
+                "as a new draft and validate/dry-run its returned revision_id. "
+                "Legacy status and evidence do not authorize execution."
+            ),
+        }
+
     def get_strategy(
-        self, strategy_id: str, revision_id: str | None = None
+        self,
+        strategy_id: str,
+        revision_id: str | None = None,
+        *,
+        legacy: bool = False,
     ) -> dict[str, Any]:
         """Read bundled or generated strategy source and config."""
+        if legacy:
+            if revision_id is not None:
+                return self._revision_error(
+                    StrategyRevisionError("Legacy source has no revision_id")
+                )
+            if strategy_id not in self._revisions.list_legacy_ids():
+                return self._not_found(strategy_id, None)
+            return self._get_legacy_strategy(strategy_id)
         try:
-            metadata = self._revisions.load(strategy_id, revision_id)
+            metadata = (
+                None
+                if revision_id is None and self._catalog.get(strategy_id) is not None
+                else self._revisions.load(strategy_id, revision_id)
+            )
+        except UnsupportedStrategyRevisionError:
+            return self._get_legacy_strategy(strategy_id)
         except StrategyRevisionError as exc:
             return self._revision_error(exc)
         if metadata is not None:
@@ -538,6 +585,18 @@ class StrategyService:
             "success": False,
             "error": f"Strategy not found: {strategy_id}",
             "code": "strategy_not_found",
+        }
+
+    def _get_legacy_strategy(self, strategy_id: str) -> dict[str, Any]:
+        try:
+            source, config = self._revisions.read_legacy_source(strategy_id)
+        except StrategyRevisionError as exc:
+            return self._revision_error(exc)
+        return {
+            **self._legacy_summary(strategy_id),
+            "success": True,
+            "source_code": source,
+            "yaml_config": config,
         }
 
     def _data_requirements(self, raw_config: object) -> dict[str, Any] | None:

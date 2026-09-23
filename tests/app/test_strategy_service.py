@@ -514,6 +514,20 @@ def test_generated_save_cannot_shadow_bundled_strategy(tmp_path: Path) -> None:
     assert saved.code == "reserved_strategy_id"
 
 
+def test_legacy_id_collision_does_not_shadow_bundled_execution(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    bundled = service.resolve_executable("kd_crossover")
+    legacy = workspace.generated_strategies / "kd_crossover.json"
+    legacy.write_text('{"status": "runnable"}', encoding="utf-8")
+    assert service.resolve_executable("kd_crossover") == bundled
+    assert service.get_strategy("kd_crossover")["kind"] == "bundled"
+    with pytest.raises(StrategyNotExecutableError, match="not found"):
+        service.resolve_executable(
+            "kd_crossover", revision_id="0123456789ab4def8123456789abcdef"
+        )
+
+
 def test_dry_run_cannot_replace_newer_validation_in_the_same_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

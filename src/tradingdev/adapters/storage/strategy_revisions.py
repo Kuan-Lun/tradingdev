@@ -159,15 +159,44 @@ class StrategyRevisionStore:
         root = self._path()
         if not root.exists():
             return []
-        strategy_ids = {path.parent.name for path in root.glob("*/current.json")} | {
-            path.stem for path in root.glob("*.json")
-        }
+        strategy_ids = {path.parent.name for path in root.glob("*/current.json")}
         items = []
         for strategy_id in sorted(strategy_ids):
             metadata = self.load(strategy_id)
             if metadata is not None:
                 items.append(metadata)
         return items
+
+    def list_legacy_ids(self) -> list[str]:
+        """Discover flat metadata names without trusting their old contents.
+
+        A published current pointer supersedes the retained legacy files.
+        Discovery does not load Python or grant execution status.
+        """
+        root = self._path()
+        return sorted(
+            path.stem
+            for path in root.glob("*.json")
+            if _STRATEGY_ID.fullmatch(path.stem)
+            and not (root / path.stem / "current.json").exists()
+        )
+
+    def read_legacy_source(self, strategy_id: str) -> tuple[str, str]:
+        """Read the old fixed source/config locations solely for explicit resaving."""
+        self._validate_strategy_id(strategy_id)
+        source_path = self._path(f"{strategy_id}.py")
+        config_path = self._workspace_path("configs", f"{strategy_id}.yaml")
+        try:
+            return (
+                source_path.read_text(encoding="utf-8"),
+                config_path.read_text(encoding="utf-8"),
+            )
+        except (OSError, UnicodeError) as exc:
+            raise StrategyRevisionIntegrityError(
+                f"Cannot read legacy source/config for {strategy_id!r}; "
+                "restore its generated_strategies/<id>.py and configs/<id>.yaml "
+                "files, or provide replacement source/config to save_strategy"
+            ) from exc
 
     def update(
         self,
@@ -284,7 +313,10 @@ class StrategyRevisionStore:
             raise StrategyRevisionError("strategy_id must be lowercase snake_case")
 
     def _path(self, *parts: str) -> Path:
-        path = self._workspace.generated_strategies
+        return self._workspace_path("generated_strategies", *parts)
+
+    def _workspace_path(self, *parts: str) -> Path:
+        path = self._workspace.root
         for part in (None, *parts):
             if part is not None:
                 path = path / part

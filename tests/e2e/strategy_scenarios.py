@@ -14,6 +14,7 @@ class Scenario:
     overrides: dict[str, int]
     requirement: str
     repair: bool = False
+    legacy: bool = False
 
     @property
     def strategy_id(self) -> str:
@@ -21,14 +22,22 @@ class Scenario:
 
     @property
     def prompt(self) -> str:
-        repair = (
-            "後端已有這個策略的錯誤草稿。先 get_strategy 並 validate_strategy，"
-            "必須先取得失敗診斷，再修改儲存，不能直接覆寫而跳過診斷。"
-            if self.repair
-            else "請先查詢策略清單。"
-        )
+        if self.legacy:
+            preparation = (
+                "後端已有這個策略的舊格式檔案。先 list_strategies 找到它，"
+                "再 get_strategy 讀取現有原始碼與 YAML，依工具提供的恢復指引處理。"
+                "必須先完成這兩次讀取才可 save_strategy，不可跳過舊內容直接建立。"
+                "即使舊 metadata 標示 runnable，也必須重新儲存、驗證及 dry-run。"
+            )
+        elif self.repair:
+            preparation = (
+                "後端已有這個策略的錯誤草稿。先 get_strategy 並 validate_strategy，"
+                "必須先取得失敗診斷，再修改儲存，不能直接覆寫而跳過診斷。"
+            )
+        else:
+            preparation = "請先查詢策略清單。"
         return f"""請透過 TradingDev MCP 開發策略 {self.strategy_id}。
-{repair}
+{preparation}
 讀取 get_strategy_contract，依照契約完成 Python 與 YAML。{self.requirement}
 所有參數放在 strategy.parameters 且可覆寫：{self.parameters}。
 YAML backtest 設定 BTC/USDT、1h、2024-01-01 至 2024-01-08、init_cash=10000、
@@ -72,6 +81,13 @@ SCENARIOS = {
         {"fast_period": 3, "slow_period": 8},
         _SMA_REQUIREMENT,
         repair=True,
+    ),
+    "legacy": Scenario(
+        "legacy",
+        {"fast_period": 5, "slow_period": 20},
+        {"fast_period": 3, "slow_period": 8},
+        _SMA_REQUIREMENT,
+        legacy=True,
     ),
 }
 

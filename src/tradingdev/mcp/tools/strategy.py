@@ -12,6 +12,8 @@ from tradingdev.app.contracts.strategy import (
     BundledStrategySummary,
     GeneratedStrategyResponse,
     GeneratedStrategySummary,
+    LegacyStrategyResponse,
+    LegacyStrategySummary,
     StrategyContractResponse,
     StrategyDryRunFailure,
     StrategyDryRunSuccess,
@@ -58,11 +60,15 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
             openWorldHint=False,
         )
     )
-    def list_strategies() -> list[BundledStrategySummary | GeneratedStrategySummary]:
-        """List local strategies and lifecycle states; use get_strategy for source."""
+    def list_strategies() -> list[
+        BundledStrategySummary | GeneratedStrategySummary | LegacyStrategySummary
+    ]:
+        """List strategies; read and explicitly resave any legacy entries."""
         return [
             BundledStrategySummary.model_validate(item)
             if item.get("kind") == "bundled"
+            else LegacyStrategySummary.model_validate(item)
+            if item.get("kind") == "legacy"
             else GeneratedStrategySummary.model_validate(item)
             for item in service.list_strategies()
         ]
@@ -78,13 +84,29 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
     def get_strategy(
         strategy_id: str,
         revision_id: str | None = None,
-    ) -> BundledStrategyResponse | GeneratedStrategyResponse | ErrorResponse:
-        """Read source, YAML, and evidence; omitted revision_id selects current once."""
-        response = service.get_strategy(strategy_id, revision_id=revision_id)
+        legacy: bool = False,
+    ) -> (
+        BundledStrategyResponse
+        | GeneratedStrategyResponse
+        | LegacyStrategyResponse
+        | ErrorResponse
+    ):
+        """Read source/YAML; omitted revision_id selects current once.
+
+        Legacy source is read-only recovery material: save it as a new draft,
+        then validate/dry-run the returned revision before execution.
+        Set legacy=true to read a legacy entry sharing a reserved bundled ID;
+        save that source under a different ID. Do not combine with revision_id.
+        """
+        response = service.get_strategy(
+            strategy_id, revision_id=revision_id, legacy=legacy
+        )
         if not response["success"]:
             return ErrorResponse.model_validate(response)
         if response["kind"] == "bundled":
             return BundledStrategyResponse.model_validate(response)
+        if response["kind"] == "legacy":
+            return LegacyStrategyResponse.model_validate(response)
         return GeneratedStrategyResponse.model_validate(response)
 
     @mcp.tool(

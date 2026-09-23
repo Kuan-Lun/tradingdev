@@ -77,8 +77,13 @@ Generated 策略的一般回測與 walk-forward 參數必須與該 revision 的�
 Bundled 策略仍由 Git 管理，`revision_id` 為 `null`。
 
 舊版 `generated_strategies/<id>.py`／`<id>.json` 與 `configs/<id>.yaml`
-不會自動遷移或改寫；請將原程式與 YAML 重新透過 `save_strategy` 保存，
-再完成 validate 與 dry-run。舊的 runnable/promoted 狀態不能替新 revision 授權。
+不會自動遷移或改寫。`list_strategies` 會列為 `kind: legacy`、
+`status: revision_required`，不影響其他策略的探索；以 `get_strategy` 讀取原程式與
+YAML，再明確透過 `save_strategy` 保存並完成 validate 與 dry-run。
+舊的 runnable/promoted 狀態不能替新 revision 授權；保存後清單改列新版本，
+舊檔仍保留。若原程式或 YAML 缺失、無法讀取，請還原檔案或提供替代內容再保存。
+若舊策略與 bundled 策略同名，預設查詢與執行選擇 bundled；請用
+`get_strategy(strategy_id, legacy=true)` 讀取舊內容，改用另一個未保留的 ID 保存。
 
 `inspect_dataset(config_path)` 可在執行前檢查策略需要的行情、特徵資料、
 檔案位置與缺值狀態。
