@@ -107,7 +107,7 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 |------|--------|------|
 | `gamma` | 500.0 | 風險厭惡係數 (γ)，越大 spread 越寬 |
 | `kappa` | 1000.0 | 訂單到達強度 (κ)，越大 spread 越窄 |
-| `ema_window` | 21 | EMA 計算窗口，用於估計公允價格 |
+| `ema_window` | 21 | EMA 計算窗口，用於估計公允價格；整數 2～100000 |
 
 ### Volatility
 
@@ -150,7 +150,7 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 |------|--------|------|
 | `min_entry_edge` | 0.0015 | 最低進場偏離閾值（須 >= `fee_rate × 2`） |
 | `momentum_guard` | false | 動量防護：只在 deviation 收斂時進場 |
-| `trend_ema_window` | 0 | 趨勢過濾慢 EMA；0=停用 |
+| `trend_ema_window` | 0 | 趨勢過濾慢 EMA；0=停用，啟用時為整數 2～100000 |
 
 ### Exit
 
@@ -193,10 +193,10 @@ actual_size = position_size × weight
 |------|--------|------|
 | `gamma_candidates` | [0, 0.1, 1] | 搜尋最佳 γ |
 | `kappa_candidates` | [250, 500, 750] | 搜尋最佳 κ |
-| `ema_window_candidates` | [5, 15, 30] | 搜尋最佳 EMA 窗口 |
+| `ema_window_candidates` | [5, 15, 30] | 搜尋最佳 EMA 窗口；各值為整數 2～100000 |
 | `max_holding_bars_candidates` | [6, 8, 13] | 搜尋最佳持倉上限 |
 | `min_entry_edge_candidates` | [0.0012, 0.0015, 0.002, 0.003] | 搜尋最佳進場門檻 |
-| `trend_ema_candidates` | [0, 200] | 搜尋趨勢過濾窗口 |
+| `trend_ema_candidates` | [0, 200] | 搜尋趨勢過濾窗口；各值為 0 或整數 2～100000 |
 | `profit_target_ratio_candidates` | [0.5, 0.75, 1.0] | 搜尋最佳利潤目標 |
 | `target_metric` | "total_volume" | 優化目標指標 |
 | `min_monthly_pnl` | -1500 | 月均 PnL 約束門檻（USDT） |

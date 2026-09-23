@@ -33,7 +33,7 @@ _ALLOWED_IMPORT_ROOTS = {
     "typing_extensions",
     "numpy",
     "pandas",
-    "pandas_ta",
+    "talib",
     "tradingdev",
 }
 _BANNED_CALLS = {
@@ -177,8 +177,9 @@ def _import_diagnostics(root: str, line: int) -> list[StrategyDiagnostic]:
                 message=f"import not allowed: {root}",
                 line=line,
                 fix=(
-                    "Use pandas, numpy, pandas_ta, typing, math, datetime, or "
-                    "tradingdev strategy APIs only."
+                    "Allowed import roots: "
+                    f"{', '.join(sorted(_ALLOWED_IMPORT_ROOTS))}. "
+                    "Prefer tradingdev.domain.indicators for standard indicators."
                 ),
             )
         ]

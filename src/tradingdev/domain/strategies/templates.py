@@ -22,10 +22,17 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
             "input DataFrame. Use tradingdev.domain.indicators (sma, ema, rsi, "
             "macd, bollinger_bands, atr, adx, stochastic) for standard "
             "indicators and tradingdev.shared.utils.logger for logging. "
-            "pandas_ta may be imported directly, but select its output columns "
-            "by name and pass talib=False so results do not depend on the "
-            "environment. Allowed imports are restricted to a small "
-            "Python/pandas/numpy/pandas_ta/tradingdev allowlist."
+            "The indicator facade uses TA-Lib and preserves its warm-up and "
+            "NaN behavior; keep signals flat until all required values are "
+            "finite, and never backfill indicators from future rows. "
+            "talib may be imported directly: pass float64 NumPy arrays to its "
+            "Function API, unpack multi-output tuples (MACD: line, signal, "
+            "histogram; BBANDS: upper, middle, lower; STOCH: k, d), and align "
+            "returned arrays with the input index. Allowed imports are "
+            "restricted to a small Python/pandas/numpy/talib/tradingdev "
+            "allowlist; pandas_ta is no longer supported. Ruff treats "
+            "tradingdev as first-party: separate its imports from third-party "
+            "numpy, pandas, and talib imports with a blank line."
         ),
         "lifecycle": (
             "save_strategy stores a draft; validate_strategy runs static checks, "
@@ -50,6 +57,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
+from tradingdev.domain import indicators
 from tradingdev.domain.strategies.base import BaseStrategy
 
 if TYPE_CHECKING:
@@ -73,14 +83,20 @@ class SmaCrossoverStrategy(BaseStrategy):
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
-        fast = result["close"].rolling(self._fast_period).mean()
-        slow = result["close"].rolling(self._slow_period).mean()
+        fast = indicators.sma(result["close"], self._fast_period)
+        slow = indicators.sma(result["close"], self._slow_period)
         fast_prev = fast.shift(1)
         slow_prev = slow.shift(1)
+        ready = (
+            np.isfinite(fast)
+            & np.isfinite(slow)
+            & np.isfinite(fast_prev)
+            & np.isfinite(slow_prev)
+        )
 
         result["signal"] = 0
-        result.loc[(fast > slow) & (fast_prev <= slow_prev), "signal"] = 1
-        result.loc[(fast < slow) & (fast_prev >= slow_prev), "signal"] = -1
+        result.loc[ready & (fast > slow) & (fast_prev <= slow_prev), "signal"] = 1
+        result.loc[ready & (fast < slow) & (fast_prev >= slow_prev), "signal"] = -1
         return result
 
     def get_parameters(self) -> dict[str, Any]:

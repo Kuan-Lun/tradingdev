@@ -1,10 +1,12 @@
 """Configuration models for the bundled GLFT-ML strategy."""
 
-from __future__ import annotations
-
 from typing import Literal, Self
 
 from pydantic import BaseModel, model_validator
+
+from tradingdev.domain.strategies.bundled.indicator_parameters import (
+    MovingAveragePeriod,
+)
 
 
 class GLFTMLStrategyConfig(BaseModel):
@@ -19,14 +21,14 @@ class GLFTMLStrategyConfig(BaseModel):
     confidence_threshold_candidates: list[float] = [0.52, 0.55, 0.60]
     gamma: float = 0.0
     kappa: float = 1000.0
-    ema_window: int = 15
+    ema_window: MovingAveragePeriod = 15
     vol_window: int = 30
     vol_type: Literal["realized", "parkinson", "implied"] = "implied"
     min_holding_bars: int = 5
     max_holding_bars: int = 13
     gamma_candidates: list[float] = [0.0, 200.0, 500.0]
     kappa_candidates: list[float] = [500.0, 1000.0]
-    ema_window_candidates: list[int] = [5, 15, 30, 75]
+    ema_window_candidates: list[MovingAveragePeriod] = [5, 15, 30, 75]
     max_holding_bars_candidates: list[int] = [8, 13, 30]
     min_entry_edge_candidates: list[float] = [0.0008, 0.0012, 0.002]
     profit_target_ratio_candidates: list[float] = [0.5, 0.75, 1.0]

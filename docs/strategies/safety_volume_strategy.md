@@ -61,8 +61,8 @@ FLAT ──(safe + direction)──► LONG/SHORT
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
 | `use_ml_direction` | false | true: 使用 XGBoost 方向模型 |
-| `sma_fast` | 5 | SMA 快線週期 |
-| `sma_slow` | 20 | SMA 慢線週期 |
+| `sma_fast` | 5 | SMA 快線週期；整數 2～100000 |
+| `sma_slow` | 20 | SMA 慢線週期；整數 2～100000 |
 
 ### Holding Management
 

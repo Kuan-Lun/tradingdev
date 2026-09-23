@@ -26,6 +26,44 @@ from tests.integration.mcp_harness import MCPWorkspace, temporary_mcp_workspace
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+_SMA_CODE = '''\
+"""Deterministic SMA direction fixture for workflow verification."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from tradingdev.domain import indicators
+from tradingdev.domain.strategies.base import BaseStrategy
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+
+class SmaFixture(BaseStrategy):
+    def __init__(self, fast_period: int, slow_period: int) -> None:
+        self.fast_period = fast_period
+        self.slow_period = slow_period
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        result = df.copy()
+        fast = indicators.sma(result["close"], self.fast_period)
+        slow = indicators.sma(result["close"], self.slow_period)
+        ready = np.isfinite(fast) & np.isfinite(slow)
+        result["signal"] = 0
+        result.loc[ready & (fast > slow), "signal"] = 1
+        result.loc[ready & (fast < slow), "signal"] = -1
+        return result
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {
+            "fast_period": self.fast_period,
+            "slow_period": self.slow_period,
+        }
+'''
+
 _MOMENTUM_CODE = '''\
 """Deterministic momentum fixture for workflow verification."""
 
@@ -86,19 +124,8 @@ async def _complete_workflow(
             code = _MOMENTUM_CODE
             config["strategy"]["class_name"] = "MomentumFixture"
         else:
-            # Contract example emits only crossover events. The scenario asks
-            # for the direction on every bar, including before the first cross.
-            code = contract["example_strategy_code"].replace(
-                "        fast_prev = fast.shift(1)\n"
-                "        slow_prev = slow.shift(1)\n",
-                "",
-            )
-            code = code.replace(
-                "(fast > slow) & (fast_prev <= slow_prev)", "fast > slow"
-            )
-            code = code.replace(
-                "(fast < slow) & (fast_prev >= slow_prev)", "fast < slow"
-            )
+            code = _SMA_CODE
+            config["strategy"]["class_name"] = "SmaFixture"
         config["strategy"]["id"] = scenario.strategy_id
         config["strategy"]["parameters"] = scenario.parameters
         config["backtest"].update(
