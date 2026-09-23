@@ -213,6 +213,30 @@ def test_excessive_evidence_fails_before_model_call(
     assert not fake_codex.exists()
 
 
+def test_explicit_budget_reviews_complete_evidence_larger_than_default(
+    repository: tuple[Path, str, str], fake_codex: Path
+) -> None:
+    repo, base, _ = repository
+    content = "# unchanged evidence must reach the reviewer\n" * 8_000
+    (repo / "src/app.py").write_text(content, encoding="utf-8")
+    _git(repo, "add", "src/app.py")
+    tree = _git(repo, "write-tree")
+    evidence = review_docs.build_evidence(repo, base, tree, max_bytes=1_000_000)
+    size = len(evidence.encode("utf-8"))
+    assert size > review_docs.MAX_EVIDENCE_BYTES
+    with pytest.raises(review_docs.ReviewError, match="no evidence was truncated"):
+        review_docs.review(base, tree, repo=repo)
+    assert not fake_codex.exists()
+    with pytest.raises(review_docs.ReviewError, match="no evidence was truncated"):
+        review_docs.review(base, tree, repo=repo, max_evidence_bytes=size - 1)
+    assert not fake_codex.exists()
+
+    review_docs.review(base, tree, repo=repo, max_evidence_bytes=size)
+    record = json.loads(fake_codex.read_text(encoding="utf-8"))
+    assert record["prompt"].endswith(evidence)
+    assert not Path(record["root"]).exists()
+
+
 def test_unavailable_codex_is_an_actionable_failure(
     repository: tuple[Path, str, str], monkeypatch: MonkeyPatch
 ) -> None:
