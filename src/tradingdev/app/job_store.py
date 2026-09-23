@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import pickle
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +22,7 @@ from tradingdev.app.run_lineage import (
     load_config_payload,
     resolve_strategy_source,
 )
+from tradingdev.shared.utils.json_values import normalize_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -159,26 +159,13 @@ class JobStore:
         pipeline: Any | None = None,
     ) -> Path:
         """Serialize metrics to a run artifact and record run metadata."""
-        safe: dict[str, Any] = {}
-        for k, v in metrics.items():
-            if isinstance(v, bool):
-                safe[k] = bool(v)
-            elif isinstance(v, int):
-                safe[k] = int(v)
-            elif v is None:
-                safe[k] = None
-            else:
-                try:
-                    f = float(v)
-                    safe[k] = None if (math.isnan(f) or math.isinf(f)) else f
-                except (TypeError, ValueError):
-                    safe[k] = v
+        safe = normalize_json_object(metrics)
 
         run_dir = self._workspace.runs / job_id
         run_dir.mkdir(parents=True, exist_ok=True)
         result_path = run_dir / "result.json"
         result_path.write_text(
-            json.dumps(safe, indent=2, ensure_ascii=False),
+            json.dumps(safe, indent=2, ensure_ascii=False, allow_nan=False),
             encoding="utf-8",
         )
 
@@ -290,7 +277,7 @@ class JobStore:
         if not path.exists():
             return None
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return raw if isinstance(raw, dict) else None
+        return normalize_json_object(raw) if isinstance(raw, dict) else None
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         """Return a completed run."""
