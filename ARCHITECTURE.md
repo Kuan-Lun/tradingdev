@@ -271,11 +271,16 @@ their run artifact directory is `workspace/runs/cli_<cache_key>/`, which holds
 the manifest even though the pickle remains in the cache directory.
 Job and CLI run config hashes describe the serialized executed config snapshot.
 The separate manifest hash identifies the complete request, including any
-optimization search settings. CLI caching uses the executed manifest hash rather
-than re-reading the original YAML, so editing that file after execution does not
-prevent saving the old snapshot. Cache identity also includes processed-data
-file size/mtime and a Git code fingerprint; those are invalidation signals,
-not immutable data or environment versions. Background jobs persist their
+optimization search settings. `compute_cache_key` requires the executed
+`manifest_hash` and processed-data path explicitly; it has no YAML-based fallback.
+Editing the original YAML after execution does not prevent saving the old
+snapshot. Cache identity also includes processed-data file size/mtime and a Git
+code fingerprint; those are invalidation signals, not immutable data or environment
+versions. Completed pipeline results are retrieved by run ID through the recorded
+artifact path, without recomputing a lookup key from current YAML, data, or code.
+The unused YAML-based `load_cached_result` and `save_cached_result` APIs have been
+removed; this artifact storage flow does not provide automatic reuse of prior
+backtests. Background jobs persist their
 verified in-memory manifest config at completion.
 The dashboard reads run metadata and pipeline artifacts through `RunService` /
 `ArtifactService`.

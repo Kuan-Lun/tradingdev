@@ -129,9 +129,8 @@ class ArtifactService:
             config_payload, self._workspace, strategy_id=strategy_id
         )
         key = compute_cache_key(
-            config_path,
-            processed_path,
-            config_content=manifest.manifest_hash.encode("ascii"),
+            manifest_hash=manifest.manifest_hash,
+            processed_path=processed_path,
         )
         run_id = f"cli_{key}"
         manifest_path = ExecutionManifestStore(self._workspace).publish(

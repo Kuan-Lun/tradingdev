@@ -170,6 +170,9 @@ def test_artifact_service_cache_pipeline_records_run_lineage(
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
     monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
+    monkeypatch.setattr(
+        "tradingdev.shared.utils.cache._code_fingerprint", lambda: "fixed-source"
+    )
 
     strategy_source = tmp_path / "cli_strategy.py"
     strategy_source.write_text("class CliStrategy: pass\n", encoding="utf-8")
@@ -207,7 +210,7 @@ backtest:
         execution_manifest=manifest,
     )
 
-    service.cache_pipeline_result(
+    cached_path = service.cache_pipeline_result(
         pipeline=pipeline,
         config_path=config_path,
         processed_path=processed_path,
@@ -225,13 +228,48 @@ backtest:
     )
     assert json.loads(artifact["content"]) == manifest.model_dump(mode="json")
 
+    # Saving an executed result never derives its identity from mutable YAML.
+    config_path.write_text("strategy:\n  id: another_strategy\n", encoding="utf-8")
+    assert (
+        service.cache_pipeline_result(
+            pipeline=pipeline,
+            config_path=config_path,
+            processed_path=processed_path,
+            metrics={"total_return": 0.2},
+            strategy_id="cli_fixture",
+        )
+        == cached_path
+    )
+    assert len(store.list_runs()) == 1
 
+    # Reading follows the recorded artifact path even if current key inputs differ.
+    config_path.unlink()
+    processed_path.unlink()
+    monkeypatch.setattr(
+        "tradingdev.shared.utils.cache._code_fingerprint", lambda: "changed-source"
+    )
+    loaded = ArtifactService(workspace=workspace, store=store).load_pipeline_result(
+        run["run_id"]
+    )
+    assert loaded["success"] is True
+    assert loaded["artifact"]["path"] == str(cached_path)
+    restored = loaded["pipeline"]
+    assert isinstance(restored, PipelineResult)
+    assert restored.mode == pipeline.mode
+    assert restored.config_snapshot == manifest.config_copy()
+    assert restored.execution_manifest == manifest
+
+
+@pytest.mark.parametrize("changed_setting", ["backtest", "strategy_execution"])
 def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
-    tmp_path: Path, monkeypatch: MonkeyPatch
+    tmp_path: Path, monkeypatch: MonkeyPatch, changed_setting: str
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
     monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
+    monkeypatch.setattr(
+        "tradingdev.shared.utils.cache._code_fingerprint", lambda: "fixed-source"
+    )
     config_path = tmp_path / "cli.yaml"
     original = {
         "strategy": {"id": "fixture"},
@@ -246,7 +284,9 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
     manifest = ExecutionManifest.create(
         kind="backtest",
         config=original,
-        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+        strategy_execution=StrategyExecution(
+            kind="generated", constructor_kwargs={"window": 7}
+        ),
     )
     pipeline = PipelineResult(
         mode="simple",
@@ -263,12 +303,20 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
     )
     assert not config_path.exists()
     changed_config = manifest.config_copy()
-    changed_config["backtest"]["end_date"] = "2024-02-29"
+    strategy_execution = manifest.strategy_execution
+    if changed_setting == "backtest":
+        changed_config["backtest"]["end_date"] = "2024-02-29"
+    else:
+        strategy_execution = StrategyExecution(
+            kind="generated", constructor_kwargs={"window": 14}
+        )
     changed = ExecutionManifest.create(
         kind="backtest",
         config=changed_config,
-        strategy_execution=manifest.strategy_execution,
+        strategy_execution=strategy_execution,
     )
+    if changed_setting == "strategy_execution":
+        assert changed.config_copy() == manifest.config_copy()
     second = service.cache_pipeline_result(
         pipeline=PipelineResult(
             mode="simple",

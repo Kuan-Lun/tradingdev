@@ -227,11 +227,15 @@ Saving uses this manifest without re-reading the original config file; editing
 that file after execution does not prevent saving the original result. The
 original `config_path` remains descriptive artifact metadata.
 
-CLI cache identity combines the manifest hash, processed-data file size/mtime,
-and a Git source-code fingerprint. New settings produce a different manifest and
-therefore a different cache key. These file-stat and code fingerprints help
-invalidate caches; they are not immutable data or environment versions and do
-not guarantee full reproducibility.
+CLI cache identity requires the executed manifest hash and combines it with
+processed-data file size/mtime and a Git source-code fingerprint. There is no
+YAML-based key fallback. New settings produce a different manifest and therefore
+a different cache key. Completed results are loaded by run ID through the
+registered artifact path, without recomputing a key from current YAML, data, or
+code. The unused YAML-based `load_cached_result` and `save_cached_result` helpers
+have been removed; this storage path does not automatically reuse prior backtests.
+These file-stat and code fingerprints help invalidate caches; they are not
+immutable data or environment versions and do not guarantee full reproducibility.
 
 Optimization `result.json` includes the best parameters, training metrics and
 out-of-sample metrics. For newly saved results, its parsed JSON matches the

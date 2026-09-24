@@ -116,10 +116,9 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
         monkeypatch.setattr("tradingdev.shared.utils.cache.CACHE_DIR", None)
 
         def cache_key(
-            _config: Path,
-            _processed: Path,
             *,
-            config_content: bytes | None = None,
+            manifest_hash: str,
+            processed_path: Path,
         ) -> str:
             return "metric-contract"
 
