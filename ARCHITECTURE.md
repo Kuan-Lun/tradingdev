@@ -356,7 +356,13 @@ backtesting and lookup.
   resolved configuration for inspection.
 - Generated strategies must pass static policy checks before execution.
   `validate_strategy` and `dry_run_strategy` currently execute generated Python
-  code during contract checks; sandbox isolation is future work.
+  code during contract checks. The three `start_*` tools also load generated
+  classes to capture effective settings in the MCP server before job creation
+  or worker startup, executing module-level Python without constructing a
+  strategy instance. Optimization's grid preflight loads the class again.
+  Workers later load and construct strategies for execution; their supervision
+  does not cover submission-time code in the server. Sandbox isolation is future
+  work; see the [strategy security model](docs/strategy_contract.md#security-model).
 - A detached supervisor owns each background worker's separate process group.
   Startup captures the supervisor identity before allowing it to spawn a worker;
   startup failures persist a failed job and its error. Job status checks use the
