@@ -14,7 +14,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
-from tradingdev.mcp.tools import jobs
+from tradingdev.app.optimization_service import OptimizationService
+from tradingdev.mcp.tools import jobs, optimization
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -114,6 +115,7 @@ def test_job_lifecycle_payloads_satisfy_advertised_contract(
     assert isinstance(result, tuple)
     payload: Any = result[1]["result"]
     assert payload["status"] == state
+    assert payload["manifest_hash"] is None
     if state == "done":
         assert payload["train_metrics"]["sharpe_ratio"] == 0.0
         assert payload["test_metrics"]["sharpe_ratio"] is None
@@ -143,3 +145,23 @@ def test_cancel_contract_does_not_claim_success_when_identity_missing(
     assert "process_terminated" not in payload
     persisted = store.get_job("job")
     assert persisted is not None and persisted["status"] == "running_backtest"
+
+
+def test_confirmation_returns_structured_failure_for_unversioned_job(
+    job_service: JobService,
+) -> None:
+    store = job_service._job_store
+    store.create_job(job_id="legacy", job_type="optimization")
+    store.update_job("legacy", status="pending_confirmation")
+    server = FastMCP("contract-test")
+    optimization.register(server, OptimizationService(job_store=store), job_service)
+
+    result = asyncio.run(server.call_tool("confirm_optimization", {"job_id": "legacy"}))
+
+    assert isinstance(result, tuple)
+    payload = result[1]["result"]
+    assert not payload["success"]
+    assert payload["code"] == "execution_manifest_invalid"
+    persisted = store.get_job("legacy")
+    assert persisted is not None
+    assert persisted.get("confirmed") is not True

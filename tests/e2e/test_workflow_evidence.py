@@ -46,7 +46,7 @@ def _repair_evidence() -> list[ToolCall]:
                 "start_date": "2024-01-01",
                 "end_date": "2024-01-08",
             },
-            {"job_id": "job", "revision_id": "revision_a"},
+            {"job_id": "job", "revision_id": "revision_a", "manifest_hash": "a" * 64},
         ),
         ToolCall(
             "get_job_status",
@@ -56,6 +56,7 @@ def _repair_evidence() -> list[ToolCall]:
                 "run_id": "run",
                 "metrics": metrics,
                 "revision_id": "revision_a",
+                "manifest_hash": "a" * 64,
             },
         ),
         ToolCall(
@@ -67,6 +68,7 @@ def _repair_evidence() -> list[ToolCall]:
                     "strategy_id": strategy_id,
                     "metrics": metrics,
                     "revision_id": "revision_a",
+                    "manifest_hash": "a" * 64,
                 },
             },
         ),
@@ -208,5 +210,15 @@ def test_mixed_revisions_cannot_supply_workflow_evidence(event_index: int) -> No
         calls[event_index].result["run"]["revision_id"] = "revision_b"
     else:
         calls[event_index].result["revision_id"] = "revision_b"
+    with pytest.raises(AssertionError):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize("event_index", [6, 7, 8])
+def test_different_manifests_cannot_supply_workflow_evidence(event_index: int) -> None:
+    calls = _repair_evidence()
+    result = calls[event_index].result
+    payload = result["run"] if event_index == 8 else result
+    payload["manifest_hash"] = "b" * 64
     with pytest.raises(AssertionError):
         assert_workflow(calls, SCENARIOS["repair"])

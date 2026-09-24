@@ -21,7 +21,8 @@ Generated code must:
 
 - inherit `tradingdev.domain.strategies.base.BaseStrategy`;
 - expose a constructor that can be called with YAML `strategy.parameters`;
-- accept optional `backtest_engine` when it needs engine context;
+- accept optional `backtest_engine` or `parallel_config` when it needs application
+  execution context;
 - implement `generate_signals(df)` and return a new pandas DataFrame;
 - preserve the input DataFrame without mutation;
 - include a `signal` column containing only `1`, `-1`, or `0`;
@@ -30,11 +31,21 @@ Generated code must:
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
-the constructor cannot accept fail validation. `backtest_engine` is injected by
-the application and cannot be overridden in YAML. Saving a revised draft
+the constructor cannot accept fail validation. `backtest_engine` and
+`parallel_config` are injected by the application and cannot be overridden in
+YAML. Saving a revised draft
 creates a new revision and loads that source, including
 same-size edits made within one filesystem timestamp interval. An existing
 revision is never replaced by a later save.
+
+Execution submission captures every declared constructor default, excluding the
+injected execution context, as an explicit keyword value in
+`manifest.strategy_execution`, separately from the original
+revision declaration. Defaults must be finite JSON values; unsupported defaults
+require explicit serializable parameters or a revised strategy. Generated code
+must express configurable values as constructor parameters rather than derive
+hidden defaults from environment state. This captures declared arguments, not
+arbitrary Python behavior or dependency versions.
 
 Allowed import roots for generated strategies are intentionally small:
 
@@ -190,6 +201,18 @@ revision never falls back to current. Submitted jobs, worker configs, completed
 runs and strategy source artifacts remain tied to the selected revision when
 current changes, including during optimization confirmation.
 
+Each submission also fixes an execution manifest containing that strategy
+identity, source hash, effective config with defaults, and any optimization
+search specification. Effective constructor values, including nested bundled
+parameter/fit-model defaults, are stored separately in `strategy_execution` and
+consumed without filling new defaults in the worker. The start response returns
+its `manifest_hash`, which
+also appears on job status and completed runs. Workers recheck the manifest
+against the submitted job and recheck strategy eligibility before execution.
+Changing a separate runtime YAML after submission does not change the job;
+submit a new job to change execution settings. The run's `config.yaml` is an
+inspection projection, while `manifest.json` is the execution authority.
+
 Runtime symbol, timeframe, and dates are separate from the revision's base
 config. For generated strategies, ordinary backtest and walk-forward execution
 configs must preserve the saved `strategy` mapping in full, including parameters,
@@ -200,11 +223,17 @@ The comparison excludes the execution-managed `source_hash` and separately
 verifies that `source_path` resolves to the selected revision's source. Copy the
 saved config and apply market/date/cost changes outside the `strategy` section.
 Optimization may override only its search parameters, retaining all other base
-parameters and all other saved strategy settings. Validation evidence covers
+parameters and all other saved strategy settings. Nested parameter candidates
+recursively override only the specified fields of the fixed effective base;
+other nested fields retain their captured values. Validation evidence covers
 the base parameters; it does not certify
-every possible optimization candidate. This revision identity does not freeze
-imported Python dependencies, the engine environment,
-or market data, and is not a full execution manifest. Bundled strategies remain
+every possible optimization candidate. Optimization fixes candidate lists,
+metric, calendar training/test ranges, maximization direction, and confirmation
+policy in the manifest. A config with `validation` settings cannot also request
+optimization; choose walk-forward or supply a config using the optimization
+training/test split alone. The complete request does not freeze imported Python
+dependencies, the engine environment, market data, or RNG state, and therefore
+does not guarantee fully reproducible results. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
 
 Legacy flat source/metadata/config files are not migrated or overwritten. They
@@ -233,8 +262,8 @@ Historical run records with no revision retain `revision_id: null`.
 
 ## Security Model
 
-Validation currently uses static policy checks plus restricted imports as a
-first layer. It rejects known unsafe imports (`os`, `sys`, `subprocess`,
+Validation currently uses static policy checks, including an import allowlist,
+as a first layer. It rejects known unsafe imports (`os`, `sys`, `subprocess`,
 `socket`, `requests`, `httpx`, `ccxt`, `shutil`, `pathlib`), dynamic execution
 calls (`eval`, `exec`, `__import__`), raw `open`, and common destructive file
 operations such as `unlink`, `remove`, `rmtree`, and `write_text`.
@@ -244,8 +273,27 @@ imported or executed.
 This is not a full process sandbox. `validate_strategy` and `dry_run_strategy`
 still import and execute generated Python to check class loading, constructor
 behavior, BaseStrategy inheritance, input immutability, signal values, and smoke
-dataframe output. Generated strategies must therefore be reviewed as runtime
-code until a dedicated sandboxed execution layer is added.
+dataframe output.
+
+Submission is another code-execution boundary. After checking that the selected
+revision is executable, `start_backtest`, `start_walk_forward`, and
+`start_optimization` call `StrategyLoader.resolve_execution` through
+`BacktestService.prepare_execution` to capture constructor arguments and defaults
+for the execution manifest. Loading a generated class compiles and executes its
+module-level Python in the MCP server process, before creating a job or spawning
+a worker. Optimization's parameter-grid preflight loads the class again, so
+module-level code can execute more than once during submission. This code can
+have effects even if a later preparation check rejects the request without a job.
+
+Submission does not instantiate the strategy. For scheduled jobs, workers later
+load the class and call its constructor through `create_from_execution`, then
+execute the strategy using the captured settings; optimization also constructs
+strategies for trial and parameter-combination runs. These execution steps are
+separate from the earlier validation/dry-run checks and submission-time module
+loading. Worker supervision and job cancellation do not cover code that runs in
+the MCP server before the worker exists. Generated strategies must therefore be
+reviewed as runtime code at all of these boundaries until a dedicated sandboxed
+execution layer is added.
 
 `signal_analysis` includes row count, signal distribution, missing-signal count,
 transition count, active-signal ratio, and timestamp bounds. Use it to debug

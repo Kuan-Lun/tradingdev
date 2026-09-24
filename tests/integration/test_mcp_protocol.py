@@ -128,15 +128,18 @@ async def test_generated_strategy_full_mcp_workflow(
             "start_backtest", **RUN_ARGUMENTS, revision_id=saved["revision_id"]
         )
         assert started["revision_id"] == saved["revision_id"]
+        assert len(started["manifest_hash"]) == 64
         assert started["job_id"] and started["data_available"], started
         completed = await client.wait_for_job(started["job_id"])
         assert completed["status"] == "done", completed
         assert completed["revision_id"] == saved["revision_id"]
+        assert completed["manifest_hash"] == started["manifest_hash"]
         assert completed["metrics"]["total_trades"] > 0
         run_id = completed["run_id"]
         run = (await client.call("get_run", run_id=run_id))["run"]
         assert run["strategy_id"] == STRATEGY_ID
         assert run["revision_id"] == saved["revision_id"]
+        assert run["manifest_hash"] == started["manifest_hash"]
         assert run["metrics"] == completed["metrics"]
         artifacts = await client.call("list_artifacts", run_id=run_id)
         by_type = {item["artifact_type"]: item for item in artifacts}
@@ -146,6 +149,7 @@ async def test_generated_strategy_full_mcp_workflow(
             "strategy_source",
             "dataset_fingerprint",
             "pipeline_result",
+            "execution_manifest",
         } <= by_type.keys()
         for artifact in artifacts:
             path = Path(artifact["path"])
@@ -169,8 +173,22 @@ async def test_generated_strategy_full_mcp_workflow(
             "slow_period": 8,
         }
         assert effective["backtest"]["symbol"] == "BTC/USDT"
-        assert effective["backtest"]["end_date"] == "2024-01-08"
+        assert effective["backtest"]["end_date"].startswith("2024-01-08")
         assert effective["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
+        manifest_artifact = await client.call(
+            "get_artifact",
+            artifact_id=by_type["execution_manifest"]["artifact_id"],
+            include_content=True,
+        )
+        manifest = json.loads(manifest_artifact["content"])
+        assert manifest["schema_version"] == 2
+        assert manifest["strategy_execution"]["constructor_kwargs"] == {
+            "fast_period": 3,
+            "slow_period": 8,
+        }
+        assert manifest["kind"] == "backtest"
+        assert manifest["manifest_hash"] == started["manifest_hash"]
+        assert manifest["config"] == effective
         assert (
             yaml.safe_load(Path(saved["yaml_path"]).read_text())["backtest"]["symbol"]
             == "ETH/USDT"

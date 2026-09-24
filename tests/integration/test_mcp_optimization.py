@@ -12,6 +12,8 @@ import pandas as pd
 import pytest
 import yaml
 
+from tradingdev.domain.execution import ExecutionManifest
+
 if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPClient, MCPWorkspace
 
@@ -34,7 +36,7 @@ if TYPE_CHECKING:
 class DirectionStrategy(BaseStrategy):
     """Expose both searched and required fixed YAML parameters."""
 
-    def __init__(self, direction: int, warmup: int) -> None:
+    def __init__(self, direction: int, warmup: int = 2) -> None:
         self._direction = direction
         self._warmup = warmup
 
@@ -67,14 +69,18 @@ def _opposite_trends() -> pd.DataFrame:
     )
 
 
-async def _save_runnable(client: MCPClient) -> dict[str, Any]:
+async def _save_runnable(
+    client: MCPClient, *, walk_forward: bool = False
+) -> dict[str, Any]:
     contract = await client.call("get_strategy_contract")
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"].update(
-        class_name="DirectionStrategy", parameters={"direction": -1, "warmup": 2}
+        class_name="DirectionStrategy", parameters={"direction": -1}
     )
     # The MCP request must override these without editing the saved strategy.
     config["backtest"].update(symbol="ETH/USDT", timeframe="4h", fees=0, slippage=0)
+    if walk_forward:
+        config["validation"] = {"n_splits": 2}
     saved = await client.call(
         "save_strategy",
         strategy_id=STRATEGY_ID,
@@ -100,6 +106,30 @@ async def _wait_for_confirmation(client: MCPClient, job_id: str) -> dict[str, An
             if status["status"] == "pending_confirmation":
                 return dict(status)
             await anyio.sleep(0.1)
+
+
+async def test_optimization_rejects_walk_forward_config_through_mcp(
+    mcp_workspace: MCPWorkspace,
+) -> None:
+    async with mcp_workspace.connect() as client:
+        saved = await _save_runnable(client, walk_forward=True)
+        rejected = await client.call(
+            "start_optimization",
+            strategy_id=STRATEGY_ID,
+            revision_id=saved["revision_id"],
+            symbol="BTC/USDT",
+            timeframe="1h",
+            param_ranges={"direction": [-1, 1]},
+            optimization_metric="total_return",
+            train_start="2024-01-01",
+            train_end="2024-01-03",
+            test_start="2024-01-04",
+            test_end="2024-01-07",
+        )
+        assert rejected["job_id"] == ""
+        assert rejected["code"] == "invalid_optimization_request"
+        assert "must not contain validation settings" in rejected["message"]
+        assert await client.call("list_jobs") == []
 
 
 async def test_optimization_confirmation_search_and_persisted_oos(
@@ -143,8 +173,11 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         job_id = started["job_id"]
         assert job_id and started["total_combinations"] == 3, started
         assert started["revision_id"] == saved["revision_id"]
+        manifest_hash = started["manifest_hash"]
+        assert len(manifest_hash) == 64
         pending = await _wait_for_confirmation(client, job_id)
         assert pending["revision_id"] == saved["revision_id"]
+        assert pending["manifest_hash"] == manifest_hash
         replacement = await client.call(
             "save_strategy",
             strategy_id=STRATEGY_ID,
@@ -172,11 +205,13 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         completed = await client.wait_for_job(job_id, timeout=180)
         assert completed["status"] == "done", json.dumps(completed, indent=2)
         assert completed["revision_id"] == saved["revision_id"]
+        assert completed["manifest_hash"] == manifest_hash
         assert completed["best_params"] == {"direction": 1}
         assert completed["optimization_metric"] == "total_return"
         assert completed["total_combinations"] == 3
         assert (await client.call("list_jobs"))[0]["completed"] == 3
-        # warmup=2 is fixed YAML, not a grid parameter. The engine enters one
+        # warmup=2 is a captured constructor default, not a grid parameter.
+        # The engine enters one
         # bar later (index 3), and training must include the entire last day.
         train_return = 171.0 / 103.0 - 1
         oos_return = 105.0 / 197.0 - 1
@@ -192,6 +227,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         run = (await client.call("get_run", run_id=completed["run_id"]))["run"]
         assert run["strategy_id"] == STRATEGY_ID
         assert run["revision_id"] == saved["revision_id"]
+        assert run["manifest_hash"] == manifest_hash
         assert run["dataset_id"].startswith("BTC/USDT:1h:2024-01-01:2024-01-07:")
         result = run["metrics"]
         assert result["best_params"] == completed["best_params"]
@@ -203,6 +239,29 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             item["artifact_type"]: item
             for item in await client.call("list_artifacts", run_id=job_id)
         }
+        specification = await client.call(
+            "get_artifact",
+            artifact_id=artifacts["execution_manifest"]["artifact_id"],
+            include_content=True,
+        )
+        manifest = ExecutionManifest.model_validate_json(specification["content"])
+        manifest.verify(manifest_hash)
+        assert manifest.kind == "optimization"
+        assert manifest.strategy_execution.constructor_kwargs == {
+            "direction": -1,
+            "warmup": 2,
+        }
+        search = manifest.optimization
+        assert search is not None
+        assert search.param_ranges == {"direction": [-1, 0, 1]}
+        assert search.optimization_metric == "total_return"
+        assert search.train_start.isoformat() == "2024-01-01"
+        assert search.train_end.isoformat() == "2024-01-03"
+        assert search.test_start.isoformat() == "2024-01-04"
+        assert search.test_end.isoformat() == "2024-01-07"
+        assert search.direction == "maximize"
+        assert search.trial_timeout_seconds == 300
+        assert search.confirmation_timeout_seconds == 1800
         stored = await client.call(
             "get_artifact",
             artifact_id=artifacts["result_json"]["artifact_id"],
@@ -220,7 +279,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert effective["backtest"]["timeframe"] == "1h"
         assert effective["backtest"]["end_date"] == "2024-01-07T23:59:59.999999"
         assert effective["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
-        assert effective["strategy"]["parameters"] == {"direction": -1, "warmup": 2}
+        assert effective["strategy"]["parameters"] == {"direction": -1}
+        assert effective == manifest.config_copy()
         original = yaml.safe_load(Path(saved["yaml_path"]).read_text())
         assert original["backtest"]["symbol"] == "ETH/USDT"
         assert original["backtest"]["timeframe"] == "4h"
@@ -228,6 +288,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
     async with mcp_workspace.connect() as client:
         reloaded = await client.call("get_job_status", job_id=job_id)
         assert reloaded["status"] == "done"
+        assert reloaded["manifest_hash"] == manifest_hash
         assert reloaded["best_params"] == {"direction": 1}
         assert reloaded["train_metrics"] == completed["train_metrics"]
         assert reloaded["test_metrics"] == completed["test_metrics"]

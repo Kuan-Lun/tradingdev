@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import importlib.util
 import inspect
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -15,9 +16,14 @@ from pydantic import BaseModel
 from tradingdev.domain.backtest.schemas import ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
+from tradingdev.domain.strategies.execution import (
+    StrategyExecution,
+    finite_strategy_value,
+)
 from tradingdev.shared.paths import resolve_workspace_root
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from types import ModuleType
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
@@ -52,24 +58,223 @@ class StrategyLoader:
         engine: BaseBacktestEngine | None,
         parallel_config: ParallelConfig | None = None,
     ) -> BaseStrategy:
-        """Build a strategy instance from a parsed YAML configuration."""
+        """Resolve and build using the same constructor contract as execution."""
         strategy_cfg = raw_config["strategy"]
         if not isinstance(strategy_cfg, dict):
             msg = "strategy config must be a mapping"
             raise ValueError(msg)
 
-        strategy_id = self._required_strategy_string(strategy_cfg, "id")
+        if parallel_config is None:
+            raw_parallel = raw_config.get("parallel")
+            parallel_config = ParallelConfig.model_validate(
+                {} if raw_parallel is None else raw_parallel
+            )
+        execution = self.resolve_execution(strategy_cfg)
+        return self.create_from_execution(
+            strategy_cfg, execution, engine, parallel_config
+        )
+
+    def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
+        """Capture effective settings without constructing a strategy instance."""
+        cls = self.load_class(strategy_cfg)
+        bundled = strategy_cfg["id"] in self._bundled_class_by_id()
         params = strategy_cfg.get("parameters", {})
         if not isinstance(params, dict):
-            msg = "strategy.parameters must be a mapping"
-            raise ValueError(msg)
+            raise ValueError("strategy.parameters must be a mapping")
+        signature = inspect.signature(cls)
+        kwargs: dict[str, Any]
+        if bundled:
+            kwargs = {}
+            if "config" in signature.parameters:
+                model = self._bundled_config_model(cls).model_validate(params)
+                kwargs["config"] = model.model_dump(mode="python")
+            if "fit_config" in signature.parameters and "fit" in strategy_cfg:
+                fit = strategy_cfg["fit"]
+                if not isinstance(fit, dict):
+                    raise ValueError("strategy.fit must be a mapping")
+                fit_model = self._bundled_config_model(cls, suffix="FitConfig")
+                kwargs["fit_config"] = fit_model.model_validate(fit).model_dump(
+                    mode="python"
+                )
+        else:
+            kwargs = deepcopy(params)
+        injected = {"backtest_engine", "parallel_config"}
+        if injected.intersection(kwargs):
+            raise ValueError("Strategy parameters cannot override injected settings")
+        for name, parameter in signature.parameters.items():
+            if name in injected or name in kwargs:
+                continue
+            if parameter.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            if parameter.default is not inspect.Parameter.empty:
+                kwargs[name] = parameter.default
+        signature.bind(
+            **kwargs,
+            **{name: None for name in injected if name in signature.parameters},
+        )
+        execution = StrategyExecution(
+            kind="bundled" if bundled else "generated",
+            constructor_kwargs=kwargs,
+        )
+        self._execution_kwargs(cls, execution, None, None, None)
+        return execution
 
-        bundled = self._bundled_class_by_id()
-        if strategy_id in bundled:
-            return self._create_bundled(strategy_cfg, engine, parallel_config)
-        self._reject_unknown_bundled_source(strategy_id, strategy_cfg, bundled)
+    def create_from_execution(
+        self,
+        strategy_cfg: dict[str, Any],
+        execution: StrategyExecution,
+        engine: BaseBacktestEngine | None,
+        parallel_config: ParallelConfig | None = None,
+        *,
+        parameter_overrides: dict[str, Any] | None = None,
+    ) -> BaseStrategy:
+        """Construct from explicit settings; never fill missing strategy defaults."""
+        cls = self._execution_class(strategy_cfg, execution)
+        kwargs = self._execution_kwargs(
+            cls, execution, engine, parallel_config, parameter_overrides
+        )
+        return cls(**kwargs)
 
-        return self._create_generated(strategy_cfg, engine)
+    def validate_parameter_overrides(
+        self,
+        strategy_cfg: dict[str, Any],
+        execution: StrategyExecution,
+        parameter_overrides: dict[str, Any],
+    ) -> None:
+        """Validate one search combination without running its constructor."""
+        cls = self._execution_class(strategy_cfg, execution)
+        self._execution_kwargs(cls, execution, None, None, parameter_overrides)
+
+    def validate_parameter_grid(
+        self,
+        strategy_cfg: dict[str, Any],
+        execution: StrategyExecution,
+        combinations: Iterable[dict[str, Any]],
+    ) -> None:
+        """Check a lazy grid using one resolved class, without instantiation."""
+        cls = self._execution_class(strategy_cfg, execution)
+        models = self._execution_models(cls, execution)
+        signature = inspect.signature(cls)
+        for parameters in combinations:
+            self._execution_kwargs(
+                cls,
+                execution,
+                None,
+                None,
+                parameters,
+                models=models,
+                signature=signature,
+            )
+
+    def _execution_class(
+        self, strategy_cfg: dict[str, Any], execution: StrategyExecution
+    ) -> type[BaseStrategy]:
+        bundled = strategy_cfg.get("id") in self._bundled_class_by_id()
+        if bundled != (execution.kind == "bundled"):
+            raise ValueError("Strategy execution kind does not match the strategy")
+        return self.load_class(strategy_cfg)
+
+    def _execution_kwargs(
+        self,
+        cls: type[BaseStrategy],
+        execution: StrategyExecution,
+        engine: BaseBacktestEngine | None,
+        parallel_config: ParallelConfig | None,
+        parameter_overrides: dict[str, Any] | None,
+        *,
+        models: dict[str, type[BaseModel]] | None = None,
+        signature: inspect.Signature | None = None,
+    ) -> dict[str, Any]:
+        copied = finite_strategy_value(execution.constructor_kwargs)
+        assert isinstance(copied, dict)
+        kwargs: dict[str, Any] = copied
+        if parameter_overrides is not None:
+            target = kwargs.get("config") if execution.kind == "bundled" else kwargs
+            if not isinstance(target, dict):
+                raise ValueError("Strategy does not expose searchable parameters")
+            self._overlay_parameters(target, parameter_overrides)
+        signature = signature or inspect.signature(cls)
+        injected = {"backtest_engine", "parallel_config"}
+        if injected.intersection(kwargs):
+            raise ValueError("Strategy execution cannot override injected settings")
+        for name, parameter in signature.parameters.items():
+            if name in injected or parameter.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            if name not in kwargs:
+                raise ValueError(
+                    "Strategy execution is missing explicit constructor setting "
+                    f"{name!r}"
+                )
+        for name, model in (
+            models if models is not None else self._execution_models(cls, execution)
+        ).items():
+            kwargs[name] = self._restore_model(model, kwargs[name])
+        if "backtest_engine" in signature.parameters:
+            kwargs["backtest_engine"] = engine
+        if "parallel_config" in signature.parameters:
+            kwargs["parallel_config"] = parallel_config
+        signature.bind(**kwargs)
+        return kwargs
+
+    def _execution_models(
+        self, cls: type[BaseStrategy], execution: StrategyExecution
+    ) -> dict[str, type[BaseModel]]:
+        if execution.kind != "bundled":
+            return {}
+        models: dict[str, type[BaseModel]] = {}
+        if "config" in execution.constructor_kwargs:
+            models["config"] = self._bundled_config_model(cls)
+        if execution.constructor_kwargs.get("fit_config") is not None:
+            models["fit_config"] = self._bundled_config_model(cls, suffix="FitConfig")
+        return models
+
+    @staticmethod
+    def _overlay_parameters(target: dict[str, Any], overrides: dict[str, Any]) -> None:
+        """Replace selected leaves while retaining captured nested defaults."""
+        for name, value in overrides.items():
+            if name not in target:
+                raise ValueError(f"Unknown strategy parameter: {name}")
+            previous = target[name]
+            if isinstance(previous, dict) and isinstance(value, dict):
+                StrategyLoader._overlay_parameters(previous, value)
+            else:
+                target[name] = finite_strategy_value(value)
+
+    @staticmethod
+    def _restore_model(model: type[BaseModel], values: object) -> BaseModel:
+        """Reject schema drift that adds, removes, or changes recorded values."""
+        before = finite_strategy_value(values)
+        restored = model.model_validate(deepcopy(before))
+        after = finite_strategy_value(restored.model_dump(mode="python"))
+        if not StrategyLoader._unchanged_model_values(before, after):
+            raise ValueError(
+                f"Recorded {model.__name__} settings no longer match its model; "
+                "submit a new execution"
+            )
+        return restored
+
+    @staticmethod
+    def _unchanged_model_values(before: object, after: object) -> bool:
+        """Allow only identical JSON values or lossless integer-to-float leaves."""
+        if isinstance(before, dict) and isinstance(after, dict):
+            return before.keys() == after.keys() and all(
+                StrategyLoader._unchanged_model_values(value, after[key])
+                for key, value in before.items()
+            )
+        if isinstance(before, list) and isinstance(after, list):
+            return len(before) == len(after) and all(
+                StrategyLoader._unchanged_model_values(left, right)
+                for left, right in zip(before, after, strict=True)
+            )
+        if type(before) is int and type(after) is float:
+            return before == after
+        return type(before) is type(after) and before == after
 
     def load_class(self, strategy_cfg: dict[str, Any]) -> type[BaseStrategy]:
         """Resolve a strategy class from bundled metadata or generated source."""
@@ -133,43 +338,6 @@ class StrategyLoader:
     def _is_bundled_source(self, source_path: Path) -> bool:
         return self._catalog.contains_source(source_path)
 
-    def _create_bundled(
-        self,
-        strategy_cfg: dict[str, Any],
-        engine: BaseBacktestEngine | None,
-        parallel_config: ParallelConfig | None,
-    ) -> BaseStrategy:
-        cls = self.load_class(strategy_cfg)
-        signature = inspect.signature(cls)
-        kwargs: dict[str, Any] = {}
-
-        if "config" in signature.parameters:
-            params = strategy_cfg.get("parameters", {})
-            if not isinstance(params, dict):
-                msg = "strategy.parameters must be a mapping"
-                raise ValueError(msg)
-            config_model = self._bundled_config_model(cls)
-            kwargs["config"] = config_model(**params)
-
-        if "fit_config" in signature.parameters and "fit" in strategy_cfg:
-            fit = strategy_cfg["fit"]
-            if not isinstance(fit, dict):
-                msg = "strategy.fit must be a mapping"
-                raise ValueError(msg)
-            fit_model = self._bundled_config_model(cls, suffix="FitConfig")
-            kwargs["fit_config"] = fit_model(**fit)
-
-        if "backtest_engine" in signature.parameters:
-            kwargs["backtest_engine"] = engine
-        if "parallel_config" in signature.parameters:
-            kwargs["parallel_config"] = parallel_config or ParallelConfig()
-
-        instance = cls(**kwargs)
-        if not isinstance(instance, BaseStrategy):
-            msg = f"{cls.__name__} must inherit from BaseStrategy"
-            raise TypeError(msg)
-        return instance
-
     def _bundled_config_model(
         self,
         cls: type[BaseStrategy],
@@ -202,31 +370,6 @@ class StrategyLoader:
             )
             raise ValueError(msg)
         return candidates[0]
-
-    def _create_generated(
-        self,
-        strategy_cfg: dict[str, Any],
-        engine: BaseBacktestEngine | None,
-    ) -> BaseStrategy:
-        """Apply the same YAML constructor contract in checks and real runs."""
-        cls = self.load_class(strategy_cfg)
-        params = strategy_cfg.get("parameters", {})
-        if not isinstance(params, dict):
-            msg = "strategy.parameters must be a mapping"
-            raise ValueError(msg)
-        if "backtest_engine" in params:
-            msg = "strategy.parameters cannot override the injected backtest_engine"
-            raise ValueError(msg)
-
-        kwargs = dict(params)
-        signature = inspect.signature(cls)
-        if "backtest_engine" in signature.parameters:
-            kwargs["backtest_engine"] = engine
-        # Binding rejects misspelled parameters and missing required values
-        # before calling the constructor, with identical diagnostics at every
-        # execution depth. Constructors accepting **kwargs retain that behavior.
-        signature.bind(**kwargs)
-        return cls(**kwargs)
 
     def _required_strategy_string(
         self,

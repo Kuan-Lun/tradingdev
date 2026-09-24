@@ -76,6 +76,17 @@ Generated 策略的一般回測與 walk-forward 參數必須與該 revision 的�
 調整參數須另存並驗證新 revision。最佳化可覆寫搜尋範圍內的參數，其餘保留基礎值。
 Bundled 策略仍由 Git 管理，`revision_id` 為 `null`。
 
+每次提交回測、walk-forward 或最佳化時，會先固定完整執行規格
+`manifest.json`，包含策略版本、有效設定與預設值、資料路徑，以及最佳化的搜尋
+與確認設定。成功回覆的 `manifest_hash` 可與 job、run 及執行規格產物核對；
+worker 使用這份規格，稍後修改原 YAML 或切換當前策略版本都不會改變已提交工作。
+`config.yaml` 是方便檢視的設定副本；修改它不會修改工作。要改設定請提交新工作。
+原始策略宣告保留供 revision 核對；建構子參數與內建策略模型的預設值另外展開並
+存進 `strategy_execution`。執行時不再補入新的預設值；不相容的模型或參數會令
+工作失敗。規格使用 schema 2；早期 schema 1 規格須重新提交，不會原地遷移。
+規格固定執行請求，但沒有封存行情內容、Python 依賴或隨機數產生器狀態，
+因此不保證日後能得到完全相同的結果。
+
 舊版 `generated_strategies/<id>.py`／`<id>.json` 與 `configs/<id>.yaml`
 不會自動遷移或改寫。`list_strategies` 會列為 `kind: legacy`、
 `status: revision_required`，不影響其他策略的探索；以 `get_strategy` 讀取原程式與
@@ -132,6 +143,14 @@ MCP 回傳 `isError: true`。不應只依 MCP `isError` 判斷應用操作是否
 不會執行剩餘搜尋。
 訓練與測試日期都包含終日，須符合 `train_start < train_end < test_start < test_end`。
 呼叫指定的交易對與時間框架會覆寫 YAML；搜尋參數以外的 YAML 固定參數仍會保留。
+搜尋以所選指標的最大值挑選參數；參數名稱排序後展開組合，各參數的候選值順序保留。
+巢狀參數只覆寫搜尋值指定的欄位，其他欄位保留已固定的值。提交前會檢查候選組合，
+不符合參數結構或內建設定模型契約的組合不會建立工作；策略建構與執行錯誤仍可能
+於試跑時發生。
+含 `validation:` 設定的策略 config 須使用 walk-forward；最佳化使用自己的訓練／
+測試日期，會以 `invalid_optimization_request` 拒絕同時提供兩套切分設定。
+升級前沒有執行規格的歷史結果仍可查詢，但舊工作不能以新版 worker 接續執行或確認；
+請重新提交工作。
 
 ## 工作區與檔案
 
@@ -149,9 +168,9 @@ MCP 回傳 `isError: true`。不應只依 MCP `isError` 判斷應用操作是否
   `workspace/data/raw/` 與 `workspace/data/processed/`
 - 工作狀態與執行結果索引：
   `workspace/tradingdev.sqlite`
-- 每次執行的結果檔案：
-  `workspace/runs/<run_id>/`，包含結果、使用的設定與策略副本、資料集識別資訊
-  及 dashboard 所需檔案。
+- 背景工作的規格與結果檔案：
+  `workspace/runs/<run_id>/`，包含固定執行規格 `manifest.json`、結果、
+  使用的設定與策略副本、資料集識別資訊及 dashboard 所需檔案。
 
 `workspace/` 是預設工作區；指定其他 `--workspace` 路徑時，生成策略、
 資料與執行結果會存到該路徑。內建策略與設定隨專案提供，透過 MCP 撰寫的
@@ -171,7 +190,10 @@ Generated 策略請指定已通過 dry-run 的 revision 所屬 `config.yaml`，
 `description`、`version`、`fit` 等原有欄位；新增、移除或變更欄位都需要另存並驗證新 revision。
 `source_path` 必須仍指向原 revision 的來源；`source_hash` 由執行流程驗證後填入。
 交易對、期間與成本可在 `strategy` 以外的設定區段調整。
-執行中若修改該設定檔，CLI 會拒絕將結果存入變更後設定的快取。
+CLI 也先固定執行規格，再執行並用該規格保存結果快取；執行中修改原設定檔，
+仍可保存原規格的結果。下次執行會依新設定建立新規格與快取識別。
+CLI 的 `manifest.json` 存於 `workspace/runs/cli_<cache_key>/`，
+pipeline 結果快取則位於資料目錄的 `processed/cache/`。
 
 報表以 `N/A` 表示缺少或沒有有限數值的指標，不代表零。
 

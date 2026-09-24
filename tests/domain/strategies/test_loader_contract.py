@@ -234,6 +234,54 @@ def test_generated_constructor_can_omit_engine(
     assert strategy.get_parameters() == {"threshold": 101.0, "direction": -1}
 
 
+def test_signal_contract_injects_the_same_parallel_policy_as_execution(
+    tmp_path: Path,
+    generated_config: dict[str, Any],
+) -> None:
+    source = Path(generated_config["strategy"]["source_path"])
+    source.write_text(
+        _PARAMETERIZED_CODE.replace(
+            "        direction: int = 1,",
+            "        direction: int = 1,\n        parallel_config: Any = None,",
+        ).replace(
+            "        self.direction = direction",
+            "        if parallel_config is None "
+            "or parallel_config.reserve_cores != 1:\n"
+            "            raise ValueError('Missing configured parallel policy')\n"
+            "        self.direction = direction",
+        )
+    )
+    generated_config["parallel"] = {"reserve_cores": 1}
+    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+
+    checked = SignalContractChecker(loader).check(
+        _contract_metadata(tmp_path, generated_config), fixture_rows=80
+    )
+
+    assert checked["diagnostics"] == []
+
+
+def test_signal_contract_rejects_unrecordable_constructor_defaults(
+    tmp_path: Path,
+    generated_config: dict[str, Any],
+) -> None:
+    source = Path(generated_config["strategy"]["source_path"])
+    source.write_text(
+        _PARAMETERIZED_CODE.replace(
+            "        direction: int = 1,",
+            "        direction: int = 1,\n        hidden: object = object(),",
+        )
+    )
+
+    checked = SignalContractChecker(
+        StrategyLoader(workspace_root=tmp_path / "workspace")
+    ).check(_contract_metadata(tmp_path, generated_config), fixture_rows=80)
+
+    assert len(checked["diagnostics"]) == 1
+    assert checked["diagnostics"][0].code == "contract_execution_error"
+    assert "finite JSON" in checked["diagnostics"][0].message
+
+
 def test_loader_honors_workspace_environment_and_explicit_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

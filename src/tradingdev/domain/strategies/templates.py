@@ -19,7 +19,12 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
         "api_reference": (
             "Generated strategies must inherit BaseStrategy, return a DataFrame "
             "with signal values limited to -1, 0, and 1, and avoid mutating the "
-            "input DataFrame. Use tradingdev.domain.indicators (sma, ema, rsi, "
+            "input DataFrame. Express configurable settings as constructor "
+            "keyword arguments with finite JSON values, including any defaults. "
+            "Execution captures these values at submission. backtest_engine and "
+            "parallel_config are reserved application injections and cannot be "
+            "overridden in strategy.parameters. Use tradingdev.domain.indicators "
+            "(sma, ema, rsi, "
             "macd, bollinger_bands, atr, adx, stochastic) for standard "
             "indicators and tradingdev.shared.utils.logger for logging. "
             "The indicator facade uses TA-Lib and preserves its warm-up and "

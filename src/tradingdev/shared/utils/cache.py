@@ -1,13 +1,13 @@
-"""Persistent disk cache for PipelineResult objects.
+"""Storage location and identity for CLI pipeline result artifacts.
 
-Avoids re-running expensive backtests when the config, data, and
-source code have not changed.  The cache key is derived from:
+ArtifactService writes results and retrieves them by their registered run ID.
+The cache key used when saving an artifact is derived from:
 
-1. YAML config file **content** (catches any parameter change).
+1. Executed manifest hash (includes effective settings and strategy defaults).
 2. Processed data file **mtime + size** (catches data regeneration).
 3. Git code fingerprint of ``src/`` (catches strategy logic changes).
-   Falls back to a random value when git is unavailable, ensuring
-   no stale cache is used.
+   Falls back to a random value when git is unavailable, avoiding reuse of
+   an unverified code identity when saving a result.
 """
 
 from __future__ import annotations
@@ -15,18 +15,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import pickle
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-
-if TYPE_CHECKING:
-    from tradingdev.domain.backtest.pipeline_result import (
-        PipelineResult,
-    )
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +62,8 @@ def _code_fingerprint() -> str:
     * Content of untracked files under ``src/``.
 
     Returns a 16-char hex digest.  If any git command fails the
-    function returns a random hex string so the cache is always
-    invalidated (safe fallback).
+    function returns a random hex string so a new result does not reuse
+    a cache key whose code identity could not be checked.
     """
     # Locate the repository root.
     toplevel = _run_git("rev-parse", "--show-toplevel", cwd=Path.cwd())
@@ -110,57 +103,18 @@ def _code_fingerprint() -> str:
 
 
 def compute_cache_key(
-    config_path: Path,
-    processed_path: Path,
     *,
-    config_content: bytes | None = None,
+    manifest_hash: str,
+    processed_path: Path,
 ) -> str:
-    """Compute a SHA-256 cache key from config + data + code state."""
+    """Compute artifact identity from the executed manifest + data + code state."""
     h = hashlib.sha256()
-    h.update(config_path.read_bytes() if config_content is None else config_content)
+    h.update(manifest_hash.encode("ascii"))
     if processed_path.exists():
         stat = processed_path.stat()
         h.update(f"{stat.st_mtime}:{stat.st_size}".encode())
     h.update(_code_fingerprint().encode())
     return h.hexdigest()[:16]
-
-
-def load_cached_result(
-    config_path: Path,
-    processed_path: Path,
-) -> PipelineResult | None:
-    """Load a cached PipelineResult if one exists for this key."""
-    key = compute_cache_key(config_path, processed_path)
-    cache_file = cache_dir() / f"{key}.pkl"
-    if not cache_file.exists():
-        return None
-    try:
-        with open(cache_file, "rb") as f:
-            result: PipelineResult = pickle.load(f)  # noqa: S301
-        logger.info("Loaded cached result from %s", cache_file.name)
-        return result
-    except Exception:
-        logger.warning(
-            "Failed to load cache %s, will re-run",
-            cache_file.name,
-        )
-        return None
-
-
-def save_cached_result(
-    result: PipelineResult,
-    config_path: Path,
-    processed_path: Path,
-) -> Path:
-    """Persist a PipelineResult to disk. Returns the cache file path."""
-    directory = cache_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    key = compute_cache_key(config_path, processed_path)
-    cache_file = directory / f"{key}.pkl"
-    with open(cache_file, "wb") as f:
-        pickle.dump(result, f)
-    logger.info("Saved result cache to %s", cache_file.name)
-    return cache_file
 
 
 def clear_cache() -> int:

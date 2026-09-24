@@ -239,6 +239,8 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         f"expected {expected_arguments!r}; got {started.arguments!r}"
     )
     assert started.result["revision_id"] == revision_id
+    manifest_hash = started.result.get("manifest_hash")
+    assert isinstance(manifest_hash, str) and len(manifest_hash) == 64
     job_id = started.result["job_id"]
     done_index = require_index(
         f"get_job_status(job_id={job_id!r}) returning status='done' "
@@ -255,6 +257,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     )
     done = calls[done_index]
     assert done.result["revision_id"] == revision_id
+    assert done.result["manifest_hash"] == manifest_hash
     run_id = done.result["run_id"]
     queried_index = require_index(
         f"get_run(run_id={run_id!r}) returning a result after "
@@ -270,6 +273,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     )
     queried = calls[queried_index]
     assert queried.result["run"]["revision_id"] == revision_id
+    assert queried.result["run"]["manifest_hash"] == manifest_hash
     assert queried.result["success"], (
         f"get_run(run_id={run_id!r}) did not return success=True: {queried.result!r}"
     )

@@ -40,6 +40,7 @@ src/tradingdev/
     job_store.py
     run_lineage.py
   domain/
+    execution.py
     strategies/
     backtest/
     data/
@@ -124,15 +125,15 @@ parameter config models under
 `src/tradingdev/domain/strategies/bundled/<strategy>/` and are discovered
 through `BundledStrategyCatalog`.
 
-Execution is gated in the application layer: `BacktestService.run_raw_config`
+Execution is gated in the application layer: `BacktestService.prepare_execution`
 resolves the strategy through `StrategyService.resolve_executable`, which
 rejects anything that is not runnable or promoted, requires successful validation
 and dry-run evidence for the same revision, checks source/base-config integrity,
 and verifies that the effective config's source identity matches that revision.
-`JobService` and `OptimizationService` use the same gate, so MCP jobs, the CLI,
-and subprocess
-workers all pass through one check. An optional `revision_id` selects an older
-revision explicitly; otherwise current is resolved once before submission.
+`JobService` and `OptimizationService` use the same gate, and subprocess workers
+recheck strategy eligibility before executing the manifest. An optional
+`revision_id` selects an older revision explicitly; otherwise current is resolved
+once before submission.
 Job payloads and effective configs carry the selected revision through workers,
 optimization confirmation and result persistence. Bundled strategies remain
 Git-managed and have no generated revision identity (`revision_id: null`).
@@ -140,19 +141,77 @@ Git-managed and have no generated revision identity (`revision_id: null`).
 The revision binds source and base config. Execution may override request
 dates/market inputs; generated backtest and walk-forward parameters must match
 the base revision. Optimization may vary its search parameters while retaining
-other base parameters. It does not freeze Python dependencies, data, or the
-engine environment, and does not constitute a complete
-execution manifest. Legacy flat generated files are left untouched and require
+other base parameters. Legacy flat generated files are left untouched and require
 resaving and validation before execution; no compatibility execution path
 trusts their previous lifecycle status. Discovery lists legacy filenames as typed
 `legacy` entries requiring a revision, independently of current revision loading.
 The source query can read their fixed source/config locations for explicit
 resaving, without trusting legacy metadata paths or validation evidence.
 
-`app/job_config.py` applies request overrides and writes effective config snapshots
+`app/job_config.py` applies request overrides and binds source identity
 for both backtest and optimization jobs. Optimization trials and parallel search
-share `StrategyLoader.create_from_config`, retaining fixed YAML parameters while
+share `StrategyLoader.create_from_execution`, retaining fixed effective parameters while
 overriding the searched parameters.
+
+## Execution Specifications
+
+`domain/execution.py` defines the versioned `ExecutionManifest` and
+`OptimizationSpec`. Before submission, `BacktestService.prepare_execution`
+binds the selected strategy ID, generated revision when present, and source hash;
+resolves data directories and feature paths to absolute paths; and fills typed
+backtest, walk-forward, parallel, and optional seed defaults. The saved strategy
+mapping remains subject to the revision contract. Dates become JSON strings and
+all execution values must be finite JSON; non-finite requests are rejected.
+
+Schema version 2 records the execution kind, resolved config, required effective
+strategy constructor settings (`strategy_execution`), optional
+optimization spec, and `manifest_hash`. The SHA-256 covers canonical JSON with
+sorted object keys and excludes the hash field itself, job IDs and creation
+timestamps. Omitted typed execution defaults and their explicit equivalents have
+the same hash. The original strategy mapping stays revision-bound, while
+`StrategyLoader.resolve_execution` captures declared constructor defaults and
+recursively expanded bundled parameter/fit models in a separate object. The
+worker constructs strategies from these saved values. Missing new constructor or
+model fields, non-finite/non-JSON defaults, and normalization that changes the
+saved values are rejected instead of silently accepting new defaults. Strategy
+models permit lossless integer-to-float conversion for existing numeric fields,
+so JSON grid candidates such as `80` remain valid for float settings.
+Optimization fixes the parameter grid, metric, ordered non-overlapping calendar
+date ranges, `maximize` direction, and trial/confirmation timeouts and polling
+interval. Parameter names are sorted for traversal; each candidate list retains
+its order. Optimization rejects a config with walk-forward validation settings
+because its own training/test ranges define the split.
+Nested optimization values recursively override the fixed base settings; fields
+outside the search remain fixed. Parameter combinations are checked before a
+job is created, without instantiating a strategy for each candidate.
+
+Creation resolves defaults; decoding an existing manifest preserves its recorded
+JSON values. Execution separately checks that current runtime models can consume
+those values without adding defaults or changing their values, with only the
+lossless strategy-model numeric conversion described above permitted.
+Schema 1 manifests, missing version/effective strategy fields, and unknown versions
+cannot execute through schema 2. Stored results remain readable. Future format
+or decoding changes require a new schema version, not reinterpretation of saved
+specifications using current defaults.
+
+`ExecutionManifestStore` publishes `runs/<id>/manifest.json` atomically without
+replacing an existing specification. `JobStore` keeps its expected digest in the
+job record. File publication and the database write are separate operations, not
+a cross-resource transaction. Workers receive only the job ID, load the fixed path,
+and verify both
+the content digest and job identity before executing. Confirmation and result
+persistence also verify that binding. Changing an original config, a later
+current revision, or the `config.yaml` inspection projection cannot redefine the
+job. Legacy jobs without manifests cannot resume through these workers or be
+confirmed; their saved results remain readable.
+
+The model is frozen only at the field-assignment level. Consumers call
+`verify()` to detect nested mutation and use `config_copy()` for independent
+working config values. The digest is an integrity check against the separately
+stored job identity, not a security boundary against writers controlling both
+SQLite and the filesystem. The manifest freezes the requested execution; it
+does not snapshot data contents, installed dependencies, the engine environment,
+or RNG state and does not promise fully reproducible results.
 
 ## Storage
 
@@ -197,20 +256,32 @@ classDiagram
 
 SQLite stores metadata. The `jobs` table keeps generic job lifecycle columns;
 backtest-specific values such as strategy, symbol, timeframe, date range, and
-config path are optional payload fields. Filesystem stores generated code/config,
+config path and manifest hash are payload fields. Filesystem stores generated code/config,
 feature requests, data caches, and run artifacts. Each completed background job records
-result, config snapshot, strategy source hash, random seed, optional strategy
+result, execution manifest, config snapshot, strategy source hash, random seed, optional strategy
 source snapshot, dataset fingerprint, and dashboard `pipeline_result` artifacts
 under `workspace/runs/<run_id>/`; that directory is linked from the
-`runs.artifact_dir` column. `app.job_config` applies request-level market/date
-overrides and writes execution snapshots shared by `JobService` and
-`OptimizationService`. `app.run_lineage` centralizes config/source/seed
+`runs.artifact_dir` column. `JobStore` publishes the manifest before starting a
+worker and writes its resolved config as a YAML inspection projection.
+`app.run_lineage` centralizes config/source/seed
 lineage extraction for job and artifact services. CLI pipeline-result cache
 files are stored under `workspace/data/processed/cache` (or
-`$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through `ArtifactService`.
+`$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through `ArtifactService`;
+their run artifact directory is `workspace/runs/cli_<cache_key>/`, which holds
+the manifest even though the pickle remains in the cache directory.
 Job and CLI run config hashes describe the serialized executed config snapshot.
-CLI caching rejects a config file that no longer matches the executed snapshot;
-background jobs persist their in-memory execution snapshot at completion.
+The separate manifest hash identifies the complete request, including any
+optimization search settings. `compute_cache_key` requires the executed
+`manifest_hash` and processed-data path explicitly; it has no YAML-based fallback.
+Editing the original YAML after execution does not prevent saving the old
+snapshot. Cache identity also includes processed-data file size/mtime and a Git
+code fingerprint; those are invalidation signals, not immutable data or environment
+versions. Completed pipeline results are retrieved by run ID through the recorded
+artifact path, without recomputing a lookup key from current YAML, data, or code.
+The unused YAML-based `load_cached_result` and `save_cached_result` APIs have been
+removed; this artifact storage flow does not provide automatic reuse of prior
+backtests. Background jobs persist their
+verified in-memory manifest config at completion.
 The dashboard reads run metadata and pipeline artifacts through `RunService` /
 `ArtifactService`.
 
@@ -233,6 +304,12 @@ Tool annotations describe actual side effects, including status reconciliation
 and cache replacement. A false destructive hint promises only additive updates,
 so tools that replace lifecycle state or validation evidence use a true hint.
 These annotations are not authorization or sandbox guarantees.
+
+Successful start responses require `manifest_hash`. Job status, job lists, and
+run records expose it as nullable so historical records remain readable.
+Completed results register an `execution_manifest` artifact for inspection
+through the existing artifact tools. An invalid or absent manifest at
+optimization confirmation returns `execution_manifest_invalid`.
 
 Real stdio MCP tests validate structured responses against the schemas advertised
 by the running server, including unsuccessful application outcomes. Separate
@@ -273,12 +350,19 @@ backtesting and lookup.
   `market_data_filename()`.
 - `inspect_dataset(config_path)` reports market cache availability and feature
   source missing-value status from the same data root used by backtests.
-- `start_backtest` / `start_walk_forward` write a per-job effective config under
-  `workspace/runs/<job_id>/config.yaml`; MCP tool inputs override the config's
-  symbol, timeframe, and date range before the subprocess worker executes it.
+- Start tools fix a per-job manifest under `workspace/runs/<job_id>/manifest.json`;
+  MCP inputs override symbol, timeframe, and date range before its creation.
+  Workers use the verified manifest; the adjacent `config.yaml` projects its
+  resolved configuration for inspection.
 - Generated strategies must pass static policy checks before execution.
   `validate_strategy` and `dry_run_strategy` currently execute generated Python
-  code during contract checks; sandbox isolation is future work.
+  code during contract checks. The three `start_*` tools also load generated
+  classes to capture effective settings in the MCP server before job creation
+  or worker startup, executing module-level Python without constructing a
+  strategy instance. Optimization's grid preflight loads the class again.
+  Workers later load and construct strategies for execution; their supervision
+  does not cover submission-time code in the server. Sandbox isolation is future
+  work; see the [strategy security model](docs/strategy_contract.md#security-model).
 - A detached supervisor owns each background worker's separate process group.
   Startup captures the supervisor identity before allowing it to spawn a worker;
   startup failures persist a failed job and its error. Job status checks use the

@@ -87,6 +87,43 @@ class DataService:
             features=[],
         )
 
+    def execution_config(
+        self,
+        raw_config: dict[str, Any],
+        backtest_config: BacktestConfig,
+    ) -> dict[str, Any]:
+        """Resolve data locations now, without fetching or versioning their contents."""
+        data = self.data_config(raw_config).model_dump(mode="json")
+        for key in ("raw_dir", "processed_dir"):
+            data[key] = str(self._resolve_data_path(data[key]))
+        requirements = self.requirements(raw_config, backtest_config)
+        request = self._request_from_backtest(backtest_config)
+        features = []
+        for feature in requirements.features:
+            resolved = feature.model_dump(mode="json")
+            path = (
+                self._resolve_data_path(feature.path)
+                if feature.path
+                else self._default_dvol_path(request)
+                if feature.type == "dvol"
+                else None
+            )
+            resolved["path"] = str(path) if path is not None else None
+            raw_path = (
+                self._resolve_data_path(feature.raw_path)
+                if feature.raw_path
+                else path.with_suffix(".csv")
+                if feature.type == "dvol" and path is not None
+                else None
+            )
+            resolved["raw_path"] = str(raw_path) if raw_path is not None else None
+            features.append(resolved)
+        data["requirements"] = {
+            "market": requirements.market.model_dump(mode="json"),
+            "features": features,
+        }
+        return data
+
     def load(
         self,
         raw_config: dict[str, Any],

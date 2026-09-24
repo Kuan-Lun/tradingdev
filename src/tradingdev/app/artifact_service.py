@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import pickle
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
     sha256_file,
@@ -20,6 +20,7 @@ from tradingdev.app.run_lineage import (
     read_strategy_snapshot,
 )
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
+from tradingdev.domain.execution import ManifestError
 from tradingdev.shared.utils.cache import cache_dir, compute_cache_key
 
 
@@ -111,21 +112,29 @@ class ArtifactService:
         strategy_id: str,
     ) -> Path:
         """Persist a CLI pipeline result and track it as a SQLite artifact."""
-        config_payload = pipeline.config_snapshot
+        manifest = pipeline.execution_manifest
+        if manifest is None:
+            raise ManifestError("CLI result must retain the executed manifest")
+        config_payload = manifest.config_copy()
+        if config_payload != pipeline.config_snapshot:
+            raise ManifestError("Result config differs from the executed manifest")
+        expected_kind = (
+            "walk_forward" if pipeline.mode == "walk_forward" else "backtest"
+        )
+        if manifest.kind != expected_kind:
+            raise ManifestError("Result mode differs from the executed manifest")
+        if config_payload["strategy"].get("id") != strategy_id:
+            raise ManifestError("Result strategy differs from the executed manifest")
         source = read_strategy_snapshot(
             config_payload, self._workspace, strategy_id=strategy_id
         )
-        disk_content = config_path.read_bytes()
-        disk_config = yaml.safe_load(disk_content)
-        executed_config = deepcopy(config_payload)
-        for config in (disk_config, executed_config):
-            if isinstance(config, dict) and isinstance(config.get("strategy"), dict):
-                config["strategy"].pop("source_hash", None)
-        if disk_config != executed_config:
-            msg = "Config changed after the CLI run; result cannot be cached"
-            raise ValueError(msg)
         key = compute_cache_key(
-            config_path, processed_path, config_content=disk_content
+            manifest_hash=manifest.manifest_hash,
+            processed_path=processed_path,
+        )
+        run_id = f"cli_{key}"
+        manifest_path = ExecutionManifestStore(self._workspace).publish(
+            run_id, manifest
         )
         directory = cache_dir()
         directory.mkdir(parents=True, exist_ok=True)
@@ -133,7 +142,6 @@ class ArtifactService:
         with cache_path.open("wb") as handle:
             pickle.dump(pipeline, handle)
 
-        run_id = f"cli_{key}"
         config_hash = sha256_text(
             yaml.safe_dump(config_payload, sort_keys=False, allow_unicode=True)
         )
@@ -147,12 +155,24 @@ class ArtifactService:
             job_id=run_id,
             strategy_id=strategy_id,
             revision_id=source.revision_id,
-            artifact_dir=directory,
+            manifest_hash=manifest.manifest_hash,
+            artifact_dir=manifest_path.parent,
             metrics=metrics,
             config_hash=config_hash,
             source_hash=source.source_hash,
             random_seed=extract_random_seed(config_payload),
             dataset_id=dataset_id,
+        )
+        self._store.create_artifact(
+            artifact_id=f"{run_id}:execution_manifest",
+            run_id=run_id,
+            artifact_type="execution_manifest",
+            path=manifest_path,
+            sha256=sha256_file(manifest_path),
+            metadata={
+                "manifest_hash": manifest.manifest_hash,
+                "schema_version": manifest.schema_version,
+            },
         )
         self._store.create_artifact(
             artifact_id=f"{run_id}:pipeline_result",
