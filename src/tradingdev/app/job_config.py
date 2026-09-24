@@ -16,6 +16,14 @@ if TYPE_CHECKING:
     from tradingdev.domain.strategies.schemas import StrategySpec
 
 
+def _read_revision_file(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        msg = f"Cannot read strategy revision file {path}: {exc}"
+        raise StrategyNotExecutableError(msg) from exc
+
+
 def bind_strategy_revision(
     config: dict[str, Any],
     spec: StrategySpec,
@@ -63,7 +71,7 @@ def bind_strategy_revision(
         if class_name != spec.class_name:
             msg = "Generated strategy config requires its revision class_name"
             raise StrategyNotExecutableError(msg)
-        base_content = Path(spec.config_path).read_bytes()
+        base_content = _read_revision_file(Path(spec.config_path))
         if hashlib.sha256(base_content).hexdigest() != spec.metadata.config_hash:
             msg = "Strategy revision config hash changed before execution"
             raise StrategyNotExecutableError(msg)
@@ -81,7 +89,7 @@ def bind_strategy_revision(
         expected_hash = spec.metadata.source_hash
     else:
         source_path = Path(spec.source_path).expanduser().resolve()
-        expected_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        expected_hash = hashlib.sha256(_read_revision_file(source_path)).hexdigest()
         strategy["source_path"] = str(source_path)
         strategy["class_name"] = spec.class_name
     supplied_hash = strategy.get("source_hash")

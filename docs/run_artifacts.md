@@ -125,6 +125,10 @@ Non-finite numbers in execution configuration or search values are rejected inst
 being converted to `null`. Invalid resolved execution settings return
 `invalid_execution_request` for backtest/walk-forward submissions or
 `invalid_optimization_request` for optimization, without creating a job.
+These codes also cover strategy identity mismatches, revision-file read failures
+during binding, and failures of the repeated executable-state check during
+preparation. Failure to select an executable strategy at the start of the request
+instead returns `strategy_not_executable`.
 The mode must match the presence of walk-forward
 validation settings. Optimization has its own training/test split and rejects
 configs containing `validation` with `invalid_optimization_request`.

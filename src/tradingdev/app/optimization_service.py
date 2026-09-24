@@ -134,7 +134,7 @@ class OptimizationService:
                 raise ManifestError(
                     f"Invalid strategy optimization settings: {exc}"
                 ) from exc
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, StrategyNotExecutableError) as exc:
             return {
                 "job_id": "",
                 "message": str(exc),

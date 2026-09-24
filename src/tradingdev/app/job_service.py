@@ -395,24 +395,24 @@ class JobService:
         spec: StrategySpec,
     ) -> dict[str, Any]:
         raw_config = load_config(config_path)
-        bind_strategy_revision(raw_config, spec)
-        effective_config = apply_run_overrides(
-            raw_config,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-        )
         kind: Literal["backtest", "walk_forward"] = (
             "walk_forward" if walk_forward else "backtest"
         )
         try:
+            bind_strategy_revision(raw_config, spec)
+            effective_config = apply_run_overrides(
+                raw_config,
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
+            )
             manifest = BacktestService(
                 data_service=self._data_service,
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
             ).prepare_execution(effective_config, kind=kind)
-        except (ManifestError, ValidationError) as exc:
+        except (ManifestError, ValidationError, StrategyNotExecutableError) as exc:
             return {
                 "job_id": "",
                 "message": str(exc),
