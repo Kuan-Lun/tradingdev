@@ -150,7 +150,7 @@ resaving, without trusting legacy metadata paths or validation evidence.
 
 `app/job_config.py` applies request overrides and binds source identity
 for both backtest and optimization jobs. Optimization trials and parallel search
-share `StrategyLoader.create_from_config`, retaining fixed YAML parameters while
+share `StrategyLoader.create_from_execution`, retaining fixed effective parameters while
 overriding the searched parameters.
 
 ## Execution Specifications
@@ -163,21 +163,42 @@ backtest, walk-forward, parallel, and optional seed defaults. The saved strategy
 mapping remains subject to the revision contract. Dates become JSON strings and
 all execution values must be finite JSON; non-finite requests are rejected.
 
-Schema version 1 records the execution kind, resolved config, optional
+Schema version 2 records the execution kind, resolved config, required effective
+strategy constructor settings (`strategy_execution`), optional
 optimization spec, and `manifest_hash`. The SHA-256 covers canonical JSON with
 sorted object keys and excludes the hash field itself, job IDs and creation
 timestamps. Omitted typed execution defaults and their explicit equivalents have
-the same hash. Strategy constructor and imported parameter-model defaults are
-not expanded; the strategy mapping remains explicit revision-bound input.
+the same hash. The original strategy mapping stays revision-bound, while
+`StrategyLoader.resolve_execution` captures declared constructor defaults and
+recursively expanded bundled parameter/fit models in a separate object. The
+worker constructs strategies from these saved values. Missing new constructor or
+model fields, non-finite/non-JSON defaults, and normalization that changes the
+saved values are rejected instead of silently accepting new defaults. Strategy
+models permit lossless integer-to-float conversion for existing numeric fields,
+so JSON grid candidates such as `80` remain valid for float settings.
 Optimization fixes the parameter grid, metric, ordered non-overlapping calendar
 date ranges, `maximize` direction, and trial/confirmation timeouts and polling
 interval. Parameter names are sorted for traversal; each candidate list retains
 its order. Optimization rejects a config with walk-forward validation settings
 because its own training/test ranges define the split.
+Nested optimization values recursively override the fixed base settings; fields
+outside the search remain fixed. Parameter combinations are checked before a
+job is created, without instantiating a strategy for each candidate.
+
+Creation resolves defaults; decoding an existing manifest preserves its recorded
+JSON values. Execution separately checks that current runtime models can consume
+those values without adding defaults or changing their values, with only the
+lossless strategy-model numeric conversion described above permitted.
+Schema 1 manifests, missing version/effective strategy fields, and unknown versions
+cannot execute through schema 2. Stored results remain readable. Future format
+or decoding changes require a new schema version, not reinterpretation of saved
+specifications using current defaults.
 
 `ExecutionManifestStore` publishes `runs/<id>/manifest.json` atomically without
 replacing an existing specification. `JobStore` keeps its expected digest in the
-job record. Workers receive only the job ID, load the fixed path, and verify both
+job record. File publication and the database write are separate operations, not
+a cross-resource transaction. Workers receive only the job ID, load the fixed path,
+and verify both
 the content digest and job identity before executing. Confirmation and result
 persistence also verify that binding. Changing an original config, a later
 current revision, or the `config.yaml` inspection projection cannot redefine the

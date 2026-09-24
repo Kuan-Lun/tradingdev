@@ -181,7 +181,11 @@ async def test_generated_strategy_full_mcp_workflow(
             include_content=True,
         )
         manifest = json.loads(manifest_artifact["content"])
-        assert manifest["schema_version"] == 1
+        assert manifest["schema_version"] == 2
+        assert manifest["strategy_execution"]["constructor_kwargs"] == {
+            "fast_period": 3,
+            "slow_period": 8,
+        }
         assert manifest["kind"] == "backtest"
         assert manifest["manifest_hash"] == started["manifest_hash"]
         assert manifest["config"] == effective

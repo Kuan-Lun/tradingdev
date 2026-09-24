@@ -16,6 +16,7 @@ from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.job_store import JobStore
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.execution import ExecutionManifest
+from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardResult
 from tradingdev.shared.utils.json_values import normalize_json_value
@@ -131,6 +132,9 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
         processed_path.write_bytes(b"cache identity fixture")
         manifest = ExecutionManifest.create(
             kind="walk_forward",
+            strategy_execution=StrategyExecution(
+                kind="generated", constructor_kwargs={}
+            ),
             config={
                 "strategy": {"id": "cli_fixture"},
                 "backtest": {

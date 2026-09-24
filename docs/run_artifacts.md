@@ -84,13 +84,20 @@ includes the same error persisted in the database. Spawn failures also persist
 
 Before spawning a background worker, the service publishes
 `runs/<job_id>/manifest.json` and records its hash in the job. Publication never
-replaces a different existing manifest. Schema version 1 contains:
+replaces a different existing manifest. Atomic publication applies to the manifest
+file; file publication and the database job write do not form one transaction.
+Schema version 2 contains:
 
 - `kind`: `backtest`, `walk_forward`, or `optimization`.
 - `config`: the effective strategy identity and source hash, backtest settings,
   optional walk-forward settings, parallel policy, seed settings, and data
   requirements with resolved absolute directories and feature paths. Typed
   execution defaults are materialized and dates are JSON strings.
+- `strategy_execution`: the strategy kind (`bundled` or `generated`) and
+  `constructor_kwargs`. Bundled `config` and optional `fit_config` objects include
+  nested model defaults; generated keyword arguments include declared constructor
+  defaults. Injected engine and parallel policy objects remain outside this JSON
+  object and are supplied from the manifest's execution configuration.
 - `optimization`: `null` for other kinds; otherwise the parameter ranges,
   optimization metric, `train_start`/`train_end`/`test_start`/`test_end`,
   `direction: maximize`, `trial_timeout_seconds: 300`,
@@ -98,14 +105,22 @@ replaces a different existing manifest. Schema version 1 contains:
   These timeout and polling values are fixed at submission. Parameter names are
   sorted; the caller's candidate order within each range is preserved.
 - `manifest_hash`: SHA-256 of canonical JSON over all the preceding fields and
-  `schema_version: 1`, excluding the hash field itself. Object keys are sorted;
+  `schema_version: 2`, excluding the hash field itself. Object keys are sorted;
   job IDs and creation timestamps are not part of the specification.
 
 Typed backtest, walk-forward, parallel, and data defaults have the same digest
 whether implicit or explicit. The strategy mapping is retained under its revision
-contract; constructor or imported parameter-model defaults are not expanded into
-`strategy.parameters`. An omitted strategy parameter and an explicit value can
-therefore produce different digests.
+contract. Its effective values are expanded separately into `strategy_execution`,
+so filling defaults does not modify the validated revision's original declaration.
+Because the declaration is also retained, omitted and explicit strategy parameters
+can still produce different digests even when their effective values are equal.
+Nested optimization candidates override only their specified leaves, preserving
+the remaining fixed values; candidate structure and bundled model contracts are
+validated before creating a job, without running strategy constructors. Constructor
+or execution errors can still occur during the trial. Unsupported defaults or
+candidates requiring new implicit fields are rejected. Integer candidates for
+float fields are accepted only when conversion preserves their numeric value;
+string/boolean coercion and precision loss are rejected.
 Non-finite numbers in execution configuration or search values are rejected instead of
 being converted to `null`. Invalid resolved execution settings return
 `invalid_execution_request` for backtest/walk-forward submissions or
@@ -113,6 +128,14 @@ being converted to `null`. Invalid resolved execution settings return
 The mode must match the presence of walk-forward
 validation settings. Optimization has its own training/test split and rejects
 configs containing `validation` with `invalid_optimization_request`.
+
+Manifest decoding preserves stored JSON without reapplying today's config defaults.
+Before execution, current runtime models must accept the saved config and effective
+strategy settings without adding fields or changing values. New required/defaulted
+fields or incompatible normalization cause execution to fail, not reinterpret the
+request. Schema version 2 requires the version and effective strategy fields;
+version 1 or unknown versions require a new submission. No manifest is migrated
+in place, and historical result metadata remains readable.
 
 Workers receive only a job ID and load this fixed manifest path. They verify the
 supported schema, content digest, expected job hash, and strategy/mode identity
@@ -124,7 +147,9 @@ the submitted request. A changed request requires a new job.
 
 `config.yaml` is a readable projection of `manifest.config`; workers do not use
 it as their source of execution settings. `config_hash` still hashes the YAML
-projection, while `manifest_hash` covers the complete execution request. The
+projection (including the original strategy declaration); resolved constructor
+settings are available in the manifest's `strategy_execution` object.
+`manifest_hash` covers the complete execution request. The
 artifact's `sha256` hashes the actual `manifest.json` file bytes, including its
 own `manifest_hash` field, and therefore is a separate digest.
 

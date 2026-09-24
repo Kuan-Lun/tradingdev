@@ -15,6 +15,7 @@ from tradingdev.app.run_lineage import load_config_payload
 from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
+from tradingdev.domain.strategies.execution import StrategyExecution
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -194,7 +195,11 @@ backtest:
 
     service = ArtifactService(workspace=workspace, store=store)
     manifest = ExecutionManifest.create(
-        kind="backtest", config=load_config_payload(config_path) or {}
+        kind="backtest",
+        config=load_config_payload(config_path) or {},
+        strategy_execution=StrategyExecution(
+            kind="generated", constructor_kwargs={"random_seed": 11}
+        ),
     )
     pipeline = PipelineResult(
         mode="simple",
@@ -238,7 +243,11 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
             "init_cash": 10000,
         },
     }
-    manifest = ExecutionManifest.create(kind="backtest", config=original)
+    manifest = ExecutionManifest.create(
+        kind="backtest",
+        config=original,
+        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+    )
     pipeline = PipelineResult(
         mode="simple",
         config_snapshot=manifest.config_copy(),
@@ -255,7 +264,11 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
     assert not config_path.exists()
     changed_config = manifest.config_copy()
     changed_config["backtest"]["end_date"] = "2024-02-29"
-    changed = ExecutionManifest.create(kind="backtest", config=changed_config)
+    changed = ExecutionManifest.create(
+        kind="backtest",
+        config=changed_config,
+        strategy_execution=manifest.strategy_execution,
+    )
     second = service.cache_pipeline_result(
         pipeline=PipelineResult(
             mode="simple",
@@ -283,6 +296,7 @@ def test_cli_cache_rejects_results_without_their_intact_execution_manifest(
     monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
     manifest = ExecutionManifest.create(
         kind="backtest",
+        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
         config={
             "strategy": {"id": "fixture"},
             "backtest": {

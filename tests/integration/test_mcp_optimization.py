@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 class DirectionStrategy(BaseStrategy):
     """Expose both searched and required fixed YAML parameters."""
 
-    def __init__(self, direction: int, warmup: int) -> None:
+    def __init__(self, direction: int, warmup: int = 2) -> None:
         self._direction = direction
         self._warmup = warmup
 
@@ -75,7 +75,7 @@ async def _save_runnable(
     contract = await client.call("get_strategy_contract")
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"].update(
-        class_name="DirectionStrategy", parameters={"direction": -1, "warmup": 2}
+        class_name="DirectionStrategy", parameters={"direction": -1}
     )
     # The MCP request must override these without editing the saved strategy.
     config["backtest"].update(symbol="ETH/USDT", timeframe="4h", fees=0, slippage=0)
@@ -210,7 +210,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert completed["optimization_metric"] == "total_return"
         assert completed["total_combinations"] == 3
         assert (await client.call("list_jobs"))[0]["completed"] == 3
-        # warmup=2 is fixed YAML, not a grid parameter. The engine enters one
+        # warmup=2 is a captured constructor default, not a grid parameter.
+        # The engine enters one
         # bar later (index 3), and training must include the entire last day.
         train_return = 171.0 / 103.0 - 1
         oos_return = 105.0 / 197.0 - 1
@@ -246,6 +247,10 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         manifest = ExecutionManifest.model_validate_json(specification["content"])
         manifest.verify(manifest_hash)
         assert manifest.kind == "optimization"
+        assert manifest.strategy_execution.constructor_kwargs == {
+            "direction": -1,
+            "warmup": 2,
+        }
         search = manifest.optimization
         assert search is not None
         assert search.param_ranges == {"direction": [-1, 0, 1]}
@@ -274,7 +279,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert effective["backtest"]["timeframe"] == "1h"
         assert effective["backtest"]["end_date"] == "2024-01-07T23:59:59.999999"
         assert effective["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
-        assert effective["strategy"]["parameters"] == {"direction": -1, "warmup": 2}
+        assert effective["strategy"]["parameters"] == {"direction": -1}
         assert effective == manifest.config_copy()
         original = yaml.safe_load(Path(saved["yaml_path"]).read_text())
         assert original["backtest"]["symbol"] == "ETH/USDT"

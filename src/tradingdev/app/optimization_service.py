@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -18,6 +19,7 @@ from tradingdev.app.strategy_service import (
     StrategyService,
 )
 from tradingdev.domain.execution import ManifestError, OptimizationSpec
+from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
@@ -33,6 +35,7 @@ class OptimizationService:
         strategy_service: StrategyService | None = None,
         job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
+        strategy_loader: StrategyLoader | None = None,
         project_root: Path | None = None,
     ) -> None:
         self._job_store = job_store or get_default_job_store()
@@ -41,6 +44,9 @@ class OptimizationService:
         )
         self._process_runner = process_runner or ProcessRunner(
             project_root, workspace=self._job_store.workspace
+        )
+        self._strategy_loader = strategy_loader or StrategyLoader(
+            workspace_root=self._job_store.workspace.root
         )
 
     def start_optimization(
@@ -108,11 +114,27 @@ class OptimizationService:
         try:
             manifest = BacktestService(
                 strategy_gate=self._strategy_service,
+                strategy_loader=self._strategy_loader,
                 data_service=DataService(self._job_store.workspace),
             ).prepare_execution(
                 effective_config, kind="optimization", optimization=optimization
             )
-        except (ManifestError, ValidationError) as exc:
+            strategy_config = manifest.config_copy()["strategy"]
+            names = list(optimization.param_ranges)
+            candidates = (optimization.param_ranges[name] for name in names)
+            combinations = (
+                dict(zip(names, combination, strict=True))
+                for combination in product(*candidates)
+            )
+            try:
+                self._strategy_loader.validate_parameter_grid(
+                    strategy_config, manifest.strategy_execution, combinations
+                )
+            except Exception as exc:
+                raise ManifestError(
+                    f"Invalid strategy optimization settings: {exc}"
+                ) from exc
+        except (TypeError, ValueError) as exc:
             return {
                 "job_id": "",
                 "message": str(exc),

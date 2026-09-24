@@ -21,7 +21,11 @@ from tradingdev.domain.backtest.schemas import (
     ParallelConfig,
     WalkForwardConfig,
 )
-from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
+from tradingdev.domain.execution import (
+    ExecutionManifest,
+    ManifestError,
+    OptimizationSpec,
+)
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
@@ -132,8 +136,17 @@ class BacktestService:
         config["data"] = self._data_service.execution_config(
             config, run_config.backtest
         )
+        try:
+            strategy_execution = self._strategy_loader.resolve_execution(
+                config["strategy"]
+            )
+        except Exception as exc:
+            raise ManifestError(f"Invalid strategy execution settings: {exc}") from exc
         return ExecutionManifest.create(
-            kind=kind, config=config, optimization=optimization
+            kind=kind,
+            config=config,
+            optimization=optimization,
+            strategy_execution=strategy_execution,
         )
 
     def run_manifest(self, manifest: ExecutionManifest) -> BacktestRun:
@@ -142,14 +155,14 @@ class BacktestService:
         if manifest.kind not in {"backtest", "walk_forward"}:
             msg = "BacktestService cannot execute an optimization manifest"
             raise ValueError(msg)
-        raw_config = manifest.config_copy()
+        raw_config = manifest.config_for_execution()
         self.prepare_strategy(raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
         dataset = self._data_service.load(raw_config, bt_cfg)
         engine = self.create_engine(bt_cfg)
-        strategy = self._strategy_loader.create_from_config(
-            raw_config, engine, parallel_cfg
+        strategy = self._strategy_loader.create_from_execution(
+            raw_config["strategy"], manifest.strategy_execution, engine, parallel_cfg
         )
 
         if manifest.kind == "walk_forward":

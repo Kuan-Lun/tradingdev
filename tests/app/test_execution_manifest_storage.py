@@ -14,6 +14,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.job_store import JobStore
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
+from tradingdev.domain.strategies.execution import StrategyExecution
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 def _manifest(*, fees: float = 0.0006) -> ExecutionManifest:
     return ExecutionManifest.create(
+        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
         kind="backtest",
         config={
             "strategy": {"id": "fixture"},

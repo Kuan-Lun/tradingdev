@@ -15,9 +15,12 @@ from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.strategy_service import StrategyNotExecutableError
+from tradingdev.domain.strategies.execution import StrategyExecution
+from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
     from tradingdev.adapters.execution.process_runner import ProcessRunner
@@ -59,6 +62,25 @@ class _RunnerStub:
         return WorkerHandle(2468, 100.0, "a" * 32)
 
 
+class _StrategyLoaderStub(StrategyLoader):
+    def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
+        return StrategyExecution(
+            kind="bundled",
+            constructor_kwargs={"config": {"window": 10, "threshold": 0.1}},
+        )
+
+    def validate_parameter_grid(
+        self,
+        strategy_cfg: dict[str, Any],
+        execution: StrategyExecution,
+        combinations: Iterable[dict[str, Any]],
+    ) -> None:
+        for combination in combinations:
+            invalid = set(combination) - {"window", "threshold"}
+            if invalid:
+                raise ValueError(f"Unknown optimization parameters: {sorted(invalid)}")
+
+
 def _service(
     tmp_path: Path,
     *,
@@ -74,6 +96,7 @@ def _service(
         strategy_service=cast("StrategyService", _StrategyServiceStub(metadata)),
         job_store=job_store,
         process_runner=cast("ProcessRunner", runner),
+        strategy_loader=_StrategyLoaderStub(workspace_root=workspace.root),
         project_root=tmp_path,
     )
     return service, job_store, runner
@@ -134,6 +157,9 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
     assert config["backtest"]["fees"] == 0.0006
     assert config["parallel"]["reserve_cores"] == 2
     assert config["backtest"]["end_date"] == "2024-03-01T23:59:59.999999"
+    assert manifest.strategy_execution.constructor_kwargs == {
+        "config": {"window": 10, "threshold": 0.1}
+    }
 
     # A later source YAML edit cannot alter the accepted specification.
     config_path.write_text("strategy: changed\n", encoding="utf-8")
@@ -278,5 +304,39 @@ def test_start_optimization_rejects_walk_forward_settings(tmp_path: Path) -> Non
     assert response["job_id"] == ""
     assert response["code"] == "invalid_optimization_request"
     assert "must not contain validation settings" in response["message"]
+    assert job_store.list_all_jobs() == []
+    assert runner.calls == []
+
+
+def test_start_optimization_rejects_invalid_strategy_parameters_before_job(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "strategy.yaml"
+    config_path.write_text(
+        "strategy:\n  id: fixture\nbacktest:\n  symbol: ETH/USDT\n"
+        "  timeframe: 4h\n  start_date: '2024-01-01'\n"
+        "  end_date: '2024-12-31'\n  init_cash: 10000\n",
+        encoding="utf-8",
+    )
+    service, job_store, runner = _service(
+        tmp_path,
+        metadata={"status": "runnable", "config_path": str(config_path)},
+    )
+
+    response = service.start_optimization(
+        strategy_id="fixture",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        param_ranges={"windwo": [10]},
+        optimization_metric="sharpe_ratio",
+        train_start="2024-01-01",
+        train_end="2024-02-01",
+        test_start="2024-02-02",
+        test_end="2024-03-01",
+    )
+
+    assert response["job_id"] == ""
+    assert response["code"] == "invalid_optimization_request"
+    assert "windwo" in response["message"]
     assert job_store.list_all_jobs() == []
     assert runner.calls == []

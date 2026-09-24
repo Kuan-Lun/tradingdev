@@ -56,7 +56,8 @@ def register(
         The strategy config must not contain walk-forward validation settings.
         Dates are inclusive UTC calendar days and must satisfy
         train_start < train_end < test_start < test_end, without overlap.
-        Grid values override matching YAML parameters; other parameters stay fixed.
+        Grid values override fixed effective parameters; nested objects override
+        only specified leaves. Other values and defaults stay fixed.
         Review get_job_status before calling confirm_optimization.
         May download data and replace partial caches.
         """

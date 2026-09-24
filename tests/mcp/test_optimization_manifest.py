@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 import pytest
@@ -14,6 +15,9 @@ from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService, LoadedDataset
 from tradingdev.app.job_store import JobStore
 from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
+from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
+from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
+from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.mcp.workers import optimization
 from tradingdev.mcp.workers.optimization import _run_optimization
@@ -21,12 +25,15 @@ from tradingdev.mcp.workers.optimization import _run_optimization
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
     from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 
 
 def _queued_job(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[JobStore, ExecutionManifest]:
+    from tradingdev.domain.backtest.schemas import BacktestConfig
+
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = JobStore(workspace=workspace)
     monkeypatch.setenv("TRADINGDEV_WORKSPACE", str(workspace.root))
@@ -34,18 +41,25 @@ def _queued_job(
         "TRADINGDEV_WORKER_IDENTITY",
         json.dumps(WorkerHandle(4321, 100.0, "a" * 32).job_fields()),
     )
+    config: dict[str, Any] = {
+        "strategy": {"id": "fixture"},
+        "backtest": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-07T23:59:59.999999",
+            "init_cash": 10000,
+        },
+    }
+    config["data"] = DataService(workspace).execution_config(
+        config, BacktestConfig(**config["backtest"])
+    )
     manifest = ExecutionManifest.create(
         kind="optimization",
-        config={
-            "strategy": {"id": "fixture"},
-            "backtest": {
-                "symbol": "BTC/USDT",
-                "timeframe": "1h",
-                "start_date": "2024-01-01",
-                "end_date": "2024-01-07T23:59:59.999999",
-                "init_cash": 10000,
-            },
-        },
+        strategy_execution=StrategyExecution(
+            kind="generated", constructor_kwargs={"direction": -1}
+        ),
+        config=config,
         optimization=OptimizationSpec.model_validate(
             {
                 "param_ranges": {"direction": [-1, 1]},
@@ -129,12 +143,14 @@ def test_optimization_worker_ignores_mutable_config_and_search_copies(
 
     def evaluate(
         strategy_cfg: dict[str, Any],
+        strategy_execution: StrategyExecution,
         bt_cfg: BacktestConfig,
         frame: pd.DataFrame,
         params: dict[str, Any],
         metric: str,
         parallel_cfg: ParallelConfig,
     ) -> tuple[dict[str, Any], float, dict[str, Any]]:
+        assert strategy_execution == manifest.strategy_execution
         evaluations.append(
             (
                 params,
@@ -146,15 +162,10 @@ def test_optimization_worker_ignores_mutable_config_and_search_copies(
         )
         return params, 1.0, {metric: 1.0}
 
-    class ParameterSignature:
-        def __init__(self, direction: int) -> None:
-            self.direction = direction
-
     # Stub only external data/strategy evaluation. The real worker still loads
     # the manifest, expands the grid, selects its winner, performs OOS and saves.
     monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
     monkeypatch.setattr(DataService, "load", capture_data_load)
-    monkeypatch.setattr(StrategyLoader, "load_class", lambda *args: ParameterSignature)
     monkeypatch.setattr(optimization, "_run_single_combo", evaluate)
     monkeypatch.setattr(optimization, "estimate_n_jobs", lambda *args, **kwargs: 1)
     _run_optimization("fixture")
@@ -171,3 +182,68 @@ def test_optimization_worker_ignores_mutable_config_and_search_copies(
     assert job["status"] == "done"
     assert job["best_params"] == {"direction": -1}
     assert store.load_manifest("fixture") == manifest
+
+
+def test_optimization_evaluations_keep_unsearched_strategy_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
+
+    strategy_config = {"id": "kd_crossover", "parameters": {"oversold": 15.0}}
+    loader = StrategyLoader()
+    execution = loader.resolve_execution(strategy_config)
+    captured: list[dict[str, Any]] = []
+
+    class ChangedDefaultConfig(KDStrategyConfig):
+        k_period: int = 21
+
+    monkeypatch.setattr(
+        StrategyLoader,
+        "_bundled_config_model",
+        lambda *args, **kwargs: ChangedDefaultConfig,
+    )
+
+    def capture_signals(self: KDStrategy, frame: pd.DataFrame) -> pd.DataFrame:
+        captured.append(self.get_parameters())
+        return frame.copy()
+
+    engine = cast(
+        "BaseBacktestEngine",
+        SimpleNamespace(
+            run=lambda frame: SimpleNamespace(metrics={"total_return": 1.0})
+        ),
+    )
+    monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
+    monkeypatch.setattr(BacktestService, "create_engine", lambda *args: engine)
+    monkeypatch.setattr(KDStrategy, "generate_signals", capture_signals)
+    config = BacktestConfig(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        start_date="2024-01-01",
+        end_date="2024-01-07",
+        init_cash=10000,
+    )
+    frame = pd.DataFrame({"close": [1.0, 2.0]})
+    parallel = ParallelConfig()
+    optimization._run_single_combo(
+        strategy_config,
+        execution,
+        config,
+        frame,
+        {"d_period": 5},
+        "total_return",
+        parallel,
+    )
+    optimization._evaluate_combo(
+        strategy_config,
+        execution,
+        config.model_dump(),
+        frame.to_json(orient="split"),
+        {"d_period": 7},
+        "total_return",
+        parallel.model_dump(),
+    )
+
+    assert [parameters["k_period"] for parameters in captured] == [14, 14]
+    assert [parameters["d_period"] for parameters in captured] == [5, 7]
+    assert [parameters["oversold"] for parameters in captured] == [15.0, 15.0]

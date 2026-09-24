@@ -29,6 +29,7 @@ from tradingdev.app.strategy_service import (
 )
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.domain.execution import ManifestError
+from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ class JobService:
         *,
         strategy_service: StrategyService | None = None,
         data_service: DataService | None = None,
+        strategy_loader: StrategyLoader | None = None,
         job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
         project_root: Path | None = None,
@@ -63,6 +65,9 @@ class JobService:
             self._job_store.workspace
         )
         self._data_service = data_service or DataService(self._job_store.workspace)
+        self._strategy_loader = strategy_loader or StrategyLoader(
+            workspace_root=self._job_store.workspace.root
+        )
         self._project_root = (project_root or self._default_project_root()).resolve()
         self._process_runner = process_runner or ProcessRunner(
             self._project_root, workspace=self._job_store.workspace
@@ -405,6 +410,7 @@ class JobService:
             manifest = BacktestService(
                 data_service=self._data_service,
                 strategy_gate=self._strategy_service,
+                strategy_loader=self._strategy_loader,
             ).prepare_execution(effective_config, kind=kind)
         except (ManifestError, ValidationError) as exc:
             return {

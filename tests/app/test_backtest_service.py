@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 import pytest
+from pydantic import create_model
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
@@ -18,6 +19,10 @@ from tradingdev.app.strategy_service import (
 )
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
+from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
+from tradingdev.domain.strategies.execution import StrategyExecution
+from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 from tradingdev.shared.utils.config import load_config
 
@@ -25,7 +30,6 @@ if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
-    from tradingdev.domain.strategies.loader import StrategyLoader
 
 
 def _frame(rows: int = 24) -> pd.DataFrame:
@@ -99,9 +103,13 @@ class _StrategyLoaderStub:
         self.engine: BaseBacktestEngine | None = None
         self.parallel_config: ParallelConfig | None = None
 
-    def create_from_config(
+    def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
+        return StrategyExecution(kind="generated", constructor_kwargs={})
+
+    def create_from_execution(
         self,
-        raw_config: dict[str, Any],
+        strategy_cfg: dict[str, Any],
+        execution: StrategyExecution,
         engine: BaseBacktestEngine,
         parallel_config: ParallelConfig | None = None,
     ) -> BaseStrategy:
@@ -241,6 +249,52 @@ def test_run_raw_config_allows_promoted_bundled_strategy(tmp_path: Path) -> None
     run = service.run_raw_config(raw_config)
 
     assert run.mode == "simple"
+
+
+@pytest.mark.parametrize("walk_forward", [False, True])
+def test_run_manifest_uses_captured_defaults_in_real_strategy(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    sample_ohlcv_with_kd: pd.DataFrame,
+    walk_forward: bool,
+) -> None:
+    dataset = LoadedDataset(
+        frame=sample_ohlcv_with_kd,
+        processed_path=tmp_path / "processed.parquet",
+        dataset_id="captured-kd",
+    )
+    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    service = BacktestService(
+        data_service=_DataServiceStub(dataset),
+        strategy_loader=loader,
+        strategy_gate=_gate_service(tmp_path),
+    )
+    config = _raw_config(strategy={"id": "kd_crossover", "parameters": {}})
+    if walk_forward:
+        config["validation"] = {"n_splits": 2, "train_ratio": 0.5}
+    manifest = service.prepare_execution(
+        config, kind="walk_forward" if walk_forward else "backtest"
+    )
+    assert manifest.config_copy()["strategy"]["parameters"] == {}
+
+    changed_model = create_model(
+        "ChangedKDConfig", k_period=(int, 21), __base__=KDStrategyConfig
+    )
+    monkeypatch.setattr(loader, "_bundled_config_model", lambda _cls: changed_model)
+    observed: list[Any] = []
+    original_generate = KDStrategy.generate_signals
+
+    def observe(strategy: KDStrategy, df: pd.DataFrame) -> pd.DataFrame:
+        observed.append(strategy.get_parameters()["k_period"])
+        return original_generate(strategy, df)
+
+    monkeypatch.setattr(KDStrategy, "generate_signals", observe)
+
+    run = service.run_manifest(manifest)
+
+    assert observed == ([14, 14, 14, 14] if walk_forward else [14])
+    assert run.pipeline.execution_manifest is manifest
+    manifest.verify()
 
 
 def test_run_raw_config_rejects_source_path_mismatch(tmp_path: Path) -> None:

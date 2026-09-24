@@ -18,14 +18,13 @@ start_optimization) and uses it for every phase:
 from __future__ import annotations
 
 import argparse
-import inspect
 import json
 import logging
 import signal
 import time
 from datetime import UTC, datetime
 from io import StringIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from joblib import Parallel, delayed
 
@@ -42,6 +41,9 @@ from tradingdev.domain.optimization.grid_search import (
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
+
+if TYPE_CHECKING:
+    from tradingdev.domain.strategies.execution import StrategyExecution
 
 logger = setup_logger(__name__)
 
@@ -77,6 +79,7 @@ def _trial_timeout_handler(signum: int, frame: Any) -> None:
 # ---------------------------------------------------------------------------
 def _evaluate_combo(
     strategy_cfg: dict[str, Any],
+    strategy_execution: StrategyExecution,
     bt_cfg_dict: dict[str, Any],
     df_json: str,
     param_dict: dict[str, Any],
@@ -90,6 +93,7 @@ def _evaluate_combo(
 
     Args:
         strategy_cfg: Strategy config section.
+        strategy_execution: Captured constructor arguments, including defaults.
         bt_cfg_dict: BacktestConfig fields as a plain dict.
         df_json: Training DataFrame serialised as JSON string.
         param_dict: Parameter combination to evaluate.
@@ -104,6 +108,7 @@ def _evaluate_combo(
     df = pd.read_json(StringIO(df_json), orient="split")
     return _run_single_combo(
         strategy_cfg,
+        strategy_execution,
         BacktestConfig(**bt_cfg_dict),
         df,
         param_dict,
@@ -114,6 +119,7 @@ def _evaluate_combo(
 
 def _run_single_combo(
     strategy_cfg: dict[str, Any],
+    strategy_execution: StrategyExecution,
     bt_cfg: BacktestConfig,
     df: Any,
     param_dict: dict[str, Any],
@@ -123,15 +129,13 @@ def _run_single_combo(
     """Run a single combo in the main process (for trial run)."""
     service = BacktestService()
     engine = service.create_engine(bt_cfg)
-    effective_strategy = {
-        **strategy_cfg,
-        "parameters": {**strategy_cfg.get("parameters", {}), **param_dict},
-    }
-    service.prepare_strategy(
-        {"strategy": effective_strategy}, allow_parameter_overrides=True
-    )
-    strategy = StrategyLoader().create_from_config(
-        {"strategy": effective_strategy}, engine, parallel_cfg
+    service.prepare_strategy({"strategy": strategy_cfg})
+    strategy = StrategyLoader().create_from_execution(
+        strategy_cfg,
+        strategy_execution,
+        engine,
+        parallel_cfg,
+        parameter_overrides=param_dict,
     )
 
     signals_df = strategy.generate_signals(df)
@@ -169,7 +173,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         if manifest.kind != "optimization" or optimization is None:
             msg = "Job requires an optimization execution manifest"
             raise ValueError(msg)
-        raw_config = manifest.config_copy()
+        raw_config = manifest.config_for_execution()
         BacktestService().prepare_strategy(raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config["parallel"])
@@ -223,26 +227,9 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
 
     logger.info("Train: %d rows, Test: %d rows", len(train_df), len(test_df))
 
-    # --- Phase 4: load strategy class & validate params ---
-    try:
-        strategy_cfg: dict[str, Any] = raw_config["strategy"]
-        strategy_class_name = str(strategy_cfg.get("class_name") or "")
-        cls = StrategyLoader().load_class(strategy_cfg)
-    except Exception as exc:
-        _fail(job_id, f"Strategy load error: {exc}")
-        return
-
-    # Validate param_ranges keys against __init__ signature
-    sig = inspect.signature(cls)
-    invalid_params = [k for k in param_ranges if k not in sig.parameters]
-    if invalid_params:
-        _fail(
-            job_id,
-            f"Parameters not found in {strategy_class_name}.__init__: "
-            f"{invalid_params}. Available: {list(sig.parameters.keys())}",
-        )
-        return
-
+    # --- Phase 4: use the captured constructor inputs for every combination ---
+    strategy_cfg: dict[str, Any] = raw_config["strategy"]
+    strategy_execution = manifest.strategy_execution
     # Build all combinations through the domain grid-search helper.
     all_combos = parameter_grid(param_ranges)
     total_combinations = len(all_combos)
@@ -271,6 +258,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         t0 = time.monotonic()
         trial_result = _run_single_combo(
             strategy_cfg,
+            strategy_execution,
             train_bt_cfg,
             train_df,
             first_combo,
@@ -388,6 +376,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
                 Parallel(n_jobs=n_jobs)(
                     delayed(_evaluate_combo)(
                         strategy_cfg,
+                        strategy_execution,
                         train_bt_cfg.model_dump(),
                         train_df_json,
                         combo,
@@ -443,6 +432,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     try:
         _, oos_metric_value, oos_metrics = _run_single_combo(
             strategy_cfg,
+            strategy_execution,
             test_bt_cfg,
             test_df,
             best_params,

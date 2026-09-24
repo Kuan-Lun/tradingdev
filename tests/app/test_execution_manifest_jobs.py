@@ -15,6 +15,7 @@ from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.execution import ExecutionManifest
+from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.mcp.workers import backtest
 
 
@@ -97,7 +98,11 @@ def test_worker_rejects_tampered_manifest_before_execution(
     payload["config"]["backtest"]["fees"] = 0.9
     if recompute_hash:
         payload = ExecutionManifest.create(
-            kind="backtest", config=payload["config"]
+            kind="backtest",
+            config=payload["config"],
+            strategy_execution=StrategyExecution.model_validate(
+                payload["strategy_execution"]
+            ),
         ).model_dump(mode="json")
     path.write_text(json.dumps(payload), encoding="utf-8")
 

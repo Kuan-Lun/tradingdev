@@ -21,7 +21,8 @@ Generated code must:
 
 - inherit `tradingdev.domain.strategies.base.BaseStrategy`;
 - expose a constructor that can be called with YAML `strategy.parameters`;
-- accept optional `backtest_engine` when it needs engine context;
+- accept optional `backtest_engine` or `parallel_config` when it needs application
+  execution context;
 - implement `generate_signals(df)` and return a new pandas DataFrame;
 - preserve the input DataFrame without mutation;
 - include a `signal` column containing only `1`, `-1`, or `0`;
@@ -30,11 +31,21 @@ Generated code must:
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
-the constructor cannot accept fail validation. `backtest_engine` is injected by
-the application and cannot be overridden in YAML. Saving a revised draft
+the constructor cannot accept fail validation. `backtest_engine` and
+`parallel_config` are injected by the application and cannot be overridden in
+YAML. Saving a revised draft
 creates a new revision and loads that source, including
 same-size edits made within one filesystem timestamp interval. An existing
 revision is never replaced by a later save.
+
+Execution submission captures every declared constructor default, excluding the
+injected execution context, as an explicit keyword value in
+`manifest.strategy_execution`, separately from the original
+revision declaration. Defaults must be finite JSON values; unsupported defaults
+require explicit serializable parameters or a revised strategy. Generated code
+must express configurable values as constructor parameters rather than derive
+hidden defaults from environment state. This captures declared arguments, not
+arbitrary Python behavior or dependency versions.
 
 Allowed import roots for generated strategies are intentionally small:
 
@@ -192,7 +203,10 @@ current changes, including during optimization confirmation.
 
 Each submission also fixes an execution manifest containing that strategy
 identity, source hash, effective config with defaults, and any optimization
-search specification. The start response returns its `manifest_hash`, which
+search specification. Effective constructor values, including nested bundled
+parameter/fit-model defaults, are stored separately in `strategy_execution` and
+consumed without filling new defaults in the worker. The start response returns
+its `manifest_hash`, which
 also appears on job status and completed runs. Workers recheck the manifest
 against the submitted job and recheck strategy eligibility before execution.
 Changing a separate runtime YAML after submission does not change the job;
@@ -209,7 +223,9 @@ The comparison excludes the execution-managed `source_hash` and separately
 verifies that `source_path` resolves to the selected revision's source. Copy the
 saved config and apply market/date/cost changes outside the `strategy` section.
 Optimization may override only its search parameters, retaining all other base
-parameters and all other saved strategy settings. Validation evidence covers
+parameters and all other saved strategy settings. Nested parameter candidates
+recursively override only the specified fields of the fixed effective base;
+other nested fields retain their captured values. Validation evidence covers
 the base parameters; it does not certify
 every possible optimization candidate. Optimization fixes candidate lists,
 metric, calendar training/test ranges, maximization direction, and confirmation

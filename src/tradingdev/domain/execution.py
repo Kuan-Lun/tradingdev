@@ -20,6 +20,9 @@ from pydantic import (
 )
 
 from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
+from tradingdev.domain.data.requirements import DataRequirement
+from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.domain.strategies.execution import StrategyExecution
 
 type ExecutionKind = Literal["backtest", "walk_forward", "optimization"]
 type OptimizationMetric = Literal[
@@ -151,17 +154,34 @@ class ExecutionManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2]
     kind: ExecutionKind
     config: dict[str, JsonValue]
+    strategy_execution: StrategyExecution
     optimization: OptimizationSpec | None = None
     manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("config", mode="before")
     @classmethod
-    def resolved_config(cls, value: object) -> dict[str, JsonValue]:
-        """Normalize dates and fill execution defaults on creation and loading."""
-        return _resolve_config(value)
+    def persisted_config(cls, value: object) -> dict[str, JsonValue]:
+        """Decode saved values without consulting current execution defaults."""
+        copied = _json_value(value)
+        if not isinstance(copied, dict):
+            raise ManifestError("Execution config must be an object")
+        return copied
+
+    @field_validator("optimization", mode="before")
+    @classmethod
+    def complete_saved_search(cls, value: object) -> object:
+        """Persist every policy field, even when a new request uses defaults."""
+        if isinstance(value, dict):
+            missing = OptimizationSpec.model_fields.keys() - value.keys()
+            if missing:
+                raise ManifestError(
+                    "Saved optimization policy is missing fields: "
+                    + ", ".join(sorted(missing))
+                )
+        return value
 
     @model_validator(mode="after")
     def valid_manifest(self) -> Self:
@@ -175,25 +195,32 @@ class ExecutionManifest(BaseModel):
         *,
         kind: ExecutionKind,
         config: dict[str, Any],
+        strategy_execution: StrategyExecution,
         optimization: OptimizationSpec | None = None,
     ) -> Self:
         """Resolve an independent request and compute its canonical SHA-256."""
         try:
             resolved = _resolve_config(config)
+            strategy = StrategyExecution.model_validate(
+                strategy_execution.model_dump(mode="python")
+            )
             search = (
                 OptimizationSpec.model_validate(optimization.model_dump(mode="python"))
                 if optimization is not None
                 else None
             )
             payload = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": kind,
                 "config": resolved,
+                "strategy_execution": strategy.model_dump(mode="python"),
                 "optimization": search.model_dump(mode="python") if search else None,
             }
             return cls(
+                schema_version=2,
                 kind=kind,
                 config=resolved,
+                strategy_execution=strategy,
                 optimization=search,
                 manifest_hash=cls._digest(payload),
             )
@@ -216,6 +243,10 @@ class ExecutionManifest(BaseModel):
 
     def verify(self, expected_hash: str | None = None) -> None:
         """Reject invalid mode, nested mutations, and a mismatching job digest."""
+        _json_value(self.config)
+        _json_value(self.strategy_execution.constructor_kwargs)
+        if self.optimization is not None:
+            _json_value(self.optimization.param_ranges)
         is_walk_forward = self.config.get("validation") is not None
         if is_walk_forward != (self.kind == "walk_forward"):
             raise ManifestError("Execution kind does not match config.validation")
@@ -232,4 +263,36 @@ class ExecutionManifest(BaseModel):
     def config_copy(self) -> dict[str, Any]:
         """Return an independent execution config after checking its integrity."""
         self.verify()
+        return deepcopy(self.config)
+
+    def config_for_execution(self) -> dict[str, Any]:
+        """Reject saved settings that current execution would change implicitly.
+
+        Historical manifests remain readable through ``config_copy()`` even when
+        their settings no longer match the current runtime. An execution boundary
+        must call this method before allowing current models to interpret them.
+        Canonical JSON comparison also distinguishes booleans, integers and floats.
+        """
+        self.verify()
+        resolved = _resolve_config(self.config)
+        if self._digest(resolved) != self._digest(self.config):
+            raise ManifestError(
+                "Saved execution settings differ from the current runtime schema; "
+                "submit a new job"
+            )
+        data = self.config.get("data")
+        if not isinstance(data, dict):
+            raise ManifestError("Saved execution requires explicit data settings")
+        try:
+            data_config = DataConfig.model_validate(data).model_dump(mode="python")
+            data_config["requirements"] = DataRequirement.model_validate(
+                data.get("requirements")
+            ).model_dump(mode="python")
+        except ValidationError as exc:
+            raise ManifestError(f"Invalid saved data settings: {exc}") from exc
+        if self._digest(data_config) != self._digest(data):
+            raise ManifestError(
+                "Saved data settings differ from the current runtime schema; "
+                "submit a new job"
+            )
         return deepcopy(self.config)
