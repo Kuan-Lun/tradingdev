@@ -47,6 +47,50 @@ Local 使用支援工具呼叫的 Chat Completions 服務，預設
 同時確認原有檔案未變。
 `--llm-timeout 900` 是每個模型情境的秒數上限，不是預期執行時間。
 
+## 開發階段的程式碼審查
+
+審查責任、時機與 findings 處理以
+[AGENTS.md](../AGENTS.md#開發階段的程式碼審查) 為準。代理開發時，由主代理
+主動安排獨立 reviewer 或另啟本機審查工作階段；使用者不必每次手動輸入命令。
+這個流程不會透過 `check-full.sh`、commit 或 push 自動呼叫模型，也沒有額外
+的 repository 審查腳本。
+
+代理有獨立 reviewer 可用時，提供任務目的、基準與受查版本、差異範圍，以及
+相關契約的位置。Reviewer 直接檢視差異及相關使用端，只回報 findings；主代理
+負責核實與修正。開始審查後暫停修改受查內容，修正 findings 後再複查受影響範圍。
+
+改用 Codex CLI，或由開發者手動審查時，在 repository 根目錄選擇符合範圍的
+一個入口即可。階段修改尚未提交時：
+
+```bash
+codex review --uncommitted
+```
+
+這會審查已暫存、未暫存及未追蹤的修改，需先確認範圍沒有混入其他任務。
+若要檢查已提交的完整分支差異，先確認工作樹乾淨，再取得目標主線並執行：
+
+```bash
+git fetch origin main
+codex review --base origin/main
+```
+
+`origin/main` 是範例，使用實際的 remote 與主線。此命令不推送或建立 PR；審查
+前記錄基準與 HEAD，結束後確認版本及工作樹內容未變。未提交內容也要在交付時
+說明所涵蓋的範圍，不能把舊結果套用到後續修改。已由獨立 reviewer 涵蓋的相同
+內容不需要再跑一次 CLI review。
+
+例如 reviewer 指出某個預期的 service 拒絕會在 MCP 邊界變成未處理例外，
+先核對呼叫鏈與例外型別，再用能重現該失敗的測試驗證；修正後測試應通過。
+若原行為已符合契約，記錄不採納的程式／測試證據。最後回報受查範圍、findings
+處理與未涵蓋項目，不只列出命令的 exit code。
+
+Codex CLI 審查會呼叫模型，需可用的 CLI、登入與額度；用法可用
+`codex review --help` 核對，功能說明見
+[OpenAI 官方文件](https://learn.chatgpt.com/docs/codex/cli)。
+此審查用來找程式缺陷；`check-full.sh` 執行品質檢查與離線測試，
+`check-pr.sh` 另外檢查合併候選的文件一致性及遠端版本。Code review 不會取代
+這些檢查，也不代表真實模型策略流程已驗證。
+
 ## 從開發到合併
 
 以下以 remote `origin`、主線 `main`、開發分支 `feature/my-task` 示範，
@@ -54,7 +98,9 @@ Local 使用支援工具呼叫的 Chat Completions 服務，預設
 
 ### 1. 分階段提交並推送
 
-在開發分支完成一個階段後，先 `git add` 要提交的檔案，再填寫提交訊息：
+在開發分支完成一個階段，依變更完成相關測試與
+[開發階段審查](#開發階段的程式碼審查) 後，先 `git add` 要提交的檔案，
+再填寫提交訊息：
 
 ```bash
 ./scripts/git-flow-commit.sh "feat: add strategy validation"
