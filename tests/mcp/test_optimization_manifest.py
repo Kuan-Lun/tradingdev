@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import pickle
 import signal
+import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -19,6 +22,7 @@ from tradingdev.app.data_service import DataService, LoadedDataset
 from tradingdev.app.job_store import JobStore
 from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
+from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 from tradingdev.domain.strategies.execution import StrategyExecution
@@ -27,8 +31,6 @@ from tradingdev.mcp.workers import optimization
 from tradingdev.mcp.workers.optimization import ComboEvaluation, _run_optimization
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
     from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 
@@ -78,6 +80,7 @@ def _queued_job(
     monkeypatch: pytest.MonkeyPatch,
     *,
     metric: str = "total_return",
+    trial_timeout_seconds: int = 300,
 ) -> tuple[JobStore, ExecutionManifest]:
     from tradingdev.domain.backtest.schemas import BacktestConfig
 
@@ -116,6 +119,7 @@ def _queued_job(
                 "train_end": "2024-01-03",
                 "test_start": "2024-01-04",
                 "test_end": "2024-01-07",
+                "trial_timeout_seconds": trial_timeout_seconds,
             }
         ),
     )
@@ -507,3 +511,82 @@ def test_optimization_failure_restores_alarm_without_partial_performance_files(
     assert not (run_dir / "performance.json").exists()
     assert not (run_dir / "observations.json").exists()
     assert not list(run_dir.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("phase", ["constructor", "generate_signals"])
+def test_real_trial_alarm_during_contract_execution_retains_timeout_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    """Use the real trial/contract/constructor path and a real one-second alarm."""
+    entered: list[str] = []
+
+    class SlowStrategy(BaseStrategy):
+        def __init__(
+            self, direction: int, backtest_engine: BaseBacktestEngine | None = None
+        ) -> None:
+            # Contract fixtures inject None; reaching a real-engine execution
+            # would mean this test missed the regression's actual failure site.
+            assert backtest_engine is None
+            self.direction = direction
+            if phase == "constructor":
+                entered.append("constructor")
+                time.sleep(10)
+
+        def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+            assert len(df) == 80
+            entered.append("generate_signals")
+            time.sleep(10)
+            result = df.copy()
+            result["signal"] = 0
+            return result
+
+        def get_parameters(self) -> dict[str, Any]:
+            return {"direction": self.direction}
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    with TemporaryDirectory(prefix="trial-timeout-", dir=tmp_path) as temporary:
+        root = Path(temporary)
+        store, _ = _queued_job(root, monkeypatch, trial_timeout_seconds=1)
+
+        def load(
+            self: DataService, config: dict[str, Any], bt: BacktestConfig
+        ) -> LoadedDataset:
+            return LoadedDataset(
+                frame=pd.DataFrame(
+                    {
+                        "timestamp": pd.date_range(
+                            "2024-01-01", periods=7, freq="D", tz="UTC"
+                        )
+                    }
+                ),
+                processed_path=root / "unused.parquet",
+                dataset_id="fixture-data",
+            )
+
+        # The fake class and data replace external inputs. The worker trial,
+        # captured constructor inputs, contract fixture, alarm and SQLite are real.
+        monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
+        monkeypatch.setattr(DataService, "load", load)
+        monkeypatch.setattr(StrategyLoader, "load_class", lambda *args: SlowStrategy)
+        try:
+            _run_optimization("fixture")
+            assert entered == [phase]
+            assert signal.getsignal(signal.SIGALRM) == previous_handler
+            assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+            job = store.get_job("fixture")
+            assert job is not None
+            assert job["status"] == "estimation_timeout", job
+            assert "exceeded 1s timeout" in job["error"]
+            assert job["ended_at"] is not None
+            assert store.list_runs() == []
+            run_dir = store.workspace.runs / "fixture"
+            assert {path.name for path in run_dir.iterdir()} == {
+                "manifest.json",
+                "config.yaml",
+            }
+            assert not list(root.rglob(".pending-*"))
+        finally:
+            # Restore process signal state even when a regression fails an assert.
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous_handler)
+    assert not root.exists()

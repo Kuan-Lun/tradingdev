@@ -27,8 +27,6 @@ def _read_revision_file(path: Path) -> bytes:
 def bind_strategy_revision(
     config: dict[str, Any],
     spec: StrategySpec,
-    *,
-    allow_parameter_overrides: bool = False,
 ) -> None:
     """Check execution identity and bind its trusted source digest in place."""
     strategy = config.get("strategy")
@@ -76,9 +74,7 @@ def bind_strategy_revision(
             msg = "Strategy revision config hash changed before execution"
             raise StrategyNotExecutableError(msg)
         base_strategy = yaml.safe_load(base_content)["strategy"]
-        ignored = {"source_hash", "source_path"}
-        if allow_parameter_overrides:
-            ignored.add("parameters")
+        ignored = {"source_hash", "source_path", "parameters"}
         actual = {key: value for key, value in strategy.items() if key not in ignored}
         expected = {
             key: value for key, value in base_strategy.items() if key not in ignored

@@ -47,6 +47,13 @@ Strategy development workflow
 8. For parameter tuning, call start_optimization, poll get_job_status, and
    confirm with confirm_optimization when it reports pending_confirmation.
 
+For individual parameter experiments, pass parameters to start_backtest or
+start_walk_forward with the same runnable revision_id. Nested parameter mappings
+merge recursively with the base values. Each run fixes its effective settings
+in its manifest and checks the generated signal contract at both fixture depths;
+the saved revision and current pointer stay unchanged. Save a new strategy
+revision when changing source or the base configuration, not for each trial.
+
 Signals use 1 = long, -1 = short, 0 = flat, and must never use data after
 the bar being signalled. Strategy parameters live only in YAML
 strategy.parameters. Generated strategies must remain in workspace/.

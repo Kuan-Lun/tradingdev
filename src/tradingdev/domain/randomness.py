@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ _CURRENT: ContextVar[_Randomness | None] = ContextVar(
 
 
 @contextmanager
-def execution_randomness(seed: int | None) -> Iterator[None]:
+def execution_randomness(seed: int | None) -> Generator[None]:
     """Start fresh streams for this execution and restore the enclosing context.
 
     Each execution (including each parallel trial) must open its own scope.

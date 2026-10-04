@@ -283,19 +283,28 @@ inspection projection, while `manifest.json` is the execution authority.
 
 Runtime symbol, timeframe, and dates are separate from the revision's base
 config. For generated strategies, ordinary backtest and walk-forward execution
-configs must preserve the saved `strategy` mapping in full, including parameters,
-identity, and any descriptive or constructor settings such as `description`,
-`version`, or `fit`. Adding, removing, or changing those fields requires saving
+configs may change `strategy.parameters` for experiments on the same runnable
+revision. All other saved `strategy` fields, including
+identity and any descriptive or constructor settings such as `description`,
+`version` or `fit`, must remain unchanged. Changing those fields requires saving
 and checking a new revision, even if identity and parameters are unchanged.
 The comparison excludes the execution-managed `source_hash` and separately
 verifies that `source_path` resolves to the selected revision's source. Copy the
 saved config and apply market/date/cost changes outside the `strategy` section.
+MCP `start_backtest` and `start_walk_forward` accept a `parameters` mapping;
+nested mappings merge recursively with the base and other values replace the
+specified parameter. CLI configs provide their complete experiment parameters.
+The base source, YAML, lifecycle evidence and current pointer remain unchanged.
+Each run stores its own fixed parameters and constructor settings in its manifest.
+Short and long signal-contract fixtures check the effective generated execution
+settings at submission and execution; a failure rejects the experiment without
+changing the revision's status. Static checks remain bound to the verified source.
 Optimization may override only its search parameters, retaining all other base
 parameters and all other saved strategy settings. Nested parameter candidates
 recursively override only the specified fields of the fixed effective base;
 other nested fields retain their captured values. Validation evidence covers
-the base parameters; it does not certify
-every possible optimization candidate. Optimization fixes candidate lists,
+the base parameters; generated optimization candidates also pass the short and
+long signal-contract fixtures before execution. Optimization fixes candidate lists,
 metric, calendar training/test ranges, the metric's minimization or maximization
 direction, and confirmation
 policy in the manifest. A config with `validation` settings cannot also request

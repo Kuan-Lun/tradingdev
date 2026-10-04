@@ -74,6 +74,10 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | Artifact | 與執行或研究相關的檔案及其索引，由 ArtifactService 提供探索與讀取 |
 
 一個 revision 可以提交多次工作；工作開始或結束不會把策略狀態改成 running 或 done。
+參數實驗屬於工作設定：MCP 的 `parameters` 覆寫與 CLI 執行設定共用
+BacktestService，在同一 revision 上固定不同參數的 manifest，避免重複保存策略程式。
+Generated 策略以固定的建構子設定執行短、長訊號契約檢查，驗證與 dry-run
+的基礎證據仍保留在原 revision；實驗不會更新這些證據或 current pointer。
 背景回測與最佳化完成時，目前以 job ID 作為 run ID。CLI 同步執行也會保存獨立 run，
 但不建立背景 job。相同設定的兩次執行可以留下不同結果，不會因設定相同而覆寫前次 run。
 
@@ -245,8 +249,9 @@ Walk-forward 保存每個 fold 的訓練／測試結果；其摘要是各 fold �
 
 ### 設定與儲存一致性
 
-Generated 策略執行時必須維持 revision 綁定的策略宣告；一般執行的市場、期間與成本
-可在策略宣告之外覆寫，最佳化只允許搜尋範圍內的參數變化。提交時固定有效預設值與
+Generated 策略執行時必須維持 revision 綁定的策略身分與非參數宣告；一般執行可
+調整 `strategy.parameters`，市場、期間與成本可在策略宣告之外覆寫。
+最佳化只允許搜尋範圍內的參數變化。提交時固定有效預設值與
 絕對資料路徑，worker 以 manifest 作為執行設定來源，也不追蹤稍後的 current pointer；
 它仍會讀取所選 revision 的基礎設定，以檢查內容完整性與宣告一致性。
 執行產物中的 `config.yaml` 是 manifest 的檢視副本，不是另一份可修改工作內容的設定。

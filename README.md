@@ -74,8 +74,13 @@ Claude Desktop 範例：
 省略時，每次操作只選取一次當前 revision；已建立的工作固定使用選定版本。
 修正策略須重新 `save_strategy`，新 revision 從 draft 開始；舊版本與驗證證據保留，
 可用其 `revision_id` 查詢或執行。job、run 與策略回覆會帶回所選版本。
-Generated 策略的一般回測與 walk-forward 參數必須與該 revision 的基礎設定相同；
-調整參數須另存並驗證新 revision。最佳化可覆寫搜尋範圍內的參數，其餘保留基礎值。
+參數實驗沿用已 runnable 的 revision：在 `start_backtest` 或 `start_walk_forward`
+傳入 `parameters`，只覆寫該次執行的策略參數，巢狀物件逐層合併，其餘保留基礎值。
+每次執行固定完整設定，並以有效參數執行短、長兩組訊號契約檢查；
+不修改原 Python、基礎 YAML、驗證證據或 current pointer，也不建立新的 revision。
+例如同一 MACD revision 可分別傳入 `parameters={"fast_period": 12, "slow_period": 29}`
+及其他組合，結果各自保存成 run。修改程式或要保存新的基礎設定時才另存 revision。
+最佳化可覆寫搜尋範圍內的參數，其餘保留基礎值。
 Bundled 策略仍由 Git 管理，`revision_id` 為 `null`。
 
 每次提交回測、walk-forward 或最佳化時，會先固定完整執行規格
@@ -83,7 +88,7 @@ Bundled 策略仍由 Git 管理，`revision_id` 為 `null`。
 與確認設定。成功回覆的 `manifest_hash` 可與 job、run 及執行規格產物核對；
 worker 使用這份規格，稍後修改原 YAML 或切換當前策略版本都不會改變已提交工作。
 `config.yaml` 是方便檢視的設定副本；修改它不會修改工作。要改設定請提交新工作。
-原始策略宣告保留供 revision 核對；建構子參數與內建策略模型的預設值另外展開並
+策略宣告的身分與非參數欄位保留供 revision 核對；建構子參數與內建策略模型的預設值另外展開並
 存進 `strategy_execution`。執行時不再補入新的預設值；不相容的模型或參數會令
 工作失敗。規格使用 schema 4，固定完整設定結構、頂層執行種子、績效計算設定及最佳化方向；
 早期 schema 1／2／3 規格須重新提交，不會原地遷移。格式詳見
@@ -257,8 +262,9 @@ uv run python -m tradingdev --config \
 ```
 
 Generated 策略請指定已通過 dry-run 的 revision 所屬 `config.yaml`，
-或複製它建立執行設定並完整保留 `strategy` 區段，包括身分、參數、
-`description`、`version`、`fit` 等原有欄位；新增、移除或變更欄位都需要另存並驗證新 revision。
+或複製它建立執行設定，調整 `strategy.parameters` 進行參數實驗。
+`strategy` 的身分、`description`、`version`、`fit` 等其餘原有欄位須完整保留；
+新增、移除或變更這些欄位需要另存並驗證新 revision。
 `source_path` 必須仍指向原 revision 的來源；`source_hash` 由執行流程驗證後填入。
 交易對、期間與成本可在 `strategy` 以外的設定區段調整。
 CLI 也先固定執行規格，再執行並用該規格保存結果快取；執行中修改原設定檔，

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from mcp.types import ToolAnnotations
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
 from tradingdev.app.contracts.jobs import BacktestRejected, BacktestStarted
 from tradingdev.mcp.schemas import BacktestInput
@@ -34,10 +34,14 @@ def register(mcp: FastMCP, service: JobService) -> None:
         start_date: str,
         end_date: str,
         revision_id: str | None = None,
+        parameters: dict[str, JsonValue] | None = None,
     ) -> BacktestStarted | BacktestRejected:
         """Launch a backtest for a runnable/promoted strategy without validation folds.
 
         Pass the runnable revision_id; omission selects current at submission.
+        parameters overrides only this run's strategy parameters (nested mappings
+        merge recursively). Reuse the revision for experiments instead of saving
+        duplicate source. Effective generated settings pass both contract fixtures.
         The returned manifest_hash identifies the fixed execution settings.
         An empty job_id and code mean no job was created. Otherwise poll
         get_job_status, then use get_run after completion. May download data
@@ -50,6 +54,7 @@ def register(mcp: FastMCP, service: JobService) -> None:
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
+            parameters=parameters,
         )
         result = service.start_backtest(
             strategy_id=payload.strategy_id,
@@ -58,6 +63,7 @@ def register(mcp: FastMCP, service: JobService) -> None:
             timeframe=payload.timeframe,
             start_date=payload.start_date,
             end_date=payload.end_date,
+            parameters=payload.parameters,
         )
         return TypeAdapter(BacktestStarted | BacktestRejected).validate_python(result)
 
@@ -76,10 +82,14 @@ def register(mcp: FastMCP, service: JobService) -> None:
         start_date: str,
         end_date: str,
         revision_id: str | None = None,
+        parameters: dict[str, JsonValue] | None = None,
     ) -> BacktestStarted | BacktestRejected:
         """Launch walk-forward for a runnable/promoted strategy with validation config.
 
         Pass the runnable revision_id; omission selects current at submission.
+        parameters overrides only this run's strategy parameters (nested mappings
+        merge recursively). Reuse the revision for experiments instead of saving
+        duplicate source. Effective generated settings pass both contract fixtures.
         The returned manifest_hash identifies the fixed execution settings and folds.
         An empty job_id and code mean no job was created. Otherwise poll
         get_job_status, then use get_run after completion. May download data
@@ -92,6 +102,7 @@ def register(mcp: FastMCP, service: JobService) -> None:
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
+            parameters=parameters,
         )
         result = service.start_walk_forward(
             strategy_id=payload.strategy_id,
@@ -100,5 +111,6 @@ def register(mcp: FastMCP, service: JobService) -> None:
             timeframe=payload.timeframe,
             start_date=payload.start_date,
             end_date=payload.end_date,
+            parameters=payload.parameters,
         )
         return TypeAdapter(BacktestStarted | BacktestRejected).validate_python(result)

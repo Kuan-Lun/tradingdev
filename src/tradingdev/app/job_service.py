@@ -85,6 +85,7 @@ class JobService:
         start_date: str,
         end_date: str,
         revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Start a simple backtest job."""
         try:
@@ -123,6 +124,7 @@ class JobService:
             raw_config=raw_config,
             walk_forward=False,
             spec=spec,
+            parameters=parameters,
         )
 
     def start_walk_forward(
@@ -134,6 +136,7 @@ class JobService:
         start_date: str,
         end_date: str,
         revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Start a walk-forward job."""
         try:
@@ -173,6 +176,7 @@ class JobService:
             raw_config=raw_config,
             walk_forward=True,
             spec=spec,
+            parameters=parameters,
         )
 
     def get_job_status(self, job_id: str) -> dict[str, Any]:
@@ -449,6 +453,7 @@ class JobService:
         raw_config: dict[str, Any],
         walk_forward: bool,
         spec: StrategySpec,
+        parameters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         kind: Literal["backtest", "walk_forward"] = (
             "walk_forward" if walk_forward else "backtest"
@@ -466,7 +471,7 @@ class JobService:
                 data_service=self._data_service,
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
-            ).prepare_execution(effective_config, kind=kind)
+            ).prepare_execution(effective_config, kind=kind, parameters=parameters)
         except (
             OSError,
             TypeError,

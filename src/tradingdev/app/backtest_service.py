@@ -26,6 +26,11 @@ from tradingdev.domain.execution import (
     OptimizationSpec,
 )
 from tradingdev.domain.randomness import execution_randomness
+from tradingdev.domain.strategies.contract import (
+    DRY_RUN_FIXTURE_ROWS,
+    VALIDATE_FIXTURE_ROWS,
+    SignalContractChecker,
+)
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
@@ -36,6 +41,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
+    from tradingdev.domain.strategies.execution import StrategyExecution
     from tradingdev.domain.strategies.schemas import StrategySpec
 
 
@@ -105,6 +111,7 @@ class BacktestService:
         *,
         kind: Literal["backtest", "walk_forward", "optimization"],
         optimization: OptimizationSpec | None = None,
+        parameters: dict[str, Any] | None = None,
     ) -> ExecutionManifest:
         """Bind the strategy and resolve application defaults before execution."""
         config = deepcopy(raw_config)
@@ -125,12 +132,49 @@ class BacktestService:
             )
         except Exception as exc:
             raise ManifestError(f"Invalid strategy execution settings: {exc}") from exc
-        return ExecutionManifest.create(
+        if parameters is not None:
+            strategy_execution = self._strategy_loader.override_execution(
+                config["strategy"], strategy_execution, parameters
+            )
+            config["strategy"]["parameters"] = (
+                strategy_execution.constructor_kwargs["config"]
+                if strategy_execution.kind == "bundled"
+                else strategy_execution.constructor_kwargs
+            )
+        manifest = ExecutionManifest.create(
             kind=kind,
             config=config,
             optimization=optimization,
             strategy_execution=strategy_execution,
         )
+        self.check_execution(manifest.config_for_execution(), strategy_execution)
+        return manifest
+
+    def check_execution(
+        self,
+        raw_config: dict[str, Any],
+        execution: StrategyExecution,
+        *,
+        parameter_overrides: dict[str, Any] | None = None,
+    ) -> None:
+        """Check generated experiment settings at both fixture depths, read-only."""
+        if execution.kind != "generated":
+            return
+        checker = SignalContractChecker(self._strategy_loader)
+        for fixture_rows in (VALIDATE_FIXTURE_ROWS, DRY_RUN_FIXTURE_ROWS):
+            checked = checker.check_config(
+                raw_config,
+                fixture_rows=fixture_rows,
+                execution=execution,
+                parameter_overrides=parameter_overrides,
+            )
+            errors = [item for item in checked["diagnostics"] if item.level == "error"]
+            if errors:
+                detail = "; ".join(f"{item.code}: {item.message}" for item in errors)
+                raise ManifestError(
+                    f"Strategy execution contract failed ({fixture_rows} rows): "
+                    f"{detail}"
+                )
 
     def run_manifest(self, manifest: ExecutionManifest) -> BacktestRun:
         """Execute a verified specification without rebuilding its defaults."""
@@ -147,6 +191,7 @@ class BacktestService:
     ) -> BacktestRun:
         """Construct and execute the strategy within its run's random context."""
         self.prepare_strategy(raw_config)
+        self.check_execution(raw_config, manifest.strategy_execution)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
         dataset = self._data_service.load(raw_config, bt_cfg)
@@ -175,6 +220,9 @@ class BacktestService:
 
         signals = strategy.generate_signals(dataset.frame)
         result = engine.run(signals)
+        result.metric_metadata["strategy_parameters"] = deepcopy(
+            strategy.get_parameters()
+        )
         pipeline = PipelineResult(
             mode="simple",
             backtest_result=result,
@@ -192,8 +240,6 @@ class BacktestService:
     def prepare_strategy(
         self,
         raw_config: dict[str, Any],
-        *,
-        allow_parameter_overrides: bool = False,
     ) -> None:
         """Validate a pinned strategy before backtest or optimization loading."""
         strategy_cfg = raw_config.get("strategy")
@@ -209,9 +255,7 @@ class BacktestService:
             msg = "strategy.revision_id must be a string"
             raise StrategyNotExecutableError(msg)
         spec = self._strategy_gate.resolve_executable(strategy_id, revision_id)
-        bind_strategy_revision(
-            raw_config, spec, allow_parameter_overrides=allow_parameter_overrides
-        )
+        bind_strategy_revision(raw_config, spec)
 
     def create_engine(self, config: BacktestConfig) -> BaseBacktestEngine:
         """Create a backtest engine from config."""

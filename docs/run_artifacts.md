@@ -183,9 +183,13 @@ database and workspace files.
 
 The generated revision's `config.yaml` holds its base settings;
 `runs/<run_id>/config.yaml` holds effective execution settings and includes
-`strategy.revision_id`. Runtime market/date or optimization parameter overrides
-do not rewrite the base revision. Generated backtest and walk-forward parameters
-must match the base revision; only optimization search parameters can vary.
+`strategy.revision_id`. Runtime market/date and parameter experiments
+do not rewrite the base revision. Backtest and walk-forward requests may supply
+`parameters`, recursively merged into the base parameters. CLI runtime configs
+may change `strategy.parameters` while preserving other strategy declarations.
+The same revision can therefore have many runs with different parameters and
+manifest hashes, without duplicate generated source revisions. Both short and
+long signal-contract fixtures check effective generated settings before execution.
 The execution manifest additionally fixes runtime overrides and search settings
 without rewriting the base revision.
 
@@ -279,6 +283,24 @@ the result; queries do not substitute the current catalog.
 | Backtest | `full` | `full` |
 | Walk-forward | `fold/<index>/train`, `fold/<index>/test`, `test_summary` | `test_summary` |
 | Optimization | `trial/<index>/train`, `test` | `test` |
+
+New backtest and walk-forward scopes record the manifest's fixed, effective
+constructor parameters, including defaults, in `parameters`. This includes
+`test_summary`: its parameters describe the initial execution settings, not an
+aggregation of learned fold settings. Generated strategies use their constructor
+arguments; bundled strategies use the constructor's `config` object. Actual
+values reported by `strategy.get_parameters()` are saved separately in
+`metadata.strategy_parameters` for the full backtest or each train/test fold.
+Walk-forward captures each fold's values independently after fitting; later
+folds cannot overwrite earlier snapshots. The summary retains those values in
+`metadata.fold_metadata`.
+
+Optimization keeps its existing meaning: `parameters` contains the trial's
+searched values (or the selected values for `test`), while
+`metadata.strategy_parameters` contains the strategy's complete reported values.
+Previously published artifacts are read unchanged. In older artifacts, full and
+summary parameters may be empty and fold parameters may contain fitted values;
+queries do not infer missing values from current strategy files.
 
 Indices are zero-based. Optimization's `selected_train_scope` identifies the
 winning training trial. A `backtest` scope contains scalar values; the

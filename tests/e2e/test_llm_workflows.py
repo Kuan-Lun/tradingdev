@@ -229,7 +229,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         ),
     )
     started = calls[start_index]
-    expected_arguments = {
+    expected_arguments: dict[str, Any] = {
         "strategy_id": scenario.strategy_id,
         "revision_id": revision_id,
         "symbol": "BTC/USDT",
@@ -237,7 +237,15 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         "start_date": "2024-01-01",
         "end_date": "2024-01-08",
     }
-    assert started.arguments == expected_arguments, (
+    if scenario.experiment:
+        expected_arguments["parameters"] = scenario.overrides
+        assert not any(
+            call.name == "save_strategy" for call in calls[previous + 1 :]
+        ), "Parameter experiments must reuse the runnable revision"
+    actual_arguments = dict(started.arguments)
+    if actual_arguments.get("parameters") is None:
+        actual_arguments.pop("parameters", None)
+    assert actual_arguments == expected_arguments, (
         f"start_backtest arguments differ for {target}: "
         f"expected {expected_arguments!r}; got {started.arguments!r}"
     )

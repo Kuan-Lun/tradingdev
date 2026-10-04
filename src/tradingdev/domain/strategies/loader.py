@@ -21,6 +21,7 @@ from tradingdev.domain.strategies.execution import (
     finite_strategy_value,
 )
 from tradingdev.shared.paths import resolve_workspace_root
+from tradingdev.shared.utils.json_values import strict_json_value
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -137,6 +138,25 @@ class StrategyLoader:
             cls, execution, engine, parallel_config, parameter_overrides
         )
         return cls(**kwargs)
+
+    def override_execution(
+        self,
+        strategy_cfg: dict[str, Any],
+        execution: StrategyExecution,
+        parameters: dict[str, Any],
+    ) -> StrategyExecution:
+        """Freeze one experiment using the search grid's strict nested overlay."""
+        overrides = strict_json_value(parameters)
+        if not isinstance(overrides, dict):
+            raise ValueError("Strategy parameters must be a mapping")
+        kwargs = deepcopy(execution.constructor_kwargs)
+        target = kwargs.get("config") if execution.kind == "bundled" else kwargs
+        if not isinstance(target, dict):
+            raise ValueError("Strategy does not expose searchable parameters")
+        self._overlay_parameters(target, overrides)
+        selected = StrategyExecution(kind=execution.kind, constructor_kwargs=kwargs)
+        self.validate_parameter_overrides(strategy_cfg, selected, {})
+        return selected
 
     def validate_parameter_overrides(
         self,
