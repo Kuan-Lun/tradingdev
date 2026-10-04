@@ -261,7 +261,7 @@ for _period in ("daily", "monthly"):
                 "period",
                 "numpy/pandas",
                 f"{_stat} of net PnL aggregated by observed UTC "
-                "calendar {_period} periods; std uses ddof=0.",
+                f"calendar {_period} periods; std uses ddof=0.",
                 direction="minimize" if _stat == "std" else "maximize",
             )
         )

@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict
@@ -18,6 +19,7 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_file,
     sha256_text,
 )
+from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_lineage import (
     extract_random_seed,
@@ -26,7 +28,14 @@ from tradingdev.app.run_lineage import (
 )
 from tradingdev.app.strategy_service import StrategyNotExecutableError
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
+from tradingdev.domain.performance.artifacts import (
+    PerformanceArtifacts,
+    bundles_from_pipeline,
+)
 from tradingdev.shared.utils.json_values import normalize_json_object
+
+if TYPE_CHECKING:
+    from tradingdev.domain.backtest.pipeline_result import PipelineResult
 
 logger = logging.getLogger(__name__)
 
@@ -229,11 +238,16 @@ class JobStore:
         job_id: str,
         metrics: dict[str, Any],
         *,
-        pipeline: Any | None = None,
+        pipeline: PipelineResult | None = None,
+        performance: PerformanceArtifacts | None = None,
         config_snapshot: dict[str, Any] | None = None,
         execution_manifest: ExecutionManifest | None = None,
     ) -> Path:
         """Serialize metrics to a run artifact and record run metadata."""
+        if pipeline is not None and performance is not None:
+            raise ValueError(
+                "Supply either pipeline or performance artifacts, not both"
+            )
         safe = normalize_json_object(metrics)
 
         job = self.get_job(job_id)
@@ -264,6 +278,19 @@ class JobStore:
             config_payload = executed.config_copy()
         elif executed is not None:
             raise ManifestError("Result manifest is not bound to a submitted job")
+        details = (
+            bundles_from_pipeline(job_id, pipeline, safe)
+            if pipeline is not None
+            else PerformanceArtifacts.model_validate_json(performance.model_dump_json())
+            if performance is not None
+            else None
+        )
+        if details is not None and (
+            details.performance.run_id != job_id
+            or details.performance.manifest_hash
+            != (executed.manifest_hash if executed is not None else None)
+        ):
+            raise ManifestError("Performance artifacts differ from the executed result")
         source = read_strategy_snapshot(
             config_payload,
             self._workspace,
@@ -281,110 +308,138 @@ class JobStore:
             sha256_text(config_content) if config_content is not None else None
         )
         run_dir = self._workspace.runs / job_id
-        run_dir.mkdir(parents=True, exist_ok=True)
         result_path = run_dir / "result.json"
-        result_path.write_text(
-            json.dumps(safe, indent=2, ensure_ascii=False, allow_nan=False),
-            encoding="utf-8",
-        )
-
-        if job is not None:
-            strategy_source = source.path
-            source_hash = source.source_hash
-            random_seed = extract_random_seed(config_payload)
-            dataset_fingerprint = self._dataset_fingerprint(job)
-            # Current execution creates one run per job, so run_id is job_id.
-            # Revisit this before supporting multi-run jobs such as fold-level
-            # optimization artifacts.
-            self._store.create_run(
-                run_id=job_id,
-                job_id=job_id,
-                strategy_id=str(job.get("strategy_name", "")),
-                revision_id=source.revision_id,
-                manifest_hash=executed.manifest_hash if executed is not None else None,
-                artifact_dir=run_dir,
-                metrics=safe,
-                config_hash=config_hash,
-                source_hash=source_hash,
-                random_seed=random_seed,
-                dataset_id=dataset_fingerprint["dataset_id"],
-            )
-            self._store.create_artifact(
-                artifact_id=f"{job_id}:result_json",
-                run_id=job_id,
-                artifact_type="result_json",
-                path=result_path,
-                sha256=sha256_file(result_path),
-                metadata={"job_id": job_id},
-            )
-            if executed is not None:
-                manifest_path = self._manifests.path(job_id)
-                self._store.create_artifact(
-                    artifact_id=f"{job_id}:execution_manifest",
-                    run_id=job_id,
-                    artifact_type="execution_manifest",
-                    path=manifest_path,
-                    sha256=sha256_file(manifest_path),
-                    metadata={
-                        "manifest_hash": executed.manifest_hash,
-                        "schema_version": executed.schema_version,
-                    },
-                )
-            if config_content is not None:
-                snapshot_path = run_dir / "config.yaml"
-                snapshot_path.write_bytes(config_content.encode("utf-8"))
-                self._store.create_artifact(
-                    artifact_id=f"{job_id}:config_snapshot",
-                    run_id=job_id,
-                    artifact_type="config_snapshot",
-                    path=snapshot_path,
-                    sha256=sha256_file(snapshot_path),
-                    metadata={
-                        "job_id": job_id,
-                        "source_path": str(config_path),
-                        "config_hash": config_hash,
-                    },
-                )
-                if strategy_source is not None and source.content is not None:
-                    strategy_snapshot = run_dir / "strategy.py"
-                    strategy_snapshot.write_bytes(source.content)
-                    self._store.create_artifact(
-                        artifact_id=f"{job_id}:strategy_source",
-                        run_id=job_id,
-                        artifact_type="strategy_source",
-                        path=strategy_snapshot,
-                        sha256=sha256_file(strategy_snapshot),
-                        metadata={
-                            "job_id": job_id,
-                            "source_path": str(strategy_source),
-                            "source_hash": source_hash,
-                            "revision_id": source.revision_id,
-                        },
+        performance_store = PerformanceStore(self._workspace, self._store)
+        if details is not None and job is None:
+            raise ValueError("Performance artifacts require an existing job")
+        publication = (
+            performance_store.publication(
+                details,
+                safe,
+                [
+                    run_dir / name
+                    for name in (
+                        "result.json",
+                        "config.yaml",
+                        "strategy.py",
+                        "dataset_fingerprint.json",
+                        "pipeline_result.pkl",
                     )
-            fingerprint_path = run_dir / "dataset_fingerprint.json"
-            fingerprint_path.write_text(
-                json.dumps(dataset_fingerprint, indent=2, ensure_ascii=False),
+                ],
+            )
+            if details is not None
+            else nullcontext(False)
+        )
+        with publication as existing:
+            if existing:
+                return result_path
+            run_dir.mkdir(parents=True, exist_ok=True)
+            result_path.write_text(
+                json.dumps(safe, indent=2, ensure_ascii=False, allow_nan=False),
                 encoding="utf-8",
             )
-            self._store.create_artifact(
-                artifact_id=f"{job_id}:dataset_fingerprint",
-                run_id=job_id,
-                artifact_type="dataset_fingerprint",
-                path=fingerprint_path,
-                sha256=sha256_file(fingerprint_path),
-                metadata=dataset_fingerprint,
-            )
-            if pipeline is not None:
-                pipeline_path = run_dir / "pipeline_result.pkl"
-                pipeline_path.write_bytes(pickle.dumps(pipeline))
-                self._store.create_artifact(
-                    artifact_id=f"{job_id}:pipeline_result",
+
+            if job is not None:
+                strategy_source = source.path
+                source_hash = source.source_hash
+                random_seed = extract_random_seed(config_payload)
+                dataset_fingerprint = self._dataset_fingerprint(job)
+                # Current execution creates one run per job, so run_id is job_id.
+                # Revisit this before supporting multi-run jobs such as fold-level
+                # optimization artifacts.
+                self._store.create_run(
                     run_id=job_id,
-                    artifact_type="pipeline_result",
-                    path=pipeline_path,
-                    sha256=sha256_file(pipeline_path),
-                    metadata={"job_id": job_id, "format": "pickle"},
+                    job_id=job_id,
+                    strategy_id=str(job.get("strategy_name", "")),
+                    revision_id=source.revision_id,
+                    manifest_hash=executed.manifest_hash
+                    if executed is not None
+                    else None,
+                    artifact_dir=run_dir,
+                    metrics=safe,
+                    config_hash=config_hash,
+                    source_hash=source_hash,
+                    random_seed=random_seed,
+                    dataset_id=dataset_fingerprint["dataset_id"],
                 )
+                self._store.create_artifact(
+                    artifact_id=f"{job_id}:result_json",
+                    run_id=job_id,
+                    artifact_type="result_json",
+                    path=result_path,
+                    sha256=sha256_file(result_path),
+                    metadata={"job_id": job_id},
+                )
+                if executed is not None:
+                    manifest_path = self._manifests.path(job_id)
+                    self._store.create_artifact(
+                        artifact_id=f"{job_id}:execution_manifest",
+                        run_id=job_id,
+                        artifact_type="execution_manifest",
+                        path=manifest_path,
+                        sha256=sha256_file(manifest_path),
+                        metadata={
+                            "manifest_hash": executed.manifest_hash,
+                            "schema_version": executed.schema_version,
+                        },
+                    )
+                if config_content is not None:
+                    snapshot_path = run_dir / "config.yaml"
+                    snapshot_path.write_bytes(config_content.encode("utf-8"))
+                    self._store.create_artifact(
+                        artifact_id=f"{job_id}:config_snapshot",
+                        run_id=job_id,
+                        artifact_type="config_snapshot",
+                        path=snapshot_path,
+                        sha256=sha256_file(snapshot_path),
+                        metadata={
+                            "job_id": job_id,
+                            "source_path": str(config_path),
+                            "config_hash": config_hash,
+                        },
+                    )
+                    if strategy_source is not None and source.content is not None:
+                        strategy_snapshot = run_dir / "strategy.py"
+                        strategy_snapshot.write_bytes(source.content)
+                        self._store.create_artifact(
+                            artifact_id=f"{job_id}:strategy_source",
+                            run_id=job_id,
+                            artifact_type="strategy_source",
+                            path=strategy_snapshot,
+                            sha256=sha256_file(strategy_snapshot),
+                            metadata={
+                                "job_id": job_id,
+                                "source_path": str(strategy_source),
+                                "source_hash": source_hash,
+                                "revision_id": source.revision_id,
+                            },
+                        )
+                fingerprint_path = run_dir / "dataset_fingerprint.json"
+                fingerprint_path.write_text(
+                    json.dumps(dataset_fingerprint, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                self._store.create_artifact(
+                    artifact_id=f"{job_id}:dataset_fingerprint",
+                    run_id=job_id,
+                    artifact_type="dataset_fingerprint",
+                    path=fingerprint_path,
+                    sha256=sha256_file(fingerprint_path),
+                    metadata=dataset_fingerprint,
+                )
+                if pipeline is not None:
+                    pipeline_path = run_dir / "pipeline_result.pkl"
+                    pipeline_path.write_bytes(pickle.dumps(pipeline))
+                    self._store.create_artifact(
+                        artifact_id=f"{job_id}:pipeline_result",
+                        run_id=job_id,
+                        artifact_type="pipeline_result",
+                        path=pipeline_path,
+                        sha256=sha256_file(pipeline_path),
+                        metadata={"job_id": job_id, "format": "pickle"},
+                    )
+                if details is not None:
+                    PerformanceStore(self._workspace, self._store).publish(details)
         logger.debug("Saved result for job %s -> %s", job_id, result_path)
         return result_path
 
@@ -503,7 +558,8 @@ def save_result(
     job_id: str,
     metrics: dict[str, Any],
     *,
-    pipeline: Any | None = None,
+    pipeline: PipelineResult | None = None,
+    performance: PerformanceArtifacts | None = None,
     config_snapshot: dict[str, Any] | None = None,
     execution_manifest: ExecutionManifest | None = None,
 ) -> Path:
@@ -512,6 +568,7 @@ def save_result(
         job_id,
         metrics,
         pipeline=pipeline,
+        performance=performance,
         config_snapshot=config_snapshot,
         execution_manifest=execution_manifest,
     )

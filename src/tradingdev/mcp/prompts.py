@@ -39,13 +39,29 @@ Strategy development workflow
    strategies; this gate is enforced at execution time on every entry point,
    so drafts cannot run even outside MCP.
 7. Poll get_job_status (cancel_job to abort), then inspect list_runs /
-   get_run / compare_runs / list_artifacts / get_artifact as needed.
+   get_run for summaries. Use get_metric_catalog to discover metrics and
+   get_run_metrics(run_id, metric_ids, scope) for saved detailed results.
+   The response's available_scopes lists full, fold, and trial results;
+   an omitted summary field does not mean the metric was not computed.
+   Use compare_runs / list_artifacts / get_artifact as needed.
 8. For parameter tuning, call start_optimization, poll get_job_status, and
    confirm with confirm_optimization when it reports pending_confirmation.
 
 Signals use 1 = long, -1 = short, 0 = flat, and must never use data after
 the bar being signalled. Strategy parameters live only in YAML
 strategy.parameters. Generated strategies must remain in workspace/.
+
+Performance metrics use Empyrical for return/risk statistics and VectorBT for
+closed-trade statistics. Set backtest.periods_per_year for observed UTC daily
+returns (365 for continuously traded crypto; choose the appropriate calendar
+for other markets); this factor is independent of bar timeframe. risk_free_rate
+and required_return are annual decimal rates. Missing annualization leaves
+annualized metrics unavailable. Volume mode has no initial capital; use amount
+PnL and drawdown, not capital-return ratios. Inspect saved definitions, settings
+and unavailable reasons before interpreting nulls, and inspect comparability
+reasons before comparing runs. Fold summaries describe fold distributions and
+are not recalculated whole-period returns. Query saved values before deciding
+whether another execution is needed; do not treat unavailable metrics as zero.
 
 Compute standard indicators with tradingdev.domain.indicators (sma, ema,
 rsi, macd, bollinger_bands, atr, adx, stochastic), backed by TA-Lib. Preserve

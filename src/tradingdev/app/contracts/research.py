@@ -2,13 +2,32 @@
 
 from typing import Literal
 
-from pydantic import JsonValue
+from pydantic import ConfigDict, Field, JsonValue
 
-from tradingdev.app.contracts.common import ContractModel
+from tradingdev.app.contracts.common import ContractModel, ErrorResponse
+from tradingdev.domain.performance.artifacts import MetricDefinitionSnapshot
 
 
-class RunRecord(ContractModel):
-    """Persisted run identity, execution lineage, and dynamic metrics."""
+class MetricDefinitionRecord(MetricDefinitionSnapshot):
+    """JSON boundary for snapshots, accepting JSON arrays for the tuple of modes."""
+
+    model_config = ConfigDict(strict=False)
+
+
+class MetricDiscovery(ContractModel):
+    """Discover stored detail without making summary selection a data filter."""
+
+    details_available: bool
+    provenance: Literal["performance_artifact", "legacy_metrics", "invalid_artifact"]
+    available_metric_ids: list[str]
+    available_scopes: list[str]
+    default_scope: str | None
+    selected_train_scope: str | None = None
+    detail_error: ErrorResponse | None = None
+
+
+class RunRecord(MetricDiscovery):
+    """Run identity and a compact view of the persisted default metric scope."""
 
     run_id: str
     job_id: str
@@ -31,19 +50,70 @@ class RunResponse(ContractModel):
     run: RunRecord
 
 
-class RunComparison(ContractModel):
-    """Selected metrics for one run in a comparison."""
+class MetricCatalogResponse(ContractModel):
+    """Current supported metric definitions; runs retain their own snapshots."""
+
+    success: Literal[True]
+    schema_version: Literal[1]
+    definitions: list[MetricDefinitionRecord]
+
+
+class MetricQueryError(ErrorResponse):
+    """Invalid selection with discovery data to help the caller correct it."""
+
+    run_id: str | None = None
+    available_metric_ids: list[str] = Field(default_factory=list)
+    available_scopes: list[str] = Field(default_factory=list)
+    default_scope: str | None = None
+
+
+class RunMetricsResponse(MetricDiscovery):
+    """One recorded scope and its original definitions and calculation settings."""
+
+    success: Literal[True]
+    run_id: str
+    manifest_hash: str | None
+    scope: str
+    kind: Literal["backtest", "fold_summary"]
+    mode: Literal["signal", "volume"]
+    split: Literal["full", "train", "test"] | None
+    fold_index: int | None
+    trial_index: int | None
+    parameters: dict[str, JsonValue]
+    metrics: dict[str, JsonValue]
+    metadata: dict[str, JsonValue]
+    definitions: dict[str, MetricDefinitionRecord]
+
+
+class MetricCompatibility(ContractModel):
+    """Whether metric values share an interpretation, with explicit limitations."""
+
+    comparable: bool
+    reasons: list[str]
+
+
+class RunComparison(MetricDiscovery):
+    """Selected recorded metrics, with their context and provenance."""
 
     run_id: str
     strategy_id: str
+    scope: str | None
+    kind: Literal["backtest", "fold_summary"] | None
+    mode: Literal["signal", "volume"] | None
+    split: Literal["full", "train", "test"] | None
     metrics: dict[str, JsonValue]
+    metadata: dict[str, JsonValue]
+    definitions: dict[str, MetricDefinitionRecord]
 
 
 class CompareRunsResponse(ContractModel):
-    """Successful comparison of the selected completed runs."""
+    """Values are not ranked; compatibility must be checked before comparison."""
 
     success: Literal[True]
     runs: list[RunComparison]
+    comparable: bool
+    metric_compatibility: dict[str, MetricCompatibility]
+    context_differences: dict[str, dict[str, JsonValue]]
 
 
 class ArtifactIdentity(ContractModel):

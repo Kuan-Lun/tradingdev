@@ -221,7 +221,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         ):
             assert metrics["total_return"] == pytest.approx(expected)
             assert metrics["total_pnl"] == pytest.approx(10000 * expected)
-            assert metrics["total_trades"] == 1
+            # The strategy holds its final position; trade statistics use closed trades.
+            assert metrics["total_trades"] == 0
         assert completed["train_metrics"]["profit_factor"] is None
         assert not (await client.call("confirm_optimization", job_id=job_id))["success"]
         run = (await client.call("get_run", run_id=completed["run_id"]))["run"]
@@ -229,12 +230,60 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert run["revision_id"] == saved["revision_id"]
         assert run["manifest_hash"] == manifest_hash
         assert run["dataset_id"].startswith("BTC/USDT:1h:2024-01-01:2024-01-07:")
-        result = run["metrics"]
-        assert result["best_params"] == completed["best_params"]
-        assert result["train_metrics"] == completed["train_metrics"]
-        assert result["test_metrics"] == completed["test_metrics"]
-        assert result["best_train_metric_value"] == pytest.approx(train_return)
-        assert result["best_oos_metric_value"] == pytest.approx(oos_return)
+        assert run["details_available"] is True
+        assert run["default_scope"] == "test"
+        assert run["selected_train_scope"] == "trial/2/train"
+        assert set(run["available_scopes"]) == {
+            "trial/0/train",
+            "trial/1/train",
+            "trial/2/train",
+            "test",
+        }
+        assert "daily_pnl_median" in run["available_metric_ids"]
+        assert "daily_pnl_median" not in run["metrics"]
+        assert run["metrics"]["total_return"] == pytest.approx(oos_return)
+        train_detail = await client.call(
+            "get_run_metrics", run_id=job_id, scope=run["selected_train_scope"]
+        )
+        test_detail = await client.call("get_run_metrics", run_id=job_id)
+        assert train_detail["metrics"]["total_return"] == pytest.approx(train_return)
+        assert test_detail["metrics"]["total_return"] == pytest.approx(oos_return)
+        assert train_detail["metrics"]["open_trades"] == 1
+        assert test_detail["metrics"]["open_trades"] == 1
+        assert (
+            train_detail["parameters"] == test_detail["parameters"] == {"direction": 1}
+        )
+        assert train_detail["metadata"]["strategy_parameters"] == {
+            "direction": 1,
+            "warmup": 2,
+        }
+        assert (
+            train_detail["metadata"]["execution_context"]["end_date"]
+            == "2024-01-03T23:59:59.999999"
+        )
+        assert train_detail["metadata"]["providers"]["empyrical-reloaded"]
+        assert (
+            train_detail["definitions"]["max_drawdown"]["optimization_direction"]
+            == "minimize"
+        )
+        # A losing and a flat trial remain discoverable without re-running them.
+        losing = await client.call(
+            "get_run_metrics",
+            run_id=job_id,
+            scope="trial/0/train",
+            metric_ids=["total_return", "daily_pnl_median"],
+        )
+        assert losing["parameters"] == {"direction": -1}
+        assert losing["metrics"]["total_return"] < 0
+        assert losing["metrics"]["daily_pnl_median"] < 0
+        flat = await client.call(
+            "get_run_metrics",
+            run_id=job_id,
+            scope="trial/1/train",
+            metric_ids=["total_return", "win_rate"],
+        )
+        assert flat["metrics"] == {"total_return": 0.0, "win_rate": None}
+        assert flat["metadata"]["unavailable"]["win_rate"] == "no_trades"
         artifacts = {
             item["artifact_type"]: item
             for item in await client.call("list_artifacts", run_id=job_id)
@@ -269,7 +318,33 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         )
         assert "Infinity" not in stored["content"]
         assert "NaN" not in stored["content"]
-        assert json.loads(stored["content"]) == result
+        result = json.loads(stored["content"])
+        assert result["best_params"] == completed["best_params"]
+        assert result["train_metrics"] == train_detail["metrics"]
+        assert result["test_metrics"] == test_detail["metrics"]
+        assert result["best_train_metric_value"] == pytest.approx(train_return)
+        assert result["best_oos_metric_value"] == pytest.approx(oos_return)
+        original_observations = await client.call(
+            "get_artifact",
+            artifact_id=artifacts["observations_json"]["artifact_id"],
+            include_content=True,
+        )
+        observations = json.loads(original_observations["content"])
+        assert observations["manifest_hash"] == manifest_hash
+        assert set(observations["scopes"]) == set(run["available_scopes"])
+        for scope_id in ["trial/0/train", "trial/1/train", "trial/2/train"]:
+            raw = observations["scopes"][scope_id]
+            assert (
+                len(raw["equity_curve"])
+                == len(raw["returns"])
+                == len(raw["timestamps"])
+                == 72
+            )
+        assert observations["scopes"]["trial/1/train"]["trades"] == []
+        assert observations["scopes"]["trial/2/train"]["trades"][0][
+            "net_pnl"
+        ] == pytest.approx(10000 * train_return)
+        assert len(observations["scopes"]["test"]["equity_curve"]) == 96
         effective = yaml.safe_load(
             Path(artifacts["config_snapshot"]["path"]).read_text()
         )
@@ -292,4 +367,11 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert reloaded["best_params"] == {"direction": 1}
         assert reloaded["train_metrics"] == completed["train_metrics"]
         assert reloaded["test_metrics"] == completed["test_metrics"]
+        reloaded_trial = await client.call(
+            "get_run_metrics",
+            run_id=job_id,
+            scope="trial/0/train",
+            metric_ids=["total_return", "daily_pnl_median"],
+        )
+        assert reloaded_trial == losing
         assert any(item["run_id"] == job_id for item in await client.call("list_runs"))

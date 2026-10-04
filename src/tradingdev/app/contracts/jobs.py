@@ -102,6 +102,15 @@ class JobStatus(ContractModel):
     ended_at: str | None = None
     run_id: str | None = None
     metrics: dict[str, JsonValue] | None = None
+    details_available: bool | None = None
+    provenance: (
+        Literal["performance_artifact", "legacy_metrics", "invalid_artifact"] | None
+    ) = None
+    available_metric_ids: list[str] | None = None
+    available_scopes: list[str] | None = None
+    default_scope: str | None = None
+    selected_train_scope: str | None = None
+    detail_error: ErrorResponse | None = None
     error: str | None = None
     message: str | None = None
     data_downloaded: bool | None = None

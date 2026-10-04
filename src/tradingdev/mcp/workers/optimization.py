@@ -22,6 +22,8 @@ import json
 import logging
 import signal
 import time
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import StringIO
 from typing import TYPE_CHECKING, Any
@@ -39,14 +41,31 @@ from tradingdev.domain.optimization.grid_search import (
     finite_metric_value,
     parameter_grid,
 )
+from tradingdev.domain.performance.artifacts import build_artifacts, scope_from_backtest
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
+    from tradingdev.domain.backtest.result import BacktestResult
+    from tradingdev.domain.performance.artifacts import PerformanceArtifacts
     from tradingdev.domain.strategies.execution import StrategyExecution
 
 logger = setup_logger(__name__)
+
+
+@dataclass(frozen=True)
+class ComboEvaluation:
+    """One complete trial, retaining raw observations and metric provenance."""
+
+    parameters: dict[str, Any]
+    target_metric: str
+    result: BacktestResult
+
+    @property
+    def target_value(self) -> float | None:
+        """Derive the objective from the same values persisted for this trial."""
+        return finite_metric_value(self.result.metrics.get(self.target_metric))
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +105,7 @@ def _evaluate_combo(
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg_dict: dict[str, Any],
-) -> tuple[dict[str, Any], float | None, dict[str, Any]]:
+) -> ComboEvaluation:
     """Evaluate a single parameter combination.
 
     This function is called by joblib workers.  It re-loads the strategy
@@ -102,7 +121,7 @@ def _evaluate_combo(
         parallel_cfg_dict: Fixed parallel resource policy from the manifest.
 
     Returns:
-        (param_dict, target_metric_value, all_serialised_metrics)
+        Complete backtest result, parameters, and objective identifier.
     """
     import pandas as pd
 
@@ -126,7 +145,7 @@ def _run_single_combo(
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg: ParallelConfig,
-) -> tuple[dict[str, Any], float | None, dict[str, Any]]:
+) -> ComboEvaluation:
     """Run a single combo in the main process (for trial run)."""
     service = BacktestService()
     engine = service.create_engine(bt_cfg)
@@ -142,10 +161,45 @@ def _run_single_combo(
     signals_df = strategy.generate_signals(df)
     result = engine.run(signals_df)
 
-    target_val = finite_metric_value(result.metrics.get(metric_name))
-    serialized = service.serialize_metrics(result.metrics)
+    result.metric_metadata["execution_context"] = bt_cfg.model_dump(mode="json")
+    result.metric_metadata["strategy_parameters"] = deepcopy(strategy.get_parameters())
 
-    return param_dict, target_val, serialized
+    return ComboEvaluation(deepcopy(param_dict), metric_name, result)
+
+
+def _performance_artifacts(
+    job_id: str,
+    manifest_hash: str,
+    evaluations: list[ComboEvaluation],
+    selected_index: int,
+    oos: ComboEvaluation,
+) -> PerformanceArtifacts:
+    """Keep every trial once; reference the selected training scope."""
+    scopes = {}
+    observations = {}
+    for index, evaluation in enumerate(evaluations):
+        scope, raw = scope_from_backtest(
+            evaluation.result,
+            split="train",
+            trial_index=index,
+            parameters=evaluation.parameters,
+        )
+        scope_id = f"trial/{index}/train"
+        scopes[scope_id] = scope
+        observations[scope_id] = raw
+    scope, raw = scope_from_backtest(
+        oos.result, split="test", parameters=oos.parameters
+    )
+    scopes["test"] = scope
+    observations["test"] = raw
+    return build_artifacts(
+        run_id=job_id,
+        manifest_hash=manifest_hash,
+        default_scope="test",
+        scopes=scopes,
+        observations=observations,
+        selected_train_scope=f"trial/{selected_index}/train",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -246,11 +300,11 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     # Use BacktestConfig with training period for evaluation
     train_bt_raw = dict(raw_config["backtest"])
     train_bt_raw["start_date"] = train_start
-    train_bt_raw["end_date"] = train_end
+    train_bt_raw["end_date"] = f"{train_end}T23:59:59.999999"
     train_bt_cfg = BacktestConfig(**train_bt_raw)
 
     first_combo = all_combos[0]
-    trial_result: tuple[dict[str, Any], float | None, dict[str, Any]] | None = None
+    trial_result: ComboEvaluation | None = None
 
     # Set up SIGALRM timeout
     old_handler = signal.signal(signal.SIGALRM, _trial_timeout_handler)
@@ -358,7 +412,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     )
 
     # Collect all results (including trial)
-    all_results: list[tuple[dict[str, Any], float | None, dict[str, Any]]] = []
+    all_results: list[ComboEvaluation] = []
     if trial_result is not None:
         all_results.append(trial_result)
 
@@ -373,19 +427,17 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         batch = remaining_combos[batch_start : batch_start + batch_size]
 
         try:
-            batch_results: list[tuple[dict[str, Any], float | None, dict[str, Any]]] = (
-                Parallel(n_jobs=n_jobs)(
-                    delayed(_evaluate_combo)(
-                        strategy_cfg,
-                        strategy_execution,
-                        train_bt_cfg.model_dump(),
-                        train_df_json,
-                        combo,
-                        optimization_metric,
-                        parallel_cfg.model_dump(),
-                    )
-                    for combo in batch
+            batch_results: list[ComboEvaluation] = Parallel(n_jobs=n_jobs)(
+                delayed(_evaluate_combo)(
+                    strategy_cfg,
+                    strategy_execution,
+                    train_bt_cfg.model_dump(),
+                    train_df_json,
+                    combo,
+                    optimization_metric,
+                    parallel_cfg.model_dump(),
                 )
+                for combo in batch
             )
         except Exception as exc:
             _fail(job_id, f"Optimization error at batch {batch_start}: {exc}")
@@ -408,18 +460,23 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     logger.info("All %d combos evaluated", total_combinations)
 
     # --- Phase 8: select best params ---
-    try:
-        best = best_result(
-            (
-                GridSearchResult(params=params, metric_value=value, metrics=metrics)
-                for params, value, metrics in all_results
-            ),
-            direction=optimization.direction,
+    candidates = [
+        GridSearchResult(
+            params=evaluation.parameters,
+            metric_value=evaluation.target_value,
+            metrics=evaluation.result.metrics,
         )
+        for evaluation in all_results
+    ]
+    try:
+        best = best_result(candidates, direction=optimization.direction)
     except ValueError as exc:
         _fail(job_id, f"Optimization selection error: {exc}")
         return
     best_params = best.params
+    selected_index = next(
+        index for index, candidate in enumerate(candidates) if candidate is best
+    )
     best_metric_value = best.metric_value
     best_train_metrics = best.metrics
     logger.info(
@@ -434,11 +491,11 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
 
     test_bt_raw = dict(raw_config["backtest"])
     test_bt_raw["start_date"] = test_start
-    test_bt_raw["end_date"] = test_end
+    test_bt_raw["end_date"] = f"{test_end}T23:59:59.999999"
     test_bt_cfg = BacktestConfig(**test_bt_raw)
 
     try:
-        _, oos_metric_value, oos_metrics = _run_single_combo(
+        oos = _run_single_combo(
             strategy_cfg,
             strategy_execution,
             test_bt_cfg,
@@ -451,7 +508,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         _fail(job_id, f"Out-of-sample test error: {exc}")
         return
 
-    logger.info("OOS result: %s=%s", optimization_metric, oos_metric_value)
+    logger.info("OOS result: %s=%s", optimization_metric, oos.target_value)
 
     # --- Phase 10: persist results ---
     try:
@@ -460,9 +517,9 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             "optimization_metric": optimization_metric,
             "direction": optimization.direction,
             "best_train_metric_value": best_metric_value,
-            "best_oos_metric_value": oos_metric_value,
+            "best_oos_metric_value": oos.target_value,
             "train_metrics": best_train_metrics,
-            "test_metrics": oos_metrics,
+            "test_metrics": oos.result.metrics,
             "total_combinations": total_combinations,
             "time_per_combo": round(time_per_combo, 2),
             "n_parallel_workers": n_jobs,
@@ -472,6 +529,9 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             optimization_result,
             config_snapshot=raw_config,
             execution_manifest=manifest,
+            performance=_performance_artifacts(
+                job_id, manifest.manifest_hash, all_results, selected_index, oos
+            ),
         )
         job_store.update_job(
             job_id,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import (  # type: ignore[attr-defined]
     TransportSecuritySettings,
 )
@@ -21,6 +20,7 @@ from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.mcp.prompts import SERVER_INSTRUCTIONS
+from tradingdev.mcp.strict_server import StrictFastMCP
 from tradingdev.mcp.tools import (
     artifacts,
     backtest,
@@ -35,11 +35,11 @@ from tradingdev.mcp.tools import (
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
 
-def create_server(workspace: WorkspacePaths | None = None) -> FastMCP:
+def create_server(workspace: WorkspacePaths | None = None) -> StrictFastMCP:
     """Compose an MCP server with one explicitly shared runtime workspace."""
     workspace = workspace or WorkspacePaths()
     store = get_sqlite_store(workspace)
-    mcp = FastMCP(
+    mcp = StrictFastMCP(
         name="tradingdev",
         json_response=True,
         transport_security=TransportSecuritySettings(

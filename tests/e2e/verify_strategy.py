@@ -12,6 +12,7 @@ import pandas as pd
 
 from tests.e2e.strategy_scenarios import SCENARIOS, expected_signals, market_frame
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.run_service import RunService
@@ -79,6 +80,7 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     assert str(bt.end_date.date()) == "2024-01-08"
     assert bt.init_cash == 10000 and bt.fees == 0 and bt.slippage == 0
     assert bt.random_seed == 42
+    assert bt.periods_per_year == 365
     frame = market_frame()
     original = frame.copy(deep=True)
     for parameters in (scenario.parameters, scenario.overrides):
@@ -101,7 +103,8 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
             )
             pd.testing.assert_frame_equal(prefix, original.iloc[:length])
 
-    runs = RunService(workspace=workspace).list_runs()
+    run_service = RunService(workspace=workspace)
+    runs = run_service.list_runs()
     assert len(runs) == 1, runs
     run = runs[0]
     assert run["strategy_id"] == scenario.strategy_id
@@ -117,6 +120,17 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
         assert math.isclose(
             run["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
         ), (metric, run["metrics"][metric], reference[metric])
+    detailed = run_service.get_run_metrics(run["run_id"])
+    assert detailed["success"] and detailed["scope"] == "full", detailed
+    stored = SQLiteStore(workspace).get_run(run["run_id"])
+    assert stored is not None
+    for metric, value in detailed["metrics"].items():
+        assert stored["metrics"][metric] == value, (metric, "SQLite/artifact mismatch")
+    for metric in ("daily_pnl_mean", "total_volume", "n_days"):
+        assert metric not in run["metrics"]
+        assert math.isclose(
+            detailed["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
+        ), (metric, detailed["metrics"][metric], reference[metric])
     artifacts = ArtifactService(workspace=workspace).list_artifacts(run["run_id"])
     by_type = {artifact["artifact_type"]: artifact for artifact in artifacts}
     assert {
@@ -124,6 +138,8 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
         "config_snapshot",
         "result_json",
         "dataset_fingerprint",
+        "performance_json",
+        "observations_json",
     } <= by_type.keys()
     for artifact in artifacts:
         path = Path(artifact["path"])

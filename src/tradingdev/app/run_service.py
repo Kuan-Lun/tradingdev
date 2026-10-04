@@ -1,15 +1,36 @@
-"""Application service for completed run lookup and comparison."""
+"""Read saved performance scopes and compare their declared interpretations."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.performance import (
+    PerformanceArtifactError,
+    PerformanceStore,
+)
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.domain.performance.catalog import metric_catalog
+
+if TYPE_CHECKING:
+    from tradingdev.domain.performance.artifacts import (
+        PerformanceBundle,
+        PerformanceScope,
+    )
+
+_DISCOVERY_FIELDS = (
+    "details_available",
+    "provenance",
+    "available_metric_ids",
+    "available_scopes",
+    "default_scope",
+    "selected_train_scope",
+    "detail_error",
+)
 
 
 class RunService:
-    """Read and compare run metadata."""
+    """Query stored results; presentation never changes the stored metric set."""
 
     def __init__(
         self,
@@ -20,62 +41,310 @@ class RunService:
         self._workspace = workspace or WorkspacePaths()
         self._workspace.ensure()
         self._store = store or get_sqlite_store(self._workspace)
+        self._performance = PerformanceStore(self._workspace, self._store)
 
     def list_runs(self) -> list[dict[str, Any]]:
-        """List completed runs."""
-        return self._store.list_runs()
+        """List compact default-scope values with explicit detail discovery."""
+        return [self._summarize_run(run) for run in self._store.list_runs()]
 
     def get_run(self, run_id: str) -> dict[str, Any]:
-        """Return one completed run."""
+        """Return run identity, summary, and available recorded metric scopes."""
         run = self._store.get_run(run_id)
         if run is None:
-            return {
-                "success": False,
-                "error": f"Unknown run: {run_id}",
-                "code": "run_not_found",
-            }
-        return {"success": True, "run": run}
+            return _error("run_not_found", f"Unknown run: {run_id}")
+        return {"success": True, "run": self._summarize_run(run)}
 
-    def compare_runs(self, run_ids: list[str]) -> dict[str, Any]:
-        """Compare numeric metrics across selected runs."""
+    def get_metric_catalog(self, mode: str | None = None) -> dict[str, Any]:
+        """Describe the current metric catalog, optionally restricted by mode."""
+        if mode not in (None, "signal", "volume"):
+            return _error("invalid_mode", "mode must be 'signal' or 'volume'")
+        return {
+            "success": True,
+            "schema_version": 1,
+            "definitions": metric_catalog(mode),
+        }
+
+    def get_run_metrics(
+        self,
+        run_id: str,
+        metric_ids: list[str] | None = None,
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        """Read original values, definitions, and settings without recomputation."""
+        if self._store.get_run(run_id) is None:
+            return _error("run_not_found", f"Unknown run: {run_id}")
+        try:
+            bundle = self._performance.load(run_id)
+        except PerformanceArtifactError as exc:
+            return _error(exc.code, str(exc))
+        scope_id = bundle.default_scope if scope is None else scope
+        if scope_id not in bundle.scopes:
+            return _selection_error(
+                bundle,
+                "unknown_metric_scope",
+                f"Unknown metric scope: {scope_id}",
+                bundle.scopes[bundle.default_scope],
+            )
+        selected = bundle.scopes[scope_id]
+        names = (
+            list(selected.values)
+            if metric_ids is None
+            else list(dict.fromkeys(metric_ids))
+        )
+        unknown = sorted(set(names) - selected.values.keys())
+        if unknown:
+            return _selection_error(
+                bundle,
+                "unknown_metric_id",
+                f"Unknown metrics in scope {scope_id}: {', '.join(unknown)}",
+                selected,
+            )
+        scope_payload = selected.model_dump(mode="json")
+        payload = {
+            key: value for key, value in scope_payload.items() if key != "values"
+        }
+        payload.update(
+            success=True,
+            run_id=run_id,
+            manifest_hash=bundle.manifest_hash,
+            scope=scope_id,
+            metrics={name: scope_payload["values"][name] for name in names},
+            definitions={name: bundle.definitions[name].model_dump() for name in names},
+            **_discovery(bundle, selected),
+        )
+        return payload
+
+    def compare_runs(
+        self,
+        run_ids: list[str],
+        metric_ids: list[str] | None = None,
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        """Keep values and fold statistics intact and state comparability per metric."""
         if len(run_ids) < 2:
-            return {
-                "success": False,
-                "error": "compare_runs requires at least two run_ids",
-                "code": "insufficient_runs",
-            }
-
-        rows = []
-        metric_names: set[str] = set()
+            return _error(
+                "insufficient_runs", "compare_runs requires at least two run_ids"
+            )
+        if len(set(run_ids)) != len(run_ids):
+            return _error("duplicate_runs", "compare_runs requires distinct run_ids")
+        rows: list[dict[str, Any]] = []
+        default_names: set[str] = set()
         for run_id in run_ids:
             run = self._store.get_run(run_id)
             if run is None:
-                return {
-                    "success": False,
-                    "error": f"Unknown run: {run_id}",
-                    "code": "run_not_found",
+                return _error("run_not_found", f"Unknown run: {run_id}")
+            detail = self.get_run_metrics(run_id, metric_ids=metric_ids, scope=scope)
+            if detail.get("success") is False:
+                if (
+                    detail["code"] != "performance_artifact_unavailable"
+                    or scope is not None
+                ):
+                    return detail
+                summary = self._summarize_run(run)
+                metrics = {
+                    key: value
+                    for key, value in run["metrics"].items()
+                    if _is_metric_value(value)
                 }
-            metrics = run.get("metrics", {})
-            if isinstance(metrics, dict):
-                metric_names.update(
-                    key
-                    for key, value in metrics.items()
-                    if isinstance(value, int | float)
+                if metric_ids is not None:
+                    unknown = sorted(set(metric_ids) - metrics.keys())
+                    if unknown:
+                        return _error(
+                            "unknown_metric_id",
+                            f"Unknown legacy metrics: {', '.join(unknown)}",
+                        ) | {
+                            "run_id": run_id,
+                            "available_metric_ids": sorted(metrics),
+                            "available_scopes": [],
+                            "default_scope": None,
+                        }
+                    metrics = {key: metrics[key] for key in metric_ids}
+                rows.append(
+                    {
+                        "run_id": run_id,
+                        "strategy_id": run["strategy_id"],
+                        "scope": None,
+                        "kind": None,
+                        "mode": None,
+                        "split": None,
+                        "metrics": metrics,
+                        "metadata": {},
+                        "definitions": {},
+                        **{key: summary[key] for key in _DISCOVERY_FIELDS},
+                    }
                 )
-            rows.append(run)
+                default_names.update(metrics)
+            else:
+                definitions = detail["definitions"]
+                default_names.update(
+                    key
+                    for key, definition in definitions.items()
+                    if definition["summary"] and detail["mode"] in definition["modes"]
+                )
+                rows.append(
+                    {
+                        "run_id": run_id,
+                        "strategy_id": run["strategy_id"],
+                        **{
+                            key: detail[key]
+                            for key in (
+                                "scope",
+                                "kind",
+                                "mode",
+                                "split",
+                                "metrics",
+                                "metadata",
+                                "definitions",
+                                *_DISCOVERY_FIELDS,
+                            )
+                        },
+                    }
+                )
+        names = (
+            sorted(default_names)
+            if metric_ids is None
+            else list(dict.fromkeys(metric_ids))
+        )
+        for row in rows:
+            row["metrics"] = {name: row["metrics"].get(name) for name in names}
+            row["definitions"] = {
+                name: row["definitions"][name]
+                for name in names
+                if name in row["definitions"]
+            }
+        compatibility = {name: _metric_compatibility(name, rows) for name in names}
+        return {
+            "success": True,
+            "runs": rows,
+            "comparable": bool(names)
+            and all(item["comparable"] for item in compatibility.values()),
+            "metric_compatibility": compatibility,
+            "context_differences": _context_differences(rows),
+        }
 
-        comparison = []
-        for run in rows:
-            metrics = run.get("metrics", {})
-            comparison.append(
-                {
-                    "run_id": run["run_id"],
-                    "strategy_id": run["strategy_id"],
-                    "metrics": {
-                        name: metrics.get(name)
-                        for name in sorted(metric_names)
-                        if isinstance(metrics, dict)
-                    },
-                }
-            )
-        return {"success": True, "runs": comparison}
+    def _summarize_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        try:
+            bundle = self._performance.load(run["run_id"])
+        except PerformanceArtifactError as exc:
+            legacy = exc.code == "performance_artifact_unavailable"
+            return run | {
+                "metrics": run["metrics"] if legacy else {},
+                "details_available": False,
+                "provenance": "legacy_metrics" if legacy else "invalid_artifact",
+                "available_metric_ids": sorted(run["metrics"]) if legacy else [],
+                "available_scopes": [],
+                "default_scope": None,
+                "selected_train_scope": None,
+                "detail_error": _error(exc.code, str(exc)),
+            }
+        selected = bundle.scopes[bundle.default_scope]
+        values = selected.model_dump(mode="json")["values"]
+        return run | {
+            "metrics": {
+                key: value
+                for key, value in values.items()
+                if bundle.definitions[key].summary
+                and selected.mode in bundle.definitions[key].modes
+            },
+            **_discovery(bundle, selected),
+        }
+
+
+def _error(code: str, message: str) -> dict[str, Any]:
+    return {"success": False, "error": message, "code": code}
+
+
+def _discovery(bundle: PerformanceBundle, scope: PerformanceScope) -> dict[str, Any]:
+    return {
+        "details_available": True,
+        "provenance": "performance_artifact",
+        "available_metric_ids": sorted(scope.values),
+        "available_scopes": list(bundle.scopes),
+        "default_scope": bundle.default_scope,
+        "selected_train_scope": bundle.selected_train_scope,
+        "detail_error": None,
+    }
+
+
+def _selection_error(
+    bundle: PerformanceBundle,
+    code: str,
+    message: str,
+    scope: PerformanceScope,
+) -> dict[str, Any]:
+    return _error(code, message) | {
+        "run_id": bundle.run_id,
+        "available_metric_ids": sorted(scope.values),
+        "available_scopes": list(bundle.scopes),
+        "default_scope": bundle.default_scope,
+    }
+
+
+def _is_metric_value(value: Any) -> bool:
+    return (
+        value is None
+        or (isinstance(value, int | float) and not isinstance(value, bool))
+        or (
+            isinstance(value, dict)
+            and {"mean", "std", "min", "max", "valid_count"}.issubset(value)
+        )
+    )
+
+
+def _metric_compatibility(name: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    reasons: list[str] = []
+    for row in rows:
+        if row["provenance"] != "performance_artifact":
+            reasons.append(f"unknown_provenance:{row['run_id']}")
+        if name not in row["available_metric_ids"]:
+            reasons.append(f"metric_not_recorded:{row['run_id']}")
+        elif row["metrics"].get(name) is None:
+            reasons.append(f"metric_unavailable:{row['run_id']}")
+        elif (
+            isinstance(row["metrics"][name], dict)
+            and row["metrics"][name].get("valid_count") == 0
+        ):
+            reasons.append(f"no_valid_folds:{row['run_id']}")
+    baseline = rows[0]
+    baseline_definition = baseline["definitions"].get(name)
+    for row in rows[1:]:
+        definition = row["definitions"].get(name)
+        if baseline_definition is None or definition is None:
+            continue
+        for key in ("unit", "category", "provider", "description"):
+            if definition.get(key) != baseline_definition.get(key):
+                reasons.append(f"definition.{key}_differs:{row['run_id']}")
+        for key in ("mode", "kind", "split"):
+            if row[key] != baseline[key]:
+                reasons.append(f"{key}_differs:{row['run_id']}")
+        for section in ("providers", "settings"):
+            baseline_settings = baseline["metadata"].get(section)
+            other_settings = row["metadata"].get(section)
+            if baseline_settings is None or other_settings is None:
+                reasons.append(f"{section}_unavailable:{row['run_id']}")
+            elif baseline_settings != other_settings:
+                reasons.append(f"{section}_differ:{row['run_id']}")
+        baseline_context = baseline["metadata"].get("execution_context", {})
+        context = row["metadata"].get("execution_context", {})
+        if definition.get("unit") == "amount":
+            for key in ("symbol", "init_cash", "initial_cash", "position_size"):
+                if baseline_context.get(key) != context.get(key):
+                    reasons.append(f"amount_basis.{key}_differs:{row['run_id']}")
+            if not baseline_context.get("symbol") or not context.get("symbol"):
+                reasons.append(f"amount_currency_unavailable:{row['run_id']}")
+    return {"comparable": not reasons, "reasons": list(dict.fromkeys(reasons))}
+
+
+def _context_differences(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    sections = ("execution_context", "observations")
+    differences: dict[str, dict[str, Any]] = {}
+    for section in sections:
+        names = {key for row in rows for key in row["metadata"].get(section, {})}
+        for name in sorted(names):
+            values = {
+                row["run_id"]: row["metadata"].get(section, {}).get(name)
+                for row in rows
+            }
+            if any(value != next(iter(values.values())) for value in values.values()):
+                differences[f"{section}.{name}"] = values
+    return differences

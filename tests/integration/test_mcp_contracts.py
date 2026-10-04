@@ -25,6 +25,8 @@ _READ_ONLY_TOOLS = {
     "list_jobs",
     "list_runs",
     "get_run",
+    "get_metric_catalog",
+    "get_run_metrics",
     "compare_runs",
     "list_artifacts",
     "get_artifact",
@@ -111,10 +113,12 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
     ]
     async with mcp_workspace.connect() as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
-        assert len(tools) == 25
+        assert len(tools) == 27
         assert tools.keys() == expected_hints.keys() == client.output_schemas.keys()
         for name, tool in tools.items():
             assert tool.description and tool.description.strip(), name
+            Draft202012Validator.check_schema(tool.inputSchema)
+            assert tool.inputSchema.get("additionalProperties") is False, name
             assert tool.annotations is not None, name
             annotations = tool.annotations
             assert (
@@ -161,6 +165,7 @@ async def test_application_errors_follow_advertised_output_schemas(
     failures.extend(
         [
             ("get_run", {"run_id": "missing_run"}, "success", False),
+            ("get_run_metrics", {"run_id": "missing_run"}, "success", False),
             (
                 "get_artifact",
                 {"artifact_id": "missing_artifact"},

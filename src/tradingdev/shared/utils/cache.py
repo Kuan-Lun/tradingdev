@@ -1,7 +1,8 @@
-"""Storage location and identity for CLI pipeline result artifacts.
+"""Storage location and provenance fingerprint for CLI pipeline artifacts.
 
 ArtifactService writes results and retrieves them by their registered run ID.
-The cache key used when saving an artifact is derived from:
+Each saved CLI execution has its own run ID. Its descriptive cache fingerprint
+is derived from:
 
 1. Executed manifest hash (includes effective settings and strategy defaults).
 2. Processed data file **mtime + size** (catches data regeneration).
@@ -107,7 +108,7 @@ def compute_cache_key(
     manifest_hash: str,
     processed_path: Path,
 ) -> str:
-    """Compute artifact identity from the executed manifest + data + code state."""
+    """Fingerprint executed manifest + data + code; not a unique execution ID."""
     h = hashlib.sha256()
     h.update(manifest_hash.encode("ascii"))
     if processed_path.exists():

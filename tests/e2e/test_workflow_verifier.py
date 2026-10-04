@@ -167,6 +167,12 @@ async def _complete_workflow(
         run_id = finished["run_id"]
         await call("get_run", run_id=run_id)
         await call("list_artifacts", run_id=run_id)
+        await call("get_metric_catalog", mode="signal")
+        await call(
+            "get_run_metrics",
+            run_id=run_id,
+            metric_ids=["daily_pnl_mean", "total_volume", "n_days"],
+        )
     return CompletedWorkflow(
         workspace,
         scenario,

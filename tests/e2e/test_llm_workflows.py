@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.live_llm
 
+DETAIL_METRIC_IDS = {"daily_pnl_mean", "total_volume", "n_days"}
+
 
 async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None:
     async with workspace.connect() as client:
@@ -297,6 +299,35 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             and call.arguments.get("run_id") == run_id
         ),
     )
+    catalog_index = require_index(
+        "get_metric_catalog returning the additional metrics",
+        (
+            index
+            for index, call in enumerate(calls)
+            if call.name == "get_metric_catalog"
+            and call.result
+            and call.result.get("success") is True
+            and {definition["id"] for definition in call.result["definitions"]}
+            >= DETAIL_METRIC_IDS
+        ),
+    )
+    detail_index = require_index(
+        f"get_run_metrics(run_id={run_id!r}) returning the requested extra metrics",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index > max(queried_index, catalog_index)
+            and call.name == "get_run_metrics"
+            and call.arguments.get("run_id") == run_id
+            and call.result
+            and call.result.get("success") is True
+            and set(call.result.get("metrics", {})) >= DETAIL_METRIC_IDS
+        ),
+    )
+    assert calls[detail_index].result["scope"] == "full"
+    summary = queried.result["run"]
+    assert set(summary["available_metric_ids"]) >= DETAIL_METRIC_IDS
+    assert DETAIL_METRIC_IDS.isdisjoint(summary["metrics"])
     if scenario.repair:
         read_index = require_index(
             f"get_strategy({target}) returning success=True before repairing the draft",
@@ -369,6 +400,20 @@ def test_llm_authors_backtests_and_queries_results(
         calls = asyncio.run(run())
         try:
             assert_workflow(calls, scenario)
+            detail = next(
+                call for call in reversed(calls) if call.name == "get_run_metrics"
+            )
+            saved = json.loads(
+                (
+                    workspace.workspace
+                    / "runs"
+                    / detail.arguments["run_id"]
+                    / "performance.json"
+                ).read_text(encoding="utf-8")
+            )
+            persisted = saved["scopes"][detail.result["scope"]]["values"]
+            for metric_id in DETAIL_METRIC_IDS:
+                assert detail.result["metrics"][metric_id] == persisted[metric_id]
             for path, original in legacy_files.items():
                 assert path.read_bytes() == original, (
                     f"Legacy recovery modified the original file: {path.name}"

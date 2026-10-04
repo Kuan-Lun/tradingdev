@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
@@ -14,6 +15,7 @@ from tradingdev.app.job_store import JobStore
 from tradingdev.app.run_lineage import load_config_payload
 from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
+from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.strategies.execution import StrategyExecution
 
@@ -21,6 +23,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pytest import MonkeyPatch
+
+
+def _backtest_result(total_return: float) -> BacktestResult:
+    return BacktestResult(
+        metrics={"total_return": total_return},
+        equity_curve=np.array([100.0, 100.0 * (1 + total_return)]),
+        returns=np.array([0.0, total_return]),
+        init_cash=100.0,
+    )
 
 
 def test_run_service_compare_and_artifact_lookup(tmp_path: Path) -> None:
@@ -112,7 +123,9 @@ backtest:
     )
 
     pipeline = PipelineResult(
-        mode="simple", config_snapshot=load_config_payload(config_path) or {}
+        mode="simple",
+        config_snapshot=load_config_payload(config_path) or {},
+        backtest_result=_backtest_result(0.1),
     )
     # Persistence must retain what ran, even if the input file changed meanwhile.
     config_path.write_text("strategy:\n  id: different_strategy\n", encoding="utf-8")
@@ -148,6 +161,8 @@ backtest:
         "pipeline_result",
         "result_json",
         "strategy_source",
+        "performance_json",
+        "observations_json",
     }
     assert artifacts["config_snapshot"]["metadata"]["config_hash"] == run["config_hash"]
     assert artifacts["strategy_source"]["metadata"]["source_path"] == str(
@@ -206,6 +221,7 @@ backtest:
     )
     pipeline = PipelineResult(
         mode="simple",
+        backtest_result=_backtest_result(0.2),
         config_snapshot=manifest.config_copy(),
         execution_manifest=manifest,
     )
@@ -230,17 +246,16 @@ backtest:
 
     # Saving an executed result never derives its identity from mutable YAML.
     config_path.write_text("strategy:\n  id: another_strategy\n", encoding="utf-8")
-    assert (
-        service.cache_pipeline_result(
-            pipeline=pipeline,
-            config_path=config_path,
-            processed_path=processed_path,
-            metrics={"total_return": 0.2},
-            strategy_id="cli_fixture",
-        )
-        == cached_path
+    second_path = service.cache_pipeline_result(
+        pipeline=pipeline,
+        config_path=config_path,
+        processed_path=processed_path,
+        metrics={"total_return": 0.2},
+        strategy_id="cli_fixture",
     )
-    assert len(store.list_runs()) == 1
+    assert second_path != cached_path
+    assert second_path.exists()
+    assert len(store.list_runs()) == 2
 
     # Reading follows the recorded artifact path even if current key inputs differ.
     config_path.unlink()
@@ -290,6 +305,7 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
     )
     pipeline = PipelineResult(
         mode="simple",
+        backtest_result=_backtest_result(0.2),
         config_snapshot=manifest.config_copy(),
         execution_manifest=manifest,
     )
@@ -320,6 +336,7 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
     second = service.cache_pipeline_result(
         pipeline=PipelineResult(
             mode="simple",
+            backtest_result=_backtest_result(0.3),
             config_snapshot=changed.config_copy(),
             execution_manifest=changed,
         ),

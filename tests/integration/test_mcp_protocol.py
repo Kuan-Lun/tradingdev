@@ -141,6 +141,18 @@ async def test_generated_strategy_full_mcp_workflow(
         assert run["revision_id"] == saved["revision_id"]
         assert run["manifest_hash"] == started["manifest_hash"]
         assert run["metrics"] == completed["metrics"]
+        assert run["details_available"] is True
+        assert run["default_scope"] == "full"
+        assert "daily_pnl_mean" not in run["metrics"]
+        assert "daily_pnl_mean" in run["available_metric_ids"]
+        detail = await client.call(
+            "get_run_metrics",
+            run_id=run_id,
+            metric_ids=["daily_pnl_mean", "total_volume", "n_days"],
+        )
+        assert detail["success"] and detail["scope"] == "full"
+        assert set(detail["metrics"]) == {"daily_pnl_mean", "total_volume", "n_days"}
+        assert detail["metadata"]["providers"]["empyrical-reloaded"]
         artifacts = await client.call("list_artifacts", run_id=run_id)
         by_type = {item["artifact_type"]: item for item in artifacts}
         assert {
@@ -150,7 +162,21 @@ async def test_generated_strategy_full_mcp_workflow(
             "dataset_fingerprint",
             "pipeline_result",
             "execution_manifest",
+            "performance_json",
+            "observations_json",
         } <= by_type.keys()
+        performance = json.loads(Path(by_type["performance_json"]["path"]).read_text())
+        values = performance["scopes"]["full"]["values"]
+        assert detail["metrics"] == {key: values[key] for key in detail["metrics"]}
+        assert json.loads(Path(by_type["result_json"]["path"]).read_text()) == values
+        raw = await client.call(
+            "get_artifact",
+            artifact_id=by_type["observations_json"]["artifact_id"],
+            include_content=True,
+        )
+        observations = json.loads(raw["content"])["scopes"]["full"]
+        assert len(observations["equity_curve"]) == len(observations["returns"])
+        assert len(observations["returns"]) == len(observations["timestamps"])
         for artifact in artifacts:
             path = Path(artifact["path"])
             assert path.is_relative_to(mcp_workspace.workspace / "runs")
@@ -399,6 +425,22 @@ async def test_walk_forward_runs_through_real_worker(
         assert started["job_id"], started
         completed = await client.wait_for_job(started["job_id"])
         assert completed["status"] == "done", completed
-        assert completed["metrics"]["n_folds"] == 2
+        assert completed["default_scope"] == "test_summary"
+        assert set(completed["available_scopes"]) == {
+            "fold/0/train",
+            "fold/0/test",
+            "fold/1/train",
+            "fold/1/test",
+            "test_summary",
+        }
+        summary = await client.call("get_run_metrics", run_id=completed["run_id"])
+        assert summary["metadata"]["n_folds"] == 2
+        assert summary["kind"] == "fold_summary"
+        assert summary["metrics"]["total_pnl"]["valid_count"] == 2
+        fold = await client.call(
+            "get_run_metrics", run_id=completed["run_id"], scope="fold/0/test"
+        )
+        assert fold["kind"] == "backtest" and fold["split"] == "test"
+        assert isinstance(fold["metrics"]["total_pnl"], float)
         artifacts = await client.call("list_artifacts", run_id=completed["run_id"])
         assert any(item["artifact_type"] == "pipeline_result" for item in artifacts)

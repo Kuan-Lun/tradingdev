@@ -166,6 +166,13 @@ use amount-based PnL and drawdown rather than interpreting missing returns as ze
 `total_trades`, `win_rate`, `profit_factor`, and `trade_expectancy` refer to closed
 trades after entry and exit costs. Open trades are counted separately.
 
+Run and job responses contain summaries. A metric omitted from a summary may still
+be computed and saved: use `get_metric_catalog` for current definitions and
+optimization directions, and `get_run_metrics(run_id, metric_ids, scope)` to read
+saved values and their definition/settings snapshots. Use each run's
+`available_scopes` for fold and trial results. Missing values include an explicit
+reason and must not be interpreted as zero or a request to rerun the strategy.
+
 Feature sources are explicit:
 
 ```yaml

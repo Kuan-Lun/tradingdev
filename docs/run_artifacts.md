@@ -30,6 +30,8 @@ workspace/
     <run_id>/
       manifest.json
       result.json
+      performance.json
+      observations.json
       config.yaml
       strategy.py
       dataset_fingerprint.json
@@ -169,8 +171,12 @@ database and workspace files.
 
 - `list_jobs` / `get_job_status` / `cancel_job`: operational progress and
   cancellation.
-- `list_runs` / `get_run`: completed research results.
-- `compare_runs`: side-by-side numeric metric comparison.
+- `list_runs` / `get_run`: completed result summaries and metric/scope discovery.
+- `get_metric_catalog`: current definitions, units, applicability, summary choices,
+  annualization requirements and optimization directions.
+- `get_run_metrics`: complete or selected metrics in a saved scope, with definition
+  snapshots, provider versions, settings and unavailable-value reasons.
+- `compare_runs`: scoped metric comparison with explicit comparability reasons.
 - `list_artifacts` / `get_artifact`: result JSON and other artifact lookup.
 - `promote_strategy`: generated strategy artifact promotion.
 - `record_feature_request`: structured unsupported feature requests.
@@ -187,6 +193,10 @@ Each completed background job writes files under `workspace/runs/<run_id>/` and 
 matching SQLite metadata:
 
 - `result.json`: serialized metrics, stored as `result_json`.
+- `performance.json`: all metric values by scope, definitions and calculation
+  metadata, stored as `performance_json`.
+- `observations.json`: aligned timestamps, equity, per-bar returns and trade
+  records by scope, stored as `observations_json`.
 - `manifest.json`: the specification published at submission, registered after
   successful result persistence as `execution_manifest`. Its artifact metadata
   includes `manifest_hash` and `schema_version`. Use `list_artifacts` and
@@ -220,30 +230,100 @@ resolve files from the recorded artifact paths.
 
 CLI runs instead store their `pipeline_result` cache under
 `workspace/data/processed/cache` (or `$TRADINGDEV_DATA_ROOT/processed/cache`),
-while `runs.artifact_dir` points to `workspace/runs/cli_<cache_key>/`, where the
+while `runs.artifact_dir` points to
+`workspace/runs/cli_<cache_key>_<execution_id>/`, where the
 execution manifest is published and registered as an artifact. The pipeline
+shares the same performance/observations JSON storage in that run directory;
+the pickle is only needed for dashboard rendering. The pipeline
 result embeds both its config snapshot and execution manifest. The run's config
 hash, manifest hash, and revision identity come from the executed specification.
 Saving uses this manifest without re-reading the original config file; editing
 that file after execution does not prevent saving the original result. The
-original `config_path` remains descriptive artifact metadata.
+original `config_path` remains descriptive artifact metadata. Each save has a
+fresh execution ID and a separate `<run_id>.pkl`; same-request reruns can preserve
+different results. Clearing the pickle cache leaves historical performance JSON
+readable; the cleared historical dashboard artifact is unavailable, while a new
+execution writes its own complete cache.
 
-CLI cache identity requires the executed manifest hash and combines it with
+The CLI cache fingerprint requires the executed manifest hash and combines it with
 processed-data file size/mtime and a Git source-code fingerprint. There is no
 YAML-based key fallback. New settings produce a different manifest and therefore
 a different cache key. Completed results are loaded by run ID through the
 registered artifact path, without recomputing a key from current YAML, data, or
 code. The unused YAML-based `load_cached_result` and `save_cached_result` helpers
 have been removed; this storage path does not automatically reuse prior backtests.
-These file-stat and code fingerprints help invalidate caches; they are not
+These file-stat and code fingerprints describe the execution inputs; they are not
 immutable data or environment versions and do not guarantee full reproducibility.
 
-Optimization `result.json` includes the best parameters, training metrics and
-out-of-sample metrics. For newly saved results, its parsed JSON matches the
-`metrics` object in the run record returned by `get_run`, not the entire MCP
-response. Parameters outside the search grid retain their YAML values; selection
+Optimization `result.json` includes the best parameters, training metrics,
+out-of-sample metrics, objective and fixed direction. Its complete numerical
+projection remains in SQLite; `get_run` and completed `get_job_status` select a
+summary at read time, so their `metrics` are not the entire `result.json` payload.
+Parameters outside the search grid retain their YAML values; selection
 uses training results, and only the selected parameters are evaluated out of
-sample.
+sample. Every training trial retains its full result in the performance and
+observation artifacts; selection references the saved winning trial without
+discarding other trials.
+
+## Performance Scopes and Provenance
+
+`performance.json` schema version 1 records `run_id`, `manifest_hash`,
+`default_scope`, `scopes`, and `definitions`. Each scope contains `values` and
+`metadata`, its engine `mode`, `kind`, `split`, optional fold/trial index, and
+parameter values. Definition snapshots describe unit, provider, meaning,
+applicability, summary selection and optimization direction. They are saved with
+the result; queries do not substitute the current catalog.
+
+| Run type | Scopes | Default |
+| --- | --- | --- |
+| Backtest | `full` | `full` |
+| Walk-forward | `fold/<index>/train`, `fold/<index>/test`, `test_summary` | `test_summary` |
+| Optimization | `trial/<index>/train`, `test` | `test` |
+
+Indices are zero-based. Optimization's `selected_train_scope` identifies the
+winning training trial. A `backtest` scope contains scalar values; the
+`fold_summary` scope contains `mean`, `std`, `min`, `max` and `valid_count` per
+metric. Fold summaries are descriptive distributions, not portfolio returns over
+the concatenated test periods, and have no fabricated observation series.
+
+Metadata records provider versions, annualization and rate settings, daily return
+sampling, bar drawdown sampling, UTC calendar aggregation, cost model, execution
+context, and unavailable-value reasons. Examples include `not_applicable`,
+`missing_annualization`, `missing_timestamps`, `no_trades`, `zero_denominator`
+and `unbounded`. Numeric JSON values remain finite; unavailable values use `null`.
+
+`observations.json` has the same run and manifest identity. Backtest scopes retain
+initial capital, equity, per-bar returns, UTC ISO timestamps and normalized trade
+records. Volume returns and missing timestamps remain `null`. Available equity,
+return and timestamp arrays align by bar; trade indices refer to that scope's
+arrays. Open marks are separate from executed exits. Raw observations are readable
+through artifact lookup without Python pickle.
+
+`get_run_metrics` defaults to the run's saved default scope; omit `metric_ids` to
+read that scope in full. Unknown scopes and metric IDs produce structured errors
+with discovery information. Summary omission never affects calculation or storage.
+Comparisons retain the requested values and report comparability and reasons;
+differences in mode, definitions, provider versions, sampling, annualization,
+capital or execution context cannot silently become equivalent rankings.
+
+Detailed reads verify supported schema, run/manifest identity and recorded
+artifact digest. Missing or corrupted artifacts are errors rather than a request
+to rerun a strategy. Publication validates and encodes data before writing;
+existing different content is not overwritten. Retrying a background job's same
+result also checks all registered artifact files and hashes before reporting
+success; missing or corrupted files are explicit errors. File publication and SQLite writes
+are not a cross-system transaction. A per-run `.result-publication` marker prevents
+concurrent publishers. Handled exceptions restore the prior files and remove new
+run/artifact records. An externally terminated process can leave the marker;
+queries report the publication as busy instead of treating incomplete output as
+legacy data. The reader does not delete the marker or repair stored data.
+
+Historical runs without performance artifacts remain readable through ordinary
+run lookup, marked as lacking detailed provenance. `get_run_metrics` reports
+`performance_artifact_unavailable`; reads never migrate, unpickle or recompute
+those results. Historical values are not asserted to follow the new definitions.
+
+## JSON Values
 
 Before writing `result.json` or SQLite `runs.metrics`, metric values are
 recursively normalized: `NaN`, `Infinity`, and `-Infinity` become JSON `null`,

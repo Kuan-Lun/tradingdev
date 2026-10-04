@@ -236,6 +236,23 @@ The result retains provider versions, settings and reasons for unavailable value
 alongside the full numerical metrics and raw observations. Walk-forward summaries
 are per-metric fold distributions with valid counts, not whole-period returns.
 
+`domain/performance/artifacts.py` builds versioned, typed performance and
+observation bundles. Background jobs and CLI runs share the same storage adapter;
+the complete numerical projection remains in SQLite and conversational summaries
+are selected only at read time. Definitions are snapshotted at execution, so a
+later catalog change cannot reinterpret a saved run.
+
+RunService exposes the current catalog and scoped persisted metric queries through
+MCP. Simple runs use `full`; walk-forward runs retain `fold/<index>/train`,
+`fold/<index>/test`, and a descriptive `test_summary`; optimization retains each
+`trial/<index>/train` plus the selected parameters' out-of-sample `test`.
+Default run/job responses include summary values and discovery information.
+Detailed queries verify artifact identity and content before reading; they neither
+unpickle results nor run strategy code. Comparisons expose differences in metric
+definitions, providers, settings, scope and capital basis instead of silently
+ranking incomparable values. Historical records without these artifacts retain
+their original metrics without invented provenance or automatic migration.
+
 ## Storage
 
 ```mermaid
@@ -290,15 +307,19 @@ worker and writes its resolved config as a YAML inspection projection.
 lineage extraction for job and artifact services. CLI pipeline-result cache
 files are stored under `workspace/data/processed/cache` (or
 `$TRADINGDEV_DATA_ROOT/processed/cache`) and tracked through `ArtifactService`;
-their run artifact directory is `workspace/runs/cli_<cache_key>/`, which holds
-the manifest even though the pickle remains in the cache directory.
+their run artifact directory is
+`workspace/runs/cli_<cache_key>_<execution_id>/`, which holds the manifest and
+performance JSON even though `<run_id>.pkl` remains in the cache directory.
+Each CLI save represents an independent execution; identical requests can retain
+different outcomes without replacing earlier results. Clearing pipeline caches
+does not cause a later execution to return a missing old cache file.
 Job and CLI run config hashes describe the serialized executed config snapshot.
 The separate manifest hash identifies the complete request, including any
 optimization search settings. `compute_cache_key` requires the executed
 `manifest_hash` and processed-data path explicitly; it has no YAML-based fallback.
 Editing the original YAML after execution does not prevent saving the old
-snapshot. Cache identity also includes processed-data file size/mtime and a Git
-code fingerprint; those are invalidation signals, not immutable data or environment
+snapshot. The cache fingerprint also includes processed-data file size/mtime and a Git
+code fingerprint; those are provenance signals, not immutable data or environment
 versions. Completed pipeline results are retrieved by run ID through the recorded
 artifact path, without recomputing a lookup key from current YAML, data, or code.
 The unused YAML-based `load_cached_result` and `save_cached_result` APIs have been
@@ -308,7 +329,15 @@ verified in-memory manifest config at completion.
 The dashboard reads run metadata and pipeline artifacts through `RunService` /
 `ArtifactService`.
 
-## MCP Response Contracts
+## MCP Contracts
+
+`StrictFastMCP` advertises `additionalProperties: false` on every tool's input
+object and rejects unknown top-level arguments before dispatch. A misspelled
+optional argument must not silently fall back to its default, especially when
+selecting a strategy revision. This adapter uses the SDK's public tool discovery
+and dispatch methods; the SDK retains responsibility for declared argument
+validation. Optional arguments remain optional, and nested dynamic parameter
+maps retain their declared schemas.
 
 `app/contracts` owns transport-independent Pydantic response DTOs. MCP adapters
 validate service payloads against those DTOs before exposing them, and FastMCP

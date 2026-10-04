@@ -66,6 +66,11 @@ def _repair_evidence() -> list[ToolCall]:
                 "success": True,
                 "run": {
                     "strategy_id": strategy_id,
+                    "available_metric_ids": [
+                        "daily_pnl_mean",
+                        "total_volume",
+                        "n_days",
+                    ],
                     "metrics": metrics,
                     "revision_id": "revision_a",
                     "manifest_hash": "a" * 64,
@@ -73,6 +78,30 @@ def _repair_evidence() -> list[ToolCall]:
             },
         ),
         ToolCall("list_artifacts", {"run_id": "run"}, [{"artifact_id": "artifact"}]),
+        ToolCall(
+            "get_metric_catalog",
+            {"mode": "signal"},
+            {
+                "success": True,
+                "definitions": [
+                    {"id": metric_id}
+                    for metric_id in ["daily_pnl_mean", "total_volume", "n_days"]
+                ],
+            },
+        ),
+        ToolCall(
+            "get_run_metrics",
+            {"run_id": "run"},
+            {
+                "success": True,
+                "scope": "full",
+                "metrics": {
+                    "daily_pnl_mean": 1.0,
+                    "total_volume": 100.0,
+                    "n_days": 8,
+                },
+            },
+        ),
     ]
 
 
@@ -85,6 +114,27 @@ def test_other_strategy_cannot_supply_repair_evidence(event_index: int) -> None:
         original.name, {"strategy_id": "unrelated"}, original.result
     )
     with pytest.raises(AssertionError, match=SCENARIOS["repair"].strategy_id):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize("tool", ["get_metric_catalog", "get_run_metrics"])
+def test_missing_metric_discovery_or_detail_is_rejected(tool: str) -> None:
+    calls = [call for call in _repair_evidence() if call.name != tool]
+    with pytest.raises(AssertionError, match=tool):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_detail_from_another_run_is_rejected() -> None:
+    calls = _repair_evidence()
+    calls[-1].arguments["run_id"] = "unrelated"
+    with pytest.raises(AssertionError, match="get_run_metrics"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_summary_does_not_substitute_for_explicit_detail_query() -> None:
+    calls = _repair_evidence()
+    calls[-1].result["metrics"].pop("daily_pnl_mean")
+    with pytest.raises(AssertionError, match="get_run_metrics"):
         assert_workflow(calls, SCENARIOS["repair"])
 
 

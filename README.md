@@ -66,7 +66,9 @@ Claude Desktop 範例：
    通過後升為 runnable。
 6. `start_backtest` 或 `start_walk_forward`：傳入相同 `revision_id`，
    只接受 runnable/promoted revision。
-7. `get_job_status`、`list_runs`、`compare_runs`、`list_artifacts` 查詢結果。
+7. `get_job_status`、`list_runs`、`get_run` 讀取摘要，再用
+   `get_metric_catalog` 探索指標、`get_run_metrics` 查詢完整結果；
+   `compare_runs` 比較已保存結果，`list_artifacts` 取得原始紀錄。
 
 `get_strategy`、驗證、dry-run、promote 與三種執行工具都接受 `revision_id`。
 省略時，每次操作只選取一次當前 revision；已建立的工作固定使用選定版本。
@@ -116,11 +118,14 @@ TA-Lib 的初始化、暖機期與缺值處理會改變部分指標數值，因�
 | Data | `list_data_sources`, `list_available_data`, `inspect_dataset`, `ensure_data` |
 | Backtest | `start_backtest`, `start_walk_forward` |
 | Optimization | `start_optimization`, `confirm_optimization` |
-| Jobs/Runs | `get_job_status`, `list_jobs`, `cancel_job`, `list_runs`, `get_run`, `compare_runs` |
+| Jobs/Runs | `get_job_status`, `list_jobs`, `cancel_job`, `list_runs`, `get_run`, `get_metric_catalog`, `get_run_metrics`, `compare_runs` |
 | Artifacts | `list_artifacts`, `get_artifact` |
 | Requests | `record_feature_request`, `list_feature_requests` |
 
 每個工具都提供具體的 `outputSchema` 與唯讀、破壞性、冪等及外部互動提示。
+輸入 schema 的頂層參數不接受未知名稱；例如將 `revision_id` 拼成
+`revisions_id` 會在執行前回傳錯誤，必須更正後重新呼叫。
+合法的選填參數仍可省略，策略參數等動態映射仍依各工具的 schema 傳入。
 客戶端應依 `tools/list` 的 schema 讀取 `structuredContent`：單一物件回覆直接
 位於其根層；清單與成功／失敗聯集回覆放在 `structuredContent.result`。
 從舊版升級時，直接讀取根層 `success`、`job_id` 等欄位的自訂客戶端須相應調整；
@@ -180,6 +185,27 @@ backtest:
 
 新口徑會改變既有數字與交易數，升級後須重新回測才有新結果；既有使用者結果不會自動改寫。
 
+對話中的 run／job 回覆只提供摘要，並列出可查詢的指標與 `available_scopes`。
+例如在完成回測後，LLM 可呼叫：
+
+```text
+get_metric_catalog(mode="signal")
+get_run_metrics(run_id="<run_id>", metric_ids=["daily_pnl_mean", "total_volume"])
+get_run_metrics(run_id="<run_id>", scope="fold/0/test")
+```
+
+第二行讀取預設範圍的指定指標；第三行讀取 walk-forward 第 0 個 fold 的完整測試指標。
+實際 scope 以該 run 回傳清單為準。單次回測的預設範圍是 `full`，walk-forward 是
+`test_summary`，最佳化是選定參數的樣本外 `test`。Fold 摘要是各 fold 的統計分布，
+包含有效樣本數，不能當成整段期間重新計算的績效。
+
+詳細結果附保存時的定義、單位、套件版本、設定，以及 `null` 的原因。
+`compare_runs` 會指出口徑或設定不同造成的可比性限制，不自動排名。
+`performance.json` 保存完整指標，`observations.json` 保存淨值、報酬、時間與交易紀錄；
+可透過 `list_artifacts`／`get_artifact` 讀取。歷史 run 若缺少新 artifact，仍可讀原結果，
+詳細查詢則明確回報不可用，不會猜測來源或重新計算。完整格式見
+[執行產物契約](docs/run_artifacts.md)。
+
 ## 工作區與檔案
 
 - 內建策略：
@@ -219,9 +245,10 @@ Generated 策略請指定已通過 dry-run 的 revision 所屬 `config.yaml`，
 `source_path` 必須仍指向原 revision 的來源；`source_hash` 由執行流程驗證後填入。
 交易對、期間與成本可在 `strategy` 以外的設定區段調整。
 CLI 也先固定執行規格，再執行並用該規格保存結果快取；執行中修改原設定檔，
-仍可保存原規格的結果。下次執行會依新設定建立新規格與快取識別。
-CLI 的 `manifest.json` 存於 `workspace/runs/cli_<cache_key>/`，
-pipeline 結果快取則位於資料目錄的 `processed/cache/`。
+仍可保存原規格的結果。每次執行保存成獨立 run，即使設定相同也不覆寫舊結果。
+CLI 的 `manifest.json` 存於 `workspace/runs/cli_<cache_key>_<execution_id>/`，
+pipeline 結果快取則位於資料目錄的 `processed/cache/<run_id>.pkl`。
+`cache_key` 記錄規格、資料與程式指紋；清除快取後重跑會建立新的完整結果。
 
 報表以 `N/A` 表示缺少或沒有有限數值的指標，不代表零。
 
