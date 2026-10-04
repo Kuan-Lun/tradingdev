@@ -12,6 +12,7 @@ import yaml
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
+from tests.e2e.workflow_diagnostics import workflow_diagnostics
 from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
@@ -370,7 +371,10 @@ def test_llm_authors_backtests_and_queries_results(
 ) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
-    with temporary_mcp_workspace() as workspace:
+    with (
+        temporary_mcp_workspace() as workspace,
+        workflow_diagnostics(workspace, scenario),
+    ):
         workspace.seed_market(market_frame())
         legacy_files: dict[Path, bytes] = {}
 
