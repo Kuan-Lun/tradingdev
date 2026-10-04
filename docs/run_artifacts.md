@@ -289,8 +289,19 @@ the concatenated test periods, and have no fabricated observation series.
 Metadata records provider versions, annualization and rate settings, daily return
 sampling, bar drawdown sampling, UTC calendar aggregation, cost model, execution
 context, and unavailable-value reasons. Examples include `not_applicable`,
-`missing_annualization`, `missing_timestamps`, `no_trades`, `zero_denominator`
-and `unbounded`. Numeric JSON values remain finite; unavailable values use `null`.
+`missing_annualization`, `missing_timestamps`, `no_trades`, `zero_denominator`,
+`unbounded`, `unsupported_daily_sampling` (bars coarser than daily), and
+`unknown_bar_frequency`. Numeric JSON values remain finite; unavailable values
+use `null`.
+
+Annualized metrics, `daily_max_drawdown`, and daily/monthly PnL statistics require
+a declared bar frequency of one day or finer. Coarser or unrecognized frequencies
+retain bar observations, total return/PnL, bar drawdown, observed date/month counts
+and trade statistics. Their `return_sampling` and `calmar_drawdown_sampling`
+settings are `unavailable`, and converted per-period rates are `null`. Frequency
+validation does not infer bar duration from missing dates or synthesize daily
+equity. Existing saved results remain snapshots; this correction does not
+recalculate previously published artifacts.
 
 `observations.json` has the same run and manifest identity. Backtest scopes retain
 initial capital, equity, per-bar returns, UTC ISO timestamps and normalized trade

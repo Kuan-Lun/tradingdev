@@ -15,6 +15,7 @@ from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
 from tradingdev.domain.performance.catalog import METRIC_CATALOG, summarize_metrics
+from tradingdev.domain.performance.sampling import DAILY_EQUITY_METRICS
 
 
 def _market(
@@ -233,18 +234,159 @@ def test_missing_calendar_and_annualization_are_explicit() -> None:
     assert no_dates.metrics["total_return"] is not None
 
 
-def test_timestamps_define_observed_days_without_filling_missing_dates() -> None:
-    timestamps = pd.DatetimeIndex(["2024-01-01T00:00:00Z", "2024-01-04T00:00:00Z"])
+@pytest.mark.parametrize(
+    "dates",
+    [
+        ["2024-01-01T00:00:00Z", "2024-01-04T00:00:00Z"],
+        ["2024-01-05T00:00:00Z", "2024-01-08T00:00:00Z"],
+    ],
+    ids=["missing_dates", "weekend"],
+)
+def test_daily_bars_keep_observed_days_without_filling_gaps(dates: list[str]) -> None:
+    timestamps = pd.DatetimeIndex(dates)
     analysis = calculate_metrics_from_simulation(
         np.array([100.0, 110.0]),
         [],
         100.0,
         timestamps,
         periods_per_year=2,
+        frequency="1d",
     )
     assert analysis.metrics["n_days"] == 2
     assert analysis.metrics["annual_return"] == pytest.approx(0.1)
     assert analysis.metadata["settings"]["missing_dates"] == "not_filled"
+    assert analysis.metadata["settings"]["return_sampling"] == "observed_daily"
+
+
+def test_weekly_growth_is_not_annualized_as_if_each_bar_were_a_day() -> None:
+    prices = (100 * 1.01 ** np.arange(53)).tolist()
+    df = _market(prices, [1] * 53)
+    df["timestamp"] = pd.date_range("2024-01-01", periods=53, freq="7D", tz="UTC")
+    result = SignalBacktestEngine(
+        init_cash=10000,
+        fees=0,
+        slippage=0,
+        freq="1w",
+        periods_per_year=365,
+    ).run(df)
+
+    # Entry executes on the second bar: the 51 subsequent weekly gains produce
+    # 66.1% total return. Treating 53 bars as days previously reported 3194% CAGR.
+    assert result.metrics["total_return"] == pytest.approx(1.01**51 - 1)
+    assert result.metrics["total_pnl"] == pytest.approx(10000 * (1.01**51 - 1))
+    assert result.metrics["max_drawdown"] == 0
+    assert result.metrics["n_days"] == 53
+    assert result.returns is not None
+    assert len(result.returns) == 53
+    for metric_id in DAILY_EQUITY_METRICS:
+        assert result.metrics[metric_id] is None
+        assert (
+            result.metric_metadata["unavailable"][metric_id]
+            == "unsupported_daily_sampling"
+        )
+    summary = summarize_metrics(result.metrics, "signal")
+    assert summary["annual_return"] is None
+    assert summary["total_return"] == result.metrics["total_return"]
+
+
+@pytest.mark.parametrize("mode", ["signal", "volume"])
+@pytest.mark.parametrize(
+    ("frequency", "reason"),
+    [
+        ("1w", "unsupported_daily_sampling"),
+        ("1wk", "unsupported_daily_sampling"),
+        ("1M", "unsupported_daily_sampling"),
+        ("1mo", "unsupported_daily_sampling"),
+        ("3d", "unsupported_daily_sampling"),
+        ("7D", "unsupported_daily_sampling"),
+        ("48h", "unsupported_daily_sampling"),
+        ("unknown", "unknown_bar_frequency"),
+    ],
+)
+def test_unavailable_daily_sampling_preserves_bar_and_trade_metrics(
+    mode: str, frequency: str, reason: str
+) -> None:
+    df = _market([100.0, 100.0, 110.0, 90.0, 120.0], [1, 1, 0, 1, 1])
+    df["timestamp"] = pd.date_range("2024-01-24", periods=5, freq="7D", tz="UTC")
+    engine = (
+        SignalBacktestEngine(
+            init_cash=1000,
+            fees=0,
+            slippage=0,
+            freq=frequency,
+            periods_per_year=365,
+            risk_free_rate=0.02,
+            required_return=0.03,
+        )
+        if mode == "signal"
+        else VolumeBacktestEngine(
+            fees=0,
+            slippage=0,
+            freq=frequency,
+            periods_per_year=365,
+            risk_free_rate=0.02,
+            required_return=0.03,
+        )
+    )
+    result = engine.run(df)
+    for metric_id in DAILY_EQUITY_METRICS:
+        assert result.metrics[metric_id] is None
+        expected = (
+            reason if mode in METRIC_CATALOG[metric_id].modes else "not_applicable"
+        )
+        assert result.metric_metadata["unavailable"][metric_id] == expected
+    assert result.metrics["total_pnl"] is not None
+    assert result.metrics["max_drawdown_amount"] is not None
+    assert result.metrics["total_trades"] > 0
+    assert result.metrics["total_volume"] > 0
+    assert result.metrics["n_days"] == 5
+    assert result.metrics["n_months"] == 2
+    assert result.metrics["monthly_trades_mean"] == result.metrics["total_trades"] / 2
+    assert result.metrics["monthly_volume_mean"] == result.metrics["total_volume"] / 2
+    if mode == "signal":
+        assert result.metrics["total_return"] is not None
+        assert result.metrics["max_drawdown"] is not None
+        assert result.returns is not None
+        assert len(result.returns) == len(df)
+    else:
+        assert result.returns is None
+    settings = result.metric_metadata["settings"]
+    assert settings["frequency"] == frequency
+    assert settings["return_sampling"] == "unavailable"
+    assert settings["calmar_drawdown_sampling"] == "unavailable"
+    assert settings["risk_free_rate_per_period"] is None
+    assert settings["required_return_per_period"] is None
+    assert settings["stored_returns_sampling"] == "bar"
+    assert settings["drawdown_sampling"] == "bar"
+    assert set(result.metric_metadata["unavailable"]) == {
+        key for key, value in result.metrics.items() if value is None
+    }
+
+
+@pytest.mark.parametrize("frequency", ["1m", "1h", "24h", "1440m", "1d"])
+def test_daily_or_finer_bars_retain_daily_and_monthly_statistics(
+    frequency: str,
+) -> None:
+    analysis = calculate_metrics_from_simulation(
+        np.array([110.0, 105.0, 120.0]),
+        [],
+        100.0,
+        pd.date_range("2024-01-31", periods=3, freq="D", tz="UTC"),
+        frequency=frequency,
+        periods_per_year=3,
+        risk_free_rate=0.01,
+        required_return=0.02,
+    )
+    for metric_id in DAILY_EQUITY_METRICS:
+        assert analysis.metrics[metric_id] is not None
+        assert metric_id not in analysis.metadata["unavailable"]
+    assert analysis.metrics["annual_return"] == pytest.approx(0.2)
+    assert analysis.metrics["n_days"] == 3
+    assert analysis.metrics["n_months"] == 2
+    assert analysis.metrics["monthly_pnl_mean"] == pytest.approx(10)
+    assert analysis.metadata["settings"]["return_sampling"] == "observed_daily"
+    assert analysis.metadata["settings"]["risk_free_rate_per_period"] is not None
+    assert analysis.metadata["settings"]["required_return_per_period"] is not None
 
 
 @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), -1.0, 0.0])
@@ -296,6 +438,12 @@ def test_catalog_summary_is_a_view_and_does_not_remove_research_values() -> None
     assert metrics["daily_pnl_median"] == 3
     assert METRIC_CATALOG["max_drawdown_amount"].optimization_direction == "minimize"
     assert METRIC_CATALOG["sharpe_ratio"].requires_annualization
+    assert len(DAILY_EQUITY_METRICS) == 16
+    for metric_id in DAILY_EQUITY_METRICS:
+        assert (
+            "Requires a recognized bar frequency"
+            in METRIC_CATALOG[metric_id].description
+        )
 
 
 def test_timestamp_length_mismatch_fails_even_for_empty_equity() -> None:

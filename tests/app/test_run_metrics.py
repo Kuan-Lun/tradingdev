@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import pytest
 from mcp.server.fastmcp import FastMCP
 
@@ -23,6 +25,9 @@ from tradingdev.app.contracts.research import (
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.run_service import RunService
+from tradingdev.domain.backtest.pipeline_result import PipelineResult
+from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
+from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.performance.artifacts import (
     FoldStats,
     MetricDefinitionSnapshot,
@@ -33,6 +38,9 @@ from tradingdev.domain.performance.artifacts import (
     ScopeObservations,
 )
 from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.strategies.execution import StrategyExecution
+from tradingdev.domain.validation.report import summarize_results
+from tradingdev.domain.validation.walk_forward import WalkForwardResult
 from tradingdev.mcp.tools import runs
 
 if TYPE_CHECKING:
@@ -480,3 +488,139 @@ def test_unavailable_values_cannot_be_labeled_comparable(
         "no_valid_folds:fold_a"
         in response["metric_compatibility"]["win_rate"]["reasons"]
     )
+
+
+@pytest.mark.parametrize("walk_forward", [False, True], ids=["full", "fold-summary"])
+def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService], walk_forward: bool
+) -> None:
+    workspace, store, service = storage
+    prices = [100.0, 100.0, 110.0, 121.0, 110.0, 115.0, 130.0, 130.0]
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=8, freq="7D", tz="UTC"),
+            "open": prices,
+            "close": prices,
+            "signal": [1, 1, 1, 1, 1, 0, 0, 0],
+        }
+    )
+    result = SignalBacktestEngine(
+        init_cash=100.0, fees=0.0, slippage=0.0, freq="7D", periods_per_year=365
+    ).run(frame)
+    config: dict[str, Any] = {
+        "strategy": {"id": "weekly_fixture"},
+        "backtest": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1w",
+            "start_date": "2024-01-01",
+            "end_date": "2024-02-19",
+            "init_cash": 100.0,
+            "fees": 0.0,
+            "slippage": 0.0,
+            "periods_per_year": 365,
+        },
+    }
+    if walk_forward:
+        config["validation"] = {"target_metric": "total_return"}
+    manifest = ExecutionManifest.create(
+        kind="walk_forward" if walk_forward else "backtest",
+        config=config,
+        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+    )
+    pipeline = PipelineResult(
+        mode="walk_forward" if walk_forward else "simple",
+        backtest_result=None if walk_forward else result,
+        config_snapshot=manifest.config_copy(),
+        execution_manifest=manifest,
+    )
+    if walk_forward:
+        start, end = datetime(2024, 1, 1, tzinfo=UTC), datetime(2024, 2, 19, tzinfo=UTC)
+        pipeline.fold_results = [
+            WalkForwardResult(
+                fold_index=index,
+                train_start=start,
+                train_end=end,
+                test_start=start,
+                test_end=end,
+                train_metrics=result.metrics,
+                test_metrics=result.metrics,
+                train_backtest=result,
+                test_backtest=result,
+            )
+            for index in range(2)
+        ]
+    projection = (
+        summarize_results(pipeline.fold_results) if walk_forward else result.metrics
+    )
+    jobs = JobStore(workspace=workspace, store=store)
+    for run_id in ("weekly_a", "weekly_b"):
+        jobs.create_job(
+            job_id=run_id, strategy_name="weekly_fixture", manifest=manifest
+        )
+        jobs.save_result(run_id, projection, pipeline=pipeline)
+
+    persisted = store.get_run("weekly_a")
+    assert persisted is not None and persisted["metrics"] == projection
+    summary = service.get_run("weekly_a")["run"]["metrics"]
+    expected_missing = (
+        {"mean": None, "std": None, "min": None, "max": None, "valid_count": 0}
+        if walk_forward
+        else None
+    )
+    assert summary["annual_return"] == expected_missing
+    assert summary["sharpe_ratio"] == expected_missing
+    assert "daily_pnl_mean" not in summary
+    assert (
+        summary["total_return"]["mean"] if walk_forward else summary["total_return"]
+    ) == pytest.approx(0.3)
+
+    server = FastMCP("weekly-metric-query-test")
+    runs.register(server, service)
+    metric_ids = [
+        "annual_return",
+        "sharpe_ratio",
+        "daily_pnl_mean",
+        "monthly_pnl_mean",
+        "total_return",
+    ]
+
+    async def check() -> None:
+        response = await server.call_tool(
+            "get_run_metrics", {"run_id": "weekly_a", "metric_ids": metric_ids}
+        )
+        assert isinstance(response, tuple)
+        detail = RunMetricsResponse.model_validate(response[1]["result"])
+        for metric_id in metric_ids[:-1]:
+            assert detail.metrics[metric_id] == expected_missing
+        scalar_response = await server.call_tool(
+            "get_run_metrics",
+            {
+                "run_id": "weekly_a",
+                "scope": "fold/0/test" if walk_forward else "full",
+                "metric_ids": metric_ids,
+            },
+        )
+        assert isinstance(scalar_response, tuple)
+        scalar = RunMetricsResponse.model_validate(scalar_response[1]["result"])
+        unavailable = scalar.metadata["unavailable"]
+        assert isinstance(unavailable, dict)
+        for metric_id in metric_ids[:-1]:
+            assert scalar.metrics[metric_id] is None
+            assert unavailable[metric_id] == "unsupported_daily_sampling"
+        assert scalar.metrics["total_return"] == pytest.approx(0.3)
+        comparison_response = await server.call_tool(
+            "compare_runs",
+            {"run_ids": ["weekly_a", "weekly_b"], "metric_ids": ["sharpe_ratio"]},
+        )
+        assert isinstance(comparison_response, tuple)
+        comparison = CompareRunsResponse.model_validate(
+            comparison_response[1]["result"]
+        )
+        assert not comparison.comparable
+        reason = "no_valid_folds" if walk_forward else "metric_unavailable"
+        assert (
+            f"{reason}:weekly_a"
+            in comparison.metric_compatibility["sharpe_ratio"].reasons
+        )
+
+    asyncio.run(check())

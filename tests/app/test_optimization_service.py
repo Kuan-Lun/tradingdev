@@ -169,12 +169,17 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    ("metric", "mode", "annualization", "message"),
+    ("metric", "mode", "annualization", "timeframe", "message"),
     [
-        ("sharpe_ratio", "volume", 365, "not applicable"),
-        ("max_drawdown", "volume", 365, "not applicable"),
-        ("sortino_ratio", "signal", None, "requires periods_per_year"),
-        ("n_days", "signal", 365, "not an optimization objective"),
+        ("sharpe_ratio", "volume", 365, "1h", "not applicable"),
+        ("max_drawdown", "volume", 365, "1h", "not applicable"),
+        ("sortino_ratio", "signal", None, "1h", "requires periods_per_year"),
+        ("n_days", "signal", 365, "1h", "not an optimization objective"),
+        ("sharpe_ratio", "signal", 365, "1w", "unsupported_daily_sampling"),
+        ("daily_max_drawdown", "signal", 365, "1wk", "unsupported_daily_sampling"),
+        ("daily_pnl_mean", "volume", None, "3d", "unsupported_daily_sampling"),
+        ("monthly_pnl_std", "volume", None, "1M", "unsupported_daily_sampling"),
+        ("annual_return", "signal", 365, "unknown", "unknown_bar_frequency"),
     ],
 )
 def test_ineligible_objective_is_rejected_before_job_creation(
@@ -182,6 +187,7 @@ def test_ineligible_objective_is_rejected_before_job_creation(
     metric: str,
     mode: str,
     annualization: int | None,
+    timeframe: str,
     message: str,
 ) -> None:
     config_path = tmp_path / "strategy.yaml"
@@ -202,7 +208,7 @@ def test_ineligible_objective_is_rejected_before_job_creation(
     response = service.start_optimization(
         strategy_id="fixture",
         symbol="BTC/USDT",
-        timeframe="1h",
+        timeframe=timeframe,
         param_ranges={"window": [10, 20]},
         optimization_metric=metric,
         train_start="2024-01-01",

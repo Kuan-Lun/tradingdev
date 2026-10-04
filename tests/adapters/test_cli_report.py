@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 import pytest
 
 from tradingdev.adapters.cli.report import format_metrics_report
+from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 
 
 def _metrics() -> dict[str, Any]:
@@ -134,3 +136,31 @@ def test_monthly_volume_uses_calculated_value_without_estimating_from_days() -> 
     metrics["monthly_volume_mean"] = 1234.5
 
     assert _values(format_metrics_report(metrics))["Monthly Volume"] == "1,234.50"
+
+
+def test_weekly_backtest_report_keeps_observed_totals_and_marks_daily_metrics_na() -> (
+    None
+):
+    prices = [100.0, 100.0, 110.0, 121.0, 110.0, 115.0, 130.0, 130.0]
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=8, freq="7D", tz="UTC"),
+            "open": prices,
+            "close": prices,
+            "signal": [1, 1, 1, 1, 1, 0, 0, 0],
+        }
+    )
+    result = SignalBacktestEngine(
+        init_cash=100.0, fees=0.0, slippage=0.0, freq="7D", periods_per_year=365
+    ).run(frame)
+    values = _values(format_metrics_report(result.metrics))
+
+    assert values["Total Return"] == "30.00%"
+    assert values["Total P&L"] == "+30.00"
+    assert values["Total Trades"] == "1"
+    assert values["Annual Return"] == "N/A"
+    assert values["Sharpe Ratio"] == "N/A"
+    assert values["Annual Volatility"] == "N/A"
+    for period in ("Daily", "Monthly"):
+        for statistic in ("mean", "std", "min", "max", "median"):
+            assert values[f"{period} P&L {statistic}"] == "N/A"

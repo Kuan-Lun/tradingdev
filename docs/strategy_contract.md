@@ -182,6 +182,16 @@ market data is not silently filled with zero returns. Maximum drawdown retains
 bar-level resolution. `max_drawdown` is a nonnegative fraction;
 `max_drawdown_amount` is a nonnegative amount in the portfolio's quote currency.
 Calmar uses daily-return drawdown, exposed separately as `daily_max_drawdown`.
+Daily observations require a declared bar timeframe of one day or finer. Weekly,
+monthly, multi-day or unrecognized timeframes leave annualized metrics,
+`daily_max_drawdown`, and daily/monthly PnL statistics unavailable. Multi-day
+marks cannot locate daily closes or allocate PnL across month boundaries; no
+daily equity is fabricated. `periods_per_year` always means days per year, so
+setting it to 52 does not enable weekly annualization. Total return, total PnL,
+bar-level drawdown and trade statistics remain available. Frequency validation
+uses the declared timeframe, not gaps caused by weekends or missing data.
+Optimization rejects objectives requiring these unavailable observations before
+creating a job.
 Volume mode has no initial capital, so capital-return metrics are unavailable;
 use amount-based PnL and drawdown rather than interpreting missing returns as zero.
 `total_trades`, `win_rate`, `profit_factor`, and `trade_expectancy` refer to closed

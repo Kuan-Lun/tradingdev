@@ -656,6 +656,60 @@ def test_new_optimization_targets_resolve_catalog_direction(
     assert manifest.optimization.direction == direction
 
 
+@pytest.mark.parametrize("frequency", ["1w", "1M", "unknown"])
+@pytest.mark.parametrize(
+    "metric",
+    [
+        "annual_return",
+        "sharpe_ratio",
+        "daily_max_drawdown",
+        "daily_pnl_mean",
+        "monthly_pnl_std",
+    ],
+)
+def test_new_optimization_rejects_objectives_without_daily_observations(
+    frequency: str, metric: str
+) -> None:
+    config = _config()
+    config["backtest"]["timeframe"] = frequency
+    with pytest.raises(ManifestError, match="requires daily or finer bars"):
+        ExecutionManifest.create(
+            kind="optimization",
+            config=config,
+            strategy_execution=_strategy_execution(),
+            optimization=_search(optimization_metric=metric),
+        )
+
+
+@pytest.mark.parametrize("frequency", ["1h", "1d", "24h"])
+def test_new_optimization_accepts_daily_observation_objectives(frequency: str) -> None:
+    config = _config()
+    config["backtest"]["timeframe"] = frequency
+    manifest = ExecutionManifest.create(
+        kind="optimization",
+        config=config,
+        strategy_execution=_strategy_execution(),
+        optimization=_search(),
+    )
+    assert manifest.config_copy()["backtest"]["timeframe"] == frequency
+
+
+@pytest.mark.parametrize(
+    "metric", ["total_return", "total_pnl", "max_drawdown", "win_rate"]
+)
+def test_new_optimization_accepts_bar_objectives_on_weekly_data(metric: str) -> None:
+    config = _config()
+    config["backtest"].update(timeframe="1w", periods_per_year=None)
+    manifest = ExecutionManifest.create(
+        kind="optimization",
+        config=config,
+        strategy_execution=_strategy_execution(),
+        optimization=_search(optimization_metric=metric),
+    )
+    assert manifest.optimization is not None
+    assert manifest.optimization.optimization_metric == metric
+
+
 @pytest.mark.parametrize(
     ("metric", "mode", "annualization", "message"),
     [

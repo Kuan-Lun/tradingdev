@@ -24,6 +24,10 @@ from tradingdev.domain.data.requirements import DataRequirement
 from tradingdev.domain.data.schemas import DataConfig
 from tradingdev.domain.optimization.grid_search import metric_direction
 from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.performance.sampling import (
+    DAILY_EQUITY_METRICS,
+    daily_observation_unavailable_reason,
+)
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.shared.utils.json_values import strict_json_value
 
@@ -107,6 +111,15 @@ class OptimizationSpec(BaseModel):
             raise ManifestError(
                 f"Metric '{self.optimization_metric}' requires periods_per_year"
             )
+        if self.optimization_metric in DAILY_EQUITY_METRICS:
+            frequency = backtest["timeframe"]
+            assert isinstance(frequency, str)
+            reason = daily_observation_unavailable_reason(frequency)
+            if reason is not None:
+                raise ManifestError(
+                    f"Metric '{self.optimization_metric}' requires daily or finer "
+                    f"bars; timeframe '{frequency}': {reason}"
+                )
 
     @field_validator("param_ranges", mode="before")
     @classmethod

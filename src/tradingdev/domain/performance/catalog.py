@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+from tradingdev.domain.performance.sampling import DAILY_EQUITY_METRICS
+
 
 @dataclass(frozen=True)
 class MetricDefinition:
@@ -33,6 +35,12 @@ def _definition(
     modes: tuple[str, ...] = ("signal", "volume"),
     requires_annualization: bool = False,
 ) -> MetricDefinition:
+    if metric_id in DAILY_EQUITY_METRICS:
+        description += (
+            " Requires a recognized bar frequency of one day or finer; "
+            "coarser or unknown bars cannot establish daily equity observations "
+            "or allocate PnL across calendar boundaries."
+        )
     return MetricDefinition(
         metric_id,
         unit,

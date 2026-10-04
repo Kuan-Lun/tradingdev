@@ -217,12 +217,17 @@ Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料
 | `empyrical-reloaded` | 報酬與風險統計；Python 匯入名稱為 `empyrical` |
 | `vectorbt` | 兩種引擎的已平倉交易統計；signal 引擎另使用其 portfolio 模擬 |
 | `domain/performance/catalog.py` | 指標 ID、定義、單位、適用模式、摘要選擇及最佳化方向 |
+| `domain/performance/sampling.py` | 日級觀測需求與 K 棒頻率判斷，供績效計算及最佳化提交共用 |
 | `domain/performance/artifacts.py` | 各結果範圍的績效與原始觀察值模型，保存當次定義與計算來源 |
 | `adapters/storage/performance.py` | 發佈與驗證績效 JSON、觀察值 JSON 及其儲存身分 |
 | `RunService`／`JobService` | 提供一般摘要、指標探索資訊與所需的詳細查詢 |
 
 專案負責成交、費用與滑價的記帳語意，以及引擎資料到統計套件的轉換。
 年化採觀察到的 UTC 日報酬與明確指定的年化頻率，不從 K 棒頻率猜測交易日數。
+日級指標只接受宣告為日線或更細的資料，不用日期缺口推斷 K 棒頻率。
+粗於日頻或無法辨識的頻率，年化、日回撤與日／月損益指標保留為不可用；
+仍保存逐根 K 棒的觀察值、總報酬、總損益與交易統計。最佳化提交共用此判斷，
+在建立工作前拒絕不適用的目標。
 Volume 模式沒有初始資金基準，不產生虛構的資金報酬率。
 無法計算或不適用的數值保留原因，不以零代替。
 
