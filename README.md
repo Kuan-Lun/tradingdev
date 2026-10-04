@@ -83,6 +83,15 @@ Claude Desktop 範例：
 最佳化可覆寫搜尋範圍內的參數，其餘保留基礎值。
 Bundled 策略仍由 Git 管理，`revision_id` 為 `null`。
 
+`cleanup_strategy_drafts(strategy_id)` 預設只預覽舊草稿，回傳每個 revision
+是否可清理及保留原因。先向使用者說明清單；取得明確刪除授權後，才以
+`cleanup_strategy_drafts(strategy_id, revision_ids=[...], apply=true)` 清理指定項目。
+只接受非 current、未被歷史工作或執行引用的 draft；validated、runnable、promoted
+均保留。套用時會重新檢查，不能把先前預覽視為永久有效的刪除資格。
+歷史資料不明或損壞時會阻止清理，檔案完整性有疑慮的版本也會保留。
+工具不會自動清理、合併既有版本，或改寫歷史回測；刪除遇到檔案系統錯誤時逐項回報，
+可能已刪除部分檔案，須依回覆確認結果。
+
 每次提交回測、walk-forward 或最佳化時，會先固定完整執行規格
 `manifest.json`，包含策略版本、有效設定與預設值、資料路徑，以及最佳化的搜尋
 與確認設定。成功回覆的 `manifest_hash` 可與 job、run 及執行規格產物核對；
@@ -120,7 +129,7 @@ TA-Lib 的初始化、暖機期與缺值處理會改變部分指標數值，因�
 
 | 類別 | Tools |
 | ---- | ----- |
-| Strategy | `get_strategy_contract`, `list_strategies`, `get_strategy`, `save_strategy`, `validate_strategy`, `dry_run_strategy`, `promote_strategy` |
+| Strategy | `get_strategy_contract`, `list_strategies`, `get_strategy`, `save_strategy`, `validate_strategy`, `dry_run_strategy`, `promote_strategy`, `cleanup_strategy_drafts` |
 | Data | `list_data_sources`, `list_available_data`, `inspect_dataset`, `ensure_data` |
 | Backtest | `start_backtest`, `start_walk_forward` |
 | Optimization | `start_optimization`, `confirm_optimization` |

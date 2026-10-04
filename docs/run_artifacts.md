@@ -15,6 +15,8 @@ workspace/
       stop
       finished.json
   generated_strategies/
+    .locks/
+      <strategy_id>.lock
     <strategy_id>/
       current.json
       revisions/
@@ -61,6 +63,15 @@ done. Generated strategy jobs and runs carry their selected `revision_id`;
 bundled strategies and historical records without revision identity expose
 `null`. A later save changes only the current pointer and does not change the
 revision used by an existing job or completed run.
+
+Draft cleanup scans raw job identities and payloads, run references and all stored
+manifests, including manifests left without a database job. Failed and cancelled
+jobs still retain their source references. A malformed or ambiguous history blocks
+cleanup. Only explicitly selected non-current drafts without references can be
+deleted; runnable sources and execution artifacts remain. Cleanup does not dedupe
+or migrate old revisions. The per-strategy `.locks` files coordinate saves,
+validation, status updates and cleanup; they stay outside deletable revision
+directories and are never unlinked while another process might use their inode.
 
 Successful `start_backtest`, `start_walk_forward`, and `start_optimization`
 responses include the required `manifest_hash`. Job status, job lists, and run

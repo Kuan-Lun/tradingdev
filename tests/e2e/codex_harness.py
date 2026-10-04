@@ -22,6 +22,7 @@ LIFECYCLE_TOOLS = [
     "list_strategies",
     "get_strategy_contract",
     "get_strategy",
+    "cleanup_strategy_drafts",
     "save_strategy",
     "validate_strategy",
     "dry_run_strategy",

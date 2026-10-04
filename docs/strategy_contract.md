@@ -269,6 +269,28 @@ revision never falls back to current. Submitted jobs, worker configs, completed
 runs and strategy source artifacts remain tied to the selected revision when
 current changes, including during optimization confirmation.
 
+`cleanup_strategy_drafts(strategy_id, revision_ids=None, apply=False)` previews
+retention decisions. Applying requires an explicit nonempty `revision_ids` list
+and user authorization for those deletions; previewing alone never authorizes
+removal. Only intact, non-current drafts with no persisted references are eligible.
+Validated, runnable and promoted revisions remain, even when unused. All jobs
+(including failed or cancelled ones), completed runs and orphaned manifests
+protect their referenced sources. Unverifiable historical identities or malformed
+records block cleanup; ambiguous old records with no revision also block it unless
+their stored config establishes a legacy flat source for this strategy.
+
+Responses report `applied` and each revision's `outcome` (`eligible`, `protected`,
+`deleted`, `failed` or `missing`) with reasons. Apply rechecks eligibility under
+the same per-strategy lifecycle lock used for publication, validation and status
+updates. A changed preview can therefore become protected. Integrity failures,
+symlinks and unexpected files prevent deletion. An apply containing protected
+or failed items reports `success: false`; other eligible items can still be
+deleted. Filesystem deletion is not transactional and an I/O failure may leave
+a partial directory. Missing explicit IDs are reported as `missing`, making a
+repeat apply safe. Omitting IDs on apply returns `cleanup_revision_ids_required`;
+an untrustworthy reference scan or lock failure returns `strategy_cleanup_blocked`.
+No background cleanup, automatic revision merging or migration occurs.
+
 Each submission also fixes an execution manifest containing that strategy
 identity, source hash, effective config with defaults, and any optimization
 search specification. Effective constructor values, including nested bundled

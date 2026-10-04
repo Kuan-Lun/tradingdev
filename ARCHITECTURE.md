@@ -95,6 +95,12 @@ Manifest 同時保留 revision 綁定的原始策略宣告，以及解析後的�
 current pointer 指向最新保存的 revision。保存新版本不會撤銷舊版本的證據，
 也不會讓新版本繼承舊版本的執行資格。
 
+`StrategyCleanupService` 提供舊草稿的預覽與明確指定版本清理。儲存 adapter
+檢查所有 job、run 與遺留 manifest 的引用；身分不明或資料損壞時停止清理。
+current、非 draft 及被引用版本均保留。保存、驗證、狀態更新與清理共用每個策略的
+lifecycle lock，避免檢查與刪除交錯；鎖檔位於 revision 目錄之外且不刪除。
+清理每次重新確認資格與檔案完整性，檔案刪除不具跨版本或目錄內的交易原子性。
+
 ```mermaid
 stateDiagram-v2
     [*] --> draft: save_strategy 建立新 revision

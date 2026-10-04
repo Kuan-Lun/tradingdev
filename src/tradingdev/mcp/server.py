@@ -18,6 +18,7 @@ from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.run_service import RunService
+from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.mcp.prompts import SERVER_INSTRUCTIONS
 from tradingdev.mcp.strict_server import StrictFastMCP
@@ -30,6 +31,7 @@ from tradingdev.mcp.tools import (
     optimization,
     runs,
     strategy,
+    strategy_cleanup,
 )
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +66,7 @@ def create_server(workspace: WorkspacePaths | None = None) -> StrictFastMCP:
     feature_request_service = FeatureRequestService(workspace=workspace, store=store)
 
     strategy.register(mcp, strategy_service, _PACKAGE_ROOT)
+    strategy_cleanup.register(mcp, StrategyCleanupService(workspace, store=store))
     data.register(mcp, data_service)
     backtest.register(mcp, job_service)
     optimization.register(mcp, optimization_service, job_service)
