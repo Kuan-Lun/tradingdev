@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+import yaml
 from pydantic import ValidationError
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
@@ -64,7 +65,15 @@ class OptimizationService:
         revision_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a parameter optimization worker."""
-        spec, error = self._resolve_strategy_config(strategy_id, revision_id)
+        try:
+            spec, error = self._resolve_strategy_config(strategy_id, revision_id)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return {
+                "job_id": "",
+                "message": str(exc),
+                "total_combinations": 0,
+                "code": "invalid_optimization_request",
+            }
         if spec is None:
             return {
                 "job_id": "",
@@ -92,26 +101,23 @@ class OptimizationService:
             }
 
         config_path = Path(spec.config_path)
-        raw_config = load_config(config_path)
-        if raw_config.get("validation") is not None:
-            return {
-                "job_id": "",
-                "message": (
+        try:
+            raw_config = load_config(config_path)
+            if not isinstance(raw_config, dict):
+                raise ValueError("YAML config must be a mapping")
+            if raw_config.get("validation") is not None:
+                raise ValueError(
                     "Optimization config must not contain validation settings; "
                     "use a config without walk-forward validation."
-                ),
-                "total_combinations": 0,
-                "code": "invalid_optimization_request",
-            }
-        effective_config = apply_run_overrides(
-            raw_config,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=train_start,
-            # Optimization bounds are calendar days, including the final day.
-            end_date=f"{test_end}T23:59:59.999999",
-        )
-        try:
+                )
+            effective_config = apply_run_overrides(
+                raw_config,
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=train_start,
+                # Optimization bounds are calendar days, including the final day.
+                end_date=f"{test_end}T23:59:59.999999",
+            )
             manifest = BacktestService(
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
@@ -134,7 +140,13 @@ class OptimizationService:
                 raise ManifestError(
                     f"Invalid strategy optimization settings: {exc}"
                 ) from exc
-        except (TypeError, ValueError, StrategyNotExecutableError) as exc:
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+            yaml.YAMLError,
+            StrategyNotExecutableError,
+        ) as exc:
             return {
                 "job_id": "",
                 "message": str(exc),

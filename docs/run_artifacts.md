@@ -88,7 +88,7 @@ Before spawning a background worker, the service publishes
 `runs/<job_id>/manifest.json` and records its hash in the job. Publication never
 replaces a different existing manifest. Atomic publication applies to the manifest
 file; file publication and the database job write do not form one transaction.
-Schema version 3 contains:
+Schema version 4 contains:
 
 - `kind`: `backtest`, `walk_forward`, or `optimization`.
 - `config`: the effective strategy identity and source hash, backtest settings,
@@ -107,7 +107,7 @@ Schema version 3 contains:
   These timeout and polling values are fixed at submission. Parameter names are
   sorted; the caller's candidate order within each range is preserved.
 - `manifest_hash`: SHA-256 of canonical JSON over all the preceding fields and
-  `schema_version: 3`, excluding the hash field itself. Object keys are sorted;
+  `schema_version: 4`, excluding the hash field itself. Object keys are sorted;
   job IDs and creation timestamps are not part of the specification.
 
 Typed backtest, walk-forward, parallel, and data defaults have the same digest
@@ -139,9 +139,9 @@ Manifest decoding preserves stored JSON without reapplying today's config defaul
 Before execution, current runtime models must accept the saved config and effective
 strategy settings without adding fields or changing values. New required/defaulted
 fields or incompatible normalization cause execution to fail, not reinterpret the
-request. Schema version 3 requires the version, effective strategy fields,
-performance settings, and the fixed optimization direction;
-versions 1/2 or unknown versions require a new submission. No manifest is migrated
+request. Schema version 4 requires the version, effective strategy fields,
+performance settings, the fixed optimization direction, and the canonical
+top-level `random_seed`; versions 1/2/3 or unknown versions require a new submission. No manifest is migrated
 in place, and historical result metadata remains readable.
 
 Workers receive only a job ID and load this fixed manifest path. They verify the
@@ -222,9 +222,9 @@ matching SQLite metadata:
 For background jobs, SQLite `runs.artifact_dir` must match the corresponding
 `workspace/runs/<run_id>/` directory. `runs.config_hash` is the SHA-256 of the
 serialized effective config snapshot, not the hash of the immutable revision's
-base config. `runs.random_seed` records an explicit
-top-level/backtest `random_seed`, or the unique `random_seed`/`random_state`/
-`seed` value found under `strategy.parameters` when one exists. Run comparison,
+base config. `runs.random_seed` records only the canonical
+top-level `random_seed`; strategy-specific model parameters are not inferred as a
+run seed. Run comparison,
 dashboard rendering, and artifact lookup always read through SQLite first, then
 resolve files from the recorded artifact paths.
 

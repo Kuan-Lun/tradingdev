@@ -165,9 +165,18 @@ MCP 回傳 `isError: true`。不應只依 MCP `isError` 判斷應用操作是否
 報酬與風險指標由 `empyrical-reloaded` 計算，逐筆交易統計由 `vectorbt` 計算。
 日／月損益、費用與成交量來自同一份執行帳本。完整指標會保存，不因摘要欄位選擇而刪除。
 
+整次執行的 `random_seed` 只放在 YAML 頂層（與 `strategy`、`backtest` 同層），
+接受 0 至 4294967295 的整數或 `null`；舊的 `backtest.random_seed` 與未知設定名稱
+會被拒絕。策略可使用 `tradingdev.domain.randomness` 的獨立亂數產生器，
+或以 `get_seed()` 明確設定第三方模型。它不會覆寫 Python／NumPy 全域亂數狀態，
+也不會自動控制任意第三方套件的亂數。
+`get_strategy_contract` 提供完整設定 schema；驗證與 dry-run 回覆的 `effective_config`
+可用來核對種子與其他設定是否符合要求，再啟動回測。
+
 在 YAML 的 `backtest` 中明確設定日報酬的年化頻率：
 
 ```yaml
+random_seed: 42
 backtest:
   # 其餘 symbol、timeframe、日期、資金等設定依策略契約填寫
   periods_per_year: 365.0 # 全年交易的加密貨幣；股票等市場需選擇合適交易日數

@@ -18,6 +18,7 @@ from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
@@ -53,17 +54,20 @@ def verify(root: Path) -> None:
         config["strategy"]["parameters"].update(
             fast_period=fast_period, slow_period=slow_period
         )
-        strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
-            config, engine=None
-        )
-        result = strategy.generate_signals(frame)
-        fast = close.rolling(fast_period).mean()
-        slow = close.rolling(slow_period).mean()
-        expected = pd.Series(0, index=frame.index, name="signal")
-        expected.loc[fast > slow] = 1
-        expected.loc[fast < slow] = -1
-        pd.testing.assert_series_equal(result["signal"], expected, check_dtype=False)
-        pd.testing.assert_frame_equal(frame, before)
+        with execution_randomness(config.get("random_seed")):
+            strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
+                config, engine=None
+            )
+            result = strategy.generate_signals(frame)
+            fast = close.rolling(fast_period).mean()
+            slow = close.rolling(slow_period).mean()
+            expected = pd.Series(0, index=frame.index, name="signal")
+            expected.loc[fast > slow] = 1
+            expected.loc[fast < slow] = -1
+            pd.testing.assert_series_equal(
+                result["signal"], expected, check_dtype=False
+            )
+            pd.testing.assert_frame_equal(frame, before)
 
 
 def verify_workflow(root: Path, scenario_name: str) -> None:
@@ -79,29 +83,36 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     assert str(bt.start_date.date()) == "2024-01-01"
     assert str(bt.end_date.date()) == "2024-01-08"
     assert bt.init_cash == 10000 and bt.fees == 0 and bt.slippage == 0
-    assert bt.random_seed == 42
+    assert config.get("random_seed") == 42, (
+        "Expected top-level random_seed=42; "
+        f"saved value={config.get('random_seed')!r}, "
+        f"saved backtest={config['backtest']!r}"
+    )
     assert bt.periods_per_year == 365
     frame = market_frame()
     original = frame.copy(deep=True)
     for parameters in (scenario.parameters, scenario.overrides):
         overridden = deepcopy(config)
         overridden["strategy"]["parameters"] = parameters
-        strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
-            overridden, engine=None
-        )
-        actual = strategy.generate_signals(frame)
-        expected = expected_signals(frame, scenario, parameters)
-        pd.testing.assert_series_equal(actual["signal"], expected, check_dtype=False)
-        pd.testing.assert_frame_equal(frame, original)
-        # Prefixes include warmup, a reversal, and a flat interval. A strategy
-        # cannot use future rows to rewrite the earlier signal history.
-        for length in (4, 24, 55, 92):
-            prefix = frame.iloc[:length].copy()
-            result = strategy.generate_signals(prefix)
-            pd.testing.assert_series_equal(
-                result["signal"], expected.iloc[:length], check_dtype=False
+        with execution_randomness(config.get("random_seed")):
+            strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
+                overridden, engine=None
             )
-            pd.testing.assert_frame_equal(prefix, original.iloc[:length])
+            actual = strategy.generate_signals(frame)
+            expected = expected_signals(frame, scenario, parameters)
+            pd.testing.assert_series_equal(
+                actual["signal"], expected, check_dtype=False
+            )
+            pd.testing.assert_frame_equal(frame, original)
+            # Prefixes include warmup, a reversal, and a flat interval. A strategy
+            # cannot use future rows to rewrite the earlier signal history.
+            for length in (4, 24, 55, 92):
+                prefix = frame.iloc[:length].copy()
+                result = strategy.generate_signals(prefix)
+                pd.testing.assert_series_equal(
+                    result["signal"], expected.iloc[:length], check_dtype=False
+                )
+                pd.testing.assert_frame_equal(prefix, original.iloc[:length])
 
     run_service = RunService(workspace=workspace)
     runs = run_service.list_runs()

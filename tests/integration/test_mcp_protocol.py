@@ -44,7 +44,7 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"]["parameters"] = {"fast_period": 3, "slow_period": 8}
     config["backtest"]["symbol"] = "ETH/USDT"
-    config["backtest"]["random_seed"] = 42
+    config["random_seed"] = 42
     config_text = yaml.safe_dump(config)
     saved = await client.call(
         "save_strategy",
@@ -207,7 +207,7 @@ async def test_generated_strategy_full_mcp_workflow(
             include_content=True,
         )
         manifest = json.loads(manifest_artifact["content"])
-        assert manifest["schema_version"] == 3
+        assert manifest["schema_version"] == 4
         assert manifest["strategy_execution"]["constructor_kwargs"] == {
             "fast_period": 3,
             "slow_period": 8,

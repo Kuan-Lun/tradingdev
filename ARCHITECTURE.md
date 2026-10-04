@@ -120,7 +120,14 @@ transition, including `promote`. Validation records contain their revision ID,
 and checks write evidence back to the revision selected before execution.
 `validate_strategy` and `dry_run_strategy`
 share one `SignalContractChecker` (`domain/strategies/contract.py`) run at two
-fixture depths. Bundled strategies live next to their git-versioned configs and
+fixture depths. It validates the complete execution configuration before
+constructing the strategy, rejects unknown fixed fields, and records
+`effective_config` alongside signal diagnostics. This evidence includes resolved
+backtest/parallel defaults and the single root `random_seed`; data directory
+defaults remain submission-time settings. `get_strategy_contract.config_schema`
+publishes this same configuration model. Strategy parameters and bundled fit
+settings remain explicit dynamic objects. Bundled strategies live next to their
+git-versioned configs and
 parameter config models under
 `src/tradingdev/domain/strategies/bundled/<strategy>/` and are discovered
 through `BundledStrategyCatalog`.
@@ -163,7 +170,7 @@ backtest, walk-forward, parallel, and optional seed defaults. The saved strategy
 mapping remains subject to the revision contract. Dates become JSON strings and
 all execution values must be finite JSON; non-finite requests are rejected.
 
-Schema version 3 records the execution kind, resolved config, required effective
+Schema version 4 records the execution kind, resolved config, required effective
 strategy constructor settings (`strategy_execution`), optional
 optimization spec, and `manifest_hash`. The SHA-256 covers canonical JSON with
 sorted object keys and excludes the hash field itself, job IDs and creation
@@ -190,9 +197,12 @@ Creation resolves defaults; decoding an existing manifest preserves its recorded
 JSON values. Execution separately checks that current runtime models can consume
 those values without adding defaults or changing their values, with only the
 lossless strategy-model numeric conversion described above permitted.
-Schema 1/2 manifests, missing version/effective strategy fields, and unknown versions
-cannot execute through schema 3. Stored results remain readable. Version 3 fixes
-performance annualization settings and catalog-derived optimization direction.
+Schema 1/2/3 manifests, missing version/effective strategy fields, and unknown versions
+cannot execute through schema 4. Stored results remain readable. Version 4 adds
+strict configuration structure and a single run seed at the YAML root;
+`backtest.random_seed` is rejected, and run lineage no longer guesses a run seed
+from strategy model parameters. It retains explicit performance annualization
+settings and catalog-derived optimization direction.
 Persisted direction is consumed as recorded rather than inferred again from a
 later catalog. Future format
 or decoding changes require a new schema version, not reinterpretation of saved
@@ -215,7 +225,19 @@ working config values. The digest is an integrity check against the separately
 stored job identity, not a security boundary against writers controlling both
 SQLite and the filesystem. The manifest freezes the requested execution; it
 does not snapshot data contents, installed dependencies, the engine environment,
-or RNG state and does not promise fully reproducible results.
+or arbitrary third-party RNG state and does not promise fully reproducible results.
+
+`domain.randomness.execution_randomness` creates execution-local Python and NumPy
+generators in a `ContextVar`, without modifying process-global RNG state. Each
+validation, dry-run, backtest, optimization trial and test evaluation starts its
+own context before constructing the strategy. Walk-forward evaluation uses one
+stream across the ordered folds. Strategies use `get_random()` and
+`get_numpy_rng()` within execution; `get_seed()` supplies an explicit seed for
+third-party model settings. A null seed uses independent entropy. Context exit,
+including errors, restores the enclosing context; independent threaded or
+parallel evaluations must open separate contexts. Global random calls, unseeded
+third-party generators and model-specific seed parameters retain their own
+semantics and are not silently overwritten.
 
 ## Performance Analysis
 

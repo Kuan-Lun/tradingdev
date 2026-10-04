@@ -17,6 +17,27 @@ unknown imports and missing annotations are still rejected.
 
 ## Python Contract
 
+`random_seed` is a single top-level YAML setting: a strict integer in
+`0..4294967295` or `null` (independent entropy). `backtest.random_seed` is rejected.
+Use `tradingdev.domain.randomness.get_random()` or `get_numpy_rng()` for run-local
+Python and NumPy generators; `get_seed()` supplies an explicit seed to a
+third-party model's `random_state` when needed. These functions require an active
+execution context, including the strategy constructor. Validation and dry-run each
+start a fresh context; a backtest or walk-forward run shares one stream throughout
+its constructor and evaluation/folds. Each optimization trial and its out-of-sample
+evaluation starts its own context with the recorded run seed, independent of trial
+completion order. Nested contexts restore their parent on success or failure.
+These APIs do not seed arbitrary global RNG calls, third-party engines, or GPU
+operations. Separate concurrent strategy executions must each open a context;
+strategy-created threads or processes must explicitly initialize their own streams.
+
+`get_strategy_contract.config_schema` describes the complete YAML shape. Fixed
+configuration sections reject unknown fields; strategy parameters remain dynamic.
+Validation and dry-run validate this same run configuration before strategy code
+executes and return `effective_config` for checking the request against defaults.
+A valid configuration does not by itself prove that every natural-language
+requirement has been fulfilled.
+
 Generated code must:
 
 - inherit `tradingdev.domain.strategies.base.BaseStrategy`;

@@ -150,12 +150,13 @@ def test_decode_preserves_saved_values_when_runtime_schema_adds_defaults(
     )
     encoded = manifest.model_dump_json()
 
-    class FutureRunConfig(BacktestRunConfig):
-        new_execution_option: str = "future-default"
-
     class FutureParallelConfig(ParallelConfig):
         reserve_cores: int = 8
         new_parallel_option: bool = True
+
+    class FutureRunConfig(BacktestRunConfig):
+        new_execution_option: str = "future-default"
+        parallel: FutureParallelConfig | None = None
 
     monkeypatch.setattr(execution_module, "BacktestRunConfig", FutureRunConfig)
     monkeypatch.setattr(execution_module, "ParallelConfig", FutureParallelConfig)
@@ -347,7 +348,7 @@ def test_nested_non_json_mutation_cannot_hide_behind_date_canonicalization(
         mutable = manifest.optimization.param_ranges["day"]
         mutable[0] = dt.date(2024, 1, 1)
 
-    with pytest.raises(ManifestError, match="Unsupported execution value"):
+    with pytest.raises(ManifestError, match="Unsupported JSON value"):
         manifest.verify()
 
 
@@ -385,7 +386,6 @@ def test_dates_and_dictionary_order_have_stable_hashes() -> None:
         ("backtest", "fees", 0.001),
         ("backtest", "slippage", 0.002),
         ("backtest", "mode", "volume"),
-        ("backtest", "random_seed", 12),
         ("backtest", "end_date", "2024-04-29"),
         ("data", "raw_dir", "/another/raw"),
     ],
@@ -498,6 +498,7 @@ def test_unknown_version_extra_fields_and_tampered_content_cannot_load() -> None
     payload = manifest.model_dump(mode="json")
     for changes in (
         {"schema_version": 1},
+        {"schema_version": 3},
         {"schema_version": 99},
         {"unexpected": True},
         {"kind": "optimization"},
@@ -650,7 +651,7 @@ def test_new_optimization_targets_resolve_catalog_direction(
         strategy_execution=_strategy_execution(),
         optimization=_search(optimization_metric=metric),
     )
-    assert manifest.schema_version == 3
+    assert manifest.schema_version == 4
     assert manifest.optimization is not None
     assert manifest.optimization.direction == direction
 

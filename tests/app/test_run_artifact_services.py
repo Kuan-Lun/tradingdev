@@ -150,7 +150,7 @@ backtest:
     assert run["dataset_id"] == "dataset-fixture"
     assert run["artifact_dir"] == str(workspace.runs / "job_lineage")
     assert run["source_hash"] == sha256_file(strategy_source)
-    assert run["random_seed"] == 7
+    assert run["random_seed"] is None
 
     artifacts = {
         item["artifact_type"]: item for item in job_store.list_artifacts("job_lineage")
@@ -194,6 +194,7 @@ def test_artifact_service_cache_pipeline_records_run_lineage(
     config_path = tmp_path / "cli.yaml"
     config_path.write_text(
         f"""\
+random_seed: 42
 strategy:
   id: cli_fixture
   source_path: "{strategy_source}"
@@ -236,7 +237,7 @@ backtest:
 
     run = store.list_runs()[0]
     assert run["source_hash"] == sha256_file(strategy_source)
-    assert run["random_seed"] == 11
+    assert run["random_seed"] == 42
     assert run["manifest_hash"] == manifest.manifest_hash
     assert run["artifact_dir"] == str(workspace.runs / run["run_id"])
     artifact = service.get_artifact(

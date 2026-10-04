@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 import datetime as dt  # noqa: TC003
-from typing import Any, Self
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
+
+from tradingdev.domain.data.requirements import FeatureSpec, MarketDataSpec
+from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.shared.utils.json_values import strict_json_value
 
 
 class BacktestConfig(BaseModel):
     """Backtest execution configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     symbol: str
     timeframe: str
@@ -23,9 +36,8 @@ class BacktestConfig(BaseModel):
     take_profit: float | None = None
     signal_as_position: bool = False
     re_entry_after_sl: bool = True
-    mode: str = "signal"
+    mode: Literal["signal", "volume"] = "signal"
     monthly_max_loss: float = 1500.0
-    random_seed: int | None = None
     periods_per_year: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     risk_free_rate: float = Field(default=0.0, gt=-1, allow_inf_nan=False)
     required_return: float = Field(default=0.0, gt=-1, allow_inf_nan=False)
@@ -50,6 +62,8 @@ class BacktestConfig(BaseModel):
 class WalkForwardConfig(BaseModel):
     """Walk-forward validation configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     train_start: dt.datetime | None = None
     train_end: dt.datetime | None = None
     test_start: dt.datetime | None = None
@@ -60,24 +74,10 @@ class WalkForwardConfig(BaseModel):
     target_metric: str = "sharpe_ratio"
 
 
-class BacktestRunConfig(BaseModel):
-    """Top-level YAML schema relevant to run-mode selection."""
-
-    model_config = ConfigDict(extra="allow")
-
-    strategy: dict[str, Any]
-    backtest: BacktestConfig
-    validation: WalkForwardConfig | None = None
-    random_seed: int | None = None
-
-    @property
-    def is_walk_forward(self) -> bool:
-        """Return whether the config requests walk-forward validation."""
-        return self.validation is not None
-
-
 class ParallelConfig(BaseModel):
     """Parallel execution configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     reserve_cores: int = 2
     safety_factor: float = 0.6
@@ -100,3 +100,97 @@ class ParallelConfig(BaseModel):
             msg = "safety_factor must be between 0 (exclusive) and 1 (inclusive)"
             raise ValueError(msg)
         return v
+
+
+class StrategyRunConfig(BaseModel):
+    """Known strategy metadata, with explicit dynamic constructor parameters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = None
+    revision_id: str | None = None
+    version: str | None = None
+    class_name: str | None = None
+    description: str | None = None
+    source_path: str | None = None
+    source_hash: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    fit: dict[str, Any] | None = None
+
+
+class RunMarketDataSpec(MarketDataSpec):
+    """Reject misspelled market requirement fields before execution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RunFeatureSpec(FeatureSpec):
+    """Reject misspelled feature requirement fields before execution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RunDataRequirement(BaseModel):
+    """Strict requirements within a strategy execution configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    market: RunMarketDataSpec
+    features: list[RunFeatureSpec] = Field(default_factory=list)
+
+
+class RunDataConfig(DataConfig):
+    """Data settings whose environment-dependent defaults resolve at submission."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requirements: RunDataRequirement | None = None
+
+
+class BacktestRunConfig(BaseModel):
+    """Complete YAML shape shared by validation and execution boundaries."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: StrategyRunConfig
+    backtest: BacktestConfig
+    data: RunDataConfig = Field(default_factory=RunDataConfig)
+    validation: WalkForwardConfig | None = None
+    parallel: ParallelConfig | None = None
+    random_seed: int | None = Field(
+        default=None,
+        strict=True,
+        ge=0,
+        le=2**32 - 1,
+        description=(
+            "Run seed for isolated Python and NumPy generators exposed by "
+            "tradingdev.domain.randomness. This belongs at the YAML root, not "
+            "under backtest. Null uses independent entropy. Global RNGs and "
+            "third-party model seeds are not changed."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_raw_json(cls, value: object) -> object:
+        """Reject lossy raw values before Pydantic serializers can normalize them."""
+        strict_json_value(value, allow_dates=True)
+        return value
+
+    @model_validator(mode="after")
+    def validate_resolved_json(self) -> Self:
+        """Reject non-finite typed values introduced by coercion or defaults."""
+        strict_json_value(self.model_dump(mode="python"), allow_dates=True)
+        return self
+
+    @field_serializer("strategy", "data")
+    def preserve_declared_fields(
+        self, value: StrategyRunConfig | RunDataConfig
+    ) -> dict[str, Any]:
+        """Do not fill identity or environment-dependent data defaults here."""
+        return value.model_dump(mode="python", exclude_unset=True)
+
+    @property
+    def is_walk_forward(self) -> bool:
+        """Return whether the config requests walk-forward validation."""
+        return self.validation is not None

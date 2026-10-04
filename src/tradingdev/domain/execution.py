@@ -25,6 +25,7 @@ from tradingdev.domain.data.schemas import DataConfig
 from tradingdev.domain.optimization.grid_search import metric_direction
 from tradingdev.domain.performance.catalog import METRIC_CATALOG
 from tradingdev.domain.strategies.execution import StrategyExecution
+from tradingdev.shared.utils.json_values import strict_json_value
 
 type ExecutionKind = Literal["backtest", "walk_forward", "optimization"]
 
@@ -34,25 +35,11 @@ class ManifestError(ValueError):
 
 
 def _json_value(value: object, *, allow_dates: bool = False) -> JsonValue:
-    """Copy finite JSON without coercing keys or silently replacing numbers."""
-    if value is None or isinstance(value, bool | str | int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ManifestError("Execution values must contain only finite numbers")
-        return value
-    if allow_dates and isinstance(value, dt.date):
-        return value.isoformat()
-    if isinstance(value, list):
-        return [_json_value(item, allow_dates=allow_dates) for item in value]
-    if isinstance(value, dict):
-        copied: dict[str, JsonValue] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise ManifestError("Execution JSON object keys must be strings")
-            copied[key] = _json_value(item, allow_dates=allow_dates)
-        return copied
-    raise ManifestError(f"Unsupported execution value: {type(value).__name__}")
+    """Translate the shared strict input policy into a manifest error."""
+    try:
+        return strict_json_value(value, allow_dates=allow_dates)
+    except ValueError as exc:
+        raise ManifestError(f"Invalid execution JSON: {exc}") from exc
 
 
 def _resolve_config(value: object) -> dict[str, JsonValue]:
@@ -178,7 +165,7 @@ class ExecutionManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal[3]
+    schema_version: Literal[4]
     kind: ExecutionKind
     config: dict[str, JsonValue]
     strategy_execution: StrategyExecution
@@ -238,14 +225,14 @@ class ExecutionManifest(BaseModel):
                 assert isinstance(backtest, dict)
                 search.validate_new_request(backtest)
             payload = {
-                "schema_version": 3,
+                "schema_version": 4,
                 "kind": kind,
                 "config": resolved,
                 "strategy_execution": strategy.model_dump(mode="python"),
                 "optimization": search.model_dump(mode="python") if search else None,
             }
             return cls(
-                schema_version=3,
+                schema_version=4,
                 kind=kind,
                 config=resolved,
                 strategy_execution=strategy,

@@ -324,7 +324,9 @@ def _execution_scope(
         result, split=split, fold_index=fold_index, parameters=parameters
     )
     metadata = dict(scope.metadata)
-    metadata["execution_context"] = normalize_json_object(config.get("backtest", {}))
+    metadata["execution_context"] = normalize_json_object(
+        {**config.get("backtest", {}), "random_seed": config.get("random_seed")}
+    )
     return scope.model_copy(update={"metadata": metadata}), observations
 
 

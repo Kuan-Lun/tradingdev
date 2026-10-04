@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from tradingdev.domain.backtest.schemas import BacktestRunConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-def strategy_contract_payload(package_root: Path) -> dict[str, str]:
+def strategy_contract_payload(package_root: Path) -> dict[str, Any]:
     """Return source and YAML templates for generated strategies."""
     base_path = package_root / "domain" / "strategies" / "base.py"
     base_source = base_path.read_text(encoding="utf-8") if base_path.exists() else ""
@@ -16,6 +18,7 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
         "base_strategy_source": base_source,
         "example_strategy_code": _EXAMPLE_CODE,
         "example_yaml_config": _EXAMPLE_YAML,
+        "config_schema": BacktestRunConfig.model_json_schema(),
         "api_reference": (
             "Generated strategies must inherit BaseStrategy, return a DataFrame "
             "with signal values limited to -1, 0, and 1, and avoid mutating the "
@@ -24,6 +27,20 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
             "Execution captures these values at submission. backtest_engine and "
             "parallel_config are reserved application injections and cannot be "
             "overridden in strategy.parameters. Use tradingdev.domain.indicators "
+            "for indicators. config_schema describes every execution configuration "
+            "section: unknown fixed fields are errors, while strategy.parameters "
+            "and bundled strategy.fit contain strategy-specific settings. Set "
+            "random_seed at the YAML root only, never in backtest. Each validation, "
+            "dry-run, normal run, optimization trial and test evaluation starts "
+            "isolated Python/NumPy generators with that seed; walk-forward folds "
+            "consume a single stream in fold order. Randomized strategies use "
+            "tradingdev.domain.randomness.get_random() or get_numpy_rng() inside "
+            "their constructor, fit, or generate_signals. Use get_seed() when a "
+            "third-party model requires an explicit random_state/seed. Do not read "
+            "these functions at module import time. Global random/NumPy RNG state "
+            "and arbitrary third-party RNGs are not seeded; null uses independent "
+            "entropy. Separate model parameters remain explicit model settings. "
+            "The available indicators include "
             "(sma, ema, rsi, "
             "macd, bollinger_bands, atr, adx, stochastic) for standard "
             "indicators and tradingdev.shared.utils.logger for logging. "
@@ -60,7 +77,12 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
             "selects current once per operation. validate_strategy runs static checks, "
             "restricted import checks, ruff, mypy, inheritance checks, and the "
             "shared signal-contract gate on a short fixture with structured "
-            "diagnostics; dry_run_strategy accepts only validated strategies and "
+            "diagnostics; both checks validate the full execution config before "
+            "constructing the strategy and return effective_config with resolved "
+            "backtest/parallel defaults and the canonical run seed. Data directory "
+            "defaults resolve at job submission. Check this response against the "
+            "user's requested settings before proceeding. dry_run_strategy "
+            "accepts only validated strategies and "
             "re-runs the same signal-contract gate on a longer fixture, returns "
             "signal_analysis, and marks the strategy runnable; promote_strategy "
             "marks a runnable strategy promoted. validate_strategy and "
@@ -129,6 +151,8 @@ class SmaCrossoverStrategy(BaseStrategy):
 '''
 
 _EXAMPLE_YAML = """\
+random_seed: 42
+
 strategy:
   id: "sma_crossover"
   version: "0.1.0"

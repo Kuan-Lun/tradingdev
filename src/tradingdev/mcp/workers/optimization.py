@@ -42,6 +42,7 @@ from tradingdev.domain.optimization.grid_search import (
     parameter_grid,
 )
 from tradingdev.domain.performance.artifacts import build_artifacts, scope_from_backtest
+from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
@@ -105,6 +106,7 @@ def _evaluate_combo(
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg_dict: dict[str, Any],
+    random_seed: int | None,
 ) -> ComboEvaluation:
     """Evaluate a single parameter combination.
 
@@ -119,6 +121,7 @@ def _evaluate_combo(
         param_dict: Parameter combination to evaluate.
         metric_name: Target metric to extract.
         parallel_cfg_dict: Fixed parallel resource policy from the manifest.
+        random_seed: Fixed run seed, re-created independently in each worker.
 
     Returns:
         Complete backtest result, parameters, and objective identifier.
@@ -134,6 +137,7 @@ def _evaluate_combo(
         param_dict,
         metric_name,
         ParallelConfig(**parallel_cfg_dict),
+        random_seed,
     )
 
 
@@ -145,24 +149,31 @@ def _run_single_combo(
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg: ParallelConfig,
+    random_seed: int | None,
 ) -> ComboEvaluation:
     """Run a single combo in the main process (for trial run)."""
-    service = BacktestService()
-    engine = service.create_engine(bt_cfg)
-    service.prepare_strategy({"strategy": strategy_cfg})
-    strategy = StrategyLoader().create_from_execution(
-        strategy_cfg,
-        strategy_execution,
-        engine,
-        parallel_cfg,
-        parameter_overrides=param_dict,
-    )
+    with execution_randomness(random_seed):
+        service = BacktestService()
+        engine = service.create_engine(bt_cfg)
+        service.prepare_strategy({"strategy": strategy_cfg})
+        strategy = StrategyLoader().create_from_execution(
+            strategy_cfg,
+            strategy_execution,
+            engine,
+            parallel_cfg,
+            parameter_overrides=param_dict,
+        )
 
-    signals_df = strategy.generate_signals(df)
-    result = engine.run(signals_df)
+        signals_df = strategy.generate_signals(df)
+        result = engine.run(signals_df)
 
-    result.metric_metadata["execution_context"] = bt_cfg.model_dump(mode="json")
-    result.metric_metadata["strategy_parameters"] = deepcopy(strategy.get_parameters())
+        result.metric_metadata["execution_context"] = {
+            **bt_cfg.model_dump(mode="json"),
+            "random_seed": random_seed,
+        }
+        result.metric_metadata["strategy_parameters"] = deepcopy(
+            strategy.get_parameters()
+        )
 
     return ComboEvaluation(deepcopy(param_dict), metric_name, result)
 
@@ -232,6 +243,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         BacktestService().prepare_strategy(raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config["parallel"])
+        random_seed = raw_config["random_seed"]
     except Exception as exc:
         _fail(job_id, f"Execution manifest error: {exc}")
         return
@@ -319,6 +331,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             first_combo,
             optimization_metric,
             parallel_cfg,
+            random_seed,
         )
         time_per_combo = time.monotonic() - t0
     except _TrialTimeoutError:
@@ -436,6 +449,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
                     combo,
                     optimization_metric,
                     parallel_cfg.model_dump(),
+                    random_seed,
                 )
                 for combo in batch
             )
@@ -503,6 +517,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
             best_params,
             optimization_metric,
             parallel_cfg,
+            random_seed,
         )
     except Exception as exc:
         _fail(job_id, f"Out-of-sample test error: {exc}")

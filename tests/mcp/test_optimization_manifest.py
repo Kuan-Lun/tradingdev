@@ -89,6 +89,7 @@ def _queued_job(
         json.dumps(WorkerHandle(4321, 100.0, "a" * 32).job_fields()),
     )
     config: dict[str, Any] = {
+        "random_seed": 42,
         "strategy": {"id": "fixture"},
         "backtest": {
             "symbol": "BTC/USDT",
@@ -196,8 +197,10 @@ def test_optimization_worker_ignores_mutable_config_and_search_copies(
         params: dict[str, Any],
         metric: str,
         parallel_cfg: ParallelConfig,
+        random_seed: int | None,
     ) -> ComboEvaluation:
         assert strategy_execution == manifest.strategy_execution
+        assert random_seed == manifest.config["random_seed"]
         evaluations.append(
             (
                 params,
@@ -284,6 +287,7 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
         {"d_period": 5},
         "total_return",
         parallel,
+        42,
     )
     optimization._evaluate_combo(
         strategy_config,
@@ -293,15 +297,17 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
         {"d_period": 7},
         "total_return",
         parallel.model_dump(),
+        42,
     )
 
     assert [parameters["k_period"] for parameters in captured] == [14, 14]
     assert [parameters["d_period"] for parameters in captured] == [5, 7]
     assert [parameters["oversold"] for parameters in captured] == [15.0, 15.0]
     assert evaluation.result is observed_result
-    assert evaluation.result.metric_metadata["execution_context"] == config.model_dump(
-        mode="json"
-    )
+    assert evaluation.result.metric_metadata["execution_context"] == {
+        **config.model_dump(mode="json"),
+        "random_seed": 42,
+    }
     assert evaluation.result.metric_metadata["strategy_parameters"]["oversold"] == 15.0
     restored = pickle.loads(pickle.dumps(evaluation))
     assert restored.parameters == evaluation.parameters
@@ -351,6 +357,7 @@ def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
         params: dict[str, Any],
         metric: str,
         parallel_cfg: ParallelConfig,
+        random_seed: int | None,
     ) -> ComboEvaluation:
         if bt_cfg.start_date.day == 4:
             oos_calls.append(params)
@@ -467,6 +474,7 @@ def test_optimization_failure_restores_alarm_without_partial_performance_files(
         params: dict[str, Any],
         metric: str,
         parallel_cfg: ParallelConfig,
+        random_seed: int | None,
     ) -> ComboEvaluation:
         nonlocal calls
         calls += 1

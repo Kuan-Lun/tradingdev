@@ -16,6 +16,7 @@ class StrategyContractResponse(ContractModel):
     example_yaml_config: str
     api_reference: str
     lifecycle: str
+    config_schema: dict[str, JsonValue]
 
 
 class StrategyDiagnosticResponse(ContractModel):
@@ -49,6 +50,7 @@ class StrategyValidationRecord(ContractModel):
     success: bool
     diagnostics: list[StrategyDiagnosticResponse]
     signal_analysis: SignalAnalysisResponse
+    effective_config: dict[str, JsonValue] | None = None
 
 
 class GeneratedStrategyMetadata(ContractModel):
@@ -223,6 +225,7 @@ class StrategyCheckResult(ContractModel):
     revision_id: str
     diagnostics: list[StrategyDiagnosticResponse]
     signal_analysis: SignalAnalysisResponse
+    effective_config: dict[str, JsonValue] | None = None
 
 
 class StrategyValidationSuccess(StrategyCheckResult):

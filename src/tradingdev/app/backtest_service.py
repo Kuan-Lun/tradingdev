@@ -25,6 +25,7 @@ from tradingdev.domain.execution import (
     ManifestError,
     OptimizationSpec,
 )
+from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
@@ -138,6 +139,13 @@ class BacktestService:
             msg = "BacktestService cannot execute an optimization manifest"
             raise ValueError(msg)
         raw_config = manifest.config_for_execution()
+        with execution_randomness(raw_config["random_seed"]):
+            return self._execute(manifest, raw_config)
+
+    def _execute(
+        self, manifest: ExecutionManifest, raw_config: dict[str, Any]
+    ) -> BacktestRun:
+        """Construct and execute the strategy within its run's random context."""
         self.prepare_strategy(raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
