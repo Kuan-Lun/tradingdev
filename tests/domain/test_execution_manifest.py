@@ -6,6 +6,7 @@ import datetime as dt
 import hashlib
 import json
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -24,6 +25,7 @@ from tradingdev.domain.execution import (
     ManifestError,
     OptimizationSpec,
 )
+from tradingdev.domain.performance.catalog import METRIC_CATALOG
 from tradingdev.domain.strategies.execution import StrategyExecution
 
 
@@ -46,6 +48,7 @@ def _config() -> dict[str, Any]:
             "start_date": "2024-01-01",
             "end_date": "2024-04-30",
             "init_cash": 10_000,
+            "periods_per_year": 365,
         },
         "data": {
             "source": "binance_vision",
@@ -147,12 +150,13 @@ def test_decode_preserves_saved_values_when_runtime_schema_adds_defaults(
     )
     encoded = manifest.model_dump_json()
 
-    class FutureRunConfig(BacktestRunConfig):
-        new_execution_option: str = "future-default"
-
     class FutureParallelConfig(ParallelConfig):
         reserve_cores: int = 8
         new_parallel_option: bool = True
+
+    class FutureRunConfig(BacktestRunConfig):
+        new_execution_option: str = "future-default"
+        parallel: FutureParallelConfig | None = None
 
     monkeypatch.setattr(execution_module, "BacktestRunConfig", FutureRunConfig)
     monkeypatch.setattr(execution_module, "ParallelConfig", FutureParallelConfig)
@@ -344,7 +348,7 @@ def test_nested_non_json_mutation_cannot_hide_behind_date_canonicalization(
         mutable = manifest.optimization.param_ranges["day"]
         mutable[0] = dt.date(2024, 1, 1)
 
-    with pytest.raises(ManifestError, match="Unsupported execution value"):
+    with pytest.raises(ManifestError, match="Unsupported JSON value"):
         manifest.verify()
 
 
@@ -382,7 +386,6 @@ def test_dates_and_dictionary_order_have_stable_hashes() -> None:
         ("backtest", "fees", 0.001),
         ("backtest", "slippage", 0.002),
         ("backtest", "mode", "volume"),
-        ("backtest", "random_seed", 12),
         ("backtest", "end_date", "2024-04-29"),
         ("data", "raw_dir", "/another/raw"),
     ],
@@ -495,6 +498,7 @@ def test_unknown_version_extra_fields_and_tampered_content_cannot_load() -> None
     payload = manifest.model_dump(mode="json")
     for changes in (
         {"schema_version": 1},
+        {"schema_version": 3},
         {"schema_version": 99},
         {"unexpected": True},
         {"kind": "optimization"},
@@ -611,7 +615,7 @@ def test_search_and_confirmation_choices_change_digest(change: dict[str, Any]) -
         {"param_ranges": {}},
         {"param_ranges": {"fast": []}},
         {"optimization_metric": "unknown"},
-        {"direction": "minimize"},
+        {"direction": "invalid"},
         {"trial_timeout_seconds": 0},
         {"trial_timeout_seconds": True},
         {"confirmation_timeout_seconds": -1},
@@ -627,3 +631,149 @@ def test_search_and_confirmation_choices_change_digest(change: dict[str, Any]) -
 def test_invalid_search_requests_are_rejected(change: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         _search(**change)
+
+
+@pytest.mark.parametrize(
+    ("metric", "direction"),
+    [
+        ("max_drawdown", "minimize"),
+        ("max_drawdown_amount", "minimize"),
+        ("sortino_ratio", "maximize"),
+        ("daily_pnl_mean", "maximize"),
+    ],
+)
+def test_new_optimization_targets_resolve_catalog_direction(
+    metric: str, direction: str
+) -> None:
+    manifest = ExecutionManifest.create(
+        kind="optimization",
+        config=_config(),
+        strategy_execution=_strategy_execution(),
+        optimization=_search(optimization_metric=metric),
+    )
+    assert manifest.schema_version == 4
+    assert manifest.optimization is not None
+    assert manifest.optimization.direction == direction
+
+
+@pytest.mark.parametrize("frequency", ["1w", "1M", "unknown"])
+@pytest.mark.parametrize(
+    "metric",
+    [
+        "annual_return",
+        "sharpe_ratio",
+        "daily_max_drawdown",
+        "daily_pnl_mean",
+        "monthly_pnl_std",
+    ],
+)
+def test_new_optimization_rejects_objectives_without_daily_observations(
+    frequency: str, metric: str
+) -> None:
+    config = _config()
+    config["backtest"]["timeframe"] = frequency
+    with pytest.raises(ManifestError, match="requires daily or finer bars"):
+        ExecutionManifest.create(
+            kind="optimization",
+            config=config,
+            strategy_execution=_strategy_execution(),
+            optimization=_search(optimization_metric=metric),
+        )
+
+
+@pytest.mark.parametrize("frequency", ["1h", "1d", "24h"])
+def test_new_optimization_accepts_daily_observation_objectives(frequency: str) -> None:
+    config = _config()
+    config["backtest"]["timeframe"] = frequency
+    manifest = ExecutionManifest.create(
+        kind="optimization",
+        config=config,
+        strategy_execution=_strategy_execution(),
+        optimization=_search(),
+    )
+    assert manifest.config_copy()["backtest"]["timeframe"] == frequency
+
+
+@pytest.mark.parametrize(
+    "metric", ["total_return", "total_pnl", "max_drawdown", "win_rate"]
+)
+def test_new_optimization_accepts_bar_objectives_on_weekly_data(metric: str) -> None:
+    config = _config()
+    config["backtest"].update(timeframe="1w", periods_per_year=None)
+    manifest = ExecutionManifest.create(
+        kind="optimization",
+        config=config,
+        strategy_execution=_strategy_execution(),
+        optimization=_search(optimization_metric=metric),
+    )
+    assert manifest.optimization is not None
+    assert manifest.optimization.optimization_metric == metric
+
+
+@pytest.mark.parametrize(
+    ("metric", "mode", "annualization", "message"),
+    [
+        ("sharpe_ratio", "volume", 365, "not applicable"),
+        ("total_return", "volume", 365, "not applicable"),
+        ("max_drawdown", "volume", 365, "not applicable"),
+        ("annual_return", "signal", None, "requires periods_per_year"),
+        ("sortino_ratio", "signal", None, "requires periods_per_year"),
+    ],
+)
+def test_new_optimization_rejects_unavailable_objectives(
+    metric: str, mode: str, annualization: float | None, message: str
+) -> None:
+    config = _config()
+    config["backtest"].update(mode=mode, periods_per_year=annualization)
+    if mode == "volume":
+        config["backtest"].update(init_cash=None, position_size=100)
+    with pytest.raises(ManifestError, match=message):
+        ExecutionManifest.create(
+            kind="optimization",
+            config=config,
+            strategy_execution=_strategy_execution(),
+            optimization=_search(optimization_metric=metric),
+        )
+
+
+def test_new_optimization_rejects_direction_override() -> None:
+    with pytest.raises(ManifestError, match="requires direction 'minimize'"):
+        ExecutionManifest.create(
+            kind="optimization",
+            config=_config(),
+            strategy_execution=_strategy_execution(),
+            optimization=_search(
+                optimization_metric="max_drawdown", direction="maximize"
+            ),
+        )
+
+
+@pytest.mark.parametrize("metric", ["n_days", "open_trades", "unknown_metric"])
+def test_non_objective_catalog_entries_are_not_search_targets(metric: str) -> None:
+    with pytest.raises(ValidationError, match="not an optimization objective"):
+        _search(optimization_metric=metric)
+
+
+def test_saved_direction_is_not_reinterpreted_by_changed_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = ExecutionManifest.create(
+        kind="optimization",
+        config=_config(),
+        strategy_execution=_strategy_execution(),
+        optimization=_search(optimization_metric="max_drawdown"),
+    )
+    saved = manifest.model_dump_json()
+    monkeypatch.setitem(
+        METRIC_CATALOG,
+        "max_drawdown",
+        replace(METRIC_CATALOG["max_drawdown"], optimization_direction="maximize"),
+    )
+    loaded = ExecutionManifest.model_validate_json(saved)
+    loaded.verify()
+    assert loaded.optimization is not None
+    assert loaded.optimization.direction == "minimize"
+    assert loaded.manifest_hash == manifest.manifest_hash
+    # Removing a catalog entry also cannot change the immutable saved policy.
+    monkeypatch.delitem(METRIC_CATALOG, "max_drawdown")
+    assert ExecutionManifest.model_validate_json(saved) == manifest

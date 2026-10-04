@@ -218,9 +218,10 @@ def test_get_job_status_returns_run_id_for_completed_optimization(
         "job_optimization",
         {
             "best_params": {"window": 10},
-            "train_metrics": {"sharpe_ratio": 1.0},
-            "test_metrics": {"sharpe_ratio": 0.8},
-            "optimization_metric": "sharpe_ratio",
+            "train_metrics": {"max_drawdown": 0.1},
+            "test_metrics": {"max_drawdown": 0.08},
+            "optimization_metric": "max_drawdown",
+            "direction": "minimize",
             "total_combinations": 3,
         },
     )
@@ -236,6 +237,7 @@ def test_get_job_status_returns_run_id_for_completed_optimization(
     assert response["job_type"] == "optimization"
     assert response["run_id"] == "job_optimization"
     assert response["best_params"] == {"window": 10}
+    assert response["direction"] == "minimize"
 
 
 @pytest.mark.parametrize("created_at", [None, 100.0])

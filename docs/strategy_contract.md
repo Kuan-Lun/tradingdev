@@ -17,6 +17,27 @@ unknown imports and missing annotations are still rejected.
 
 ## Python Contract
 
+`random_seed` is a single top-level YAML setting: a strict integer in
+`0..4294967295` or `null` (independent entropy). `backtest.random_seed` is rejected.
+Use `tradingdev.domain.randomness.get_random()` or `get_numpy_rng()` for run-local
+Python and NumPy generators; `get_seed()` supplies an explicit seed to a
+third-party model's `random_state` when needed. These functions require an active
+execution context, including the strategy constructor. Validation and dry-run each
+start a fresh context; a backtest or walk-forward run shares one stream throughout
+its constructor and evaluation/folds. Each optimization trial and its out-of-sample
+evaluation starts its own context with the recorded run seed, independent of trial
+completion order. Nested contexts restore their parent on success or failure.
+These APIs do not seed arbitrary global RNG calls, third-party engines, or GPU
+operations. Separate concurrent strategy executions must each open a context;
+strategy-created threads or processes must explicitly initialize their own streams.
+
+`get_strategy_contract.config_schema` describes the complete YAML shape. Fixed
+configuration sections reject unknown fields; strategy parameters remain dynamic.
+Validation and dry-run validate this same run configuration before strategy code
+executes and return `effective_config` for checking the request against defaults.
+A valid configuration does not by itself prove that every natural-language
+requirement has been fulfilled.
+
 Generated code must:
 
 - inherit `tradingdev.domain.strategies.base.BaseStrategy`;
@@ -28,6 +49,17 @@ Generated code must:
 - include a `signal` column containing only `1`, `-1`, or `0`;
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
+
+Backtest execution requires finite, strictly positive prices: signal mode checks
+`open` and `close`; volume mode checks OHLC, using `close` for missing `open`,
+`high`, or `low`. When supplied, the `timestamp` column or DatetimeIndex must
+contain valid, nonmissing, unique, increasing timestamps; they are normalized to
+UTC.
+
+Volume mode applies optional `size_weight` values to the following bar with
+`shift(1).fillna(1.0)`. The resulting weights must be finite and strictly positive;
+zero is not a trade-suppression flag. Emit `signal=0` to prevent new entries; set
+`signal_as_position: true` if zero should also close an existing position.
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
@@ -123,6 +155,9 @@ backtest:
   start_date: "2024-01-01"
   end_date: "2024-12-31"
   init_cash: 10000.0
+  periods_per_year: 365.0
+  risk_free_rate: 0.0
+  required_return: 0.0
   mode: "signal"
 
 data:
@@ -146,6 +181,39 @@ data:
 `strategy.source_path` to the saved revision. These identity fields are managed
 by the service; callers need not supply them. `strategy.version` remains optional
 descriptive configuration, not the execution revision identifier.
+
+Performance analysis uses Empyrical for return/risk metrics and VectorBT for
+closed-trade statistics. `periods_per_year` is the explicit annualization factor
+for observed UTC **daily returns**, independent of the strategy's bar timeframe:
+365 for this continuously traded crypto example, or an appropriate trading-day
+count for another market. Omitting it leaves annualized metrics unavailable.
+`risk_free_rate` and `required_return` are annual decimal rates, converted to
+daily rates using that factor. Calendar aggregation uses observed dates; missing
+market data is not silently filled with zero returns. Maximum drawdown retains
+bar-level resolution. `max_drawdown` is a nonnegative fraction;
+`max_drawdown_amount` is a nonnegative amount in the portfolio's quote currency.
+Calmar uses daily-return drawdown, exposed separately as `daily_max_drawdown`.
+Daily observations require a declared bar timeframe of one day or finer. Weekly,
+monthly, multi-day or unrecognized timeframes leave annualized metrics,
+`daily_max_drawdown`, and daily/monthly PnL statistics unavailable. Multi-day
+marks cannot locate daily closes or allocate PnL across month boundaries; no
+daily equity is fabricated. `periods_per_year` always means days per year, so
+setting it to 52 does not enable weekly annualization. Total return, total PnL,
+bar-level drawdown and trade statistics remain available. Frequency validation
+uses the declared timeframe, not gaps caused by weekends or missing data.
+Optimization rejects objectives requiring these unavailable observations before
+creating a job.
+Volume mode has no initial capital, so capital-return metrics are unavailable;
+use amount-based PnL and drawdown rather than interpreting missing returns as zero.
+`total_trades`, `win_rate`, `profit_factor`, and `trade_expectancy` refer to closed
+trades after entry and exit costs. Open trades are counted separately.
+
+Run and job responses contain summaries. A metric omitted from a summary may still
+be computed and saved: use `get_metric_catalog` for current definitions and
+optimization directions, and `get_run_metrics(run_id, metric_ids, scope)` to read
+saved values and their definition/settings snapshots. Use each run's
+`available_scopes` for fold and trial results. Missing values include an explicit
+reason and must not be interpreted as zero or a request to rerun the strategy.
 
 Feature sources are explicit:
 
@@ -228,7 +296,8 @@ recursively override only the specified fields of the fixed effective base;
 other nested fields retain their captured values. Validation evidence covers
 the base parameters; it does not certify
 every possible optimization candidate. Optimization fixes candidate lists,
-metric, calendar training/test ranges, maximization direction, and confirmation
+metric, calendar training/test ranges, the metric's minimization or maximization
+direction, and confirmation
 policy in the manifest. A config with `validation` settings cannot also request
 optimization; choose walk-forward or supply a config using the optimization
 training/test split alone. The complete request does not freeze imported Python

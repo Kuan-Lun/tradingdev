@@ -342,6 +342,7 @@ class StrategyService:
             source_path = Path(metadata.source_path)
             diagnostics: list[StrategyDiagnostic] = []
             signal_analysis: dict[str, Any] = {}
+            effective_config: dict[str, Any] | None = None
             if not dry_run:
                 diagnostics.extend(self._validator.syntax_diagnostics(source_path))
                 if not self._has_error(diagnostics):
@@ -357,6 +358,7 @@ class StrategyService:
                 )
                 diagnostics.extend(contract["diagnostics"])
                 signal_analysis = contract.get("signal_analysis", {})
+                effective_config = contract.get("effective_config")
             # A new current revision may have been saved while the check ran.
             # Only this revision is updated, and modified snapshot bytes are rejected.
             self._revisions.verify(metadata)
@@ -366,6 +368,7 @@ class StrategyService:
                 success=not self._has_error(diagnostics),
                 diagnostics=diagnostics,
                 signal_analysis=signal_analysis,
+                effective_config=effective_config,
             )
             if dry_run:
                 metadata.dry_run = result
@@ -428,6 +431,7 @@ class StrategyService:
                 item.model_dump(mode="json") for item in result.diagnostics
             ],
             "signal_analysis": result.signal_analysis,
+            "effective_config": result.effective_config,
         }
 
     @staticmethod

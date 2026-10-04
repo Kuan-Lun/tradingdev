@@ -8,7 +8,12 @@ import numpy as np
 import vectorbt as vbt
 
 from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
-from tradingdev.domain.backtest.metrics import calculate_metrics
+from tradingdev.domain.backtest.metrics import (
+    calculate_metrics,
+    calculate_metrics_from_simulation,
+    normalized_trades,
+    timestamp_index,
+)
 from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -36,9 +41,36 @@ class SignalBacktestEngine(BaseBacktestEngine):
             msg = "SignalBacktestEngine requires init_cash to be set"
             raise ValueError(msg)
 
-        close = df["close"].astype(float)
-        open_ = df["open"].astype(float) if "open" in df.columns else close
-        signal = df["signal"].shift(1).fillna(0).astype(int)
+        timestamps = timestamp_index(df)
+        market = df.copy()
+        if timestamps is not None:
+            market.index = timestamps
+        if market.empty:
+            analysis = calculate_metrics_from_simulation(
+                np.array([], dtype=np.float64),
+                [],
+                init_cash,
+                timestamps,
+                periods_per_year=self._periods_per_year,
+                risk_free_rate=self._risk_free_rate,
+                required_return=self._required_return,
+                frequency=self._freq,
+            )
+            return BacktestResult(
+                metrics=analysis.metrics,
+                equity_curve=np.array([], dtype=np.float64),
+                init_cash=init_cash,
+                metric_metadata=analysis.metadata,
+                returns=analysis.returns,
+                timestamps=None if timestamps is None else timestamps.to_numpy(),
+            )
+        close = market["close"].astype(float)
+        if not np.all(np.isfinite(close)) or (close <= 0).any():
+            raise ValueError("Prices must be finite and positive")
+        open_ = market["open"].astype(float) if "open" in market.columns else close
+        if not np.all(np.isfinite(open_)) or (open_ <= 0).any():
+            raise ValueError("Prices must be finite and positive")
+        signal = market["signal"].shift(1).fillna(0).astype(int)
 
         entries = (signal == 1) & (signal.shift(1) != 1)
         exits = (signal != 1) & (signal.shift(1) == 1)
@@ -78,51 +110,30 @@ class SignalBacktestEngine(BaseBacktestEngine):
 
         pf = vbt.Portfolio.from_signals(**kwargs)
 
-        metrics = calculate_metrics(pf)
+        analysis = calculate_metrics(
+            pf,
+            timestamps=timestamps,
+            periods_per_year=self._periods_per_year,
+            risk_free_rate=self._risk_free_rate,
+            required_return=self._required_return,
+            frequency=self._freq,
+        )
+        metrics = analysis.metrics
         logger.info(
             "Backtest complete: %d trades",
             metrics["total_trades"],
         )
 
         equity_curve = np.asarray(pf.value(), dtype=np.float64)
-        trades = _extract_trades(pf)
-        timestamps = None
-        if "timestamp" in df.columns:
-            timestamps = df["timestamp"].to_numpy()
+        trades = normalized_trades(pf.trades)
 
         return BacktestResult(
             metrics=metrics,
             equity_curve=equity_curve,
             trades=trades,
-            timestamps=timestamps,
+            timestamps=None if timestamps is None else timestamps.to_numpy(),
             init_cash=init_cash,
             mode="signal",
+            metric_metadata=analysis.metadata,
+            returns=analysis.returns,
         )
-
-
-def _extract_trades(pf: vbt.Portfolio) -> list[dict[str, Any]]:
-    """Extract trade records from a vectorbt Portfolio."""
-    records = pf.trades.records_readable
-    if len(records) == 0:
-        return []
-
-    trades: list[dict[str, Any]] = []
-    for _, row in records.iterrows():
-        entry_price = row.get("Avg Entry Price", row.get("Entry Price", 0.0))
-        exit_price = row.get("Avg Exit Price", row.get("Exit Price", 0.0))
-        size = row.get("Size", 0.0)
-        pnl = row.get("PnL", 0.0)
-        direction = 1 if row.get("Direction", "Long") == "Long" else -1
-
-        trades.append(
-            {
-                "direction": direction,
-                "entry_price": float(entry_price),
-                "exit_price": float(exit_price),
-                "size_quote": float(size * entry_price),
-                "gross_pnl": float(pnl),
-                "fee": 0.0,
-                "net_pnl": float(pnl),
-            }
-        )
-    return trades

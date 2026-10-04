@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from tradingdev.domain import indicators
+from tradingdev.domain.randomness import get_seed
 from tradingdev.domain.strategies.base import BaseStrategy
 
 if TYPE_CHECKING:
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
 
 class SmaFixture(BaseStrategy):
     def __init__(self, fast_period: int, slow_period: int) -> None:
+        self.run_seed = get_seed()
         self.fast_period = fast_period
         self.slow_period = slow_period
 
@@ -137,8 +139,8 @@ async def _complete_workflow(
             fees=0,
             slippage=0,
             mode="signal",
-            random_seed=42,
         )
+        config["random_seed"] = 42
         saved = await call(
             "save_strategy",
             strategy_id=scenario.strategy_id,
@@ -167,6 +169,12 @@ async def _complete_workflow(
         run_id = finished["run_id"]
         await call("get_run", run_id=run_id)
         await call("list_artifacts", run_id=run_id)
+        await call("get_metric_catalog", mode="signal")
+        await call(
+            "get_run_metrics",
+            run_id=run_id,
+            metric_ids=["daily_pnl_mean", "total_volume", "n_days"],
+        )
     return CompletedWorkflow(
         workspace,
         scenario,

@@ -7,20 +7,299 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import yaml
 from mcp.server.fastmcp import FastMCP
 
-from tradingdev.adapters.execution.process_runner import ProcessRunner
+from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
+from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.mcp.tools import backtest, optimization
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
     from tradingdev.domain.strategies.schemas import StrategySpec
+
+
+def _start_arguments(tool: str) -> dict[str, Any]:
+    arguments: dict[str, Any] = {
+        "strategy_id": "kd_crossover",
+        "symbol": "BTC/USDT",
+        "timeframe": "1h",
+    }
+    if tool == "start_optimization":
+        arguments.update(
+            param_ranges={"k_period": [3, 5]},
+            optimization_metric="total_return",
+            train_start="2024-01-01",
+            train_end="2024-01-03",
+            test_start="2024-01-04",
+            test_end="2024-01-07",
+        )
+    else:
+        arguments.update(start_date="2024-01-01", end_date="2024-01-07")
+    return arguments
+
+
+def _broken_config(path: Path, failure: str) -> Any:
+    if failure == "malformed_yaml":
+        return yaml.safe_load("backtest: [")
+    if failure == "missing_file":
+        raise FileNotFoundError("Config disappeared during submission")
+    if failure == "unreadable_file":
+        raise PermissionError("Config is unreadable during submission")
+    if failure == "invalid_encoding":
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "Invalid config encoding")
+    if failure == "empty_yaml":
+        return None
+    if failure == "list_yaml":
+        return []
+    config = load_config(path)
+    if failure == "missing_backtest":
+        config.pop("backtest")
+    elif failure == "invalid_schema":
+        config["parallel"] = {"reserve_cores": "not-an-integer"}
+    else:
+        raise AssertionError(f"Unknown config failure: {failure}")
+    return config
+
+
+@pytest.mark.parametrize(
+    "tool", ["start_backtest", "start_walk_forward", "start_optimization"]
+)
+@pytest.mark.parametrize(
+    "failure", ["malformed_yaml", "invalid_encoding", "unreadable_file", "missing_file"]
+)
+def test_real_catalog_load_failures_remain_structured_at_the_mcp_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str, failure: str
+) -> None:
+    bundled = tmp_path / "bundled"
+    config_path = bundled / "fixture" / "config.yaml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_bytes(
+        b"\xff" if failure == "invalid_encoding" else b"strategy: ["
+    )
+    store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
+    gate = StrategyService(store.workspace)
+    gate._catalog = BundledStrategyCatalog(bundled)
+    jobs = JobService(job_store=store, strategy_service=gate)
+    server = FastMCP("catalog-load-errors")
+    backtest.register(server, jobs)
+    optimization.register(
+        server, OptimizationService(job_store=store, strategy_service=gate), jobs
+    )
+    if failure in {"unreadable_file", "missing_file"}:
+        read_text = Path.read_text
+
+        def failing_read(path: Path, *args: Any, **kwargs: Any) -> str:
+            if path == config_path:
+                if failure == "unreadable_file":
+                    raise PermissionError("Bundled config cannot be read")
+                raise FileNotFoundError("Bundled config disappeared after discovery")
+            return read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", failing_read)
+
+    def unexpected_spawn(*_args: object) -> None:
+        pytest.fail("Catalog loading failure must not start a worker")
+
+    monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
+    arguments = {**_start_arguments(tool), "strategy_id": "fixture"}
+    result = asyncio.run(server.call_tool(tool, arguments))
+    assert isinstance(result, tuple)
+    payload = result[1]["result"]
+    assert payload["job_id"] == ""
+    assert payload["code"] == (
+        "invalid_optimization_request"
+        if tool == "start_optimization"
+        else "invalid_execution_request"
+    )
+    assert payload["message"]
+    assert store.list_all_jobs() == []
+    assert not list(store.workspace.runs.iterdir())
+
+
+@pytest.mark.parametrize(
+    "tool", ["start_backtest", "start_walk_forward", "start_optimization"]
+)
+def test_real_catalog_missing_strategy_retains_its_distinct_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
+    gate = StrategyService(store.workspace)
+    gate._catalog = BundledStrategyCatalog(tmp_path / "empty-bundled")
+    jobs = JobService(job_store=store, strategy_service=gate)
+    server = FastMCP("catalog-missing-strategy")
+    backtest.register(server, jobs)
+    optimization.register(
+        server, OptimizationService(job_store=store, strategy_service=gate), jobs
+    )
+
+    def unexpected_spawn(*_args: object) -> None:
+        pytest.fail("Missing strategy must not start a worker")
+
+    monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
+    result = asyncio.run(server.call_tool(tool, _start_arguments(tool)))
+    assert isinstance(result, tuple)
+    payload = result[1]["result"]
+    assert payload["job_id"] == ""
+    assert payload["code"] == "strategy_not_executable"
+    assert store.list_all_jobs() == []
+    assert not list(store.workspace.runs.iterdir())
+
+
+@pytest.mark.parametrize(
+    "tool", ["start_backtest", "start_walk_forward", "start_optimization"]
+)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "malformed_yaml",
+        "missing_file",
+        "unreadable_file",
+        "invalid_encoding",
+        "empty_yaml",
+        "list_yaml",
+        "missing_backtest",
+    ],
+)
+def test_primary_config_load_errors_are_structured_before_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str, failure: str
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
+    jobs = JobService(job_store=store)
+    server = FastMCP("config-load-errors")
+    backtest.register(server, jobs)
+    optimization.register(server, OptimizationService(job_store=store), jobs)
+    module = "optimization_service" if tool == "start_optimization" else "job_service"
+    monkeypatch.setattr(
+        f"tradingdev.app.{module}.load_config",
+        lambda path: _broken_config(path, failure),
+    )
+
+    def unexpected_spawn(*_args: object) -> None:
+        pytest.fail("Invalid configuration must not start a worker")
+
+    monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
+    result = asyncio.run(server.call_tool(tool, _start_arguments(tool)))
+    assert isinstance(result, tuple)
+    payload = result[1]["result"]
+    assert payload["job_id"] == ""
+    assert payload["code"] == (
+        "invalid_optimization_request"
+        if tool == "start_optimization"
+        else "invalid_execution_request"
+    )
+    assert payload["message"]
+    assert store.list_all_jobs() == []
+    assert not list(store.workspace.runs.iterdir())
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "malformed_yaml",
+        "missing_file",
+        "unreadable_file",
+        "invalid_encoding",
+        "empty_yaml",
+        "list_yaml",
+        "invalid_schema",
+    ],
+)
+def test_fallback_config_load_errors_are_structured_before_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
+    server = FastMCP("fallback-config-errors")
+    backtest.register(server, JobService(job_store=store))
+    reads: list[str] = []
+
+    def read(path: Path) -> Any:
+        reads.append(path.name)
+        if path.name == "walkforward_config.yaml":
+            return _broken_config(path, failure)
+        return load_config(path)
+
+    monkeypatch.setattr("tradingdev.app.job_service.load_config", read)
+
+    def unexpected_spawn(*_args: object) -> None:
+        pytest.fail("Invalid fallback configuration must not start a worker")
+
+    monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
+    result = asyncio.run(
+        server.call_tool("start_walk_forward", _start_arguments("start_walk_forward"))
+    )
+    assert isinstance(result, tuple)
+    payload = result[1]["result"]
+    assert payload["job_id"] == ""
+    assert payload["code"] == "invalid_execution_request"
+    assert reads == ["config.yaml", "walkforward_config.yaml"]
+    assert store.list_all_jobs() == []
+    assert not list(store.workspace.runs.iterdir())
+
+
+@pytest.mark.parametrize("tool", ["start_backtest", "start_walk_forward"])
+def test_valid_configuration_with_wrong_mode_remains_a_mode_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
+    server = FastMCP("config-mode-errors")
+    backtest.register(server, JobService(job_store=store))
+
+    def read(path: Path) -> dict[str, Any]:
+        config = load_config(path)
+        if tool == "start_backtest":
+            config["validation"] = {}
+        else:
+            config.pop("validation", None)
+        return config
+
+    monkeypatch.setattr("tradingdev.app.job_service.load_config", read)
+    if tool in {"start_backtest", "start_walk_forward"}:
+
+        def unexpected_spawn(*_args: object) -> None:
+            pytest.fail("Wrong run mode must not start a worker")
+
+        monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
+    result = asyncio.run(server.call_tool(tool, _start_arguments(tool)))
+    assert isinstance(result, tuple)
+    assert result[1]["result"]["code"] == "invalid_run_mode"
+    assert store.list_all_jobs() == []
+    assert not list(store.workspace.runs.iterdir())
+
+
+@pytest.mark.parametrize("tool", ["start_backtest", "start_walk_forward"])
+def test_mode_selection_and_submission_use_the_same_config_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
+    server = FastMCP("config-snapshot")
+    backtest.register(server, JobService(job_store=store))
+    reads: list[Path] = []
+
+    def read(path: Path) -> dict[str, Any]:
+        assert path not in reads, "Submission reread the selected configuration"
+        reads.append(path)
+        config = load_config(path)
+        config["random_seed"] = 77
+        return config
+
+    monkeypatch.setattr("tradingdev.app.job_service.load_config", read)
+    monkeypatch.setattr(
+        ProcessRunner,
+        "spawn_module",
+        lambda *_args: WorkerHandle(1234, 100.0, "a" * 32),
+    )
+    result = asyncio.run(server.call_tool(tool, _start_arguments(tool)))
+    assert isinstance(result, tuple)
+    manifest = store.load_manifest(result[1]["result"]["job_id"])
+    assert manifest.config["random_seed"] == 77
+    assert len(reads) == (2 if tool == "start_walk_forward" else 1)
 
 
 @pytest.mark.parametrize(

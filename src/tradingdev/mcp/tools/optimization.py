@@ -52,7 +52,10 @@ def register(
         """Launch optimization and wait for confirmation after estimating its cost.
 
         Pass the runnable revision_id; omission selects current at submission.
-        The returned manifest_hash pins settings, grid, metric, and date splits.
+        The returned manifest_hash pins settings, grid, metric, direction, and dates.
+        The metric catalog determines direction (drawdowns minimize). Metrics
+        must support the configured mode and required annualization settings.
+        Unavailable or nonfinite trial objectives cannot win the search.
         The strategy config must not contain walk-forward validation settings.
         Dates are inclusive UTC calendar days and must satisfy
         train_start < train_end < test_start < test_end, without overlap.

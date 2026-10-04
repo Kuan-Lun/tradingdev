@@ -25,7 +25,7 @@ class GLFTStrategyConfig(BaseModel):
     ema_window_candidates: list[MovingAveragePeriod] = [10, 21, 50]
     max_holding_bars_candidates: list[int] = [30]
     vol_window_candidates: list[int] = [30]
-    target_metric: str = "total_return"
+    target_metric: str = "total_pnl"
     position_size: float = 3000.0
     monthly_volume_target: float | None = None
     fee_rate: float = 0.0006

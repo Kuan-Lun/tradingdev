@@ -58,7 +58,14 @@ def generated_config(tmp_path: Path) -> dict[str, Any]:
             "class_name": "ParameterStrategy",
             "source_path": str(source),
             "parameters": {"threshold": 101.0, "direction": -1},
-        }
+        },
+        "backtest": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-08",
+            "init_cash": 10000,
+        },
     }
 
 
@@ -189,12 +196,32 @@ def test_generated_parameters_match_contract_and_execution(
 
 
 @pytest.mark.parametrize(
-    ("parameters", "message"),
+    ("parameters", "message", "diagnostic_code", "diagnostic_message"),
     [
-        ({"direction": 1}, "missing a required argument: 'threshold'"),
-        ({"threshold": 101, "thresholdd": 99}, "unexpected keyword argument"),
-        ({"threshold": 101, "backtest_engine": None}, "cannot override"),
-        ([], "strategy.parameters must be a mapping"),
+        (
+            {"direction": 1},
+            "missing a required argument: 'threshold'",
+            "contract_execution_error",
+            "missing a required argument: 'threshold'",
+        ),
+        (
+            {"threshold": 101, "thresholdd": 99},
+            "unexpected keyword argument",
+            "contract_execution_error",
+            "unexpected keyword argument",
+        ),
+        (
+            {"threshold": 101, "backtest_engine": None},
+            "cannot override",
+            "contract_execution_error",
+            "cannot override",
+        ),
+        (
+            [],
+            "strategy.parameters must be a mapping",
+            "invalid_execution_config",
+            "strategy.parameters",
+        ),
     ],
 )
 def test_bad_parameters_fail_contract_and_execution(
@@ -202,6 +229,8 @@ def test_bad_parameters_fail_contract_and_execution(
     generated_config: dict[str, Any],
     parameters: object,
     message: str,
+    diagnostic_code: str,
+    diagnostic_message: str,
 ) -> None:
     generated_config["strategy"]["parameters"] = parameters
     loader = StrategyLoader(workspace_root=tmp_path / "workspace")
@@ -212,8 +241,8 @@ def test_bad_parameters_fail_contract_and_execution(
         _contract_metadata(tmp_path, generated_config), fixture_rows=80
     )
     assert len(checked["diagnostics"]) == 1
-    assert checked["diagnostics"][0].code == "contract_execution_error"
-    assert message in checked["diagnostics"][0].message
+    assert checked["diagnostics"][0].code == diagnostic_code
+    assert diagnostic_message in checked["diagnostics"][0].message
 
 
 def test_generated_constructor_can_omit_engine(

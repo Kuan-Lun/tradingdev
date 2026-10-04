@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
-from pydantic import ValidationError
+import yaml
 
 from tradingdev.adapters.execution.process_runner import (
     ProcessIdentity,
@@ -23,12 +23,12 @@ from tradingdev.app.job_config import (
     bind_strategy_revision,
 )
 from tradingdev.app.job_store import JobStore, get_default_job_store
+from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
     StrategyService,
 )
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
-from tradingdev.domain.execution import ManifestError
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
@@ -61,6 +61,9 @@ class JobService:
         project_root: Path | None = None,
     ) -> None:
         self._job_store = job_store or get_default_job_store()
+        self._runs = RunService(
+            workspace=self._job_store.workspace, store=self._job_store.store
+        )
         self._strategy_service = strategy_service or StrategyService(
             self._job_store.workspace
         )
@@ -84,7 +87,10 @@ class JobService:
         revision_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a simple backtest job."""
-        spec, error = self._resolve_strategy_run_config(strategy_id, revision_id)
+        try:
+            spec, error = self._resolve_strategy_run_config(strategy_id, revision_id)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return self._invalid_execution_request(exc)
         if spec is None:
             return {
                 "job_id": "",
@@ -93,8 +99,11 @@ class JobService:
                 "code": "strategy_not_executable",
             }
         config_path = Path(spec.config_path)
-        raw_config = load_config(config_path)
-        run_config = BacktestRunConfig.model_validate(raw_config)
+        try:
+            raw_config = load_config(config_path)
+            run_config = BacktestRunConfig.model_validate(raw_config)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return self._invalid_execution_request(exc)
         if run_config.is_walk_forward:
             return {
                 "job_id": "",
@@ -111,6 +120,7 @@ class JobService:
             start_date=start_date,
             end_date=end_date,
             config_path=config_path,
+            raw_config=raw_config,
             walk_forward=False,
             spec=spec,
         )
@@ -126,7 +136,10 @@ class JobService:
         revision_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a walk-forward job."""
-        spec, error = self._resolve_strategy_run_config(strategy_id, revision_id)
+        try:
+            spec, error = self._resolve_strategy_run_config(strategy_id, revision_id)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return self._invalid_execution_request(exc)
         if spec is None:
             return {
                 "job_id": "",
@@ -134,18 +147,22 @@ class JobService:
                 "data_available": False,
                 "code": "strategy_not_executable",
             }
-        config_path, error = self._resolve_walk_forward_config(
-            strategy_id=strategy_id,
-            config_path=Path(spec.config_path),
-            allow_fallback=spec.kind == "bundled",
-        )
-        if config_path is None:
+        try:
+            resolved = self._resolve_walk_forward_config(
+                strategy_id=strategy_id,
+                config_path=Path(spec.config_path),
+                allow_fallback=spec.kind == "bundled",
+            )
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return self._invalid_execution_request(exc)
+        if resolved is None:
             return {
                 "job_id": "",
-                "message": error,
+                "message": "Config has no validation section for walk-forward.",
                 "data_available": False,
                 "code": "invalid_run_mode",
             }
+        config_path, raw_config = resolved
         return self._start_worker(
             strategy_id=strategy_id,
             symbol=symbol,
@@ -153,6 +170,7 @@ class JobService:
             start_date=start_date,
             end_date=end_date,
             config_path=config_path,
+            raw_config=raw_config,
             walk_forward=True,
             spec=spec,
         )
@@ -198,26 +216,63 @@ class JobService:
         }
 
         if status == "done":
-            result_path = str(job.get("result_path") or "")
-            result = self._job_store.load_result(result_path) if result_path else None
             response["ended_at"] = job.get("ended_at")
-            run = self._job_store.get_run(job_id)
+            run_response = self._runs.get_run(job_id)
+            run = run_response.get("run")
             if run is not None:
                 response["run_id"] = run["run_id"]
+                response["metrics"] = run["metrics"]
+                for key in (
+                    "details_available",
+                    "provenance",
+                    "available_metric_ids",
+                    "available_scopes",
+                    "default_scope",
+                    "selected_train_scope",
+                    "detail_error",
+                ):
+                    response[key] = run[key]
+            else:
+                response.update(
+                    metrics=None,
+                    details_available=False,
+                    provenance="legacy_metrics",
+                    available_metric_ids=[],
+                    available_scopes=[],
+                    default_scope=None,
+                    detail_error=run_response,
+                )
             if job.get("job_type") == "optimization":
+                # Non-metric search outcome fields retain their result contract.
+                stored_run = self._job_store.get_run(job_id)
+                result = stored_run.get("metrics", {}) if stored_run else {}
                 response.update(
                     {
-                        "best_params": (result or {}).get("best_params"),
-                        "train_metrics": (result or {}).get("train_metrics"),
-                        "test_metrics": (result or {}).get("test_metrics"),
-                        "optimization_metric": (result or {}).get(
-                            "optimization_metric"
-                        ),
-                        "total_combinations": (result or {}).get("total_combinations"),
+                        key: (result or {}).get(key)
+                        for key in (
+                            "best_params",
+                            "optimization_metric",
+                            "direction",
+                            "total_combinations",
+                        )
                     }
                 )
-            else:
-                response["metrics"] = result
+                if run is not None and run["details_available"]:
+                    response["test_metrics"] = run["metrics"]
+                    selected_train = run["selected_train_scope"]
+                    if selected_train is not None:
+                        detail = self._runs.get_run_metrics(
+                            job_id, scope=selected_train
+                        )
+                        if detail.get("success"):
+                            response["train_metrics"] = _saved_metric_summary(detail)
+                        else:
+                            response["detail_error"] = {
+                                key: detail[key] for key in ("success", "code", "error")
+                            }
+                elif run is not None and run["provenance"] == "legacy_metrics":
+                    response["train_metrics"] = run["metrics"].get("train_metrics")
+                    response["test_metrics"] = run["metrics"].get("test_metrics")
         elif status == "failed":
             response["error"] = job.get("error", "Unknown error")
         elif status == "estimating":
@@ -391,10 +446,10 @@ class JobService:
         start_date: str,
         end_date: str,
         config_path: Path,
+        raw_config: dict[str, Any],
         walk_forward: bool,
         spec: StrategySpec,
     ) -> dict[str, Any]:
-        raw_config = load_config(config_path)
         kind: Literal["backtest", "walk_forward"] = (
             "walk_forward" if walk_forward else "backtest"
         )
@@ -412,13 +467,14 @@ class JobService:
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
             ).prepare_execution(effective_config, kind=kind)
-        except (ManifestError, ValidationError, StrategyNotExecutableError) as exc:
-            return {
-                "job_id": "",
-                "message": str(exc),
-                "data_available": False,
-                "code": "invalid_execution_request",
-            }
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+            yaml.YAMLError,
+            StrategyNotExecutableError,
+        ) as exc:
+            return self._invalid_execution_request(exc)
 
         data_available = self._data_service.data_available(
             symbol,
@@ -475,11 +531,11 @@ class JobService:
         strategy_id: str,
         config_path: Path,
         allow_fallback: bool,
-    ) -> tuple[Path | None, str]:
+    ) -> tuple[Path, dict[str, Any]] | None:
         raw_config = load_config(config_path)
         run_config = BacktestRunConfig.model_validate(raw_config)
         if run_config.is_walk_forward:
-            return config_path, ""
+            return config_path, raw_config
 
         fallback = config_path.with_name("walkforward_config.yaml")
         if allow_fallback and fallback.exists():
@@ -492,8 +548,18 @@ class JobService:
                 else None
             )
             if fallback_id == strategy_id and fallback_run_config.is_walk_forward:
-                return fallback, ""
-        return None, "Config has no validation section for walk-forward."
+                return fallback, fallback_raw
+        return None
+
+    @staticmethod
+    def _invalid_execution_request(exc: Exception) -> dict[str, Any]:
+        """Reject preparation errors before creating a job or starting a worker."""
+        return {
+            "job_id": "",
+            "message": str(exc),
+            "data_available": False,
+            "code": "invalid_execution_request",
+        }
 
     def _resolve_strategy_run_config(
         self, strategy_id: str, revision_id: str | None
@@ -520,3 +586,13 @@ class JobService:
         if configured:
             return Path(configured).expanduser().resolve()
         return Path.cwd().resolve()
+
+
+def _saved_metric_summary(detail: dict[str, Any]) -> dict[str, Any]:
+    """Select the original snapshot's summary flags, never today's catalog."""
+    return {
+        key: value
+        for key, value in detail["metrics"].items()
+        if detail["definitions"][key]["summary"]
+        and detail["mode"] in detail["definitions"][key]["modes"]
+    }

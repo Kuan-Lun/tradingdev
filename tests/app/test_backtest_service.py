@@ -174,11 +174,30 @@ def test_run_raw_config_simple_backtest_serializes_metrics(tmp_path: Path) -> No
     assert strategy_loader.engine is not None
     assert strategy_loader.parallel_config == ParallelConfig()
     assert "total_return" in run.metrics
-    assert "daily_pnl_mean" not in run.metrics
+    assert "daily_pnl_mean" in run.metrics
+    assert "total_volume" in run.metrics
+    assert run.metrics == run.pipeline.backtest_result.metrics
     manifest = run.pipeline.execution_manifest
     assert manifest is not None
     assert manifest.config_copy() == run.pipeline.config_snapshot
     manifest.verify()
+
+
+def test_serialization_retains_metrics_outside_the_summary(tmp_path: Path) -> None:
+    service, _data, _loader, _strategy = _service(tmp_path)
+    metrics = {
+        "daily_pnl_mean": 12.5,
+        "total_volume": 1500.0,
+        "monthly_volume_mean": 750.0,
+        "future_metric": {"value": 1.25, "unavailable": float("nan")},
+    }
+
+    assert service.serialize_metrics(metrics) == {
+        "daily_pnl_mean": 12.5,
+        "total_volume": 1500.0,
+        "monthly_volume_mean": 750.0,
+        "future_metric": {"value": 1.25, "unavailable": None},
+    }
 
 
 def test_run_raw_config_walk_forward_uses_validation_section(tmp_path: Path) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
@@ -14,6 +15,7 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_file,
     sha256_text,
 )
+from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_lineage import (
     extract_random_seed,
@@ -21,6 +23,7 @@ from tradingdev.app.run_lineage import (
 )
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.execution import ManifestError
+from tradingdev.domain.performance.artifacts import bundles_from_pipeline
 from tradingdev.shared.utils.cache import cache_dir, compute_cache_key
 
 
@@ -132,59 +135,69 @@ class ArtifactService:
             manifest_hash=manifest.manifest_hash,
             processed_path=processed_path,
         )
-        run_id = f"cli_{key}"
-        manifest_path = ExecutionManifestStore(self._workspace).publish(
-            run_id, manifest
-        )
+        run_id = f"cli_{key}_{uuid4().hex}"
+        performance = bundles_from_pipeline(run_id, pipeline, metrics)
         directory = cache_dir()
-        directory.mkdir(parents=True, exist_ok=True)
-        cache_path = directory / f"{key}.pkl"
-        with cache_path.open("wb") as handle:
-            pickle.dump(pipeline, handle)
+        cache_path = directory / f"{run_id}.pkl"
+        performance_store = PerformanceStore(self._workspace, self._store)
+        with performance_store.publication(
+            performance,
+            metrics,
+            [self._workspace.runs / run_id / "manifest.json", cache_path],
+        ) as existing:
+            if existing:
+                return cache_path
+            manifest_path = ExecutionManifestStore(self._workspace).publish(
+                run_id, manifest
+            )
+            directory.mkdir(parents=True, exist_ok=True)
+            with cache_path.open("wb") as handle:
+                pickle.dump(pipeline, handle)
 
-        config_hash = sha256_text(
-            yaml.safe_dump(config_payload, sort_keys=False, allow_unicode=True)
-        )
-        dataset_id = (
-            sha256_file(processed_path)
-            if processed_path.exists()
-            else sha256_text(str(processed_path))
-        )
-        self._store.create_run(
-            run_id=run_id,
-            job_id=run_id,
-            strategy_id=strategy_id,
-            revision_id=source.revision_id,
-            manifest_hash=manifest.manifest_hash,
-            artifact_dir=manifest_path.parent,
-            metrics=metrics,
-            config_hash=config_hash,
-            source_hash=source.source_hash,
-            random_seed=extract_random_seed(config_payload),
-            dataset_id=dataset_id,
-        )
-        self._store.create_artifact(
-            artifact_id=f"{run_id}:execution_manifest",
-            run_id=run_id,
-            artifact_type="execution_manifest",
-            path=manifest_path,
-            sha256=sha256_file(manifest_path),
-            metadata={
-                "manifest_hash": manifest.manifest_hash,
-                "schema_version": manifest.schema_version,
-            },
-        )
-        self._store.create_artifact(
-            artifact_id=f"{run_id}:pipeline_result",
-            run_id=run_id,
-            artifact_type="pipeline_result",
-            path=cache_path,
-            sha256=sha256_file(cache_path),
-            metadata={
-                "source": "cli_cache",
-                "config_path": str(config_path),
-                "processed_path": str(processed_path),
-                "cache_key": key,
-            },
-        )
+            config_hash = sha256_text(
+                yaml.safe_dump(config_payload, sort_keys=False, allow_unicode=True)
+            )
+            dataset_id = (
+                sha256_file(processed_path)
+                if processed_path.exists()
+                else sha256_text(str(processed_path))
+            )
+            self._store.create_run(
+                run_id=run_id,
+                job_id=run_id,
+                strategy_id=strategy_id,
+                revision_id=source.revision_id,
+                manifest_hash=manifest.manifest_hash,
+                artifact_dir=manifest_path.parent,
+                metrics=metrics,
+                config_hash=config_hash,
+                source_hash=source.source_hash,
+                random_seed=extract_random_seed(config_payload),
+                dataset_id=dataset_id,
+            )
+            self._store.create_artifact(
+                artifact_id=f"{run_id}:execution_manifest",
+                run_id=run_id,
+                artifact_type="execution_manifest",
+                path=manifest_path,
+                sha256=sha256_file(manifest_path),
+                metadata={
+                    "manifest_hash": manifest.manifest_hash,
+                    "schema_version": manifest.schema_version,
+                },
+            )
+            self._store.create_artifact(
+                artifact_id=f"{run_id}:pipeline_result",
+                run_id=run_id,
+                artifact_type="pipeline_result",
+                path=cache_path,
+                sha256=sha256_file(cache_path),
+                metadata={
+                    "source": "cli_cache",
+                    "config_path": str(config_path),
+                    "processed_path": str(processed_path),
+                    "cache_key": key,
+                },
+            )
+            PerformanceStore(self._workspace, self._store).publish(performance)
         return cache_path

@@ -29,6 +29,8 @@ LIFECYCLE_TOOLS = [
     "get_job_status",
     "list_runs",
     "get_run",
+    "get_metric_catalog",
+    "get_run_metrics",
     "list_artifacts",
     "get_artifact",
 ]

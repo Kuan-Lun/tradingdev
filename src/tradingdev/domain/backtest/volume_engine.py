@@ -10,6 +10,7 @@ import pandas as pd
 from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 from tradingdev.domain.backtest.metrics import (
     calculate_metrics_from_simulation,
+    timestamp_index,
 )
 from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.shared.utils.logger import setup_logger
@@ -51,9 +52,15 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         signal_as_position: bool = False,
         re_entry_after_sl: bool = True,
         monthly_max_loss: float = 1500.0,
+        periods_per_year: float | None = None,
+        risk_free_rate: float = 0.0,
+        required_return: float = 0.0,
     ) -> None:
         super().__init__(
             init_cash=None,
+            periods_per_year=periods_per_year,
+            risk_free_rate=risk_free_rate,
+            required_return=required_return,
             fees=fees,
             slippage=slippage,
             freq=freq,
@@ -86,6 +93,9 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         low = low_s.to_numpy()
         signal = signal_s.to_numpy()
 
+        prices = np.column_stack((open_, high, low, close))
+        if not np.all(np.isfinite(prices)) or np.any(prices <= 0):
+            raise ValueError("Prices must be finite and positive")
         n = len(close)
         size_quote = self._position_size or 200.0
 
@@ -95,6 +105,8 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             weights = weight_s.astype(float).to_numpy()
         else:
             weights = np.ones(n, dtype=np.float64)
+        if not np.all(np.isfinite(weights)) or np.any(weights <= 0):
+            raise ValueError("Position weights must be finite and positive")
         sl = self._stop_loss
         tp = self._take_profit
         fee_rate = self._fees + self._slippage
@@ -105,6 +117,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
 
         pos_dir = 0
         entry_price = 0.0
+        entry_idx = 0
         pos_qty = 0.0
 
         # Monthly circuit breaker state
@@ -113,8 +126,9 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         circuit_breaker_active = False
 
         # Extract timestamps for monthly tracking
-        has_timestamps = "timestamp" in df.columns
-        timestamps_arr = df["timestamp"].to_numpy() if has_timestamps else None
+        timestamps = timestamp_index(df)
+        has_timestamps = timestamps is not None
+        timestamps_arr = timestamps
 
         logger.info(
             "Running backtest (volume mode): size=%.0f, sl=%s, tp=%s, "
@@ -165,11 +179,18 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                         pos_qty,
                         entry_price,
                         exit_price,
-                        fee_rate,
+                        self._fees,
+                        self._slippage,
+                        entry_idx,
+                        i,
                     )
                     trades.append(trade)
-                    cash += trade["net_pnl"]
-                    monthly_pnl += trade["net_pnl"]
+                    cash += (
+                        trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
+                    )
+                    monthly_pnl += (
+                        trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
+                    )
                     pos_dir = 0
                     pos_qty = 0.0
 
@@ -182,9 +203,14 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                         eff = size_quote * weights[i]
                         entry_price = c
                         pos_qty = eff / c
+                        entry_idx = i
                         cash -= eff * fee_rate
                         monthly_pnl -= eff * fee_rate
                         pos_dir = sig
+
+            if circuit_breaker_active:
+                equity[i] = cash
+                continue
 
             # --- signal_as_position: signal=0 → close at open ---
             if sig_as_pos and pos_dir != 0 and sig == 0:
@@ -193,11 +219,16 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     pos_qty,
                     entry_price,
                     o,
-                    fee_rate,
+                    self._fees,
+                    self._slippage,
+                    entry_idx,
+                    i,
                 )
                 trades.append(trade)
-                cash += trade["net_pnl"]
-                monthly_pnl += trade["net_pnl"]
+                cash += trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
+                monthly_pnl += (
+                    trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
+                )
                 pos_dir = 0
                 pos_qty = 0.0
 
@@ -208,14 +239,20 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     pos_qty,
                     entry_price,
                     o,
-                    fee_rate,
+                    self._fees,
+                    self._slippage,
+                    entry_idx,
+                    i,
                 )
                 trades.append(trade)
-                cash += trade["net_pnl"]
-                monthly_pnl += trade["net_pnl"]
+                cash += trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
+                monthly_pnl += (
+                    trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
+                )
                 eff = size_quote * weights[i]
                 entry_price = o
                 pos_qty = eff / o
+                entry_idx = i
                 cash -= eff * fee_rate
                 monthly_pnl -= eff * fee_rate
                 pos_dir = sig
@@ -225,6 +262,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 eff = size_quote * weights[i]
                 entry_price = o
                 pos_qty = eff / o
+                entry_idx = i
                 cash -= eff * fee_rate
                 monthly_pnl -= eff * fee_rate
                 pos_dir = sig
@@ -254,11 +292,18 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                         pos_qty,
                         entry_price,
                         c,
-                        fee_rate,
+                        self._fees,
+                        self._slippage,
+                        entry_idx,
+                        i,
                     )
                     trades.append(trade)
-                    cash += trade["net_pnl"]
-                    monthly_pnl += trade["net_pnl"]
+                    cash += (
+                        trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
+                    )
+                    monthly_pnl += (
+                        trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
+                    )
                     pos_dir = 0
                     pos_qty = 0.0
                     equity[i] = cash
@@ -269,22 +314,26 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 pos_qty,
                 entry_price,
                 float(close[-1]),
-                fee_rate,
+                self._fees,
+                self._slippage,
+                entry_idx,
+                n - 1,
             )
             trades.append(trade)
-            cash += trade["net_pnl"]
+            cash += trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
             equity[-1] = cash
 
-        timestamps = None
-        if "timestamp" in df.columns:
-            timestamps = df["timestamp"].to_numpy()
-
-        metrics = calculate_metrics_from_simulation(
+        analysis = calculate_metrics_from_simulation(
             equity_curve=equity,
             trades=trades,
             init_cash=None,
             timestamps=timestamps,
+            periods_per_year=self._periods_per_year,
+            risk_free_rate=self._risk_free_rate,
+            required_return=self._required_return,
+            frequency=self._freq,
         )
+        metrics = analysis.metrics
         logger.info(
             "Backtest complete (volume): %d trades, volume=%.0f",
             metrics["total_trades"],
@@ -294,9 +343,11 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             metrics=metrics,
             equity_curve=equity,
             trades=trades,
-            timestamps=timestamps,
+            timestamps=None if timestamps is None else timestamps.to_numpy(),
             init_cash=None,
             mode="volume",
+            metric_metadata=analysis.metadata,
+            returns=analysis.returns,
         )
 
 
@@ -328,18 +379,34 @@ def _close_position(
     entry_price: float,
     exit_price: float,
     fee_rate: float,
+    slippage_rate: float,
+    entry_idx: int,
+    exit_idx: int,
 ) -> dict[str, Any]:
     """Build a trade record for a closed position."""
     gross_pnl = pos_dir * pos_qty * (exit_price - entry_price)
     exit_value = pos_qty * exit_price
+    entry_fee = pos_qty * entry_price * fee_rate
     exit_fee = exit_value * fee_rate
-    net_pnl = gross_pnl - exit_fee
+    entry_slippage = pos_qty * entry_price * slippage_rate
+    exit_slippage = exit_value * slippage_rate
+    net_pnl = gross_pnl - entry_fee - exit_fee - entry_slippage - exit_slippage
     return {
         "direction": pos_dir,
+        "size": pos_qty,
+        "entry_idx": entry_idx,
+        "exit_idx": exit_idx,
+        "status": "closed",
+        "exit_notional": exit_value,
+        "entry_fees": entry_fee,
+        "exit_fees": exit_fee,
+        "entry_slippage": entry_slippage,
+        "exit_slippage": exit_slippage,
+        "slippage": entry_slippage + exit_slippage,
         "entry_price": entry_price,
         "exit_price": exit_price,
         "size_quote": pos_qty * entry_price,
         "gross_pnl": gross_pnl,
-        "fee": exit_fee,
+        "fee": entry_fee + exit_fee,
         "net_pnl": net_pnl,
     }

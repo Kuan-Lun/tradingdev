@@ -37,6 +37,16 @@ def _make_ohlcv_df(
 
 
 EXPECTED_KEYS = {
+    "sortino_ratio",
+    "calmar_ratio",
+    "annual_volatility",
+    "daily_max_drawdown",
+    "max_drawdown_amount",
+    "trade_expectancy",
+    "avg_holding_bars",
+    "total_fees",
+    "total_slippage",
+    "open_trades",
     "total_return",
     "total_pnl",
     "sharpe_ratio",

@@ -56,6 +56,11 @@ FLAT ──(safe + direction)──► LONG/SHORT
 | `max_acceptable_loss_pct` | 0.0 | 不接受淨虧損；費後無法打平即標記為 unsafe |
 | `fee_rate` | 0.0011 | 單邊手續費 + 滑點 |
 
+執行 threshold 搜尋時，`fit()` 以驗證資料回測候選值，選擇扣除回測手續費
+與滑點後 `total_pnl` 最高且為有限數值的 `risk_threshold`；若有效結果皆虧損，
+選擇虧損最小者。不可用與非有限數值不參與比較；全部無有效結果時，保留
+設定的 `risk_threshold`。此搜尋不以 `monthly_volume_target` 作為硬性篩選條件。
+
 ### Direction
 
 | 參數 | 預設值 | 說明 |

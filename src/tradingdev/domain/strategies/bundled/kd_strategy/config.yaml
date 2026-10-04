@@ -22,6 +22,7 @@ parallel:
 backtest:
   symbol: "BTC/USDT"
   timeframe: "1h"
+  periods_per_year: 365.0 # Daily crypto returns, independent of bar timeframe
   start_date: "2024-01-01"
   end_date: "2024-12-31"
   init_cash: 10000.0

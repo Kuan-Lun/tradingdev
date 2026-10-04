@@ -167,7 +167,7 @@ def test_research_tool_rejects_service_response_without_success(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     service = RunService(workspace=WorkspacePaths(tmp_path / "workspace"))
-    monkeypatch.setattr(service, "compare_runs", lambda _: {"runs": []})
+    monkeypatch.setattr(service, "compare_runs", lambda *_, **__: {"runs": []})
     mcp = FastMCP("research-missing-success-test")
     runs.register(mcp, service)
     with pytest.raises(ToolError, match=r"success\s+Field required"):

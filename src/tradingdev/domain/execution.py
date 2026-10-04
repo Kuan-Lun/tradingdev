@@ -22,18 +22,16 @@ from pydantic import (
 from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
 from tradingdev.domain.data.requirements import DataRequirement
 from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.domain.optimization.grid_search import metric_direction
+from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.performance.sampling import (
+    DAILY_EQUITY_METRICS,
+    daily_observation_unavailable_reason,
+)
 from tradingdev.domain.strategies.execution import StrategyExecution
+from tradingdev.shared.utils.json_values import strict_json_value
 
 type ExecutionKind = Literal["backtest", "walk_forward", "optimization"]
-type OptimizationMetric = Literal[
-    "total_return",
-    "total_pnl",
-    "annual_return",
-    "sharpe_ratio",
-    "max_drawdown",
-    "win_rate",
-    "profit_factor",
-]
 
 
 class ManifestError(ValueError):
@@ -41,25 +39,11 @@ class ManifestError(ValueError):
 
 
 def _json_value(value: object, *, allow_dates: bool = False) -> JsonValue:
-    """Copy finite JSON without coercing keys or silently replacing numbers."""
-    if value is None or isinstance(value, bool | str | int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ManifestError("Execution values must contain only finite numbers")
-        return value
-    if allow_dates and isinstance(value, dt.date):
-        return value.isoformat()
-    if isinstance(value, list):
-        return [_json_value(item, allow_dates=allow_dates) for item in value]
-    if isinstance(value, dict):
-        copied: dict[str, JsonValue] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise ManifestError("Execution JSON object keys must be strings")
-            copied[key] = _json_value(item, allow_dates=allow_dates)
-        return copied
-    raise ManifestError(f"Unsupported execution value: {type(value).__name__}")
+    """Translate the shared strict input policy into a manifest error."""
+    try:
+        return strict_json_value(value, allow_dates=allow_dates)
+    except ValueError as exc:
+        raise ManifestError(f"Invalid execution JSON: {exc}") from exc
 
 
 def _resolve_config(value: object) -> dict[str, JsonValue]:
@@ -87,15 +71,55 @@ class OptimizationSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     param_ranges: dict[str, list[JsonValue]]
-    optimization_metric: OptimizationMetric
+    optimization_metric: str = Field(min_length=1)
     train_start: dt.date
     train_end: dt.date
     test_start: dt.date
     test_end: dt.date
-    direction: Literal["maximize"] = "maximize"
+    direction: Literal["maximize", "minimize"]
     trial_timeout_seconds: int = Field(default=300, gt=0, strict=True)
     confirmation_timeout_seconds: int = Field(default=1800, gt=0, strict=True)
     confirmation_poll_interval: float = Field(default=2.0, gt=0, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_new_objective(cls, value: object) -> object:
+        """Resolve omitted direction once; saved policies retain their meaning."""
+        if isinstance(value, dict) and "direction" not in value:
+            metric_id = value.get("optimization_metric")
+            if isinstance(metric_id, str):
+                return {**value, "direction": metric_direction(metric_id)}
+        return value
+
+    def validate_new_request(self, backtest: dict[str, JsonValue]) -> None:
+        """Validate applicability only when creating a new execution request."""
+        direction = metric_direction(self.optimization_metric)
+        definition = METRIC_CATALOG[self.optimization_metric]
+        if self.direction != direction:
+            raise ManifestError(
+                f"Metric '{self.optimization_metric}' requires direction '{direction}'"
+            )
+        if backtest["mode"] not in definition.modes:
+            raise ManifestError(
+                f"Metric '{self.optimization_metric}' is not applicable to "
+                f"mode '{backtest['mode']}'"
+            )
+        if (
+            definition.requires_annualization
+            and backtest.get("periods_per_year") is None
+        ):
+            raise ManifestError(
+                f"Metric '{self.optimization_metric}' requires periods_per_year"
+            )
+        if self.optimization_metric in DAILY_EQUITY_METRICS:
+            frequency = backtest["timeframe"]
+            assert isinstance(frequency, str)
+            reason = daily_observation_unavailable_reason(frequency)
+            if reason is not None:
+                raise ManifestError(
+                    f"Metric '{self.optimization_metric}' requires daily or finer "
+                    f"bars; timeframe '{frequency}': {reason}"
+                )
 
     @field_validator("param_ranges", mode="before")
     @classmethod
@@ -154,7 +178,7 @@ class ExecutionManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal[2]
+    schema_version: Literal[4]
     kind: ExecutionKind
     config: dict[str, JsonValue]
     strategy_execution: StrategyExecution
@@ -209,15 +233,19 @@ class ExecutionManifest(BaseModel):
                 if optimization is not None
                 else None
             )
+            if search is not None:
+                backtest = resolved["backtest"]
+                assert isinstance(backtest, dict)
+                search.validate_new_request(backtest)
             payload = {
-                "schema_version": 2,
+                "schema_version": 4,
                 "kind": kind,
                 "config": resolved,
                 "strategy_execution": strategy.model_dump(mode="python"),
                 "optimization": search.model_dump(mode="python") if search else None,
             }
             return cls(
-                schema_version=2,
+                schema_version=4,
                 kind=kind,
                 config=resolved,
                 strategy_execution=strategy,

@@ -12,6 +12,7 @@ import yaml
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
+from tests.e2e.workflow_diagnostics import workflow_diagnostics
 from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPWorkspace
 
 pytestmark = pytest.mark.live_llm
+
+DETAIL_METRIC_IDS = {"daily_pnl_mean", "total_volume", "n_days"}
 
 
 async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None:
@@ -297,6 +300,35 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             and call.arguments.get("run_id") == run_id
         ),
     )
+    catalog_index = require_index(
+        "get_metric_catalog returning the additional metrics",
+        (
+            index
+            for index, call in enumerate(calls)
+            if call.name == "get_metric_catalog"
+            and call.result
+            and call.result.get("success") is True
+            and {definition["id"] for definition in call.result["definitions"]}
+            >= DETAIL_METRIC_IDS
+        ),
+    )
+    detail_index = require_index(
+        f"get_run_metrics(run_id={run_id!r}) returning the requested extra metrics",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index > max(queried_index, catalog_index)
+            and call.name == "get_run_metrics"
+            and call.arguments.get("run_id") == run_id
+            and call.result
+            and call.result.get("success") is True
+            and set(call.result.get("metrics", {})) >= DETAIL_METRIC_IDS
+        ),
+    )
+    assert calls[detail_index].result["scope"] == "full"
+    summary = queried.result["run"]
+    assert set(summary["available_metric_ids"]) >= DETAIL_METRIC_IDS
+    assert DETAIL_METRIC_IDS.isdisjoint(summary["metrics"])
     if scenario.repair:
         read_index = require_index(
             f"get_strategy({target}) returning success=True before repairing the draft",
@@ -339,7 +371,10 @@ def test_llm_authors_backtests_and_queries_results(
 ) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
-    with temporary_mcp_workspace() as workspace:
+    with (
+        temporary_mcp_workspace() as workspace,
+        workflow_diagnostics(workspace, scenario),
+    ):
         workspace.seed_market(market_frame())
         legacy_files: dict[Path, bytes] = {}
 
@@ -369,6 +404,20 @@ def test_llm_authors_backtests_and_queries_results(
         calls = asyncio.run(run())
         try:
             assert_workflow(calls, scenario)
+            detail = next(
+                call for call in reversed(calls) if call.name == "get_run_metrics"
+            )
+            saved = json.loads(
+                (
+                    workspace.workspace
+                    / "runs"
+                    / detail.arguments["run_id"]
+                    / "performance.json"
+                ).read_text(encoding="utf-8")
+            )
+            persisted = saved["scopes"][detail.result["scope"]]["values"]
+            for metric_id in DETAIL_METRIC_IDS:
+                assert detail.result["metrics"][metric_id] == persisted[metric_id]
             for path, original in legacy_files.items():
                 assert path.read_bytes() == original, (
                     f"Legacy recovery modified the original file: {path.name}"

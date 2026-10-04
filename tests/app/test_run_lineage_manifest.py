@@ -8,11 +8,25 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.app.run_lineage import read_strategy_snapshot
+from tradingdev.app.run_lineage import extract_random_seed, read_strategy_snapshot
 from tradingdev.app.strategy_service import StrategyNotExecutableError
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_run_lineage_does_not_guess_a_seed_from_model_settings() -> None:
+    config = {
+        "strategy": {"parameters": {"random_seed": 7}},
+        "backtest": {"random_seed": 8},
+    }
+    assert extract_random_seed(config) is None
+    assert extract_random_seed({**config, "random_seed": 42}) == 42
+
+
+@pytest.mark.parametrize("invalid", [True, "42", 42.0, -1, 2**32])
+def test_run_lineage_does_not_coerce_invalid_seed(invalid: object) -> None:
+    assert extract_random_seed({"random_seed": invalid}) is None
 
 
 @pytest.mark.parametrize("change", ["replace", "remove"])

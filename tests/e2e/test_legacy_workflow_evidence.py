@@ -77,10 +77,43 @@ def legacy_calls() -> list[ToolCall]:
             {"run_id": "run-1"},
             {
                 "success": True,
-                "run": {**identity, "metrics": {}, "manifest_hash": "a" * 64},
+                "run": {
+                    **identity,
+                    "metrics": {},
+                    "manifest_hash": "a" * 64,
+                    "available_metric_ids": [
+                        "daily_pnl_mean",
+                        "total_volume",
+                        "n_days",
+                    ],
+                },
             },
         ),
         ToolCall("list_artifacts", {"run_id": "run-1"}, [{"path": "result.json"}]),
+        ToolCall(
+            "get_metric_catalog",
+            {"mode": "signal"},
+            {
+                "success": True,
+                "definitions": [
+                    {"id": metric_id}
+                    for metric_id in ["daily_pnl_mean", "total_volume", "n_days"]
+                ],
+            },
+        ),
+        ToolCall(
+            "get_run_metrics",
+            {"run_id": "run-1"},
+            {
+                "success": True,
+                "scope": "full",
+                "metrics": {
+                    "daily_pnl_mean": 1.0,
+                    "total_volume": 100.0,
+                    "n_days": 8,
+                },
+            },
+        ),
     ]
 
 

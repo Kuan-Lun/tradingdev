@@ -22,7 +22,12 @@ import xgboost as xgb
 from joblib import Parallel, delayed
 
 from tradingdev.domain.ml.features.quantile_features import QuantileFeatureEngineer
-from tradingdev.domain.optimization.grid_search import tuple_grid
+from tradingdev.domain.optimization.grid_search import (
+    finite_metric_value,
+    is_better_metric,
+    metric_direction,
+    tuple_grid,
+)
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
@@ -277,11 +282,12 @@ class QuantileStrategy(BaseStrategy):
             else [cfg.edge_for_full_size]
         )
 
-        best_value = -math.inf
+        best_value: float | None = None
         best_horizon = cfg.horizon
         best_confidence = cfg.min_entry_edge
         best_efs = cfg.edge_for_full_size
         target = cfg.target_metric
+        direction = metric_direction(target)
         min_mp = cfg.min_monthly_pnl
 
         best_model: xgb.XGBClassifier | None = None
@@ -370,17 +376,15 @@ class QuantileStrategy(BaseStrategy):
             n_filtered = 0
             for params, metrics in results:
                 if min_mp is not None:
-                    dpm = metrics.get("daily_pnl_mean", -math.inf)
-                    monthly_pnl = (
-                        dpm * 30 if isinstance(dpm, (int, float)) else -math.inf
-                    )
+                    dpm = finite_metric_value(metrics.get("daily_pnl_mean"))
+                    monthly_pnl = dpm * 30 if dpm is not None else -math.inf
                     if monthly_pnl < min_mp:
                         n_filtered += 1
                         continue
 
-                value = metrics.get(target, -math.inf)
-                if isinstance(value, (int, float)) and value > best_value:
-                    best_value = float(value)
+                value = finite_metric_value(metrics.get(target))
+                if is_better_metric(value, best_value, direction):
+                    best_value = value
                     best_horizon = params[0]
                     best_confidence = params[1]
                     best_efs = params[2]
@@ -395,6 +399,11 @@ class QuantileStrategy(BaseStrategy):
                     n_filtered,
                     len(grid),
                 )
+
+        if best_value is None:
+            raise ValueError(
+                "No quantile parameter combination has a finite eligible objective"
+            )
 
         self._best_horizon = best_horizon
         self._best_min_confidence = best_confidence

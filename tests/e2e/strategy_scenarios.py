@@ -41,15 +41,21 @@ class Scenario:
 讀取 get_strategy_contract，依照契約完成 Python 與 YAML。{self.requirement}
 所有參數放在 strategy.parameters 且可覆寫：{self.parameters}。
 YAML backtest 設定 BTC/USDT、1h、2024-01-01 至 2024-01-08、init_cash=10000、
-mode=signal、fees=0、slippage=0、random_seed=42。data.requirements.features 為空。
+mode=signal、fees=0、slippage=0、periods_per_year=365。
+random_seed=42 放在 YAML 頂層，與 strategy、backtest 同層。
+data.requirements.features 為空。
 完成 save_strategy、validate_strategy、dry_run_strategy；若有錯誤請讀取診斷修正，
 每次 save 取得的新 revision_id 必須傳給 validate、dry-run 與 start_backtest，
 確認各工具回覆的 revision_id 一致，直到 runnable。不 promote。
+啟動前核對 validate／dry-run 回覆的 effective_config 與上述所有設定一致；
+若不一致，修改 YAML 後重新 save、validate、dry-run，不可直接接受預設值。
 接著你必須親自透過 MCP start_backtest 啟動這個策略，
 symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
 本次行情已預先放入後端快取，不下載行情、不使用外部資料。
 持續 get_job_status 查詢直到 done，再以回傳的 run_id 呼叫 get_run，
-以及 list_artifacts，確認結果後就結束，只回答「完成」與 run_id。
+以及 list_artifacts。一般回覆只有摘要；接著呼叫 get_metric_catalog(mode=signal)，
+再以 get_run_metrics 查同一 run_id 的 daily_pnl_mean、total_volume、n_days，
+確認這些未列於摘要的指標仍可查詢。確認結果後就結束，只回答「完成」與 run_id。
 不得只啟動工作就結束；不需要額外取得 artifact 內容或撰寫回測報告。
 只能透過 MCP 工具撰寫與執行，不使用 shell 或直接編輯檔案。
 直接呼叫工具，不敘述計畫或重貼程式碼；程式、YAML 與 request_summary 保持精簡，

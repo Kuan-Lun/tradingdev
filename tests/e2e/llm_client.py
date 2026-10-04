@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -179,6 +180,34 @@ def _usage_summary(payload: dict[str, Any]) -> str:
     return " " + " ".join(fields) if fields else ""
 
 
+_MAX_PROVIDER_TOOL_REPAIRS = 2
+# Reproduce model sampling where the selected provider supports it. This is
+# separate from the strategy's execution random_seed in the backtest manifest.
+_MODEL_SAMPLING_SEED = 42
+_PROVIDER_TOOL_XML_ERROR = re.compile(
+    r"XML syntax error on line [1-9][0-9]*: "
+    r"element <parameter> closed by </function>"
+)
+
+
+def _provider_tool_serialization_error(response: httpx.Response) -> str | None:
+    """Recognize the confirmed Ollama tool parser failure, not generic HTTP 500s."""
+    if response.status_code != 500:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    if (
+        not isinstance(message, str)
+        or _PROVIDER_TOOL_XML_ERROR.fullmatch(message) is None
+    ):
+        return None
+    return message
+
+
 async def run_local_model(
     client: MCPClient,
     prompt: str,
@@ -194,13 +223,16 @@ async def run_local_model(
     """Bridge local Chat Completions tool calls to real stdio MCP, with bounds.
 
     No shell or file tool is exposed. MCP errors are returned to the model so it
-    can repair drafts; malformed model responses and budget exhaustion fail.
+    can repair drafts. A confirmed provider tool serialization failure receives
+    explicit model feedback at most twice per conversation, before any tool from
+    that response runs. Other malformed responses and budget exhaustion fail.
     The caller owns the MCP session and its worker/file cleanup.
     """
     calls: list[ToolCall] = []
     recent_results: list[str] = []
     stage = "MCP tool discovery"
     round_number = 0
+    provider_tool_repairs = 0
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": client.instructions},
         {"role": "user", "content": prompt},
@@ -227,6 +259,7 @@ async def run_local_model(
             ]
             allowed = {tool["function"]["name"] for tool in tools}
             _progress(f"{stage}: {len(allowed)} tools available")
+            _progress(f"model sampling seed={_MODEL_SAMPLING_SEED}")
             while True:
                 round_number += 1
                 stage = f"model round {round_number}"
@@ -236,6 +269,7 @@ async def run_local_model(
                     "tools": tools,
                     "tool_choice": "auto",
                     "stream": False,
+                    "seed": _MODEL_SAMPLING_SEED,
                 }
                 if temperature is not None:
                     request["temperature"] = temperature
@@ -252,9 +286,49 @@ async def run_local_model(
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     detail = _short_text(response.text, 1200)
+                    serialization_error = _provider_tool_serialization_error(response)
+                    if (
+                        serialization_error is not None
+                        and provider_tool_repairs < _MAX_PROVIDER_TOOL_REPAIRS
+                    ):
+                        provider_tool_repairs += 1
+                        _progress(
+                            f"{stage}: HTTP 500 provider tool serialization error "
+                            f"after {elapsed:.2f}s; feedback repair "
+                            f"{provider_tool_repairs}/{_MAX_PROVIDER_TOOL_REPAIRS}; "
+                            f"no MCP calls dispatched from this response; "
+                            f"error: {serialization_error}"
+                        )
+                        # No assistant message was received or dispatched. Keep
+                        # every completed call and result; ask for a new response
+                        # with feedback rather than replaying an identical request.
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Runtime feedback: the model provider rejected "
+                                    "your previous tool-call serialization with HTTP "
+                                    f"500: {serialization_error}. No MCP tools from "
+                                    "that response were executed. All earlier tool "
+                                    "calls and their results above remain completed. "
+                                    "Regenerate only the next intended tool call "
+                                    "using the advertised tool schema and the "
+                                    "provider's required tool-call format. Close "
+                                    "each parameter before closing the function. "
+                                    "Do not repeat already completed tool calls."
+                                ),
+                            }
+                        )
+                        continue
+                    repair_detail = (
+                        "; provider tool serialization repair budget exhausted "
+                        f"({_MAX_PROVIDER_TOOL_REPAIRS} feedback repairs)"
+                        if serialization_error is not None
+                        else ""
+                    )
                     raise httpx.HTTPStatusError(
                         f"{exc}\n{stage} failed after {elapsed:.2f}s; "
-                        f"response body: {detail}",
+                        f"response body: {detail}{repair_detail}",
                         request=exc.request,
                         response=exc.response,
                     ) from exc
@@ -277,7 +351,9 @@ async def run_local_model(
                         _short_text(content) if isinstance(content, str) else ""
                     )
                     _progress(
-                        f"{stage}: finished; final text: {final_text or '(empty)'}"
+                        f"{stage}: finished; "
+                        f"provider_tool_repairs={provider_tool_repairs}; "
+                        f"final text: {final_text or '(empty)'}"
                     )
                     return calls
                 assert choice.get("finish_reason") in {"tool_calls", "stop"}, choice

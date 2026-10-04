@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -15,6 +14,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.job_store import JobStore
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
+from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.validation.report import summarize_results
@@ -27,18 +27,27 @@ if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
 
-def _undefined_walk_forward_summary() -> dict[str, object]:
+def _undefined_walk_forward_fold() -> WalkForwardResult:
     moment = datetime(2024, 1, 1, tzinfo=UTC)
-    fold = WalkForwardResult(
+    result = BacktestResult(
+        metrics={"sharpe_ratio": None},
+        equity_curve=np.array([100.0]),
+        init_cash=100.0,
+    )
+    return WalkForwardResult(
         fold_index=0,
         train_start=moment,
         train_end=moment,
         test_start=moment,
         test_end=moment,
         test_metrics={"sharpe_ratio": float("inf")},
+        train_backtest=result,
+        test_backtest=result,
     )
-    with pytest.warns(RuntimeWarning):
-        return summarize_results([fold])
+
+
+def _undefined_walk_forward_summary() -> dict[str, object]:
+    return summarize_results([_undefined_walk_forward_fold()])
 
 
 def _reject_nonfinite(constant: str) -> object:
@@ -88,10 +97,16 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
     metrics = _undefined_walk_forward_summary()
     original_stats = metrics["sharpe_ratio"]
     assert isinstance(original_stats, dict)
-    assert math.isnan(original_stats["mean"])
+    assert original_stats["mean"] is None
     expected = {
         "n_folds": 1,
-        "sharpe_ratio": {"mean": None, "std": None, "min": None, "max": None},
+        "sharpe_ratio": {
+            "mean": None,
+            "std": None,
+            "min": None,
+            "max": None,
+            "valid_count": 0,
+        },
     }
     if writer == "job":
         jobs.create_job(job_id="walk_forward", strategy_name="fixture")
@@ -149,6 +164,7 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
         ArtifactService(workspace=workspace, store=store).cache_pipeline_result(
             pipeline=PipelineResult(
                 mode="walk_forward",
+                fold_results=[_undefined_walk_forward_fold()],
                 config_snapshot=manifest.config_copy(),
                 execution_manifest=manifest,
             ),
@@ -157,7 +173,9 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
             metrics=metrics,
             strategy_id="cli_fixture",
         )
-    run_id = "cli_metric-contract" if writer == "cli" else "walk_forward"
+    run_id = store.list_runs()[0]["run_id"] if writer == "cli" else "walk_forward"
+    if writer == "cli":
+        assert run_id.startswith("cli_metric-contract_")
     run = store.get_run(run_id)
     assert run is not None
     assert run["metrics"] == expected
@@ -169,7 +187,7 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
     assert row is not None
     assert json.loads(row["metrics"], parse_constant=_reject_nonfinite) == expected
     json.dumps(run, allow_nan=False)
-    assert math.isnan(original_stats["mean"])
+    assert original_stats["mean"] is None
 
 
 @pytest.mark.parametrize("storage", ["file", "sqlite"])

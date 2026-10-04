@@ -1,312 +1,402 @@
-"""Performance metrics for vectorbt Portfolio and custom simulation."""
+"""Third-party return/risk and closed-trade statistics with explicit semantics."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from importlib.metadata import version
+from typing import Any
 
+import empyrical as ep
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import vectorbt as vbt
+from vectorbt.portfolio.enums import trade_dt
 
-if TYPE_CHECKING:
-    import vectorbt as vbt
+from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.performance.sampling import (
+    DAILY_EQUITY_METRICS,
+    daily_observation_unavailable_reason,
+)
 
-from tradingdev.shared.utils.logger import setup_logger
 
-logger = setup_logger(__name__)
+@dataclass
+class PerformanceAnalysis:
+    """Calculated values and the settings required to interpret them."""
+
+    metrics: dict[str, Any]
+    metadata: dict[str, Any]
+    returns: npt.NDArray[np.float64] | None
 
 
-def calculate_metrics(pf: vbt.Portfolio) -> dict[str, Any]:
-    """Extract key performance metrics from a vectorbt Portfolio."""
-    trades = pf.trades
-    records = trades.records_readable
-    has_trades = len(records) > 0
+def timestamp_index(df: pd.DataFrame) -> pd.DatetimeIndex | None:
+    """Use the market timestamps, normalized to UTC, never a synthetic date."""
+    values = df.get("timestamp", df.index)
+    if "timestamp" not in df and not isinstance(df.index, pd.DatetimeIndex):
+        return None
+    index = pd.DatetimeIndex(pd.to_datetime(values, utc=True))
+    if index.hasnans or not index.is_monotonic_increasing or index.has_duplicates:
+        raise ValueError("Market timestamps must be valid, unique, and increasing")
+    return index
 
-    total_volume = 0.0
-    if has_trades and "Size" in records.columns:
-        entry_prices = records.get(
-            "Avg Entry Price",
-            records.get("Entry Price"),
+
+def normalized_trades(trades: vbt.Trades) -> list[dict[str, Any]]:
+    """Export the same vectorbt records used for statistics and reconciliation."""
+    result = []
+    for record in trades.records_arr:
+        entry_notional = float(record["size"] * record["entry_price"])
+        is_closed = int(record["status"]) == 1
+        fee = float(record["entry_fees"] + record["exit_fees"])
+        result.append(
+            {
+                "direction": 1 if int(record["direction"]) == 0 else -1,
+                "entry_idx": int(record["entry_idx"]),
+                "exit_idx": int(record["exit_idx"]),
+                "entry_price": float(record["entry_price"]),
+                "exit_price": float(record["exit_price"]),
+                "size": float(record["size"]),
+                "size_quote": entry_notional,
+                "exit_notional": float(record["size"] * record["exit_price"])
+                if is_closed
+                else 0.0,
+                "entry_fees": float(record["entry_fees"]),
+                "exit_fees": float(record["exit_fees"]),
+                "fee": fee,
+                "gross_pnl": float(record["pnl"]) + fee,
+                "net_pnl": float(record["pnl"]),
+                "status": "closed" if is_closed else "open",
+            }
         )
-        if entry_prices is not None:
-            total_volume = float((records["Size"].abs() * entry_prices).sum())
-
-    daily_pnl = _daily_pnl_from_portfolio(pf)
-    monthly_pnl = _monthly_pnl_from_portfolio(pf)
-
-    total_ret = float(pf.total_return())
-    value_series = pf.value()
-    total_pnl = (
-        float(value_series.iloc[-1] - value_series.iloc[0])
-        if len(value_series) > 1
-        else 0.0
-    )
-
-    total_trades_count = int(trades.count())
-    n_months = monthly_pnl.get("n_months", 0)
-
-    metrics: dict[str, Any] = {
-        "total_return": total_ret,
-        "total_pnl": total_pnl,
-        "sharpe_ratio": float(pf.sharpe_ratio()),
-        "max_drawdown": float(pf.max_drawdown()),
-        "win_rate": (float(trades.win_rate()) if has_trades else 0.0),
-        "profit_factor": (float(trades.profit_factor()) if has_trades else 0.0),
-        "total_trades": total_trades_count,
-        "total_volume": total_volume,
-        "annual_return": float(pf.annualized_return()),
-    }
-    metrics.update(daily_pnl)
-    metrics.update(monthly_pnl)
-    metrics["monthly_trades_mean"] = (
-        total_trades_count / n_months if n_months > 0 else 0.0
-    )
-    metrics["monthly_volume_mean"] = total_volume / n_months if n_months > 0 else 0.0
-    return metrics
+    return result
 
 
-def _daily_pnl_from_portfolio(
+def calculate_metrics(
     pf: vbt.Portfolio,
-) -> dict[str, Any]:
-    """Compute daily P&L stats from a vectorbt Portfolio."""
-    try:
-        value = pf.value()
-        if len(value) < 2:
-            return _empty_daily_pnl()
-
-        pnl_series = value.diff().dropna()
-        if hasattr(pnl_series.index, "date"):
-            daily = pnl_series.groupby(pnl_series.index.date).sum()
-        else:
-            daily = pnl_series
-
-        return _compute_daily_stats(np.array(daily, dtype=float))
-    except Exception:
-        logger.debug(
-            "Could not compute daily P&L stats",
-            exc_info=True,
-        )
-        return _empty_daily_pnl()
+    *,
+    periods_per_year: float | None = None,
+    risk_free_rate: float = 0.0,
+    required_return: float = 0.0,
+    frequency: str = "1h",
+    timestamps: pd.DatetimeIndex | None = None,
+) -> PerformanceAnalysis:
+    """Analyze portfolio returns with Empyrical and trades with vectorbt."""
+    orders = pf.orders.records_arr
+    return _analyze(
+        np.asarray(pf.value(), dtype=np.float64),
+        pf.trades,
+        float(pf.init_cash),
+        timestamps,
+        float(np.sum(orders["size"] * orders["price"])),
+        float(np.sum(orders["fees"])),
+        None,
+        periods_per_year,
+        risk_free_rate,
+        required_return,
+        frequency,
+    )
 
 
 def calculate_metrics_from_simulation(
     equity_curve: npt.NDArray[np.float64],
     trades: list[dict[str, Any]],
     init_cash: float | None,
-    timestamps: Any | None = None,
-) -> dict[str, Any]:
-    """Compute metrics from a custom bar-by-bar simulation.
-
-    When ``init_cash`` is ``None`` (volume / fixed-notional mode),
-    the equity curve is treated as cumulative P&L starting from zero.
-    Percentage-based metrics (``total_return``, ``annual_return``) are
-    set to ``0.0``, and ``max_drawdown`` is reported in absolute terms
-    (USDT).
-    """
-    n = len(equity_curve)
-    is_volume_mode = init_cash is None
-    effective_init = init_cash if init_cash is not None else 0.0
-    final_equity = float(equity_curve[-1]) if n > 0 else effective_init
-
-    total_pnl = final_equity - effective_init
-    if is_volume_mode:
-        total_return = 0.0
-    else:
-        total_return = total_pnl / effective_init if effective_init != 0 else 0.0
-
-    total_trades = len(trades)
-    total_volume = sum(t["size_quote"] for t in trades) * 2
-
-    wins = [t for t in trades if t["net_pnl"] > 0]
-    losses = [t for t in trades if t["net_pnl"] <= 0]
-    win_rate = len(wins) / total_trades if total_trades else 0.0
-    sum_wins = sum(t["net_pnl"] for t in wins)
-    sum_losses = abs(sum(t["net_pnl"] for t in losses))
-    profit_factor = sum_wins / sum_losses if sum_losses > 0 else 0.0
-
-    daily_pnl = _daily_pnl_from_equity(equity_curve, timestamps)
-    monthly_pnl = _monthly_pnl_from_equity(equity_curve, timestamps)
-
-    if n >= 2:
-        n_days = daily_pnl.get("n_days", 1)
-        bars_per_day = max(n / max(n_days, 1), 1)
-        ann_factor = np.sqrt(365 * bars_per_day)
-
-        if is_volume_mode:
-            # Absolute P&L-based Sharpe (dollar Sharpe)
-            pnl_diffs = np.diff(equity_curve)
-            std = float(np.std(pnl_diffs))
-            sharpe = float(np.mean(pnl_diffs)) / std * ann_factor if std > 0 else 0.0
-
-            # Max drawdown in absolute USDT
-            cummax = np.maximum.accumulate(equity_curve)
-            max_drawdown = float(np.max(cummax - equity_curve))
-
-            annual_return = 0.0
-        else:
-            # Percentage-based metrics (signal mode)
-            returns = np.diff(equity_curve) / equity_curve[:-1]
-            std = float(np.std(returns))
-            sharpe = float(np.mean(returns)) / std * ann_factor if std > 0 else 0.0
-
-            cummax = np.maximum.accumulate(equity_curve)
-            drawdowns = (cummax - equity_curve) / cummax
-            max_drawdown = float(np.max(drawdowns))
-
-            total_days = max(n_days, 1)
-            annual_return = (1 + total_return) ** (365 / total_days) - 1
-    else:
-        sharpe = 0.0
-        max_drawdown = 0.0
-        annual_return = 0.0
-
-    n_months = monthly_pnl.get("n_months", 0)
-
-    metrics: dict[str, Any] = {
-        "total_return": total_return,
-        "total_pnl": total_pnl,
-        "sharpe_ratio": sharpe,
-        "max_drawdown": max_drawdown,
-        "win_rate": win_rate,
-        "profit_factor": profit_factor,
-        "total_trades": total_trades,
-        "total_volume": total_volume,
-        "annual_return": annual_return,
-    }
-    metrics.update(daily_pnl)
-    metrics.update(monthly_pnl)
-    metrics["monthly_trades_mean"] = total_trades / n_months if n_months > 0 else 0.0
-    metrics["monthly_volume_mean"] = total_volume / n_months if n_months > 0 else 0.0
-    return metrics
-
-
-def _daily_pnl_from_equity(
-    equity_curve: npt.NDArray[np.float64],
-    timestamps: Any | None = None,
-) -> dict[str, Any]:
-    """Compute daily P&L stats from an equity curve."""
-    if len(equity_curve) < 2:
-        return _empty_daily_pnl()
-
-    pnl_arr: npt.NDArray[np.float64] = np.diff(equity_curve)
-
-    if timestamps is not None:
-        try:
-            ts = pd.Series(timestamps[1:])
-            dates = ts.dt.date if hasattr(ts.dt, "date") else ts
-            daily = pd.Series(pnl_arr).groupby(dates.values).sum()  # type: ignore[arg-type]
-            pnl_arr = np.asarray(daily, dtype=np.float64)
-        except Exception:
-            pass
-
-    return _compute_daily_stats(pnl_arr)
-
-
-def _compute_daily_stats(
-    arr: npt.NDArray[np.float64],
-) -> dict[str, Any]:
-    """Shared daily P&L statistics computation."""
-    if len(arr) == 0:
-        return _empty_daily_pnl()
-    return {
-        "daily_pnl_mean": float(np.mean(arr)),
-        "daily_pnl_std": float(np.std(arr)),
-        "daily_pnl_min": float(np.min(arr)),
-        "daily_pnl_max": float(np.max(arr)),
-        "daily_pnl_median": float(np.median(arr)),
-        "n_days": len(arr),
-    }
-
-
-def _empty_daily_pnl() -> dict[str, Any]:
-    return {
-        "daily_pnl_mean": 0.0,
-        "daily_pnl_std": 0.0,
-        "daily_pnl_min": 0.0,
-        "daily_pnl_max": 0.0,
-        "daily_pnl_median": 0.0,
-        "n_days": 0,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Monthly P&L statistics
-# ---------------------------------------------------------------------------
-
-
-def _monthly_pnl_from_portfolio(
-    pf: vbt.Portfolio,
-) -> dict[str, Any]:
-    """Compute monthly P&L stats from a vectorbt Portfolio."""
-    try:
-        value = pf.value()
-        if len(value) < 2:
-            return _empty_monthly_pnl()
-
-        pnl_series = value.diff().dropna()
-        if hasattr(pnl_series.index, "to_period"):
-            monthly = pnl_series.groupby(pnl_series.index.to_period("M")).sum()
-        else:
-            return _empty_monthly_pnl()
-
-        return _compute_monthly_stats(np.array(monthly, dtype=float))
-    except Exception:
-        logger.debug(
-            "Could not compute monthly P&L stats",
-            exc_info=True,
+    timestamps: pd.DatetimeIndex | None = None,
+    *,
+    periods_per_year: float | None = None,
+    risk_free_rate: float = 0.0,
+    required_return: float = 0.0,
+    frequency: str = "1h",
+) -> PerformanceAnalysis:
+    """Normalize an existing ledger into vectorbt records without simulation."""
+    records = np.zeros(len(trades), dtype=trade_dt)
+    for i, trade in enumerate(trades):
+        notional = float(trade["size_quote"])
+        records[i] = (
+            i,
+            0,
+            trade["size"],
+            trade["entry_idx"],
+            trade["entry_price"],
+            trade["entry_fees"] + trade.get("entry_slippage", 0.0),
+            trade["exit_idx"],
+            trade["exit_price"],
+            trade["exit_fees"] + trade.get("exit_slippage", 0.0),
+            trade["net_pnl"],
+            trade["net_pnl"] / notional,
+            0 if trade["direction"] == 1 else 1,
+            1 if trade["status"] == "closed" else 0,
+            i,
         )
-        return _empty_monthly_pnl()
+    index = timestamps if timestamps is not None else pd.RangeIndex(len(equity_curve))
+    wrapper = vbt.ArrayWrapper(index, [0], ndim=1, freq=frequency)
+    vbt_trades = vbt.Trades(wrapper, records, close=np.ones(len(equity_curve)))
+    return _analyze(
+        equity_curve,
+        vbt_trades,
+        init_cash,
+        timestamps,
+        sum(float(t["size_quote"] + t["exit_notional"]) for t in trades),
+        sum(float(t["fee"]) for t in trades),
+        sum(float(t.get("slippage", 0.0)) for t in trades),
+        periods_per_year,
+        risk_free_rate,
+        required_return,
+        frequency,
+    )
 
 
-def _monthly_pnl_from_equity(
-    equity_curve: npt.NDArray[np.float64],
-    timestamps: Any | None = None,
-) -> dict[str, Any]:
-    """Compute monthly P&L stats from an equity curve."""
-    if len(equity_curve) < 2:
-        return _empty_monthly_pnl()
-
-    pnl_arr: npt.NDArray[np.float64] = np.diff(equity_curve)
-
-    if timestamps is not None:
-        try:
-            ts = pd.Series(timestamps[1:])
-            if hasattr(ts.dt, "tz") and ts.dt.tz is not None:
-                ts = ts.dt.tz_localize(None)
-            periods = ts.dt.to_period("M") if hasattr(ts.dt, "to_period") else None
-            if periods is not None:
-                monthly = pd.Series(pnl_arr).groupby(periods.values).sum()  # type: ignore[arg-type]
-                return _compute_monthly_stats(
-                    np.asarray(monthly, dtype=np.float64),
-                )
-        except Exception:
-            pass
-
-    return _empty_monthly_pnl()
-
-
-def _compute_monthly_stats(
-    arr: npt.NDArray[np.float64],
-) -> dict[str, Any]:
-    """Shared monthly P&L statistics computation."""
-    if len(arr) == 0:
-        return _empty_monthly_pnl()
-    return {
-        "monthly_pnl_mean": float(np.mean(arr)),
-        "monthly_pnl_std": float(np.std(arr)),
-        "monthly_pnl_min": float(np.min(arr)),
-        "monthly_pnl_max": float(np.max(arr)),
-        "monthly_pnl_median": float(np.median(arr)),
-        "n_months": len(arr),
+def _analyze(
+    equity: npt.NDArray[np.float64],
+    trades: vbt.Trades,
+    init_cash: float | None,
+    timestamps: pd.DatetimeIndex | None,
+    total_volume: float,
+    total_fees: float,
+    total_slippage: float | None,
+    periods_per_year: float | None,
+    risk_free_rate: float,
+    required_return: float,
+    frequency: str,
+) -> PerformanceAnalysis:
+    if not np.all(np.isfinite(equity)):
+        raise ValueError("Equity must contain only finite values")
+    if timestamps is not None and len(timestamps) != len(equity):
+        raise ValueError("Timestamp and equity lengths must match")
+    daily_sampling_reason = daily_observation_unavailable_reason(frequency)
+    mode = "volume" if init_cash is None else "signal"
+    metrics: dict[str, Any] = dict.fromkeys(METRIC_CATALOG)
+    unavailable: dict[str, str] = {}
+    for metric_id, definition in METRIC_CATALOG.items():
+        if mode not in definition.modes:
+            unavailable[metric_id] = "not_applicable"
+    initial = init_cash if init_cash is not None else 0.0
+    metrics.update(
+        total_pnl=float(equity[-1]) - initial if len(equity) else 0.0,
+        total_volume=total_volume,
+        total_fees=total_fees,
+        total_slippage=total_slippage,
+        total_trades=int(trades.closed.count()),
+        open_trades=int(trades.open.count()),
+    )
+    if total_slippage is None:
+        unavailable["total_slippage"] = "embedded_in_fill_prices"
+    baseline_equity = np.concatenate(([initial], equity))
+    with np.errstate(over="ignore", invalid="ignore"):
+        drawdowns = np.maximum.accumulate(baseline_equity) - baseline_equity
+        pnl = np.diff(baseline_equity)
+    if not np.all(np.isfinite(pnl)) or not np.all(np.isfinite(drawdowns)):
+        raise ValueError("Equity differences must be finite")
+    metrics["max_drawdown_amount"] = float(np.max(drawdowns))
+    _period_metrics(metrics, unavailable, pnl, timestamps, daily_sampling_reason)
+    if metrics["total_trades"]:
+        closed = trades.closed
+        with np.errstate(divide="ignore", invalid="ignore"):
+            metrics.update(
+                win_rate=float(closed.win_rate()),
+                profit_factor=float(closed.profit_factor()),
+                trade_expectancy=float(closed.expectancy()),
+                avg_holding_bars=float(closed.duration.mean()),
+            )
+    else:
+        for metric_id in (
+            "win_rate",
+            "profit_factor",
+            "trade_expectancy",
+            "avg_holding_bars",
+        ):
+            unavailable[metric_id] = "no_trades"
+    returns = None
+    if init_cash is not None:
+        if len(equity) and np.all(baseline_equity[:-1] > 0) and np.all(equity >= 0):
+            with np.errstate(over="ignore", invalid="ignore"):
+                returns = np.asarray(pnl / baseline_equity[:-1], dtype=np.float64)
+            if not np.all(np.isfinite(returns)):
+                raise ValueError("Derived returns must be finite")
+            _return_metrics(
+                metrics,
+                unavailable,
+                returns,
+                timestamps,
+                periods_per_year,
+                risk_free_rate,
+                required_return,
+                daily_sampling_reason,
+            )
+        else:
+            for metric_id, definition in METRIC_CATALOG.items():
+                if definition.provider == "empyrical":
+                    unavailable[metric_id] = (
+                        "insufficient_data"
+                        if not len(equity)
+                        else "nonpositive_capital"
+                    )
+    for metric_id, value in metrics.items():
+        if value is not None and not np.isfinite(value):
+            metrics[metric_id] = None
+            unavailable[metric_id] = (
+                "unbounded" if np.isinf(value) else "zero_denominator"
+            )
+        elif value is None and metric_id not in unavailable:
+            unavailable[metric_id] = "insufficient_data"
+    metadata: dict[str, Any] = {
+        "schema_version": 1,
+        "providers": {
+            "empyrical-reloaded": version("empyrical-reloaded"),
+            "vectorbt": version("vectorbt"),
+        },
+        "mode": mode,
+        "settings": {
+            "initial_cash": init_cash,
+            "periods_per_year": periods_per_year,
+            "frequency": frequency,
+            "risk_free_rate": risk_free_rate,
+            "required_return": required_return,
+            "risk_free_rate_per_period": _period_rate(risk_free_rate, periods_per_year)
+            if daily_sampling_reason is None
+            else None,
+            "required_return_per_period": _period_rate(
+                required_return, periods_per_year
+            )
+            if daily_sampling_reason is None
+            else None,
+            "returns_basis": "simple" if init_cash is not None else "not_applicable",
+            "return_sampling": "observed_daily"
+            if daily_sampling_reason is None
+            else "unavailable",
+            "stored_returns_sampling": "bar",
+            "drawdown_sampling": "bar",
+            "calmar_drawdown_sampling": "observed_daily"
+            if daily_sampling_reason is None
+            else "unavailable",
+            "missing_dates": "not_filled",
+            "trade_scope": "closed",
+            "calendar_timezone": "UTC",
+            "cost_model": "commission_and_separate_notional_slippage_charges"
+            if mode == "volume"
+            else "commission_and_slippage_adjusted_fill_prices",
+            "return_std_ddof": 1,
+            "period_pnl_std_ddof": 0,
+        },
+        "unavailable": unavailable,
     }
+    return PerformanceAnalysis(metrics, metadata, returns)
 
 
-def _empty_monthly_pnl() -> dict[str, Any]:
-    return {
-        "monthly_pnl_mean": 0.0,
-        "monthly_pnl_std": 0.0,
-        "monthly_pnl_min": 0.0,
-        "monthly_pnl_max": 0.0,
-        "monthly_pnl_median": 0.0,
-        "n_months": 0,
-    }
+def _period_rate(annual_rate: float, periods_per_year: float | None) -> float | None:
+    if periods_per_year is None:
+        return None
+    return float(np.expm1(np.log1p(annual_rate) / periods_per_year))
+
+
+def _return_metrics(
+    metrics: dict[str, Any],
+    unavailable: dict[str, str],
+    returns: npt.NDArray[np.float64],
+    timestamps: pd.DatetimeIndex | None,
+    periods_per_year: float | None,
+    risk_free_rate: float,
+    required_return: float,
+    daily_sampling_reason: str | None,
+) -> None:
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        metrics["total_return"] = float(ep.cum_returns_final(returns))
+        metrics["max_drawdown"] = abs(float(ep.max_drawdown(returns)))
+        if daily_sampling_reason is not None:
+            for metric_id in DAILY_EQUITY_METRICS:
+                if METRIC_CATALOG[metric_id].provider == "empyrical":
+                    unavailable[metric_id] = daily_sampling_reason
+            return
+        if timestamps is not None:
+            daily_returns = np.asarray(
+                (
+                    pd.Series(1 + returns, index=timestamps)
+                    .groupby(timestamps.date)
+                    .prod()
+                    - 1
+                ),
+                dtype=np.float64,
+            )
+            metrics["daily_max_drawdown"] = abs(float(ep.max_drawdown(daily_returns)))
+        else:
+            unavailable["daily_max_drawdown"] = "missing_timestamps"
+        if periods_per_year is None:
+            for metric_id, definition in METRIC_CATALOG.items():
+                if definition.requires_annualization:
+                    unavailable[metric_id] = "missing_annualization"
+            return
+        if timestamps is None:
+            for metric_id, definition in METRIC_CATALOG.items():
+                if (
+                    definition.requires_annualization
+                    or metric_id == "daily_max_drawdown"
+                ):
+                    unavailable[metric_id] = "missing_timestamps"
+            return
+        returns = daily_returns
+        kwargs = {"annualization": periods_per_year}
+        metrics["annual_return"] = float(ep.annual_return(returns, **kwargs))
+        metrics["calmar_ratio"] = float(ep.calmar_ratio(returns, **kwargs))
+        if len(returns) < 2:
+            for metric_id in ("sharpe_ratio", "sortino_ratio", "annual_volatility"):
+                unavailable[metric_id] = "insufficient_data"
+            return
+        metrics["sharpe_ratio"] = float(
+            ep.sharpe_ratio(
+                returns,
+                risk_free=_period_rate(risk_free_rate, periods_per_year),
+                **kwargs,
+            )
+        )
+        metrics["sortino_ratio"] = float(
+            ep.sortino_ratio(
+                returns,
+                required_return=_period_rate(required_return, periods_per_year),
+                **kwargs,
+            )
+        )
+        metrics["annual_volatility"] = float(ep.annual_volatility(returns, **kwargs))
+
+
+def _period_metrics(
+    metrics: dict[str, Any],
+    unavailable: dict[str, str],
+    pnl: npt.NDArray[np.float64],
+    timestamps: pd.DatetimeIndex | None,
+    daily_sampling_reason: str | None,
+) -> None:
+    if timestamps is None or not len(pnl):
+        reason = "missing_timestamps" if timestamps is None else "insufficient_data"
+        for metric_id, definition in METRIC_CATALOG.items():
+            if definition.category == "period":
+                unavailable[metric_id] = reason
+        return
+    if len(timestamps) != len(pnl):
+        raise ValueError("Timestamp and equity lengths must match")
+    series = pd.Series(pnl, index=timestamps)
+    for prefix, groups in (
+        ("daily", timestamps.date),
+        ("monthly", timestamps.tz_localize(None).to_period("M")),
+    ):
+        metrics["n_days" if prefix == "daily" else "n_months"] = len(
+            pd.Index(groups).unique()
+        )
+        values = (
+            np.asarray(series.groupby(groups).sum(), dtype=np.float64)
+            if daily_sampling_reason is None
+            else None
+        )
+        for stat, func in (
+            ("mean", np.mean),
+            ("std", np.std),
+            ("min", np.min),
+            ("max", np.max),
+            ("median", np.median),
+        ):
+            metric_id = f"{prefix}_pnl_{stat}"
+            if values is None:
+                assert daily_sampling_reason is not None
+                unavailable[metric_id] = daily_sampling_reason
+            else:
+                metrics[metric_id] = float(func(values))
+    metrics["monthly_trades_mean"] = metrics["total_trades"] / metrics["n_months"]
+    metrics["monthly_volume_mean"] = metrics["total_volume"] / metrics["n_months"]

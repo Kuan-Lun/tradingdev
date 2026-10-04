@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -29,7 +30,26 @@ class BaseBacktestEngine(ABC):
         take_profit: float | None = None,
         signal_as_position: bool = False,
         re_entry_after_sl: bool = True,
+        periods_per_year: float | None = None,
+        risk_free_rate: float = 0.0,
+        required_return: float = 0.0,
     ) -> None:
+        if init_cash is not None and (not math.isfinite(init_cash) or init_cash <= 0):
+            raise ValueError("init_cash must be finite and positive")
+        if periods_per_year is not None and (
+            not math.isfinite(periods_per_year) or periods_per_year <= 0
+        ):
+            raise ValueError("periods_per_year must be finite and positive")
+        if any(
+            not math.isfinite(value) or value <= -1
+            for value in (risk_free_rate, required_return)
+        ):
+            raise ValueError(
+                "Annual risk-free and target rates must be finite and greater than -1"
+            )
+        self._periods_per_year = periods_per_year
+        self._risk_free_rate = risk_free_rate
+        self._required_return = required_return
         self._init_cash = init_cash
         self._fees = fees
         self._slippage = slippage

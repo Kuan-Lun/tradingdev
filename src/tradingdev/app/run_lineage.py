@@ -88,56 +88,10 @@ def resolve_strategy_source(
 
 
 def extract_random_seed(raw: dict[str, Any] | None) -> int | None:
-    """Return the explicit run seed, or a unique model seed from config."""
+    """Read only the canonical run seed; model parameters are separate settings."""
     if raw is None:
         return None
-    for candidate in (
-        raw.get("random_seed"),
-        _mapping_value(raw.get("backtest"), "random_seed"),
-    ):
-        parsed = _parse_seed(candidate)
-        if parsed is not None:
-            return parsed
-
-    strategy = raw.get("strategy")
-    params = _mapping_value(strategy, "parameters")
-    seeds = _collect_seed_values(params)
-    return seeds[0] if len(seeds) == 1 else None
-
-
-def _mapping_value(value: object, key: str) -> object | None:
-    if isinstance(value, dict):
-        return value.get(key)
-    return None
-
-
-def _collect_seed_values(value: object) -> list[int]:
-    found: set[int] = set()
-
-    def walk(node: object) -> None:
-        if isinstance(node, dict):
-            for key, item in node.items():
-                if key in {"random_seed", "random_state", "seed"}:
-                    parsed = _parse_seed(item)
-                    if parsed is not None:
-                        found.add(parsed)
-                walk(item)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-
-    walk(value)
-    return sorted(found)
-
-
-def _parse_seed(value: object) -> int | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, int):
+    value = raw.get("random_seed")
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2**32:
         return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
     return None

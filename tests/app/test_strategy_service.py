@@ -7,9 +7,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.contracts.strategy import (
+    StrategyDryRunFailure,
+    StrategyValidationFailure,
+)
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
 from tradingdev.domain.strategies.schemas import StrategyMetadata
 
@@ -81,11 +86,14 @@ def test_strategy_service_lifecycle(tmp_path: Path) -> None:
     assert validated["success"] is True
     assert validated["status"] == "validated"
     assert validated["signal_analysis"]["rows"] == 80
+    assert validated["effective_config"]["backtest"]["fees"] == 0.0006
+    assert validated["effective_config"]["random_seed"] is None
     dry_run = service.dry_run("fixture_strategy")
     assert dry_run["success"] is True
     assert dry_run["status"] == "runnable"
     assert dry_run["signal_analysis"]["rows"] == 240
     assert dry_run["signal_analysis"]["transition_count"] >= 1
+    assert dry_run["effective_config"] == validated["effective_config"]
     promoted = service.promote("fixture_strategy")
     assert promoted == {
         "success": True,
@@ -93,6 +101,159 @@ def test_strategy_service_lifecycle(tmp_path: Path) -> None:
         "revision_id": saved.revision_id,
         "status": "promoted",
     }
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("field", ["random_seed", "random_sead"])
+def test_config_errors_are_reported_before_constructing_strategy(
+    tmp_path: Path, dry_run: bool, field: str
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+    config = yaml.safe_load(_YAML)
+    config["backtest"][field] = 42
+    code = _STRATEGY_CODE.replace(
+        "self._engine = backtest_engine",
+        'raise RuntimeError("Constructor must not run for an invalid config")',
+    )
+    saved = service.save_draft("invalid_config", code, yaml.safe_dump(config))
+    assert saved.success
+    if dry_run:
+        # Simulate older validation evidence; dry-run must independently check config.
+        recorded = service.record_validation_status(
+            "invalid_config",
+            {
+                "revision_id": saved.revision_id,
+                "checked_at": "2024-01-01T00:00:00+00:00",
+                "success": True,
+                "diagnostics": [],
+            },
+        )
+        assert recorded["success"]
+    checked = (
+        service.dry_run("invalid_config")
+        if dry_run
+        else service.validate("invalid_config")
+    )
+    assert checked["success"] is False
+    assert checked["effective_config"] is None
+    assert checked["diagnostics"][0]["code"] == "invalid_execution_config"
+    assert checked["diagnostics"][0]["phase"] == "config"
+    assert f"backtest.{field}" in checked["diagnostics"][0]["message"]
+    assert "YAML root" in checked["diagnostics"][0]["fix"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "invalid_case",
+    [
+        "nan_fees",
+        "nan_string_fees",
+        "overflow_string_fees",
+        "nan_parameter",
+        "infinite_parameter",
+        "integer_key",
+        "cycle",
+    ],
+)
+def test_lossy_yaml_values_cannot_execute_or_advance_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+    invalid_case: str,
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+    config = yaml.safe_load(_YAML)
+    if invalid_case == "nan_fees":
+        config["backtest"]["fees"] = float("nan")
+    elif invalid_case == "nan_string_fees":
+        config["backtest"]["fees"] = "NaN"
+    elif invalid_case == "overflow_string_fees":
+        config["backtest"]["fees"] = "1e999"
+    elif invalid_case == "nan_parameter":
+        config["strategy"]["parameters"]["threshold"] = float("nan")
+    elif invalid_case == "infinite_parameter":
+        config["strategy"]["parameters"]["threshold"] = {"nested": [float("inf")]}
+    elif invalid_case == "integer_key":
+        config["strategy"]["parameters"]["threshold"] = {1: "number", "1": "text"}
+    else:
+        circular: list[Any] = []
+        circular.append(circular)
+        config["strategy"]["parameters"]["threshold"] = circular
+    saved = service.save_draft("invalid_json", _STRATEGY_CODE, yaml.safe_dump(config))
+    assert saved.success
+    if dry_run:
+        assert service.record_validation_status(
+            "invalid_json",
+            {
+                "revision_id": saved.revision_id,
+                "checked_at": "2024-01-01T00:00:00+00:00",
+                "success": True,
+                "diagnostics": [],
+            },
+        )["success"]
+    called = False
+
+    def unexpected_constructor(*args: object, **kwargs: object) -> None:
+        nonlocal called
+        called = True
+        raise AssertionError("Invalid raw configuration reached the constructor")
+
+    monkeypatch.setattr(service._loader, "create_from_config", unexpected_constructor)
+    checked = (
+        service.dry_run("invalid_json") if dry_run else service.validate("invalid_json")
+    )
+    assert not called
+    assert checked["success"] is False
+    assert checked["effective_config"] is None
+    assert checked["diagnostics"][0]["code"] == "invalid_execution_config"
+    assert checked["status"] == ("validated" if dry_run else "draft")
+    response_model = StrategyDryRunFailure if dry_run else StrategyValidationFailure
+    response_model.model_validate(checked).model_dump_json()
+    metadata = service.get_strategy("invalid_json")["metadata"]
+    assert metadata["status"] == checked["status"]
+    evidence = metadata["dry_run" if dry_run else "validation"]
+    assert not evidence["success"]
+    assert evidence["effective_config"] is None
+
+
+def test_validation_and_dry_run_seed_constructor_and_signals(tmp_path: Path) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+    code = (
+        _STRATEGY_CODE.replace(
+            "from tradingdev.domain.strategies.base import BaseStrategy",
+            "from tradingdev.domain.randomness import (\n"
+            "    get_numpy_rng, get_random, get_seed,\n)\n"
+            "from tradingdev.domain.strategies.base import BaseStrategy",
+        )
+        .replace(
+            "self._engine = backtest_engine",
+            "self._engine = backtest_engine\n"
+            "        assert get_seed() == 42\n"
+            "        assert get_random().random() == 0.6394267984578837\n"
+            "        assert get_numpy_rng().integers(100) == 8",
+        )
+        .replace(
+            'result.loc[moves > self._threshold, "signal"] = 1',
+            'result["signal"] = get_numpy_rng().integers(-1, 2, len(result))',
+        )
+    )
+    saved = service.save_draft("random_fixture", code, "random_seed: 42\n" + _YAML)
+    assert saved.success
+    first = service.validate("random_fixture")
+    second = service.validate("random_fixture")
+    assert first["success"] and second["success"]
+    assert first["signal_analysis"] == second["signal_analysis"]
+    assert first["effective_config"]["random_seed"] == 42
+    assert "random_seed" not in first["effective_config"]["backtest"]
+    checked = service.dry_run("random_fixture")
+    assert checked["success"]
+    assert checked["effective_config"] == first["effective_config"]
+    retrieved = service.get_strategy("random_fixture")
+    assert retrieved["metadata"]["validation"]["effective_config"]["random_seed"] == 42
+    assert retrieved["metadata"]["dry_run"]["effective_config"]["random_seed"] == 42
 
 
 def test_strategy_service_loads_generated_and_bundled_specs(tmp_path: Path) -> None:

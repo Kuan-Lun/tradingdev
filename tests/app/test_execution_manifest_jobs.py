@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
@@ -14,6 +15,7 @@ from tradingdev.app.backtest_service import BacktestRun, BacktestService
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
+from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.mcp.workers import backtest
@@ -69,6 +71,12 @@ def test_worker_uses_manifest_when_config_projection_changes(
             mode="simple",
             pipeline=PipelineResult(
                 mode="simple",
+                backtest_result=BacktestResult(
+                    metrics={"total_return": 0.1},
+                    equity_curve=np.array([10000.0, 11000.0]),
+                    init_cash=10000.0,
+                    returns=np.array([0.0, 0.1]),
+                ),
                 config_snapshot=selected.config_copy(),
                 execution_manifest=selected,
             ),

@@ -57,6 +57,23 @@ def _save(service: StrategyService) -> None:
     ).success
 
 
+def test_contract_advertises_seed_location_and_strict_config_schema(
+    tmp_path: Path,
+) -> None:
+    server, _service = _server(tmp_path)
+    result = asyncio.run(server.call_tool("get_strategy_contract", {}))
+    assert isinstance(result, tuple)
+    contract = result[1]
+    schema = contract["config_schema"]
+    assert schema["additionalProperties"] is False
+    assert "random_seed" in schema["properties"]
+    assert "random_seed" not in schema["$defs"]["BacktestConfig"]["properties"]
+    assert schema["$defs"]["BacktestConfig"]["additionalProperties"] is False
+    assert yaml.safe_load(contract["example_yaml_config"])["random_seed"] == 42
+    assert "get_numpy_rng()" in contract["api_reference"]
+    assert "effective_config" in contract["lifecycle"]
+
+
 def test_strategy_discovery_validates_bundled_and_generated_metadata(
     tmp_path: Path,
 ) -> None:

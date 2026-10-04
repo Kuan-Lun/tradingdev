@@ -59,7 +59,9 @@ def _reply(
     )
 
 
-def _mock_client() -> tuple[MCPClient, AsyncMock]:
+def _mock_client(
+    *, extra_tools: list[Tool] | None = None
+) -> tuple[MCPClient, AsyncMock]:
     session = create_autospec(ClientSession, instance=True)
     session.list_tools.return_value = ListToolsResult(
         tools=[
@@ -67,7 +69,8 @@ def _mock_client() -> tuple[MCPClient, AsyncMock]:
                 name="list_strategies",
                 description="List strategies.",
                 inputSchema={"type": "object", "properties": {}},
-            )
+            ),
+            *(extra_tools or []),
         ]
     )
     session.call_tool.return_value = CallToolResult(
@@ -436,6 +439,7 @@ def test_progress_reports_usage_and_results_without_source_or_reasoning(
     assert "MCP tool list_strategies" in output and "success=True" in output
     assert "input_tokens=103" in output and "output_tokens=17" in output
     assert "reasoning_tokens=7" in output and "reasoning_chars=17" in output
+    assert "model sampling seed=42" in output
     assert "Task complete." in output
     assert not any(
         secret in output
@@ -472,6 +476,283 @@ def test_http_failure_keeps_status_error_and_bounded_response_diagnostic() -> No
     assert "Unsupported reasoning effort" in str(error)
     assert "UNPRINTED_TAIL" not in str(error)
     invoke.assert_not_awaited()
+
+
+_TOOL_XML_ERROR = (
+    "XML syntax error on line 19: element <parameter> closed by </function>"
+)
+
+
+def _tool_serialization_failure() -> httpx.Response:
+    # Ollama 0.35.0 /v1/chat/completions response from the live legacy scenario.
+    return httpx.Response(
+        500,
+        json={"error": {"message": _TOOL_XML_ERROR, "type": "api_error"}},
+    )
+
+
+def test_provider_tool_error_receives_feedback_without_replaying_completed_calls(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client, invoke = _mock_client(
+        extra_tools=[
+            Tool(
+                name="get_job_status",
+                description="Get job status.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"job_id": {"type": "string"}},
+                    "required": ["job_id"],
+                },
+            )
+        ]
+    )
+    requests: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        assert str(request.url) == "http://localhost/v1/chat/completions"
+        assert body["model"] == "fixture"
+        assert body["seed"] == 42
+        assert body["temperature"] == 0.7
+        assert body["reasoning_effort"] == "none"
+        if len(requests) == 1:
+            return _reply([_call(call_id="completed")])
+        if len(requests) == 2:
+            return _tool_serialization_failure()
+        if len(requests) == 3:
+            before = requests[1]
+            assert body["messages"][:-1] == before["messages"]
+            assert {key: value for key, value in body.items() if key != "messages"} == {
+                key: value for key, value in before.items() if key != "messages"
+            }
+            feedback = body["messages"][-1]
+            assert feedback["role"] == "user"
+            assert _TOOL_XML_ERROR in feedback["content"]
+            assert (
+                "No MCP tools from that response were executed" in feedback["content"]
+            )
+            assert "Do not repeat already completed tool calls" in feedback["content"]
+            assert invoke.await_count == 1
+            return _reply([_call("get_job_status", '{"job_id":"job-1"}', "next")])
+        assert len(requests) == 4
+        return _reply()
+
+    calls = asyncio.run(
+        run_local_model(
+            client,
+            "Continue after a provider formatting failure",
+            model="fixture",
+            base_url="http://localhost/v1",
+            timeout_seconds=2,
+            temperature=0.7,
+            reasoning_effort="none",
+            transport=httpx.MockTransport(respond),
+        )
+    )
+    assert [(call.name, call.arguments) for call in calls] == [
+        ("list_strategies", {}),
+        ("get_job_status", {"job_id": "job-1"}),
+    ]
+    assert invoke.await_count == 2
+    output = capsys.readouterr().out
+    assert "HTTP 500 provider tool serialization error" in output
+    assert "feedback repair 1/2" in output
+    assert "provider_tool_repairs=1" in output
+    assert _TOOL_XML_ERROR in output
+
+
+def test_model_sampling_seed_is_preserved_across_all_tool_rounds() -> None:
+    client, invoke = _mock_client()
+    requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        assert json.loads(request.content)["seed"] == 42
+        return _reply([_call()] if requests == 1 else None)
+
+    asyncio.run(
+        run_local_model(
+            client,
+            "Fix model sampling independently of the strategy execution seed",
+            model="fixture",
+            base_url="http://localhost/v1",
+            timeout_seconds=1,
+            transport=httpx.MockTransport(respond),
+        )
+    )
+    assert requests == 2
+    invoke.assert_awaited_once_with("list_strategies", {})
+
+
+def test_provider_tool_repair_budget_applies_to_the_entire_conversation() -> None:
+    client, invoke = _mock_client()
+    requests: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) in {2, 4}:
+            return _reply([_call(call_id=f"completed-{len(requests)}")])
+        return _tool_serialization_failure()
+
+    with pytest.raises(
+        httpx.HTTPStatusError, match="repair budget exhausted"
+    ) as failure:
+        asyncio.run(
+            run_local_model(
+                client,
+                "Keep encountering malformed provider output",
+                model="fixture",
+                base_url="http://localhost/v1",
+                timeout_seconds=1,
+                transport=httpx.MockTransport(respond),
+            )
+        )
+    assert len(requests) == 5
+    assert invoke.await_count == 2
+    assert failure.value.response.status_code == 500
+    assert isinstance(failure.value.__cause__, httpx.HTTPStatusError)
+    assert _TOOL_XML_ERROR in str(failure.value)
+    feedback = [
+        message
+        for message in requests[-1]["messages"]
+        if message["role"] == "user"
+        and message["content"].startswith("Runtime feedback:")
+    ]
+    assert len(feedback) == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "payload"),
+    [
+        (500, {"error": {"message": "Model runner crashed"}}),
+        (500, {"error": {"message": "XML syntax error on line 19: unexpected EOF"}}),
+        (500, {"error": {"message": _TOOL_XML_ERROR + " extra details"}}),
+        (500, {"error": _TOOL_XML_ERROR}),
+        (500, {"error": {"message": 123}}),
+        (500, ["not an error object"]),
+        (500, None),
+        (401, {"error": {"message": _TOOL_XML_ERROR}}),
+        (400, {"error": {"message": _TOOL_XML_ERROR}}),
+        (400, {"error": {"message": "Unsupported parameter: seed"}}),
+    ],
+    ids=[
+        "runner-crash",
+        "other-xml-error",
+        "nonexact-error",
+        "unconfirmed-shape",
+        "nonstring-message",
+        "nonobject-body",
+        "invalid-json",
+        "authentication",
+        "bad-request",
+        "unsupported-seed",
+    ],
+)
+def test_other_provider_failures_are_not_retried(status: int, payload: Any) -> None:
+    client, invoke = _mock_client()
+    requests = 0
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        if payload is None:
+            return httpx.Response(status, text="Invalid JSON response")
+        return httpx.Response(status, json=payload)
+
+    with pytest.raises(httpx.HTTPStatusError) as failure:
+        asyncio.run(
+            run_local_model(
+                client,
+                "Provider unavailable",
+                model="fixture",
+                base_url="http://localhost/v1",
+                timeout_seconds=1,
+                transport=httpx.MockTransport(respond),
+            )
+        )
+    assert requests == 1
+    assert failure.value.response.status_code == status
+    invoke.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", ["deadline", "http-timeout"])
+def test_provider_tool_feedback_does_not_restart_deadline_or_retry_timeout(
+    failure: str,
+) -> None:
+    client, invoke = _mock_client()
+    requests = 0
+    transport_finished = False
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal requests, transport_finished
+        requests += 1
+        if requests == 1:
+            return _tool_serialization_failure()
+        try:
+            if failure == "http-timeout":
+                raise httpx.ReadTimeout("Model stalled after feedback", request=request)
+            await asyncio.Event().wait()
+            raise AssertionError("Unreachable")
+        finally:
+            transport_finished = True
+
+    with pytest.raises(AssertionError, match="model round 2") as error:
+        asyncio.run(
+            run_local_model(
+                client,
+                "Feedback remains within the original deadline",
+                model="fixture",
+                base_url="http://localhost/v1",
+                timeout_seconds=0.02,
+                transport=httpx.MockTransport(respond),
+            )
+        )
+    assert requests == 2
+    assert transport_finished
+    assert isinstance(error.value.__cause__, (TimeoutError, httpx.ReadTimeout))
+    invoke.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "invalid_batch", [False, True], ids=["tool-budget", "bad-batch"]
+)
+def test_provider_tool_feedback_preserves_dispatch_validation_and_tool_budget(
+    invalid_batch: bool,
+) -> None:
+    client, invoke = _mock_client()
+    requests = 0
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return _reply([_call(call_id="completed")])
+        if requests == 2:
+            return _tool_serialization_failure()
+        assert requests == 3
+        next_call = _call(
+            "shell" if invalid_batch else "list_strategies", call_id="bad"
+        )
+        return _reply([_call(call_id="not-dispatched"), next_call])
+
+    with pytest.raises(AssertionError):
+        asyncio.run(
+            run_local_model(
+                client,
+                "Never dispatch an invalid batch after provider feedback",
+                model="fixture",
+                base_url="http://localhost/v1",
+                timeout_seconds=1,
+                max_tool_calls=64 if invalid_batch else 2,
+                transport=httpx.MockTransport(respond),
+            )
+        )
+    assert requests == 3
+    invoke.assert_awaited_once_with("list_strategies", {})
 
 
 def test_model_timeout_includes_recent_tool_failure_and_preserves_cause() -> None:

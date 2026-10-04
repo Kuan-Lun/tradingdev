@@ -37,6 +37,7 @@ class ValidationResult(BaseModel):
     success: bool
     diagnostics: list[StrategyDiagnostic] = Field(default_factory=list)
     signal_analysis: dict[str, Any] = Field(default_factory=dict)
+    effective_config: dict[str, Any] | None = None
 
     @property
     def has_error(self) -> bool:
