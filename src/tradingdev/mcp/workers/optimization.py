@@ -36,6 +36,7 @@ from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.optimization.grid_search import (
     GridSearchResult,
     best_result,
+    finite_metric_value,
     parameter_grid,
 )
 from tradingdev.domain.strategies.loader import StrategyLoader
@@ -85,7 +86,7 @@ def _evaluate_combo(
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg_dict: dict[str, Any],
-) -> tuple[dict[str, Any], float, dict[str, Any]]:
+) -> tuple[dict[str, Any], float | None, dict[str, Any]]:
     """Evaluate a single parameter combination.
 
     This function is called by joblib workers.  It re-loads the strategy
@@ -125,7 +126,7 @@ def _run_single_combo(
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg: ParallelConfig,
-) -> tuple[dict[str, Any], float, dict[str, Any]]:
+) -> tuple[dict[str, Any], float | None, dict[str, Any]]:
     """Run a single combo in the main process (for trial run)."""
     service = BacktestService()
     engine = service.create_engine(bt_cfg)
@@ -141,10 +142,10 @@ def _run_single_combo(
     signals_df = strategy.generate_signals(df)
     result = engine.run(signals_df)
 
-    target_val = result.metrics.get(metric_name, float("-inf"))
+    target_val = finite_metric_value(result.metrics.get(metric_name))
     serialized = service.serialize_metrics(result.metrics)
 
-    return param_dict, float(target_val), serialized
+    return param_dict, target_val, serialized
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +250,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     train_bt_cfg = BacktestConfig(**train_bt_raw)
 
     first_combo = all_combos[0]
-    trial_result: tuple[dict[str, Any], float, dict[str, Any]] | None = None
+    trial_result: tuple[dict[str, Any], float | None, dict[str, Any]] | None = None
 
     # Set up SIGALRM timeout
     old_handler = signal.signal(signal.SIGALRM, _trial_timeout_handler)
@@ -357,7 +358,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     )
 
     # Collect all results (including trial)
-    all_results: list[tuple[dict[str, Any], float, dict[str, Any]]] = []
+    all_results: list[tuple[dict[str, Any], float | None, dict[str, Any]]] = []
     if trial_result is not None:
         all_results.append(trial_result)
 
@@ -372,7 +373,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         batch = remaining_combos[batch_start : batch_start + batch_size]
 
         try:
-            batch_results: list[tuple[dict[str, Any], float, dict[str, Any]]] = (
+            batch_results: list[tuple[dict[str, Any], float | None, dict[str, Any]]] = (
                 Parallel(n_jobs=n_jobs)(
                     delayed(_evaluate_combo)(
                         strategy_cfg,
@@ -407,10 +408,17 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     logger.info("All %d combos evaluated", total_combinations)
 
     # --- Phase 8: select best params ---
-    best = best_result(
-        GridSearchResult(params=params, metric_value=value, metrics=metrics)
-        for params, value, metrics in all_results
-    )
+    try:
+        best = best_result(
+            (
+                GridSearchResult(params=params, metric_value=value, metrics=metrics)
+                for params, value, metrics in all_results
+            ),
+            direction=optimization.direction,
+        )
+    except ValueError as exc:
+        _fail(job_id, f"Optimization selection error: {exc}")
+        return
     best_params = best.params
     best_metric_value = best.metric_value
     best_train_metrics = best.metrics
@@ -443,13 +451,14 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         _fail(job_id, f"Out-of-sample test error: {exc}")
         return
 
-    logger.info("OOS result: %s=%.4f", optimization_metric, oos_metric_value)
+    logger.info("OOS result: %s=%s", optimization_metric, oos_metric_value)
 
     # --- Phase 10: persist results ---
     try:
         optimization_result: dict[str, Any] = {
             "best_params": best_params,
             "optimization_metric": optimization_metric,
+            "direction": optimization.direction,
             "best_train_metric_value": best_metric_value,
             "best_oos_metric_value": oos_metric_value,
             "train_metrics": best_train_metrics,

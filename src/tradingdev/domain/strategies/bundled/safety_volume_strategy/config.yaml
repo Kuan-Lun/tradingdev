@@ -58,7 +58,7 @@ validation:
   train_end: "2024-12-31"
   test_start: "2025-01-01"
   test_end: "2025-01-15"
-  target_metric: "total_return"
+  target_metric: "total_pnl"
 
 backtest:
   symbol: "BTC/USDT"

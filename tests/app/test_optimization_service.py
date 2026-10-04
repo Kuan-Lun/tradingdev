@@ -107,7 +107,7 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
     config_path.write_text(
         "strategy:\n  id: fixture\nbacktest:\n  symbol: ETH/USDT\n"
         "  timeframe: 4h\n  start_date: '2024-01-01'\n"
-        "  end_date: '2024-12-31'\n  init_cash: 10000\n",
+        "  end_date: '2024-12-31'\n  init_cash: 10000\n  periods_per_year: 365\n",
         encoding="utf-8",
     )
     service, job_store, runner = _service(
@@ -129,6 +129,7 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
 
     assert response["job_id"]
     assert response["total_combinations"] == 6
+    assert response["direction"] == "maximize"
     assert runner.calls == [
         ("tradingdev.mcp.workers.optimization", (response["job_id"],))
     ]
@@ -168,6 +169,54 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
+    ("metric", "mode", "annualization", "message"),
+    [
+        ("sharpe_ratio", "volume", 365, "not applicable"),
+        ("max_drawdown", "volume", 365, "not applicable"),
+        ("sortino_ratio", "signal", None, "requires periods_per_year"),
+        ("n_days", "signal", 365, "not an optimization objective"),
+    ],
+)
+def test_ineligible_objective_is_rejected_before_job_creation(
+    tmp_path: Path,
+    metric: str,
+    mode: str,
+    annualization: int | None,
+    message: str,
+) -> None:
+    config_path = tmp_path / "strategy.yaml"
+    capital = "  position_size: 100\n" if mode == "volume" else "  init_cash: 10000\n"
+    config_path.write_text(
+        "strategy:\n  id: fixture\nbacktest:\n  symbol: BTC/USDT\n"
+        "  timeframe: 1h\n  start_date: '2024-01-01'\n"
+        "  end_date: '2024-12-31'\n"
+        f"  mode: {mode}\n"
+        + capital
+        + (f"  periods_per_year: {annualization}\n" if annualization else ""),
+        encoding="utf-8",
+    )
+    service, store, runner = _service(
+        tmp_path,
+        metadata={"status": "runnable", "config_path": str(config_path)},
+    )
+    response = service.start_optimization(
+        strategy_id="fixture",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        param_ranges={"window": [10, 20]},
+        optimization_metric=metric,
+        train_start="2024-01-01",
+        train_end="2024-02-01",
+        test_start="2024-02-02",
+        test_end="2024-03-01",
+    )
+    assert response["code"] == "invalid_optimization_request"
+    assert message in response["message"]
+    assert store.list_all_jobs() == []
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
     "failure_type", [OSError, RuntimeError, KeyboardInterrupt, asyncio.CancelledError]
 )
 def test_optimization_spawn_failure_is_persisted_before_reraising(
@@ -179,7 +228,7 @@ def test_optimization_spawn_failure_is_persisted_before_reraising(
     config_path.write_text(
         "strategy:\n  id: fixture\nbacktest:\n  symbol: ETH/USDT\n"
         "  timeframe: 4h\n  start_date: '2024-01-01'\n"
-        "  end_date: '2024-12-31'\n  init_cash: 10000\n",
+        "  end_date: '2024-12-31'\n  init_cash: 10000\n  periods_per_year: 365\n",
         encoding="utf-8",
     )
     service, store, runner = _service(
@@ -315,7 +364,7 @@ def test_start_optimization_rejects_invalid_strategy_parameters_before_job(
     config_path.write_text(
         "strategy:\n  id: fixture\nbacktest:\n  symbol: ETH/USDT\n"
         "  timeframe: 4h\n  start_date: '2024-01-01'\n"
-        "  end_date: '2024-12-31'\n  init_cash: 10000\n",
+        "  end_date: '2024-12-31'\n  init_cash: 10000\n  periods_per_year: 365\n",
         encoding="utf-8",
     )
     service, job_store, runner = _service(

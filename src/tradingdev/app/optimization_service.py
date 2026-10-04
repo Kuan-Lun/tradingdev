@@ -176,6 +176,8 @@ class OptimizationService:
             "job_id": job_id,
             "revision_id": spec.revision_id,
             "manifest_hash": manifest.manifest_hash,
+            "optimization_metric": optimization.optimization_metric,
+            "direction": optimization.direction,
             "message": (
                 f"Optimization started. {total_combinations} parameter combinations. "
                 "A trial run will estimate total time; use get_job_status() to check."

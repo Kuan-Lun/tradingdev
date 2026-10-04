@@ -48,6 +48,8 @@ class OptimizationStarted(ContractModel):
     job_id: Annotated[str, Field(min_length=1)]
     revision_id: str | None = None
     manifest_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    optimization_metric: str
+    direction: Literal["maximize", "minimize"]
     message: str
     total_combinations: Annotated[int, Field(gt=0)]
 
@@ -107,6 +109,7 @@ class JobStatus(ContractModel):
     train_metrics: dict[str, JsonValue] | None = None
     test_metrics: dict[str, JsonValue] | None = None
     optimization_metric: str | None = None
+    direction: Literal["maximize", "minimize"] | None = None
     total_combinations: int | None = None
     time_per_combo: float | None = None
     estimated_total_seconds: float | None = None

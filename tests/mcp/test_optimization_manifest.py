@@ -30,7 +30,10 @@ if TYPE_CHECKING:
 
 
 def _queued_job(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    metric: str = "total_return",
 ) -> tuple[JobStore, ExecutionManifest]:
     from tradingdev.domain.backtest.schemas import BacktestConfig
 
@@ -63,7 +66,7 @@ def _queued_job(
         optimization=OptimizationSpec.model_validate(
             {
                 "param_ranges": {"direction": [-1, 1]},
-                "optimization_metric": "total_return",
+                "optimization_metric": metric,
                 "train_start": "2024-01-01",
                 "train_end": "2024-01-03",
                 "test_start": "2024-01-04",
@@ -247,3 +250,73 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
     assert [parameters["k_period"] for parameters in captured] == [14, 14]
     assert [parameters["d_period"] for parameters in captured] == [5, 7]
     assert [parameters["oversold"] for parameters in captured] == [15.0, 15.0]
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [([0.5, 0.1], 1), ([None, 0.2], 1), ([0.3, None], -1), ([None, None], None)],
+)
+def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    values: list[float | None],
+    expected: int | None,
+) -> None:
+    store, manifest = _queued_job(tmp_path, monkeypatch, metric="max_drawdown")
+    store.update_job("fixture", confirmed=True)
+    assert manifest.optimization is not None
+    assert manifest.optimization.direction == "minimize"
+
+    def load(
+        self: DataService, config: dict[str, Any], bt: BacktestConfig
+    ) -> LoadedDataset:
+        return LoadedDataset(
+            frame=pd.DataFrame(
+                {
+                    "timestamp": pd.date_range(
+                        "2024-01-01", periods=7, freq="D", tz="UTC"
+                    )
+                }
+            ),
+            processed_path=tmp_path / "unused.parquet",
+            dataset_id="fixture-data",
+        )
+
+    oos_calls: list[dict[str, Any]] = []
+
+    def evaluate(
+        strategy_cfg: dict[str, Any],
+        strategy_execution: StrategyExecution,
+        bt_cfg: BacktestConfig,
+        frame: pd.DataFrame,
+        params: dict[str, Any],
+        metric: str,
+        parallel_cfg: ParallelConfig,
+    ) -> tuple[dict[str, Any], float | None, dict[str, Any]]:
+        if bt_cfg.start_date.day == 4:
+            oos_calls.append(params)
+            # A valid training winner may have an unavailable OOS metric.
+            return params, None, {metric: None}
+        value = values[0 if params["direction"] == -1 else 1]
+        return params, value, {metric: value}
+
+    monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
+    monkeypatch.setattr(DataService, "load", load)
+    monkeypatch.setattr(optimization, "_run_single_combo", evaluate)
+    monkeypatch.setattr(optimization, "estimate_n_jobs", lambda *args, **kwargs: 1)
+    _run_optimization("fixture")
+    job = store.get_job("fixture")
+    assert job is not None
+    if expected is None:
+        assert job["status"] == "failed"
+        assert "No parameter combination has a finite objective value" in job["error"]
+        assert oos_calls == []
+        assert not (store.workspace.runs / "fixture" / "result.json").exists()
+    else:
+        assert job["status"] == "done"
+        assert job["best_params"] == {"direction": expected}
+        assert oos_calls == [{"direction": expected}]
+        result = store.load_result(str(job["result_path"]))
+        assert result is not None
+        assert result["direction"] == "minimize"
+        assert result["best_oos_metric_value"] is None

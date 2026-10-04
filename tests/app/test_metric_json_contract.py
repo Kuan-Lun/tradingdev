@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -37,8 +36,7 @@ def _undefined_walk_forward_summary() -> dict[str, object]:
         test_end=moment,
         test_metrics={"sharpe_ratio": float("inf")},
     )
-    with pytest.warns(RuntimeWarning):
-        return summarize_results([fold])
+    return summarize_results([fold])
 
 
 def _reject_nonfinite(constant: str) -> object:
@@ -88,10 +86,16 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
     metrics = _undefined_walk_forward_summary()
     original_stats = metrics["sharpe_ratio"]
     assert isinstance(original_stats, dict)
-    assert math.isnan(original_stats["mean"])
+    assert original_stats["mean"] is None
     expected = {
         "n_folds": 1,
-        "sharpe_ratio": {"mean": None, "std": None, "min": None, "max": None},
+        "sharpe_ratio": {
+            "mean": None,
+            "std": None,
+            "min": None,
+            "max": None,
+            "valid_count": 0,
+        },
     }
     if writer == "job":
         jobs.create_job(job_id="walk_forward", strategy_name="fixture")
@@ -169,7 +173,7 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
     assert row is not None
     assert json.loads(row["metrics"], parse_constant=_reject_nonfinite) == expected
     json.dumps(run, allow_nan=False)
-    assert math.isnan(original_stats["mean"])
+    assert original_stats["mean"] is None
 
 
 @pytest.mark.parametrize("storage", ["file", "sqlite"])

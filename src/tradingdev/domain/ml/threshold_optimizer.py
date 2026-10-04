@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 from tradingdev.domain.ml.features.features import FeatureEngineer
+from tradingdev.domain.optimization.grid_search import finite_metric_value
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -64,17 +65,17 @@ class ThresholdOptimizer:
             signal_df["signal"] = signals.values
 
             result = self._engine.run(signal_df)
-            total_return = result.metrics.get("total_return", -1.0)
+            total_pnl = finite_metric_value(result.metrics.get("total_pnl"))
             total_trades = result.metrics.get("total_trades", 0)
 
             logger.info(
-                "Threshold %.2f: return=%.4f, trades=%d",
+                "Threshold %.2f: net_pnl=%s, trades=%s",
                 threshold,
-                total_return,
+                total_pnl,
                 total_trades,
             )
 
-            if isinstance(total_return, float) and total_return >= 0:
+            if total_pnl is not None and total_pnl >= 0:
                 logger.info(
                     "Selected threshold=%.2f (lowest with P&L>=0, trades=%d)",
                     threshold,

@@ -213,6 +213,7 @@ class JobService:
                         "optimization_metric": (result or {}).get(
                             "optimization_metric"
                         ),
+                        "direction": (result or {}).get("direction"),
                         "total_combinations": (result or {}).get("total_combinations"),
                     }
                 )

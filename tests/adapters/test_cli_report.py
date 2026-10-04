@@ -15,9 +15,15 @@ def _metrics() -> dict[str, Any]:
         "total_return": 0.125,
         "annual_return": 0.25,
         "max_drawdown": 0.05,
+        "max_drawdown_amount": 500.0,
         "sharpe_ratio": 1.25,
+        "sortino_ratio": 1.5,
+        "calmar_ratio": 5.0,
+        "annual_volatility": 0.15,
         "win_rate": 0.75,
         "profit_factor": 3.0,
+        "trade_expectancy": 312.5,
+        "total_fees": 2.0,
         "total_trades": 4,
         "total_volume": 2000.0,
         "daily_pnl_mean": 625.0,
@@ -37,81 +43,94 @@ def _metrics() -> dict[str, Any]:
     }
 
 
-@pytest.mark.parametrize("mode", ["signal", "volume"])
-def test_report_preserves_finite_numbers_and_units(mode: str) -> None:
+def _values(report: str) -> dict[str, str]:
+    return {
+        key.strip(): value.strip()
+        for line in report.splitlines()
+        if ":" in line
+        for key, value in [line.split(":", 1)]
+    }
+
+
+def test_report_preserves_finite_numbers_and_explicit_units() -> None:
+    report = format_metrics_report(_metrics())
+    values = _values(report)
+
+    assert values["Total P&L"] == "+1,250.00"
+    assert values["Total Return"] == "12.50%"
+    assert values["Annual Return"] == "25.00%"
+    assert values["Max Drawdown"] == "5.00%"
+    assert values["Max Drawdown (amount)"] == "500.00"
+    assert values["Sharpe Ratio"] == "1.2500"
+    assert values["Sortino Ratio"] == "1.5000"
+    assert values["Calmar Ratio"] == "5.0000"
+    assert values["Annual Volatility"] == "15.00%"
+    assert values["Win Rate"] == "75.00%"
+    assert values["Trade Expectancy"] == "+312.50"
+    assert values["Total Fees"] == "2.00"
+    assert values["Total Trades"] == "4"
+    assert values["Total Volume"] == "2,000.00"
+    assert values["Daily P&L min"] == "-100.00"
+    assert values["Monthly Volume"] == "2,000.00"
+    assert values["Monthly P&L std"] == "0.00"
+    assert values["Days"] == "2"
+    assert values["Months"] == "1"
+    assert "quote currency" in report
+    assert "Est. Monthly Vol" not in report
+
+
+def test_volume_report_keeps_return_metrics_unavailable_and_drawdown_in_own_field() -> (
+    None
+):
     metrics = _metrics()
-    if mode == "volume":
-        metrics["max_drawdown"] = 250.0
+    metrics.update(
+        dict.fromkeys(
+            (
+                "total_return",
+                "annual_return",
+                "max_drawdown",
+                "sharpe_ratio",
+                "sortino_ratio",
+                "calmar_ratio",
+                "annual_volatility",
+            )
+        )
+    )
+    values = _values(format_metrics_report(metrics, "volume"))
 
-    lines = format_metrics_report(metrics, mode).splitlines()
-
-    assert "  Total P&L:             +1,250" in lines
-    assert "  Sharpe Ratio:          1.2500" in lines
-    assert "  Win Rate:              75.00%" in lines
-    assert "  Profit Factor:         3.0000" in lines
-    assert "  Total Trades:               4" in lines
-    assert "  Total Volume:              2,000" in lines
-    assert "  Est. Monthly Vol:         30,000" in lines
-    assert "  Daily P&L  min:       -100.00" in lines
-    assert "  Monthly P&L  std:          0.00" in lines
-    assert "  Period:                  2 days" in lines
-    assert "  Period:                    1 months" in lines
-    if mode == "volume":
-        assert "  Max Drawdown:            -250 USDT" in lines
-        assert not any("Return:" in line for line in lines)
-    else:
-        assert "  Total Return:          12.50%" in lines
-        assert "  Annual Return:         25.00%" in lines
-        assert "  Max Drawdown:          -5.00%" in lines
+    assert values["Max Drawdown (amount)"] == "500.00"
+    assert values["Total P&L"] == "+1,250.00"
+    assert values["Total Return"] == "N/A"
+    assert values["Max Drawdown"] == "N/A"
+    assert values["Sharpe Ratio"] == "N/A"
+    assert values["Win Rate"] == "75.00%"
 
 
 @pytest.mark.parametrize("mode", ["signal", "volume"])
-@pytest.mark.parametrize("value", [None, float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize(
+    "value", [None, float("inf"), float("-inf"), float("nan"), True]
+)
 def test_report_marks_unavailable_metrics_without_numeric_formatting(
-    mode: str, value: float | None
+    mode: str, value: float | bool | None
 ) -> None:
     metrics = dict.fromkeys(_metrics(), value)
+    values = _values(format_metrics_report(metrics, mode))
 
-    report = format_metrics_report(metrics, mode)
-
-    values = [
-        line.split(":", 1)[1].strip() for line in report.splitlines() if ":" in line
-    ]
     assert values
-    assert all(
-        value in {"N/A", "N/A days", "N/A months", "N/A USDT"} for value in values
-    )
+    assert set(values.values()) == {"N/A"}
 
 
 @pytest.mark.parametrize("mode", ["signal", "volume"])
 def test_report_marks_missing_metrics_as_unavailable(mode: str) -> None:
-    report = format_metrics_report({}, mode)
+    values = _values(format_metrics_report({}, mode))
 
-    values = [
-        line.split(":", 1)[1].strip() for line in report.splitlines() if ":" in line
-    ]
     assert values
-    assert all(value.startswith("N/A") for value in values)
+    assert set(values.values()) == {"N/A"}
 
 
-@pytest.mark.parametrize("key", ["total_volume", "n_days"])
-@pytest.mark.parametrize("value", [None, float("inf"), float("-inf"), float("nan")])
-def test_monthly_volume_is_unavailable_when_either_input_is_unavailable(
-    key: str, value: float | None
-) -> None:
-    metrics = _metrics()
-    metrics[key] = value
-
-    report = format_metrics_report(metrics)
-
-    line = next(line for line in report.splitlines() if "Est. Monthly Vol:" in line)
-    assert line.split(":", 1)[1].strip() == "N/A"
-
-
-def test_report_preserves_zero_day_monthly_volume_behavior() -> None:
+def test_monthly_volume_uses_calculated_value_without_estimating_from_days() -> None:
     metrics = _metrics()
     metrics["n_days"] = 0
+    metrics["monthly_volume_mean"] = 1234.5
 
-    report = format_metrics_report(metrics)
-
-    assert "  Est. Monthly Vol:         60,000" in report.splitlines()
+    assert _values(format_metrics_report(metrics))["Monthly Volume"] == "1,234.50"

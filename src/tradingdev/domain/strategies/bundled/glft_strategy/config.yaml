@@ -81,7 +81,7 @@ validation:
   train_end: "2024-12-31"
   test_start: "2025-01-01"
   test_end: "2025-12-31"
-  target_metric: "total_return"
+  target_metric: "total_pnl"
 
 # Backtest engine config
 backtest:

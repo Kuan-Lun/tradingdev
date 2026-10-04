@@ -1,161 +1,125 @@
-"""Formatting and summary for walk-forward validation results."""
+"""Formatting and descriptive summaries of walk-forward fold metrics."""
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tradingdev.domain.performance.catalog import METRIC_CATALOG
+
 if TYPE_CHECKING:
-    from tradingdev.domain.validation.walk_forward import (
-        WalkForwardResult,
-    )
+    from tradingdev.domain.validation.walk_forward import WalkForwardResult
 
 
-_INTEGER_METRIC_KEYS = frozenset(
-    {
-        "total_volume",
-        "total_pnl",
-        "total_trades",
-        "n_days",
-        "n_months",
-        "monthly_trades_mean",
-        "monthly_volume_mean",
-    },
-)
-
-_PERCENT_METRIC_KEYS = frozenset(
-    {"total_return", "annual_return", "max_drawdown", "win_rate"},
-)
-
-# In volume mode, max_drawdown is absolute USDT, not a percentage.
-_VOLUME_MODE_OVERRIDE_TO_INTEGER = frozenset({"max_drawdown"})
-
-# Percentage-based metrics that are meaningless in volume mode (no init_cash).
-_VOLUME_MODE_HIDDEN_KEYS = frozenset({"total_return", "annual_return"})
+def _finite_number(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return value if math.isfinite(value) else None
 
 
-def _fmt_metric(key: str, value: float, *, mode: str = "signal") -> str:
-    """Format a metric value based on its key."""
-    # max_drawdown is stored as a positive number; display as negative.
-    if key == "max_drawdown":
-        if mode == "volume":
-            return f"{-value:>14,.0f}"
-        return f"{-value:>14.2%}"
-    if key in _INTEGER_METRIC_KEYS:
-        return f"{value:>+14,.0f}"
-    if key in _PERCENT_METRIC_KEYS:
-        return f"{value:>14.2%}"
-    return f"{value:>14.4f}"
+def _fmt_metric(key: str, value: object) -> str:
+    """Keep a metric's unit and drawdown sign independent of execution mode."""
+    number = _finite_number(value)
+    if number is None:
+        return "N/A"
+    definition = METRIC_CATALOG.get(key)
+    unit = definition.unit if definition is not None else "ratio"
+    if unit == "fraction":
+        return f"{number:.2%}"
+    if unit == "amount":
+        return f"{number:,.2f}"
+    if unit in {"count", "bars"}:
+        return f"{number:,.2f}"
+    return f"{number:.4f}"
 
 
 def summarize_results(
     results: list[WalkForwardResult],
 ) -> dict[str, Any]:
-    """Aggregate metrics across all folds.
+    """Describe valid test-fold values, without treating means as pooled metrics.
 
-    Returns:
-        Dictionary with mean, std, min, max for each metric.
+    Each metric includes the number of finite fold values. Missing, null and
+    non-finite values are excluded; no valid values yields null statistics.
     """
     if not results:
         return {}
 
-    metric_keys = list(results[0].test_metrics.keys())
+    metric_keys = dict.fromkeys(
+        key for result in results for key in result.test_metrics
+    )
     summary: dict[str, Any] = {"n_folds": len(results)}
-
     for key in metric_keys:
-        values = [r.test_metrics[key] for r in results]
-        arr = np.array(values, dtype=float)
-        # Replace inf/-inf with NaN so nanmean/nanstd ignore them cleanly
-        arr = np.where(np.isinf(arr), np.nan, arr)
-        with np.errstate(invalid="ignore"):
-            summary[key] = {
-                "mean": float(np.nanmean(arr)),
-                "std": float(np.nanstd(arr)),
-                "min": float(np.nanmin(arr)),
-                "max": float(np.nanmax(arr)),
-            }
-
+        values = [
+            number
+            for result in results
+            if (number := _finite_number(result.test_metrics.get(key))) is not None
+        ]
+        stats: dict[str, float | int | None] = {
+            "mean": None,
+            "std": None,
+            "min": None,
+            "max": None,
+            "valid_count": len(values),
+        }
+        if values:
+            arr = np.array(values, dtype=float)
+            stats.update(
+                mean=float(np.mean(arr)),
+                std=float(np.std(arr)),
+                min=float(np.min(arr)),
+                max=float(np.max(arr)),
+            )
+        summary[key] = stats
     return summary
 
 
-def _infer_mode(results: list[WalkForwardResult]) -> str:
-    """Infer backtest mode from the first fold's BacktestResult."""
-    for r in results:
-        if r.test_backtest is not None:
-            return r.test_backtest.mode
-        if r.train_backtest is not None:
-            return r.train_backtest.mode
-    return "signal"
-
-
-def format_walk_forward_report(
-    results: list[WalkForwardResult],
-) -> str:
-    """Format walk-forward results into a readable report."""
-    mode = _infer_mode(results)
-
-    lines: list[str] = [
+def format_walk_forward_report(results: list[WalkForwardResult]) -> str:
+    """Render per-fold values and explicitly labeled test-fold summaries."""
+    lines = [
         "=" * 60,
         "  Walk-Forward Validation Report",
+        "  Monetary values are in the market's quote currency.",
         "=" * 60,
     ]
-
-    for r in results:
-        lines.append(f"\n  Fold {r.fold_index}:")
-        lines.append(f"    Train: {r.train_start:%Y-%m-%d} ~ {r.train_end:%Y-%m-%d}")
-        lines.append(f"    Test:  {r.test_start:%Y-%m-%d} ~ {r.test_end:%Y-%m-%d}")
-        lines.append(f"    Params: {r.strategy_params}")
-
-        lines.append("    Train metrics:")
-        for k, v in r.train_metrics.items():
-            if mode == "volume" and k in _VOLUME_MODE_HIDDEN_KEYS:
-                continue
-            if isinstance(v, float):
-                lines.append(f"      {k:>20s}: {_fmt_metric(k, v, mode=mode)}")
-            else:
-                lines.append(f"      {k:>20s}: {v!s:>14s}")
-
-        lines.append("    Test metrics:")
-        for k, v in r.test_metrics.items():
-            if mode == "volume" and k in _VOLUME_MODE_HIDDEN_KEYS:
-                continue
-            if isinstance(v, float):
-                lines.append(f"      {k:>20s}: {_fmt_metric(k, v, mode=mode)}")
-            else:
-                lines.append(f"      {k:>20s}: {v!s:>14s}")
+    for result in results:
+        lines.extend(
+            [
+                f"\n  Fold {result.fold_index}:",
+                f"    Train: {result.train_start:%Y-%m-%d} ~ "
+                f"{result.train_end:%Y-%m-%d}",
+                f"    Test:  {result.test_start:%Y-%m-%d} ~ {result.test_end:%Y-%m-%d}",
+                f"    Params: {result.strategy_params}",
+            ]
+        )
+        for label, metrics in (
+            ("Train", result.train_metrics),
+            ("Test", result.test_metrics),
+        ):
+            lines.append(f"    {label} metrics:")
+            lines.extend(
+                f"      {key:>24s}: {_fmt_metric(key, value):>14s}"
+                for key, value in metrics.items()
+            )
 
     summary = summarize_results(results)
-    if summary.get("n_folds", 0) > 1:
-        lines.append("\n" + "-" * 60)
-        lines.append("  Summary across folds:")
+    if len(results) > 1:
+        lines.extend(
+            [
+                "\n" + "-" * 60,
+                "  Descriptive test-fold statistics:",
+                "  Fold means are not full-period portfolio performance.",
+            ]
+        )
         for key, stats in summary.items():
-            if mode == "volume" and key in _VOLUME_MODE_HIDDEN_KEYS:
-                continue
             if isinstance(stats, dict):
-                if key == "max_drawdown":
-                    fmt = ",.0f" if mode == "volume" else ".2%"
-                    # Negate: drawdown stored positive, display negative.
-                    s = stats
-                    lines.append(
-                        f"    {key}: mean={-s['mean']:{fmt}} "
-                        f"std={s['std']:{fmt}} "
-                        f"[{-s['max']:{fmt}}, "
-                        f"{-s['min']:{fmt}}]"
-                    )
-                else:
-                    if key in _INTEGER_METRIC_KEYS:
-                        fmt = ",.0f"
-                    elif key in _PERCENT_METRIC_KEYS:
-                        fmt = ".2%"
-                    else:
-                        fmt = ".4f"
-                    lines.append(
-                        f"    {key}: mean={stats['mean']:{fmt}} "
-                        f"std={stats['std']:{fmt}} "
-                        f"[{stats['min']:{fmt}}, "
-                        f"{stats['max']:{fmt}}]"
-                    )
-
+                lines.append(
+                    f"    {key}: mean={_fmt_metric(key, stats['mean'])} "
+                    f"std={_fmt_metric(key, stats['std'])} "
+                    f"[{_fmt_metric(key, stats['min'])}, "
+                    f"{_fmt_metric(key, stats['max'])}] "
+                    f"valid={stats['valid_count']}/{len(results)}"
+                )
     lines.append("=" * 60)
     return "\n".join(lines)

@@ -30,6 +30,12 @@ def strategy_contract_payload(package_root: Path) -> dict[str, str]:
             "The indicator facade uses TA-Lib and preserves its warm-up and "
             "NaN behavior; keep signals flat until all required values are "
             "finite, and never backfill indicators from future rows. "
+            "Performance uses Empyrical daily return/risk statistics and "
+            "VectorBT closed-trade statistics. Set backtest.periods_per_year "
+            "explicitly for annualized daily-return metrics (365 for this crypto "
+            "example; choose the appropriate trading calendar for other markets). "
+            "Without it, annualized metrics are unavailable. Volume mode has no "
+            "capital return; use total_pnl and max_drawdown_amount. "
             "talib may be imported directly: pass float64 NumPy arrays to its "
             "Function API, unpack multi-output tuples (MACD: line, signal, "
             "histogram; BBANDS: upper, middle, lower; STOCH: k, d), and align "
@@ -132,6 +138,9 @@ backtest:
   start_date: "2024-01-01"
   end_date: "2024-12-31"
   init_cash: 10000.0
+  periods_per_year: 365.0
+  risk_free_rate: 0.0
+  required_return: 0.0
   fees: 0.0006
   slippage: 0.0005
   mode: "signal"

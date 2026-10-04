@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any
 from joblib import Parallel, delayed
 
 from tradingdev.domain.indicators.kd import KDIndicator
-from tradingdev.domain.optimization.grid_search import tuple_grid
+from tradingdev.domain.optimization.grid_search import (
+    GridSearchResult,
+    best_result,
+    finite_metric_value,
+    metric_direction,
+    tuple_grid,
+)
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.shared.utils.logger import setup_logger
@@ -30,7 +36,7 @@ def _evaluate_kd_combo(
     trial_config: KDStrategyConfig,
     engine: BaseBacktestEngine,
     target: str,
-) -> tuple[KDStrategyConfig, float]:
+) -> tuple[KDStrategyConfig, float | None]:
     """Evaluate a single KD parameter combination.
 
     This is a module-level function so it can be pickled by joblib.
@@ -38,9 +44,7 @@ def _evaluate_kd_combo(
     trial = KDStrategy(config=trial_config)
     signals = trial.generate_signals(df)
     result = engine.run(signals)
-    value = result.metrics.get(target, float("-inf"))
-    metric = value if isinstance(value, float) else float("-inf")
-    return trial_config, metric
+    return trial_config, finite_metric_value(result.metrics.get(target))
 
 
 class KDStrategy(BaseStrategy):
@@ -74,6 +78,7 @@ class KDStrategy(BaseStrategy):
 
         engine = self._backtest_engine
         target = self._fit_config.target_metric
+        direction = metric_direction(target)
 
         grid = tuple_grid(
             self._fit_config.k_period_range,
@@ -107,16 +112,16 @@ class KDStrategy(BaseStrategy):
             for k_p, d_p, sm_k, ob, os_ in grid
         ]
 
-        results: list[tuple[KDStrategyConfig, float]] = Parallel(
+        results: list[tuple[KDStrategyConfig, float | None]] = Parallel(
             n_jobs=n_jobs,
         )(delayed(_evaluate_kd_combo)(df, cfg, engine, target) for cfg in configs)
 
-        best_config = self._config
-        best_metric = -float("inf")
-        for cfg, value in results:
-            if value > best_metric:
-                best_metric = value
-                best_config = cfg
+        best = best_result(
+            (GridSearchResult(cfg.model_dump(), value, {}) for cfg, value in results),
+            direction=direction,
+        )
+        best_config = KDStrategyConfig(**best.params)
+        best_metric = best.metric_value
 
         self._config = best_config
         self._indicator = KDIndicator(

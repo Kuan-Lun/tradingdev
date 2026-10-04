@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt  # noqa: TC003
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class BacktestConfig(BaseModel):
@@ -15,7 +15,7 @@ class BacktestConfig(BaseModel):
     timeframe: str
     start_date: dt.datetime
     end_date: dt.datetime
-    init_cash: float | None = None
+    init_cash: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     fees: float = 0.0006
     slippage: float = 0.0005
     position_size: float | None = None
@@ -26,6 +26,9 @@ class BacktestConfig(BaseModel):
     mode: str = "signal"
     monthly_max_loss: float = 1500.0
     random_seed: int | None = None
+    periods_per_year: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    risk_free_rate: float = Field(default=0.0, gt=-1, allow_inf_nan=False)
+    required_return: float = Field(default=0.0, gt=-1, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def end_after_start(self) -> Self:

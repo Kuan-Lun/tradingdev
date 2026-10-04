@@ -107,12 +107,12 @@ class WalkForwardValidator:
         test_metrics = test_result.metrics
 
         logger.info(
-            "Fold %d: train %s=%.4f, test %s=%.4f",
+            "Fold %d: train %s=%s, test %s=%s",
             fold_idx,
             self._config.target_metric,
-            train_metrics.get(self._config.target_metric, float("nan")),
+            train_metrics.get(self._config.target_metric),
             self._config.target_metric,
-            test_metrics.get(self._config.target_metric, float("nan")),
+            test_metrics.get(self._config.target_metric),
         )
 
         return WalkForwardResult(

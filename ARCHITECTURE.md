@@ -163,7 +163,7 @@ backtest, walk-forward, parallel, and optional seed defaults. The saved strategy
 mapping remains subject to the revision contract. Dates become JSON strings and
 all execution values must be finite JSON; non-finite requests are rejected.
 
-Schema version 2 records the execution kind, resolved config, required effective
+Schema version 3 records the execution kind, resolved config, required effective
 strategy constructor settings (`strategy_execution`), optional
 optimization spec, and `manifest_hash`. The SHA-256 covers canonical JSON with
 sorted object keys and excludes the hash field itself, job IDs and creation
@@ -177,7 +177,8 @@ saved values are rejected instead of silently accepting new defaults. Strategy
 models permit lossless integer-to-float conversion for existing numeric fields,
 so JSON grid candidates such as `80` remain valid for float settings.
 Optimization fixes the parameter grid, metric, ordered non-overlapping calendar
-date ranges, `maximize` direction, and trial/confirmation timeouts and polling
+date ranges, the catalog-defined `maximize` or `minimize` direction, and
+trial/confirmation timeouts and polling
 interval. Parameter names are sorted for traversal; each candidate list retains
 its order. Optimization rejects a config with walk-forward validation settings
 because its own training/test ranges define the split.
@@ -189,8 +190,11 @@ Creation resolves defaults; decoding an existing manifest preserves its recorded
 JSON values. Execution separately checks that current runtime models can consume
 those values without adding defaults or changing their values, with only the
 lossless strategy-model numeric conversion described above permitted.
-Schema 1 manifests, missing version/effective strategy fields, and unknown versions
-cannot execute through schema 2. Stored results remain readable. Future format
+Schema 1/2 manifests, missing version/effective strategy fields, and unknown versions
+cannot execute through schema 3. Stored results remain readable. Version 3 fixes
+performance annualization settings and catalog-derived optimization direction.
+Persisted direction is consumed as recorded rather than inferred again from a
+later catalog. Future format
 or decoding changes require a new schema version, not reinterpretation of saved
 specifications using current defaults.
 
@@ -212,6 +216,25 @@ stored job identity, not a security boundary against writers controlling both
 SQLite and the filesystem. The manifest freezes the requested execution; it
 does not snapshot data contents, installed dependencies, the engine environment,
 or RNG state and does not promise fully reproducible results.
+
+## Performance Analysis
+
+`domain/performance` defines metric identities, units, applicability, summary
+selection and optimization directions. Calculation and persistence retain all
+supported metrics; summary selection does not discard stored values.
+The backtest engines normalize timestamps, marked-to-market equity and trade
+records before analysis. Empyrical calculates return/risk statistics; VectorBT
+calculates closed-trade statistics for both signal and volume engines.
+The project owns execution-cost accounting and the translation to these providers.
+
+Annualized statistics use observed UTC daily returns and an explicit
+`backtest.periods_per_year`; missing annualization produces unavailable metrics.
+Annual risk-free and required returns are converted using that factor. Bar-level
+drawdowns include the starting capital/PnL baseline. Fraction and amount drawdowns
+have separate IDs, and volume mode does not invent a capital return.
+The result retains provider versions, settings and reasons for unavailable values
+alongside the full numerical metrics and raw observations. Walk-forward summaries
+are per-metric fold distributions with valid counts, not whole-period returns.
 
 ## Storage
 

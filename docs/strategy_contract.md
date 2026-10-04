@@ -123,6 +123,9 @@ backtest:
   start_date: "2024-01-01"
   end_date: "2024-12-31"
   init_cash: 10000.0
+  periods_per_year: 365.0
+  risk_free_rate: 0.0
+  required_return: 0.0
   mode: "signal"
 
 data:
@@ -146,6 +149,22 @@ data:
 `strategy.source_path` to the saved revision. These identity fields are managed
 by the service; callers need not supply them. `strategy.version` remains optional
 descriptive configuration, not the execution revision identifier.
+
+Performance analysis uses Empyrical for return/risk metrics and VectorBT for
+closed-trade statistics. `periods_per_year` is the explicit annualization factor
+for observed UTC **daily returns**, independent of the strategy's bar timeframe:
+365 for this continuously traded crypto example, or an appropriate trading-day
+count for another market. Omitting it leaves annualized metrics unavailable.
+`risk_free_rate` and `required_return` are annual decimal rates, converted to
+daily rates using that factor. Calendar aggregation uses observed dates; missing
+market data is not silently filled with zero returns. Maximum drawdown retains
+bar-level resolution. `max_drawdown` is a nonnegative fraction;
+`max_drawdown_amount` is a nonnegative amount in the portfolio's quote currency.
+Calmar uses daily-return drawdown, exposed separately as `daily_max_drawdown`.
+Volume mode has no initial capital, so capital-return metrics are unavailable;
+use amount-based PnL and drawdown rather than interpreting missing returns as zero.
+`total_trades`, `win_rate`, `profit_factor`, and `trade_expectancy` refer to closed
+trades after entry and exit costs. Open trades are counted separately.
 
 Feature sources are explicit:
 
@@ -228,7 +247,8 @@ recursively override only the specified fields of the fixed effective base;
 other nested fields retain their captured values. Validation evidence covers
 the base parameters; it does not certify
 every possible optimization candidate. Optimization fixes candidate lists,
-metric, calendar training/test ranges, maximization direction, and confirmation
+metric, calendar training/test ranges, the metric's minimization or maximization
+direction, and confirmation
 policy in the manifest. A config with `validation` settings cannot also request
 optimization; choose walk-forward or supply a config using the optimization
 training/test split alone. The complete request does not freeze imported Python

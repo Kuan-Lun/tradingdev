@@ -22,18 +22,11 @@ from pydantic import (
 from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
 from tradingdev.domain.data.requirements import DataRequirement
 from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.domain.optimization.grid_search import metric_direction
+from tradingdev.domain.performance.catalog import METRIC_CATALOG
 from tradingdev.domain.strategies.execution import StrategyExecution
 
 type ExecutionKind = Literal["backtest", "walk_forward", "optimization"]
-type OptimizationMetric = Literal[
-    "total_return",
-    "total_pnl",
-    "annual_return",
-    "sharpe_ratio",
-    "max_drawdown",
-    "win_rate",
-    "profit_factor",
-]
 
 
 class ManifestError(ValueError):
@@ -87,15 +80,46 @@ class OptimizationSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     param_ranges: dict[str, list[JsonValue]]
-    optimization_metric: OptimizationMetric
+    optimization_metric: str = Field(min_length=1)
     train_start: dt.date
     train_end: dt.date
     test_start: dt.date
     test_end: dt.date
-    direction: Literal["maximize"] = "maximize"
+    direction: Literal["maximize", "minimize"]
     trial_timeout_seconds: int = Field(default=300, gt=0, strict=True)
     confirmation_timeout_seconds: int = Field(default=1800, gt=0, strict=True)
     confirmation_poll_interval: float = Field(default=2.0, gt=0, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_new_objective(cls, value: object) -> object:
+        """Resolve omitted direction once; saved policies retain their meaning."""
+        if isinstance(value, dict) and "direction" not in value:
+            metric_id = value.get("optimization_metric")
+            if isinstance(metric_id, str):
+                return {**value, "direction": metric_direction(metric_id)}
+        return value
+
+    def validate_new_request(self, backtest: dict[str, JsonValue]) -> None:
+        """Validate applicability only when creating a new execution request."""
+        direction = metric_direction(self.optimization_metric)
+        definition = METRIC_CATALOG[self.optimization_metric]
+        if self.direction != direction:
+            raise ManifestError(
+                f"Metric '{self.optimization_metric}' requires direction '{direction}'"
+            )
+        if backtest["mode"] not in definition.modes:
+            raise ManifestError(
+                f"Metric '{self.optimization_metric}' is not applicable to "
+                f"mode '{backtest['mode']}'"
+            )
+        if (
+            definition.requires_annualization
+            and backtest.get("periods_per_year") is None
+        ):
+            raise ManifestError(
+                f"Metric '{self.optimization_metric}' requires periods_per_year"
+            )
 
     @field_validator("param_ranges", mode="before")
     @classmethod
@@ -154,7 +178,7 @@ class ExecutionManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     kind: ExecutionKind
     config: dict[str, JsonValue]
     strategy_execution: StrategyExecution
@@ -209,15 +233,19 @@ class ExecutionManifest(BaseModel):
                 if optimization is not None
                 else None
             )
+            if search is not None:
+                backtest = resolved["backtest"]
+                assert isinstance(backtest, dict)
+                search.validate_new_request(backtest)
             payload = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "kind": kind,
                 "config": resolved,
                 "strategy_execution": strategy.model_dump(mode="python"),
                 "optimization": search.model_dump(mode="python") if search else None,
             }
             return cls(
-                schema_version=2,
+                schema_version=3,
                 kind=kind,
                 config=resolved,
                 strategy_execution=strategy,

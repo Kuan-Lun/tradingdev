@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -30,6 +29,7 @@ from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 from tradingdev.shared.utils.config import load_config
+from tradingdev.shared.utils.json_values import normalize_json_object
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,24 +61,6 @@ class BacktestRun:
 
 class BacktestService:
     """Run simple and walk-forward backtests through one service path."""
-
-    _RESULT_METRICS_KEYS = [
-        "total_return",
-        "total_pnl",
-        "annual_return",
-        "sharpe_ratio",
-        "max_drawdown",
-        "win_rate",
-        "profit_factor",
-        "total_trades",
-        "monthly_pnl_mean",
-        "monthly_pnl_std",
-        "monthly_pnl_min",
-        "monthly_pnl_max",
-        "monthly_pnl_median",
-        "n_months",
-        "monthly_trades_mean",
-    ]
 
     def __init__(
         self,
@@ -228,13 +210,5 @@ class BacktestService:
         return create_backtest_engine(config)
 
     def serialize_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
-        """Return JSON metrics with the same non-finite values as MCP responses."""
-        serialized: dict[str, Any] = {}
-        for key in self._RESULT_METRICS_KEYS:
-            if key not in metrics:
-                continue
-            value = metrics[key]
-            serialized[key] = (
-                None if isinstance(value, float) and not math.isfinite(value) else value
-            )
-        return serialized
+        """Preserve all computed metrics while normalizing JSON values."""
+        return normalize_json_object(metrics)

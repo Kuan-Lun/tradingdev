@@ -11,6 +11,7 @@ import pytest
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
+from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
@@ -104,6 +105,7 @@ def test_job_lifecycle_payloads_satisfy_advertised_contract(
                 "train_metrics": {"sharpe_ratio": 0.0},
                 "test_metrics": {"sharpe_ratio": None},
                 "optimization_metric": "sharpe_ratio",
+                "direction": "maximize",
                 "total_combinations": 2,
             },
         )
@@ -117,6 +119,7 @@ def test_job_lifecycle_payloads_satisfy_advertised_contract(
     assert payload["status"] == state
     assert payload["manifest_hash"] is None
     if state == "done":
+        assert payload["direction"] == "maximize"
         assert payload["train_metrics"]["sharpe_ratio"] == 0.0
         assert payload["test_metrics"]["sharpe_ratio"] is None
 
@@ -165,3 +168,41 @@ def test_confirmation_returns_structured_failure_for_unversioned_job(
     persisted = store.get_job("legacy")
     assert persisted is not None
     assert persisted.get("confirmed") is not True
+
+
+@pytest.mark.parametrize("metric", ["max_drawdown", "daily_pnl_mean"])
+def test_start_optimization_exposes_catalog_objective_direction_through_mcp(
+    job_service: JobService, monkeypatch: pytest.MonkeyPatch, metric: str
+) -> None:
+    store = job_service._job_store
+    server = FastMCP("optimization-direction")
+    optimization.register(server, OptimizationService(job_store=store), job_service)
+    monkeypatch.setattr(
+        ProcessRunner,
+        "spawn_module",
+        lambda *args: WorkerHandle(2468, 100.0, "a" * 32),
+    )
+    result = asyncio.run(
+        server.call_tool(
+            "start_optimization",
+            {
+                "strategy_id": "kd_crossover",
+                "symbol": "BTC/USDT",
+                "timeframe": "1h",
+                "param_ranges": {"k_period": [3, 5]},
+                "optimization_metric": metric,
+                "train_start": "2024-01-01",
+                "train_end": "2024-01-03",
+                "test_start": "2024-01-04",
+                "test_end": "2024-01-07",
+            },
+        )
+    )
+    assert isinstance(result, tuple)
+    payload = result[1]["result"]
+    expected = "minimize" if metric == "max_drawdown" else "maximize"
+    assert payload["direction"] == expected
+    assert payload["optimization_metric"] == metric
+    manifest = store.load_manifest(payload["job_id"])
+    assert manifest.optimization is not None
+    assert manifest.optimization.direction == expected
