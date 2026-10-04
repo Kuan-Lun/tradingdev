@@ -289,6 +289,13 @@ uv run streamlit run src/tradingdev/adapters/dashboard/app.py -- --run-id <run_i
 `<run_id>` 是要查看的執行結果識別碼，可透過 MCP 的 `list_runs` 取得。
 省略 `--run-id` 時，可從側邊欄選擇工作區中已儲存的執行結果。
 
+歷史 run 的指標可透過 `get_run` 查詢，不代表新版 Dashboard 能完整顯示。
+Dashboard 需要可載入的 `pipeline_result` 產物，且設定快照須符合現行格式；
+含 `backtest.random_seed` 等已移除欄位的舊快照會載入失敗。舊交易若缺少
+`status`、進出場時間（或可對應行情時間的 `entry_idx`／`exit_idx`），或
+`exit_notional`，交易圖表與月成交量可能缺漏。需要完整 Dashboard 結果時，
+請以新版設定重新回測；既有產物不會自動遷移。
+
 ## 相關文件
 
 - [策略撰寫契約](docs/strategy_contract.md)

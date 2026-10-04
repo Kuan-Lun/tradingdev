@@ -36,8 +36,11 @@ designed for research on market-making volume targets, not live execution.
 ## Signal Logic
 
 - `fit()` searches candidate lookback windows by validation accuracy.
-- Optional threshold search uses the backtest engine to choose a signal
-  threshold from `signal_threshold_candidates`.
+- Optional threshold search evaluates `signal_threshold_candidates` in ascending
+  order using the backtest engine. It selects the lowest threshold with finite,
+  non-negative `total_pnl` after fees and slippage. Unavailable or non-finite
+  results are skipped; if no candidate qualifies, it retains the configured
+  `signal_threshold`.
 - `generate_signals()` requires a fitted model and rolling retrains according to
   `retrain_interval`.
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.

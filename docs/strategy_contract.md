@@ -50,6 +50,17 @@ Generated code must:
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
 
+Backtest execution requires finite, strictly positive prices: signal mode checks
+`open` and `close`; volume mode checks OHLC, using `close` for missing `open`,
+`high`, or `low`. When supplied, the `timestamp` column or DatetimeIndex must
+contain valid, nonmissing, unique, increasing timestamps; they are normalized to
+UTC.
+
+Volume mode applies optional `size_weight` values to the following bar with
+`shift(1).fillna(1.0)`. The resulting weights must be finite and strictly positive;
+zero is not a trade-suppression flag. Emit `signal=0` to prevent new entries; set
+`signal_as_position: true` if zero should also close an existing position.
+
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
 the constructor cannot accept fail validation. `backtest_engine` and

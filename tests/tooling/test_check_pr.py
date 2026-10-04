@@ -107,7 +107,7 @@ def _assert_cleaned(scenario: Scenario) -> None:
 
 
 @pytest.mark.parametrize("runner", ["pr", "full"])
-@pytest.mark.parametrize("budget", [None, 1_000_000])
+@pytest.mark.parametrize("budget", [None, 1_000_000, 2_000_000])
 def test_check_validates_both_sides_and_removes_candidate_and_snapshot(
     scenario: Scenario,
     monkeypatch: MonkeyPatch,
@@ -160,7 +160,7 @@ def test_check_validates_both_sides_and_removes_candidate_and_snapshot(
 
 
 @pytest.mark.parametrize("runner", ["pr", "full"])
-@pytest.mark.parametrize("budget", [None, 1_000_000])
+@pytest.mark.parametrize("budget", [None, 1_000_000, 2_000_000])
 def test_check_cli_forwards_evidence_budget(
     monkeypatch: MonkeyPatch, runner: str, budget: int | None
 ) -> None:
