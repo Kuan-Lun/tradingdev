@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,7 @@ from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.validator import diagnostic
 
 if TYPE_CHECKING:
+    from tradingdev.domain.strategies.execution import StrategyExecution
     from tradingdev.domain.strategies.schemas import (
         StrategyDiagnostic,
         StrategyMetadata,
@@ -44,8 +46,6 @@ class SignalContractChecker:
         fixture_rows: int,
     ) -> dict[str, Any]:
         """Return contract diagnostics and signal analysis for a strategy."""
-        diagnostics: list[StrategyDiagnostic] = []
-        effective_config: dict[str, Any] | None = None
         try:
             config_path = Path(metadata.config_path)
             config_bytes = config_path.read_bytes()
@@ -56,6 +56,50 @@ class SignalContractChecker:
             if not isinstance(raw, dict):
                 msg = "YAML config must be a mapping"
                 raise ValueError(msg)
+            strategy_cfg = raw.get("strategy")
+            if not isinstance(strategy_cfg, dict):
+                msg = "strategy config must be a mapping"
+                raise ValueError(msg)
+            for field, expected in (
+                ("id", metadata.strategy_id),
+                ("revision_id", metadata.revision_id),
+                ("class_name", metadata.class_name),
+                ("source_path", metadata.source_path),
+            ):
+                if strategy_cfg.get(field) != expected:
+                    msg = f"strategy.{field} does not match saved strategy metadata"
+                    raise ValueError(msg)
+            strategy_cfg["source_hash"] = metadata.source_hash
+            return self.check_config(raw, fixture_rows=fixture_rows)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "diagnostics": [
+                    _contract_diagnostic(
+                        code="contract_execution_error",
+                        message=str(exc),
+                        fix="Fix the saved strategy identity or configuration.",
+                    )
+                ],
+                "effective_config": None,
+            }
+
+    def check_config(
+        self,
+        raw_config: dict[str, Any],
+        *,
+        fixture_rows: int,
+        execution: StrategyExecution | None = None,
+        parameter_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Check effective execution settings without altering revision evidence.
+
+        A captured execution uses exactly its frozen constructor settings. Search
+        candidates apply the same overrides used by the real strategy loader.
+        """
+        diagnostics: list[StrategyDiagnostic] = []
+        effective_config: dict[str, Any] | None = None
+        try:
+            raw = deepcopy(raw_config)
             try:
                 run_config = BacktestRunConfig.model_validate(raw)
             except ValidationError as exc:
@@ -77,25 +121,23 @@ class SignalContractChecker:
             effective_config["parallel"] = (
                 run_config.parallel or ParallelConfig()
             ).model_dump(mode="json")
-            strategy_cfg = raw.get("strategy")
-            if not isinstance(strategy_cfg, dict):
-                msg = "strategy config must be a mapping"
-                raise ValueError(msg)
-            for field, expected in (
-                ("id", metadata.strategy_id),
-                ("revision_id", metadata.revision_id),
-                ("class_name", metadata.class_name),
-                ("source_path", metadata.source_path),
-            ):
-                if strategy_cfg.get(field) != expected:
-                    msg = f"strategy.{field} does not match saved strategy metadata"
-                    raise ValueError(msg)
-            strategy_cfg["source_hash"] = metadata.source_hash
-            effective_config["strategy"]["source_hash"] = metadata.source_hash
             with execution_randomness(run_config.random_seed):
-                strategy = self._loader.create_from_config(
-                    effective_config, engine=None
-                )
+                if execution is None:
+                    strategy = self._loader.create_from_config(
+                        effective_config, engine=None
+                    )
+                else:
+                    selected = execution
+                    if parameter_overrides:
+                        selected = self._loader.override_execution(
+                            effective_config["strategy"], execution, parameter_overrides
+                        )
+                    strategy = self._loader.create_from_execution(
+                        effective_config["strategy"],
+                        selected,
+                        None,
+                        run_config.parallel or ParallelConfig(),
+                    )
                 if not isinstance(strategy, BaseStrategy):
                     diagnostics.append(
                         _contract_diagnostic(

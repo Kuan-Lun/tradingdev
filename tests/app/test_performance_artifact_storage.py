@@ -19,6 +19,7 @@ from tradingdev.adapters.storage.performance import (
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.job_store import JobStore
+from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.domain.execution import ExecutionManifest
@@ -519,3 +520,55 @@ def test_job_retry_rejects_incomplete_registered_artifacts_without_rewriting(
         assert not target.exists()
     else:
         assert target.read_bytes() == b"corrupted pickle"
+
+
+@pytest.mark.parametrize("writer", ["job", "cli"])
+@pytest.mark.parametrize("walk_forward", [False, True])
+@pytest.mark.parametrize("bundled", [False, True])
+def test_persisted_scopes_keep_fixed_parameters_separate_from_fitted_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    writer: str,
+    walk_forward: bool,
+    bundled: bool,
+) -> None:
+    pipeline, projection = _pipeline(walk_forward=walk_forward)
+    parameters = {"window": 3, "nested": {"warmup": 2}}
+    config = pipeline.config_snapshot
+    config["strategy"]["parameters"] = {"window": 3}
+    manifest = ExecutionManifest.create(
+        kind="walk_forward" if walk_forward else "backtest",
+        config=config,
+        strategy_execution=StrategyExecution(
+            kind="bundled" if bundled else "generated",
+            constructor_kwargs={"config": parameters} if bundled else parameters,
+        ),
+    )
+    pipeline.execution_manifest = manifest
+    pipeline.config_snapshot = manifest.config_copy()
+    if pipeline.backtest_result is not None:
+        pipeline.backtest_result.metric_metadata["strategy_parameters"] = {"window": 7}
+    workspace, store, run_id, save = _writer(tmp_path, monkeypatch, writer, pipeline)
+    path = save(pipeline, projection)
+    if writer == "cli":
+        run_id = path.stem
+    performance_path = workspace.runs / run_id / "performance.json"
+    original = performance_path.read_bytes()
+    queries = RunService(workspace=workspace, store=store)
+    scopes = queries.get_run(run_id)["run"]["available_scopes"]
+    assert scopes
+    for scope_id in scopes:
+        detail = queries.get_run_metrics(run_id, scope=scope_id)
+        assert detail["success"], detail
+        assert detail["parameters"] == parameters
+        assert detail["manifest_hash"] == manifest.manifest_hash
+        if scope_id.startswith("fold/"):
+            index = int(scope_id.split("/")[1])
+            assert detail["metadata"]["strategy_parameters"] == {"window": index + 1}
+        elif scope_id == "full":
+            assert detail["metadata"]["strategy_parameters"] == {"window": 7}
+        else:
+            assert detail["metadata"]["fold_metadata"]["fold/0/test"][
+                "strategy_parameters"
+            ] == {"window": 1}
+    assert performance_path.read_bytes() == original

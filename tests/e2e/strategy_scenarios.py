@@ -15,6 +15,7 @@ class Scenario:
     requirement: str
     repair: bool = False
     legacy: bool = False
+    experiment: bool = False
 
     @property
     def strategy_id(self) -> str:
@@ -36,6 +37,13 @@ class Scenario:
             )
         else:
             preparation = "請先查詢策略清單。"
+        experiment = (
+            f"本次為參數實驗：start_backtest 必須額外傳 parameters={self.overrides}。"
+            "沿用剛通過 dry-run 的 revision_id；不得為這次參數修改另存 revision，"
+            "原 YAML 基礎參數保持不變。"
+            if self.experiment
+            else ""
+        )
         return f"""請透過 TradingDev MCP 開發策略 {self.strategy_id}。
 {preparation}
 讀取 get_strategy_contract，依照契約完成 Python 與 YAML。{self.requirement}
@@ -51,6 +59,7 @@ data.requirements.features 為空。
 若不一致，修改 YAML 後重新 save、validate、dry-run，不可直接接受預設值。
 接著你必須親自透過 MCP start_backtest 啟動這個策略，
 symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
+{experiment}
 本次行情已預先放入後端快取，不下載行情、不使用外部資料。
 持續 get_job_status 查詢直到 done，再以回傳的 run_id 呼叫 get_run，
 以及 list_artifacts。一般回覆只有摘要；接著呼叫 get_metric_catalog(mode=signal)，
@@ -68,6 +77,13 @@ _SMA_REQUIREMENT = (
     "小於時每根=-1，相等或資料不足20根時=0。不得修改輸入資料或使用未來資料。"
 )
 SCENARIOS = {
+    "experiment": Scenario(
+        "experiment",
+        {"fast_period": 5, "slow_period": 20},
+        {"fast_period": 3, "slow_period": 8},
+        _SMA_REQUIREMENT,
+        experiment=True,
+    ),
     "sma": Scenario(
         "sma",
         {"fast_period": 5, "slow_period": 20},

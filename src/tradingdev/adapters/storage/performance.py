@@ -20,7 +20,7 @@ from tradingdev.domain.performance.artifacts import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
     from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -172,7 +172,7 @@ class PerformanceStore:
         artifacts: PerformanceArtifacts,
         projection: dict[str, Any],
         output_paths: list[Path],
-    ) -> Iterator[bool]:
+    ) -> Generator[bool]:
         """Protect a whole new run publication, restoring files and rows on failure.
 
         Yield true for an identical completed result, which the caller must leave

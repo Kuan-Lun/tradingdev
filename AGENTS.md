@@ -33,8 +33,10 @@
   domain，檔案、資料庫、外部資料來源與程序操作由 adapters 負責。
 - 當前架構見 `ARCHITECTURE.md`，策略契約見 `docs/strategy_contract.md`，
   執行產物見 `docs/run_artifacts.md`。不要在本檔複製易變的介面清單。
-- 策略訊號須符合契約、不得修改輸入資料或使用未來資料。YAML 參數在
-  驗證、dry-run 與實際執行間必須一致。
+- 策略訊號須符合契約、不得修改輸入資料或使用未來資料。生成策略 revision
+  的基礎 YAML 與其驗證、dry-run 證據須一致，參數實驗不得改寫這些內容。
+  每次執行可使用不同參數，但須固定有效設定，並以相同設定通過該次訊號
+  契約檢查及實際執行。
 - Git 管理的 bundled strategies 與使用者 workspace 內的 generated
   strategies 分開。LLM 經 MCP 建立與修正生成策略是正常產品功能。
 - 驗證中執行生成 Python 不等於安全隔離；workspace 參數也不是 sandbox。

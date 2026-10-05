@@ -161,6 +161,7 @@ async def _complete_workflow(
             timeframe="1h",
             start_date="2024-01-01",
             end_date="2024-01-08",
+            **({"parameters": scenario.overrides} if scenario.experiment else {}),
         )
         assert started["job_id"], started
         finished = await client.wait_for_job(started["job_id"])
@@ -185,7 +186,7 @@ async def _complete_workflow(
     )
 
 
-@pytest.fixture(scope="module", params=["sma", "momentum"])
+@pytest.fixture(scope="module", params=["sma", "momentum", "experiment"])
 def completed_workflow(request: pytest.FixtureRequest) -> Iterator[CompletedWorkflow]:
     scenario = SCENARIOS[request.param]
     with temporary_mcp_workspace() as workspace:

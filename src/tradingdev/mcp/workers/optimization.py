@@ -87,8 +87,12 @@ def _fail(job_id: str, error: str) -> None:
     )
 
 
-class _TrialTimeoutError(Exception):
-    """Raised when the trial run exceeds the timeout."""
+class _TrialTimeoutError(BaseException):
+    """Interrupt the trial without being translated into strategy diagnostics.
+
+    This is worker control flow, like cancellation, rather than a strategy error.
+    The trial boundary catches it explicitly and records estimation_timeout.
+    """
 
 
 def _trial_timeout_handler(signum: int, frame: Any) -> None:
@@ -156,6 +160,16 @@ def _run_single_combo(
         service = BacktestService()
         engine = service.create_engine(bt_cfg)
         service.prepare_strategy({"strategy": strategy_cfg})
+        service.check_execution(
+            {
+                "strategy": strategy_cfg,
+                "backtest": bt_cfg.model_dump(mode="json"),
+                "parallel": parallel_cfg.model_dump(mode="json"),
+                "random_seed": random_seed,
+            },
+            strategy_execution,
+            parameter_overrides=param_dict,
+        )
         strategy = StrategyLoader().create_from_execution(
             strategy_cfg,
             strategy_execution,

@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import yaml
 from filelock import FileLock, Timeout
+from filelock import FileLock as LifecycleFileLock
 from pydantic import ValidationError
 
 from tradingdev.adapters.storage.filesystem import (
@@ -22,6 +25,9 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_text,
 )
 from tradingdev.domain.strategies.schemas import StrategyMetadata, StrategyStatus
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 _STRATEGY_ID = re.compile(r"[a-z][a-z0-9_]*")
 _MUTABLE_FIELDS = {"status", "updated_at", "validation", "dry_run"}
@@ -59,6 +65,16 @@ class StrategyRevisionStore:
         request_summary: str = "",
     ) -> StrategyMetadata:
         """Publish a new draft without replacing any previous revision."""
+        with self.lifecycle_lock(strategy_id):
+            return self._create(strategy_id, code, config, request_summary)
+
+    def _create(
+        self,
+        strategy_id: str,
+        code: str,
+        config: dict[str, Any],
+        request_summary: str,
+    ) -> StrategyMetadata:
         self._validate_strategy_id(strategy_id)
         revision_id = uuid4().hex
         revision_path = self._revision_path(strategy_id, revision_id)
@@ -206,6 +222,20 @@ class StrategyRevisionStore:
         expected_metadata: StrategyMetadata | None = None,
     ) -> None:
         """Atomically update lifecycle evidence for exactly this revision."""
+        with self.lifecycle_lock(metadata.strategy_id):
+            self._update(
+                metadata,
+                expected_status=expected_status,
+                expected_metadata=expected_metadata,
+            )
+
+    def _update(
+        self,
+        metadata: StrategyMetadata,
+        *,
+        expected_status: StrategyStatus | None,
+        expected_metadata: StrategyMetadata | None,
+    ) -> None:
         revision_path = self._revision_path(metadata.strategy_id, metadata.revision_id)
         if not revision_path.is_dir():
             raise StrategyRevisionIntegrityError("Cannot update a missing revision")
@@ -252,6 +282,87 @@ class StrategyRevisionStore:
             raise StrategyRevisionError(
                 "Revision metadata is busy; retry the operation"
             ) from exc
+
+    @contextmanager
+    def lifecycle_lock(
+        self, strategy_id: str, *, timeout: float = 10
+    ) -> Generator[None]:
+        """Coordinate publication, checks, and cleanup across threads/processes.
+
+        The lock lives outside deletable revisions. FileLock's singleton keeps
+        nested operations reentrant within one thread, including separate stores.
+        Never unlink this lock file, since waiters may still hold its inode.
+        """
+        self._validate_strategy_id(strategy_id)
+        lock_path = self._path(".locks", f"{strategy_id}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock = LifecycleFileLock(lock_path, is_singleton=True)
+        try:
+            with lock.acquire(timeout=timeout):
+                yield
+        except Timeout as exc:
+            raise StrategyRevisionError(
+                "Strategy lifecycle is busy; retry the operation"
+            ) from exc
+
+    def revision_ids(self, strategy_id: str) -> list[str]:
+        """List published revision directory names without following symlinks."""
+        self._validate_strategy_id(strategy_id)
+        root = self._path(strategy_id, "revisions")
+        if not root.exists():
+            return []
+        return sorted(
+            path.name
+            for path in root.iterdir()
+            if not path.name.startswith(".pending-")
+        )
+
+    def delete_draft(self, strategy_id: str, revision_id: str) -> None:
+        """Delete an intact non-current draft after caller checks references.
+
+        The caller must hold lifecycle_lock from its reference scan through this
+        call. Filesystem deletion is not transactional: an I/O failure is reported
+        and may leave a partial directory that subsequent checks must reject.
+        """
+        with self.lifecycle_lock(strategy_id):
+            metadata = self.load(strategy_id, revision_id)
+            current = self.load(strategy_id)
+            if metadata is None:
+                raise StrategyRevisionError("Revision no longer exists")
+            if current is not None and current.revision_id == revision_id:
+                raise StrategyRevisionError("Cannot delete the current revision")
+            if metadata.status != StrategyStatus.DRAFT:
+                raise StrategyRevisionError("Only draft revisions can be deleted")
+            path = self._revision_path(strategy_id, revision_id)
+            self.verify_cleanup_tree(strategy_id, revision_id)
+            shutil.rmtree(path)
+
+    def verify_cleanup_tree(self, strategy_id: str, revision_id: str) -> None:
+        """Reject unexpected files and symlinks before recursive deletion."""
+        root = self._revision_path(strategy_id, revision_id)
+        allowed_files = {
+            "strategy.py",
+            "config.yaml",
+            "metadata.json",
+            ".metadata.lock",
+        }
+        for child in root.rglob("*"):
+            relative = child.relative_to(root)
+            if child.is_symlink():
+                raise StrategyRevisionIntegrityError("Cleanup tree contains a symlink")
+            if relative.parts == ("__pycache__",) and child.is_dir():
+                continue
+            if child.is_file() and (
+                relative.as_posix() in allowed_files
+                or len(relative.parts) == 2
+                and relative.parts[0] == "__pycache__"
+                and child.name.startswith("strategy.")
+                and child.suffix == ".pyc"
+            ):
+                continue
+            raise StrategyRevisionIntegrityError(
+                f"Cleanup tree contains an unexpected entry: {relative}"
+            )
 
     def verify(self, metadata: StrategyMetadata) -> None:
         """Reject changed bytes, escaped paths, or evidence for another revision."""

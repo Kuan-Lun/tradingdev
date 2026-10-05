@@ -72,12 +72,13 @@ revision is never replaced by a later save.
 
 Execution submission captures every declared constructor default, excluding the
 injected execution context, as an explicit keyword value in
-`manifest.strategy_execution`, separately from the original
-revision declaration. Defaults must be finite JSON values; unsupported defaults
-require explicit serializable parameters or a revised strategy. Generated code
-must express configurable values as constructor parameters rather than derive
-hidden defaults from environment state. This captures declared arguments, not
-arbitrary Python behavior or dependency versions.
+`manifest.strategy_execution`. The saved revision YAML remains unchanged;
+`manifest.config.strategy.parameters` may expand to the effective captured
+parameters for an MCP experiment. Defaults must be finite JSON values;
+unsupported defaults require explicit serializable parameters or a revised
+strategy. Generated code must express configurable values as constructor
+parameters rather than derive hidden defaults from environment state. This
+captures declared arguments, not arbitrary Python behavior or dependency versions.
 
 Allowed import roots for generated strategies are intentionally small:
 
@@ -269,6 +270,31 @@ revision never falls back to current. Submitted jobs, worker configs, completed
 runs and strategy source artifacts remain tied to the selected revision when
 current changes, including during optimization confirmation.
 
+`cleanup_strategy_drafts(strategy_id, revision_ids=None, apply=False)` previews
+retention decisions. Applying requires an explicit nonempty `revision_ids` list
+and user authorization for those deletions; previewing alone never authorizes
+removal. Only intact, non-current drafts with no persisted references are eligible.
+Validated, runnable and promoted revisions remain, even when unused. All jobs
+(including failed or cancelled ones), completed runs and orphaned manifests
+protect their referenced sources. Unverifiable historical identities or malformed
+records block cleanup; ambiguous old records with no revision also block it unless
+their stored config establishes a legacy flat source for this strategy.
+
+Responses report `applied` and each revision's `outcome` (`eligible`, `protected`,
+`deleted`, `failed` or `missing`) with reasons. Apply rechecks eligibility under
+the same per-strategy lifecycle lock used for publication, validation and status
+updates. A changed preview can therefore become protected. Integrity failures,
+symlinks and unexpected files prevent deletion. An apply containing protected
+or failed items reports `success: false`; other eligible items can still be
+deleted. Filesystem deletion is not transactional and an I/O failure may leave
+a partial directory. A missing generated strategy returns `strategy_not_found`
+before creating its lifecycle lock. Cleanup rechecks current after acquiring the
+lock and also rejects the request if the strategy disappeared in between.
+For an existing strategy, missing explicit revision IDs are reported as `missing`,
+making a repeat apply safe. Omitting IDs on apply returns `cleanup_revision_ids_required`;
+an untrustworthy reference scan or lock failure returns `strategy_cleanup_blocked`.
+No background cleanup, automatic revision merging or migration occurs.
+
 Each submission also fixes an execution manifest containing that strategy
 identity, source hash, effective config with defaults, and any optimization
 search specification. Effective constructor values, including nested bundled
@@ -283,19 +309,35 @@ inspection projection, while `manifest.json` is the execution authority.
 
 Runtime symbol, timeframe, and dates are separate from the revision's base
 config. For generated strategies, ordinary backtest and walk-forward execution
-configs must preserve the saved `strategy` mapping in full, including parameters,
-identity, and any descriptive or constructor settings such as `description`,
-`version`, or `fit`. Adding, removing, or changing those fields requires saving
+configs may change `strategy.parameters` for experiments on the same runnable
+revision. All other saved `strategy` fields, including
+identity and any descriptive or constructor settings such as `description`,
+`version` or `fit`, must remain unchanged. Changing those fields requires saving
 and checking a new revision, even if identity and parameters are unchanged.
 The comparison excludes the execution-managed `source_hash` and separately
 verifies that `source_path` resolves to the selected revision's source. Copy the
 saved config and apply market/date/cost changes outside the `strategy` section.
+MCP `start_backtest` and `start_walk_forward` accept a `parameters` mapping;
+overrides apply to the captured effective base parameters, including constructor
+defaults. When both existing and supplied values are mappings, they merge
+recursively; other values replace the specified parameter. At each merge level,
+supplied keys must already exist in the captured mapping. A constructor accepting
+`**kwargs` does not allow an override to introduce new keys. Unknown keys return
+`invalid_execution_request` without creating a job. CLI configs instead provide
+their complete experiment parameters, which must satisfy constructor binding
+and the execution checks.
+The base source, YAML, lifecycle evidence and current pointer remain unchanged.
+Each run stores its own fixed parameters and constructor settings in its manifest.
+Short and long signal-contract fixtures check the effective generated execution
+settings at submission and execution, including when MCP `parameters` is omitted
+or `null`; a failure rejects the experiment without changing the revision's
+status. Static checks remain bound to the verified source.
 Optimization may override only its search parameters, retaining all other base
 parameters and all other saved strategy settings. Nested parameter candidates
 recursively override only the specified fields of the fixed effective base;
 other nested fields retain their captured values. Validation evidence covers
-the base parameters; it does not certify
-every possible optimization candidate. Optimization fixes candidate lists,
+the base parameters; generated optimization candidates also pass the short and
+long signal-contract fixtures before execution. Optimization fixes candidate lists,
 metric, calendar training/test ranges, the metric's minimization or maximization
 direction, and confirmation
 policy in the manifest. A config with `validation` settings cannot also request
@@ -349,20 +391,26 @@ revision is executable, `start_backtest`, `start_walk_forward`, and
 `start_optimization` call `StrategyLoader.resolve_execution` through
 `BacktestService.prepare_execution` to capture constructor arguments and defaults
 for the execution manifest. Loading a generated class compiles and executes its
-module-level Python in the MCP server process, before creating a job or spawning
-a worker. Optimization's parameter-grid preflight loads the class again, so
-module-level code can execute more than once during submission. This code can
-have effects even if a later preparation check rejects the request without a job.
+module-level Python in the calling process (the MCP server for tool requests).
+Before returning the manifest, `prepare_execution` also calls `check_execution`:
+for every generated strategy, it constructs strategy instances from the captured
+settings and calls `generate_signals` on 80-row and 240-row contract fixtures.
+These checks run even when MCP `parameters` is omitted or `null`.
+Optimization submissions check the captured base settings at this stage.
+Optimization's parameter-grid preflight loads the class again, so module-level
+code can execute more than once during submission. All of this happens before
+creating a job or spawning a worker, and can have effects even if a later
+preparation check rejects the request without a job.
 
-Submission does not instantiate the strategy. For scheduled jobs, workers later
-load the class and call its constructor through `create_from_execution`, then
-execute the strategy using the captured settings; optimization also constructs
-strategies for trial and parameter-combination runs. These execution steps are
-separate from the earlier validation/dry-run checks and submission-time module
-loading. Worker supervision and job cancellation do not cover code that runs in
-the MCP server before the worker exists. Generated strategies must therefore be
-reviewed as runtime code at all of these boundaries until a dedicated sandboxed
-execution layer is added.
+For scheduled jobs, workers later repeat the generated execution-contract checks,
+then construct and execute the strategy using the captured settings; generated
+optimization candidates also undergo these checks before their trial runs.
+These execution steps are separate from the earlier validation/dry-run and
+submission checks. Worker supervision, worker timeouts and job cancellation do
+not cover module loading, constructors or fixture signal generation that run in
+the calling process before the worker exists. None of these checks provides a
+process sandbox. Generated strategies must therefore be reviewed as runtime code
+at all of these boundaries until a dedicated sandboxed execution layer is added.
 
 `signal_analysis` includes row count, signal distribution, missing-signal count,
 transition count, active-signal ratio, and timestamp bounds. Use it to debug

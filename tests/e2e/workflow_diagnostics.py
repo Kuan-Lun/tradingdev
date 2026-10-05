@@ -11,14 +11,16 @@ from tradingdev.adapters.storage.strategy_revisions import StrategyRevisionStore
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from tests.e2e.strategy_scenarios import Scenario
     from tests.integration.mcp_harness import MCPWorkspace
 
 
 @contextmanager
-def workflow_diagnostics(workspace: MCPWorkspace, scenario: Scenario) -> Iterator[None]:
+def workflow_diagnostics(
+    workspace: MCPWorkspace, scenario: Scenario
+) -> Generator[None]:
     """Annotate the original exception without retaining test files or processes."""
     try:
         yield

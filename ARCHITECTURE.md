@@ -74,12 +74,20 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | Artifact | 與執行或研究相關的檔案及其索引，由 ArtifactService 提供探索與讀取 |
 
 一個 revision 可以提交多次工作；工作開始或結束不會把策略狀態改成 running 或 done。
+參數實驗屬於工作設定：MCP 的 `parameters` 覆寫與 CLI 執行設定共用
+BacktestService，在同一 revision 上固定不同參數的 manifest，避免重複保存策略程式。
+Generated 策略以固定的建構子設定執行短、長訊號契約檢查，驗證與 dry-run
+的基礎證據仍保留在原 revision；實驗不會更新這些證據或 current pointer。
 背景回測與最佳化完成時，目前以 job ID 作為 run ID。CLI 同步執行也會保存獨立 run，
 但不建立背景 job。相同設定的兩次執行可以留下不同結果，不會因設定相同而覆寫前次 run。
 
-Manifest 同時保留 revision 綁定的原始策略宣告，以及解析後的有效建構子設定。
-兩者分開保存，讓預設值展開不會改寫已驗證的策略宣告；worker 使用已固定的設定，
-不能因目前程式新增預設值而重新解釋舊請求。完整格式與版本規則見
+Manifest 保留 revision 綁定的身分與非參數宣告，以及該次執行的參數。
+未提供 MCP `parameters` 或傳入 `null` 時，`config.strategy.parameters` 保留
+輸入設定的參數映射，建構子預設值另外展開至 `strategy_execution`；明確提供映射
+（包括 `{}`）時，則將合併後、包含預設值的完整實驗參數寫入 `config.strategy.parameters`，
+取代這份執行快照中的基礎參數宣告。CLI 使用其執行 YAML 的參數映射。
+原 revision 的 YAML 與證據均不改寫；worker 使用已固定的設定，不能因目前程式
+新增預設值而重新解釋舊請求。完整格式與版本規則見
 [Execution Manifest](docs/run_artifacts.md#execution-manifest)。
 
 ## 從策略建立到結果查詢
@@ -90,6 +98,12 @@ Manifest 同時保留 revision 綁定的原始策略宣告，以及解析後的�
 程式與基礎設定固定不變，metadata 則記錄該 revision 的狀態與驗證證據；
 current pointer 指向最新保存的 revision。保存新版本不會撤銷舊版本的證據，
 也不會讓新版本繼承舊版本的執行資格。
+
+`StrategyCleanupService` 提供舊草稿的預覽與明確指定版本清理。儲存 adapter
+檢查所有 job、run 與遺留 manifest 的引用；身分不明或資料損壞時停止清理。
+current、非 draft 及被引用版本均保留。保存、驗證、狀態更新與清理共用每個策略的
+lifecycle lock，避免檢查與刪除交錯；鎖檔位於 revision 目錄之外且不刪除。
+清理每次重新確認資格與檔案完整性，檔案刪除不具跨版本或目錄內的交易原子性。
 
 ```mermaid
 stateDiagram-v2
@@ -245,8 +259,9 @@ Walk-forward 保存每個 fold 的訓練／測試結果；其摘要是各 fold �
 
 ### 設定與儲存一致性
 
-Generated 策略執行時必須維持 revision 綁定的策略宣告；一般執行的市場、期間與成本
-可在策略宣告之外覆寫，最佳化只允許搜尋範圍內的參數變化。提交時固定有效預設值與
+Generated 策略執行時必須維持 revision 綁定的策略身分與非參數宣告；一般執行可
+調整 `strategy.parameters`，市場、期間與成本可在策略宣告之外覆寫。
+最佳化只允許搜尋範圍內的參數變化。提交時固定有效預設值與
 絕對資料路徑，worker 以 manifest 作為執行設定來源，也不追蹤稍後的 current pointer；
 它仍會讀取所選 revision 的基礎設定，以檢查內容完整性與宣告一致性。
 執行產物中的 `config.yaml` 是 manifest 的檢視副本，不是另一份可修改工作內容的設定。
@@ -289,7 +304,10 @@ Manifest 固定請求；來源 hash、資料指紋與套件版本提供追蹤依
 無法依目前契約執行的舊 manifest 必須重新提交，既有結果可依保存內容讀取；
 缺少績效來源產物時明確回報不可用，不猜測來源或自動重算。
 
-策略驗證與 dry-run 會執行生成 Python；提交時為取得有效建構子設定也會載入策略模組，
-執行模組層程式。最佳化的候選檢查同樣會載入類別。
+策略驗證與 dry-run 會執行生成 Python。提交時會載入策略模組、解析建構子設定，
+並在建立 job、啟動 worker 前，以 80 與 240 筆 fixture 建構生成策略、執行訊號檢查；
+未提供參數覆寫的提交也會執行這些檢查。這些程式在呼叫端程序內執行，MCP 請求即
+在 server 程序內，不受尚未啟動的 worker supervisor、試跑逾時或 job 取消管控。
+最佳化提交另檢查候選參數結構；worker 評估生成策略候選時再以該組參數執行訊號契約檢查。
 靜態政策檢查、workspace 路徑與背景程序監督都不是完整 sandbox；
 實際安全模型見 [策略安全模型](docs/strategy_contract.md#security-model)。

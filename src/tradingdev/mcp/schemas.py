@@ -23,6 +23,7 @@ class BacktestInput(BaseModel):
     timeframe: str
     start_date: str
     end_date: str
+    parameters: dict[str, JsonValue] | None = None
 
 
 class OptimizationInput(BaseModel):

@@ -124,7 +124,8 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     selected = frame.loc[
         frame["timestamp"] <= pd.Timestamp("2024-01-08", tz="UTC")
     ].copy()
-    selected["signal"] = expected_signals(selected, scenario, scenario.parameters)
+    run_parameters = scenario.overrides if scenario.experiment else scenario.parameters
+    selected["signal"] = expected_signals(selected, scenario, run_parameters)
     reference = BacktestService().create_engine(bt).run(selected).metrics
     assert reference["total_trades"] > 0
     for metric in ("total_return", "total_trades", "max_drawdown"):
@@ -161,7 +162,7 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
         == Path(spec.source_path).read_bytes()
     )
     snapshot = load_config(Path(by_type["config_snapshot"]["path"]))
-    assert snapshot["strategy"]["parameters"] == scenario.parameters
+    assert snapshot["strategy"]["parameters"] == run_parameters
     assert snapshot["strategy"]["revision_id"] == spec.revision_id
 
 

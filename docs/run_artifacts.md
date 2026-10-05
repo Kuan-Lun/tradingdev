@@ -15,6 +15,8 @@ workspace/
       stop
       finished.json
   generated_strategies/
+    .locks/
+      <strategy_id>.lock
     <strategy_id>/
       current.json
       revisions/
@@ -61,6 +63,15 @@ done. Generated strategy jobs and runs carry their selected `revision_id`;
 bundled strategies and historical records without revision identity expose
 `null`. A later save changes only the current pointer and does not change the
 revision used by an existing job or completed run.
+
+Draft cleanup scans raw job identities and payloads, run references and all stored
+manifests, including manifests left without a database job. Failed and cancelled
+jobs still retain their source references. A malformed or ambiguous history blocks
+cleanup. Only explicitly selected non-current drafts without references can be
+deleted; runnable sources and execution artifacts remain. Cleanup does not dedupe
+or migrate old revisions. The per-strategy `.locks` files coordinate saves,
+validation, status updates and cleanup; they stay outside deletable revision
+directories and are never unlinked while another process might use their inode.
 
 Successful `start_backtest`, `start_walk_forward`, and `start_optimization`
 responses include the required `manifest_hash`. Job status, job lists, and run
@@ -111,15 +122,39 @@ Schema version 4 contains:
   job IDs and creation timestamps are not part of the specification.
 
 Typed backtest, walk-forward, parallel, and data defaults have the same digest
-whether implicit or explicit. The strategy mapping is retained under its revision
-contract. Its effective values are expanded separately into `strategy_execution`,
-so filling defaults does not modify the validated revision's original declaration.
-Because the declaration is also retained, omitted and explicit strategy parameters
-can still produce different digests even when their effective values are equal.
+whether implicit or explicit. Strategy identity and non-parameter declarations
+remain bound to the revision. Without an MCP `parameters` override, or with
+`parameters: null`, `config.strategy.parameters` retains the input configuration's
+parameter mapping while constructor defaults are expanded separately into
+`strategy_execution`. CLI execution likewise retains the parameter mapping from
+its submitted YAML, which may already contain experiment settings.
+
+An explicit MCP `parameters` mapping, including `{}`, recursively overlays the
+captured values and replaces `config.strategy.parameters` with the complete
+effective experiment parameters, including defaults. For bundled strategies this
+is the captured constructor's `config` mapping; for generated strategies it is
+the captured constructor keyword mapping. The run's `config.yaml` projection
+reflects that replacement. The revision's original YAML and evidence stay unchanged.
+Overrides can target only keys already captured from base parameters or constructor
+defaults; unknown keys at any recursively merged mapping level are rejected.
+
+Without overrides, omitted versus explicit constructor defaults in the input
+parameter mapping can produce different digests despite equal effective values.
+An explicit empty override can also differ from an omitted override if it expands
+defaults absent from that mapping. Conversely, explicit override mappings that
+produce identical full parameters have the same digest when the rest of the
+manifest is identical. The hash records the stored specification, not whether
+the caller explicitly supplied a particular override key.
+
 Nested optimization candidates override only their specified leaves, preserving
 the remaining fixed values; candidate structure and bundled model contracts are
-validated before creating a job, without running strategy constructors. Constructor
-or execution errors can still occur during the trial. Unsupported defaults or
+validated before creating a job without constructing each candidate. Submission
+also constructs generated strategies with the base execution parameters and runs
+80- and 240-row signal-contract fixtures in the calling process before job creation,
+even without parameter overrides. Worker supervision and trial timeouts do not
+cover these submission-time checks. Each generated candidate is checked again
+with its own parameters in the worker; constructor or execution errors can still
+occur during the trial. Unsupported defaults or
 candidates requiring new implicit fields are rejected. Integer candidates for
 float fields are accepted only when conversion preserves their numeric value;
 string/boolean coercion and precision loss are rejected.
@@ -154,7 +189,8 @@ the submitted request. A changed request requires a new job.
 
 `config.yaml` is a readable projection of `manifest.config`; workers do not use
 it as their source of execution settings. `config_hash` still hashes the YAML
-projection (including the original strategy declaration); resolved constructor
+projection (including the execution's strategy identity, non-parameter declarations,
+and parameter mapping described above); resolved constructor
 settings are available in the manifest's `strategy_execution` object.
 `manifest_hash` covers the complete execution request. The
 artifact's `sha256` hashes the actual `manifest.json` file bytes, including its
@@ -183,9 +219,13 @@ database and workspace files.
 
 The generated revision's `config.yaml` holds its base settings;
 `runs/<run_id>/config.yaml` holds effective execution settings and includes
-`strategy.revision_id`. Runtime market/date or optimization parameter overrides
-do not rewrite the base revision. Generated backtest and walk-forward parameters
-must match the base revision; only optimization search parameters can vary.
+`strategy.revision_id`. Runtime market/date and parameter experiments
+do not rewrite the base revision. Backtest and walk-forward requests may supply
+`parameters`, recursively merged into the base parameters. CLI runtime configs
+may change `strategy.parameters` while preserving other strategy declarations.
+The same revision can therefore have many runs with different parameters and
+manifest hashes, without duplicate generated source revisions. Both short and
+long signal-contract fixtures check effective generated settings before execution.
 The execution manifest additionally fixes runtime overrides and search settings
 without rewriting the base revision.
 
@@ -279,6 +319,24 @@ the result; queries do not substitute the current catalog.
 | Backtest | `full` | `full` |
 | Walk-forward | `fold/<index>/train`, `fold/<index>/test`, `test_summary` | `test_summary` |
 | Optimization | `trial/<index>/train`, `test` | `test` |
+
+New backtest and walk-forward scopes record the manifest's fixed, effective
+constructor parameters, including defaults, in `parameters`. This includes
+`test_summary`: its parameters describe the initial execution settings, not an
+aggregation of learned fold settings. Generated strategies use their constructor
+arguments; bundled strategies use the constructor's `config` object. Actual
+values reported by `strategy.get_parameters()` are saved separately in
+`metadata.strategy_parameters` for the full backtest or each train/test fold.
+Walk-forward captures each fold's values independently after fitting; later
+folds cannot overwrite earlier snapshots. The summary retains those values in
+`metadata.fold_metadata`.
+
+Optimization keeps its existing meaning: `parameters` contains the trial's
+searched values (or the selected values for `test`), while
+`metadata.strategy_parameters` contains the strategy's complete reported values.
+Previously published artifacts are read unchanged. In older artifacts, full and
+summary parameters may be empty and fold parameters may contain fitted values;
+queries do not infer missing values from current strategy files.
 
 Indices are zero-based. Optimization's `selected_train_scope` identifies the
 winning training trial. A `backtest` scope contains scalar values; the

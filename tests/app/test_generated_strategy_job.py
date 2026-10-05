@@ -242,7 +242,6 @@ def test_queued_revision_runs_after_new_draft_is_saved(
         ("source_path", "other.py"),
         ("class_name", "UnvalidatedStrategy"),
         ("revision_id", None),
-        ("parameters", {"unvalidated_parameter": 3}),
         ("fit", True),
     ],
 )

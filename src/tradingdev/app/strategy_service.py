@@ -264,6 +264,17 @@ class StrategyService:
         result: ValidationResult | dict[str, Any],
     ) -> dict[str, Any]:
         """Record external evidence against the revision it actually checked."""
+        try:
+            with self._revisions.lifecycle_lock(strategy_id):
+                return self._record_validation_status(strategy_id, result)
+        except StrategyRevisionError as exc:
+            return self._revision_error(exc)
+
+    def _record_validation_status(
+        self,
+        strategy_id: str,
+        result: ValidationResult | dict[str, Any],
+    ) -> dict[str, Any]:
         validation = (
             result
             if isinstance(result, ValidationResult)
@@ -306,6 +317,17 @@ class StrategyService:
         return self._check_revision(strategy_id, revision_id, dry_run=True)
 
     def _check_revision(
+        self, strategy_id: str, revision_id: str | None, *, dry_run: bool
+    ) -> dict[str, Any]:
+        try:
+            with self._revisions.lifecycle_lock(strategy_id):
+                return self._check_locked_revision(
+                    strategy_id, revision_id, dry_run=dry_run
+                )
+        except StrategyRevisionError as exc:
+            return self._revision_error(exc)
+
+    def _check_locked_revision(
         self, strategy_id: str, revision_id: str | None, *, dry_run: bool
     ) -> dict[str, Any]:
         try:

@@ -319,15 +319,36 @@ def _execution_scope(
     split: Literal["full", "train", "test"],
     fold_index: int | None = None,
     parameters: dict[str, Any] | None = None,
+    strategy_parameters: dict[str, Any] | None = None,
 ) -> tuple[PerformanceScope, ScopeObservations]:
     scope, observations = scope_from_backtest(
         result, split=split, fold_index=fold_index, parameters=parameters
     )
     metadata = dict(scope.metadata)
+    if strategy_parameters is not None:
+        metadata["strategy_parameters"] = normalize_json_object(strategy_parameters)
     metadata["execution_context"] = normalize_json_object(
         {**config.get("backtest", {}), "random_seed": config.get("random_seed")}
     )
     return scope.model_copy(update={"metadata": metadata}), observations
+
+
+def _pipeline_parameters(pipeline: PipelineResult) -> dict[str, Any]:
+    """Read initial parameters from the executed constructor, including defaults."""
+    manifest = pipeline.execution_manifest
+    if manifest is None:
+        return normalize_json_object(
+            pipeline.config_snapshot.get("strategy", {}).get("parameters", {})
+        )
+    execution = manifest.strategy_execution
+    parameters = (
+        execution.constructor_kwargs.get("config", {})
+        if execution.kind == "bundled"
+        else execution.constructor_kwargs
+    )
+    if not isinstance(parameters, dict):
+        raise ValueError("Recorded strategy parameters must be an object")
+    return normalize_json_object(parameters)
 
 
 def bundles_from_pipeline(
@@ -338,6 +359,7 @@ def bundles_from_pipeline(
     """Create simple or train/test fold scopes from an executed pipeline."""
     scopes: dict[str, PerformanceScope] = {}
     observations: dict[str, ScopeObservations] = {}
+    parameters = _pipeline_parameters(pipeline)
     manifest_hash = (
         pipeline.execution_manifest.manifest_hash
         if pipeline.execution_manifest is not None
@@ -347,7 +369,10 @@ def bundles_from_pipeline(
         if pipeline.backtest_result is None:
             raise ValueError("Simple pipeline has no backtest observations")
         scopes["full"], observations["full"] = _execution_scope(
-            pipeline.backtest_result, pipeline.config_snapshot, split="full"
+            pipeline.backtest_result,
+            pipeline.config_snapshot,
+            split="full",
+            parameters=parameters,
         )
         if scopes["full"].values != normalize_json_object(projection):
             raise ValueError("Saved metrics differ from executed backtest metrics")
@@ -373,7 +398,8 @@ def bundles_from_pipeline(
                     pipeline.config_snapshot,
                     split=split,
                     fold_index=fold.fold_index,
-                    parameters=fold.strategy_params,
+                    parameters=parameters,
+                    strategy_parameters=fold.strategy_params,
                 )
         test_scopes = {
             key: scope for key, scope in scopes.items() if scope.split == "test"
@@ -399,6 +425,7 @@ def bundles_from_pipeline(
         scopes["test_summary"] = PerformanceScope.model_validate(
             {
                 "kind": "fold_summary",
+                "parameters": parameters,
                 "mode": modes.pop(),
                 "values": {
                     key: value

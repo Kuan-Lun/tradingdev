@@ -40,6 +40,7 @@ _MUTATING_HINTS = {
     "validate_strategy": (False, True, False, True),
     "dry_run_strategy": (False, True, False, True),
     "promote_strategy": (False, True, True, False),
+    "cleanup_strategy_drafts": (False, True, True, False),
     "ensure_data": (False, True, False, True),
     "start_backtest": (False, True, False, True),
     "start_walk_forward": (False, True, False, True),
@@ -113,7 +114,7 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
     ]
     async with mcp_workspace.connect() as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
-        assert len(tools) == 27
+        assert len(tools) == 28
         assert tools.keys() == expected_hints.keys() == client.output_schemas.keys()
         for name, tool in tools.items():
             assert tool.description and tool.description.strip(), name
@@ -165,6 +166,12 @@ async def test_application_errors_follow_advertised_output_schemas(
     failures.extend(
         [
             ("get_run", {"run_id": "missing_run"}, "success", False),
+            (
+                "cleanup_strategy_drafts",
+                {"strategy_id": "missing_strategy", "apply": True},
+                "success",
+                False,
+            ),
             ("get_run_metrics", {"run_id": "missing_run"}, "success", False),
             (
                 "get_artifact",
@@ -241,3 +248,95 @@ async def test_missing_required_inputs_are_mcp_errors_without_side_effects(
         assert await client.call("list_runs") == []
         assert await client.call("list_feature_requests") == []
         assert not list(mcp_workspace.workspace.rglob("*.py"))
+
+
+async def test_cleanup_previews_then_deletes_only_explicit_unused_drafts(
+    mcp_workspace: MCPWorkspace,
+) -> None:
+    async with mcp_workspace.connect() as client:
+        arguments = {
+            "strategy_id": "cleanup_fixture",
+            "code": "class Fixture: pass\n",
+            "yaml_config": "strategy:\n  class_name: Fixture\n",
+        }
+        first = await client.call("save_strategy", **arguments)
+        current = await client.call("save_strategy", **arguments)
+        assert first["success"] and current["success"]
+        preview = await client.call(
+            "cleanup_strategy_drafts", strategy_id="cleanup_fixture"
+        )
+        assert preview["success"] and not preview["applied"]
+        outcomes = {
+            item["revision_id"]: item["outcome"] for item in preview["revisions"]
+        }
+        assert outcomes == {
+            first["revision_id"]: "eligible",
+            current["revision_id"]: "protected",
+        }
+        preserved = await client.call(
+            "get_strategy",
+            strategy_id="cleanup_fixture",
+            revision_id=first["revision_id"],
+        )
+        assert preserved["success"]
+        rejected = await client.call(
+            "cleanup_strategy_drafts", strategy_id="cleanup_fixture", apply=True
+        )
+        assert not rejected["success"]
+        assert rejected["code"] == "cleanup_revision_ids_required"
+        deleted = await client.call(
+            "cleanup_strategy_drafts",
+            strategy_id="cleanup_fixture",
+            revision_ids=[first["revision_id"]],
+            apply=True,
+        )
+        assert deleted["success"] and deleted["applied"]
+        assert deleted["revisions"] == [
+            {"revision_id": first["revision_id"], "outcome": "deleted", "reasons": []}
+        ]
+        missing = await client.call(
+            "get_strategy",
+            strategy_id="cleanup_fixture",
+            revision_id=first["revision_id"],
+        )
+        assert not missing["success"]
+        protected = await client.call(
+            "cleanup_strategy_drafts",
+            strategy_id="cleanup_fixture",
+            revision_ids=[current["revision_id"]],
+            apply=True,
+        )
+        assert not protected["success"]
+        assert protected["revisions"][0]["reasons"] == ["current_revision"]
+        selected = await client.call("get_strategy", strategy_id="cleanup_fixture")
+        assert selected["success"] and selected["revision_id"] == current["revision_id"]
+
+
+@pytest.mark.parametrize("apply", [False, True], ids=["preview", "apply"])
+async def test_unknown_cleanup_strategy_is_error_without_creating_lifecycle_lock(
+    mcp_workspace: MCPWorkspace,
+    apply: bool,
+) -> None:
+    strategy_id = "cleanup_unknown_apply" if apply else "cleanup_unknown_preview"
+    generated = mcp_workspace.workspace / "generated_strategies"
+    async with mcp_workspace.connect() as client:
+        before = set(generated.rglob("*"))
+        response = await client.call(
+            "cleanup_strategy_drafts",
+            strategy_id=strategy_id,
+            revision_ids=["00000000000040008000000000000000"] if apply else None,
+            apply=apply,
+        )
+        assert response["success"] is False, response
+        assert response["code"] == "strategy_not_found", response
+        assert not (generated / ".locks" / f"{strategy_id}.lock").exists()
+        assert set(generated.rglob("*")) == before
+
+        rejected = await client.call(
+            "cleanup_strategy_drafts",
+            strategy_id=strategy_id,
+            apply=True,
+        )
+        assert rejected["success"] is False, rejected
+        assert rejected["code"] == "cleanup_revision_ids_required", rejected
+        assert set(generated.rglob("*")) == before

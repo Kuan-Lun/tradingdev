@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -123,7 +124,7 @@ class WalkForwardValidator:
             test_end=test_end.to_pydatetime(),
             train_metrics=train_metrics,
             test_metrics=test_metrics,
-            strategy_params=strategy.get_parameters(),
+            strategy_params=deepcopy(strategy.get_parameters()),
             train_backtest=train_result,
             test_backtest=test_result,
         )

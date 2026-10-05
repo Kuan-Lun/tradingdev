@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tests.e2e.llm_client import ToolCall
@@ -272,3 +274,32 @@ def test_different_manifests_cannot_supply_workflow_evidence(event_index: int) -
     payload["manifest_hash"] = "b" * 64
     with pytest.raises(AssertionError):
         assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_parameter_experiment_requires_explicit_overrides_and_original_revision() -> (
+    None
+):
+    scenario = replace(SCENARIOS["repair"], experiment=True)
+    calls = _repair_evidence()
+    with pytest.raises(AssertionError, match="start_backtest arguments differ"):
+        assert_workflow(calls, scenario)
+    calls[6].arguments["parameters"] = scenario.overrides
+    assert_workflow(calls, scenario)
+    calls[6].arguments["revision_id"] = "another_revision"
+    with pytest.raises(AssertionError, match="start_backtest arguments differ"):
+        assert_workflow(calls, scenario)
+
+
+def test_parameter_experiment_cannot_resave_after_base_is_runnable() -> None:
+    scenario = replace(SCENARIOS["repair"], experiment=True)
+    calls = _repair_evidence()
+    calls[6].arguments["parameters"] = scenario.overrides
+    calls.append(
+        ToolCall(
+            "save_strategy",
+            {"strategy_id": scenario.strategy_id},
+            {"success": True, "revision_id": "duplicate_source"},
+        )
+    )
+    with pytest.raises(AssertionError, match="reuse the runnable revision"):
+        assert_workflow(calls, scenario)
