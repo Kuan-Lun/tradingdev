@@ -23,6 +23,7 @@ pytestmark = pytest.mark.live_llm
 
 _SCENARIO = Scenario("cleanup", {}, {}, "")
 STRATEGY_ID = _SCENARIO.strategy_id
+MISSING_STRATEGY_ID = "llm_cleanup_missing"
 _FORBIDDEN_MUTATIONS = {
     "save_strategy",
     "validate_strategy",
@@ -49,6 +50,9 @@ class CleanupSeed:
     @property
     def prompt(self) -> str:
         return f"""請透過 TradingDev MCP 清理策略 {STRATEGY_ID} 的舊草稿。
+先呼叫 cleanup_strategy_drafts(strategy_id={MISSING_STRATEGY_ID}) 預覽不存在的策略，
+讀取 success=false、code=strategy_not_found 的錯誤後，再處理下面的既有策略。
+不要建立這個不存在的策略，也不要對它 apply；不存在不代表成功清理。
 我已明確授權刪除 cleanup_strategy_drafts 預覽中 outcome=eligible 的舊草稿。
 必須先呼叫 cleanup_strategy_drafts(strategy_id={STRATEGY_ID}) 預覽全部版本，
 檢查每個版本的 outcome/reasons，再以預覽回傳的明確 revision_ids 和 apply=true 執行。
@@ -164,13 +168,36 @@ def assert_cleanup_workflow(calls: list[ToolCall], seed: CleanupSeed) -> None:
     assert not any(call.name in _FORBIDDEN_MUTATIONS for call in calls), (
         "Cleanup workflow must not create or modify strategies, jobs, or data"
     )
+    missing_index: int | None = None
     preview_index: int | None = None
     apply_index: int | None = None
     for index, call in enumerate(calls):
         if call.name != "cleanup_strategy_drafts":
             continue
+        if call.arguments.get("strategy_id") == MISSING_STRATEGY_ID:
+            assert preview_index is None and apply_index is None, (
+                "Missing-strategy preview must precede existing-strategy cleanup"
+            )
+            assert call.arguments.get("apply", False) is False, (
+                "Missing-strategy check must be a preview without mutation"
+            )
+            assert call.arguments.get("revision_ids") is None, (
+                "Missing-strategy preview must not select revisions"
+            )
+            assert isinstance(call.result, dict), "Missing-strategy error is absent"
+            assert call.result.get("success") is False, (
+                "Missing strategy must not be reported as successful cleanup"
+            )
+            assert call.result.get("code") == "strategy_not_found", (
+                "Missing-strategy preview must return strategy_not_found"
+            )
+            missing_index = index
+            continue
         assert call.arguments.get("strategy_id") == STRATEGY_ID, (
             "Cleanup request target mismatch"
+        )
+        assert missing_index is not None, (
+            "Existing cleanup requires a prior missing-strategy error"
         )
         applied = call.arguments.get("apply", False)
         assert type(applied) is bool, "Cleanup apply must be a boolean"
@@ -218,6 +245,7 @@ def assert_cleanup_workflow(calls: list[ToolCall], seed: CleanupSeed) -> None:
             )
             assert apply_index is None, "Cleanup must not repeat apply after deletion"
             apply_index = index
+    assert missing_index is not None, "Missing strategy_not_found preview"
     assert preview_index is not None, "Missing successful cleanup preview"
     assert apply_index is not None, "Missing successful cleanup apply"
     assert any(
@@ -237,7 +265,10 @@ def assert_cleanup_workflow(calls: list[ToolCall], seed: CleanupSeed) -> None:
 
 def assert_cleanup_files(workspace: MCPWorkspace, seed: CleanupSeed) -> None:
     """Check actual deletion and byte-for-byte retention independently of replies."""
-    revisions = workspace.workspace / "generated_strategies" / STRATEGY_ID / "revisions"
+    generated = workspace.workspace / "generated_strategies"
+    assert not (generated / MISSING_STRATEGY_ID).exists()
+    assert not (generated / ".locks" / f"{MISSING_STRATEGY_ID}.lock").exists()
+    revisions = generated / STRATEGY_ID / "revisions"
     assert {path.name for path in revisions.iterdir()} == {
         seed.runnable_id,
         seed.current_id,

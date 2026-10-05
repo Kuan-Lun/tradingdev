@@ -9,6 +9,7 @@ import pytest
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.test_llm_cleanup import (
+    MISSING_STRATEGY_ID,
     STRATEGY_ID,
     CleanupSeed,
     assert_cleanup_files,
@@ -28,6 +29,11 @@ def seed() -> CleanupSeed:
 def calls(seed: CleanupSeed) -> list[ToolCall]:
     target = {"strategy_id": STRATEGY_ID}
     return [
+        ToolCall(
+            "cleanup_strategy_drafts",
+            {"strategy_id": MISSING_STRATEGY_ID},
+            {"success": False, "code": "strategy_not_found", "error": "not found"},
+        ),
         ToolCall(
             "cleanup_strategy_drafts",
             target,
@@ -93,7 +99,9 @@ def test_complete_cleanup_evidence_is_accepted(
     assert_cleanup_workflow(calls, seed)
 
 
-@pytest.mark.parametrize("event", [0, 1, 2], ids=["preview", "apply", "current_read"])
+@pytest.mark.parametrize(
+    "event", [0, 1, 2, 3], ids=["missing", "preview", "apply", "current_read"]
+)
 def test_cleanup_requires_every_successful_step(
     calls: list[ToolCall], seed: CleanupSeed, event: int
 ) -> None:
@@ -102,7 +110,7 @@ def test_cleanup_requires_every_successful_step(
         assert_cleanup_workflow(calls, seed)
 
 
-@pytest.mark.parametrize("event", [0, 1, 2])
+@pytest.mark.parametrize("event", [1, 2, 3])
 def test_cleanup_rejects_failed_tool_results(
     calls: list[ToolCall], seed: CleanupSeed, event: int
 ) -> None:
@@ -118,7 +126,7 @@ def test_cleanup_rejects_failed_tool_results(
 def test_apply_requires_only_explicit_eligible_ids(
     calls: list[ToolCall], seed: CleanupSeed, revision_ids: Any
 ) -> None:
-    calls[1].arguments["revision_ids"] = revision_ids
+    calls[2].arguments["revision_ids"] = revision_ids
     with pytest.raises(AssertionError, match="explicit revision_ids"):
         assert_cleanup_workflow(calls, seed)
 
@@ -126,7 +134,7 @@ def test_apply_requires_only_explicit_eligible_ids(
 def test_apply_cannot_omit_revision_selector(
     calls: list[ToolCall], seed: CleanupSeed
 ) -> None:
-    calls[1].arguments.pop("revision_ids")
+    calls[2].arguments.pop("revision_ids")
     with pytest.raises(AssertionError, match="explicit revision_ids"):
         assert_cleanup_workflow(calls, seed)
 
@@ -135,12 +143,12 @@ def test_apply_cannot_omit_revision_selector(
 def test_apply_requires_confirmed_deletion(
     calls: list[ToolCall], seed: CleanupSeed, outcome: str
 ) -> None:
-    calls[1].result["revisions"][0]["outcome"] = outcome
+    calls[2].result["revisions"][0]["outcome"] = outcome
     with pytest.raises(AssertionError, match="confirm actual deletion"):
         assert_cleanup_workflow(calls, seed)
 
 
-@pytest.mark.parametrize("event", [0, 1])
+@pytest.mark.parametrize("event", [1, 2])
 @pytest.mark.parametrize("side", ["arguments", "result"])
 def test_cleanup_target_must_match_request(
     calls: list[ToolCall], seed: CleanupSeed, event: int, side: str
@@ -155,7 +163,7 @@ def test_cleanup_target_must_match_request(
 def test_preview_must_protect_seeded_revisions(
     calls: list[ToolCall], seed: CleanupSeed, index: int
 ) -> None:
-    calls[0].result["revisions"][index]["outcome"] = "eligible"
+    calls[1].result["revisions"][index]["outcome"] = "eligible"
     with pytest.raises(AssertionError, match="must protect"):
         assert_cleanup_workflow(calls, seed)
 
@@ -167,19 +175,19 @@ def test_read_must_verify_current_after_apply(
     calls: list[ToolCall], seed: CleanupSeed, change: str
 ) -> None:
     if change == "out_of_order":
-        calls[1], calls[2] = calls[2], calls[1]
+        calls[2], calls[3] = calls[3], calls[2]
     elif change == "wrong_revision":
-        calls[2].result["revision_id"] = seed.runnable_id
+        calls[3].result["revision_id"] = seed.runnable_id
     elif change == "not_current_lookup":
-        calls[2].arguments["revision_id"] = seed.current_id
+        calls[3].arguments["revision_id"] = seed.current_id
     else:
-        calls[2].result["metadata"]["status"] = "runnable"
+        calls[3].result["metadata"]["status"] = "runnable"
     with pytest.raises(AssertionError, match="unchanged current draft"):
         assert_cleanup_workflow(calls, seed)
 
 
 def test_apply_cannot_precede_preview(calls: list[ToolCall], seed: CleanupSeed) -> None:
-    calls[0], calls[1] = calls[1], calls[0]
+    calls[1], calls[2] = calls[2], calls[1]
     with pytest.raises(AssertionError, match="prior successful preview"):
         assert_cleanup_workflow(calls, seed)
 
@@ -187,7 +195,7 @@ def test_apply_cannot_precede_preview(calls: list[ToolCall], seed: CleanupSeed) 
 def test_wrong_applied_flag_is_not_success(
     calls: list[ToolCall], seed: CleanupSeed
 ) -> None:
-    calls[1].result["applied"] = False
+    calls[2].result["applied"] = False
     with pytest.raises(AssertionError, match="result mismatch"):
         assert_cleanup_workflow(calls, seed)
 
@@ -214,6 +222,7 @@ def test_cleanup_seed_and_evidence_use_real_mcp_and_preserve_history() -> None:
             observed: list[ToolCall] = []
             async with workspace.connect() as client:
                 for name, arguments in (
+                    ("cleanup_strategy_drafts", {"strategy_id": MISSING_STRATEGY_ID}),
                     ("cleanup_strategy_drafts", {"strategy_id": STRATEGY_ID}),
                     (
                         "cleanup_strategy_drafts",
@@ -233,3 +242,40 @@ def test_cleanup_seed_and_evidence_use_real_mcp_and_preserve_history() -> None:
 
         asyncio.run(run())
     assert not root.exists()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"success": True, "code": "strategy_not_found"},
+        {"success": False, "code": "strategy_cleanup_blocked"},
+        {"success": False},
+        None,
+    ],
+)
+def test_missing_strategy_requires_actual_not_found_error(
+    calls: list[ToolCall],
+    seed: CleanupSeed,
+    response: Any,
+) -> None:
+    calls[0].result = response
+    with pytest.raises(AssertionError):
+        assert_cleanup_workflow(calls, seed)
+
+
+def test_missing_strategy_check_must_not_apply(
+    calls: list[ToolCall],
+    seed: CleanupSeed,
+) -> None:
+    calls[0].arguments["apply"] = True
+    with pytest.raises(AssertionError, match="preview without mutation"):
+        assert_cleanup_workflow(calls, seed)
+
+
+def test_missing_strategy_error_must_precede_existing_cleanup(
+    calls: list[ToolCall],
+    seed: CleanupSeed,
+) -> None:
+    calls[0], calls[1] = calls[1], calls[0]
+    with pytest.raises(AssertionError, match="prior missing-strategy error"):
+        assert_cleanup_workflow(calls, seed)

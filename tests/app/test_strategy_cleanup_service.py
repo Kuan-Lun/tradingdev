@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
@@ -23,6 +24,9 @@ from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.schemas import StrategyMetadata, StrategyStatus
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 def _setup(
@@ -104,6 +108,72 @@ def test_apply_requires_explicit_nonempty_revision_ids(
     result = service.cleanup("fixture", ids, apply=True)
     assert isinstance(result, ErrorResponse)
     assert result.code == "cleanup_revision_ids_required"
+    assert revisions.load("fixture", first.revision_id) == first
+
+
+@pytest.mark.parametrize(
+    ("apply", "revision_ids"),
+    [
+        (False, None),
+        (False, []),
+        (False, ["00000000000040008000000000000000"]),
+        (True, ["00000000000040008000000000000000"]),
+    ],
+)
+@pytest.mark.parametrize("populated", [False, True])
+def test_unknown_strategies_are_rejected_without_creating_lock_files(
+    tmp_path: Path, apply: bool, revision_ids: list[str] | None, populated: bool
+) -> None:
+    workspace, _, revisions, service = _setup(tmp_path)
+    current = _draft(revisions) if populated else None
+    before = {
+        path: path.read_bytes()
+        for path in workspace.generated_strategies.rglob("*")
+        if path.is_file()
+    }
+    for index in range(3):
+        result = service.cleanup(f"unknown_{index}", revision_ids, apply=apply)
+        assert isinstance(result, ErrorResponse)
+        assert not result.success and result.code == "strategy_not_found"
+    assert {
+        path: path.read_bytes()
+        for path in workspace.generated_strategies.rglob("*")
+        if path.is_file()
+    } == before
+    assert revisions.load("fixture") == current
+    if not populated:
+        assert not (workspace.generated_strategies / ".locks").exists()
+
+
+@pytest.mark.parametrize("change", ["missing", "new_current"])
+def test_cleanup_rechecks_current_after_lock_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    workspace, _, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    pointer = workspace.generated_strategies / "fixture" / "current.json"
+    original_lock = service._revisions.lifecycle_lock
+
+    @contextmanager
+    def change_current(strategy_id: str) -> Generator[None]:
+        with original_lock(strategy_id):
+            if change == "missing":
+                pointer.unlink()
+            else:
+                pointer.write_text(json.dumps({"revision_id": first.revision_id}))
+            yield
+
+    monkeypatch.setattr(service._revisions, "lifecycle_lock", change_current)
+    result = service.cleanup("fixture", [first.revision_id], apply=True)
+    assert not result.success
+    if change == "missing":
+        assert isinstance(result, ErrorResponse)
+        assert result.code == "strategy_not_found"
+    else:
+        assert isinstance(result, StrategyCleanupResult)
+        assert result.revisions[0].outcome == "protected"
+        assert "current_revision" in result.revisions[0].reasons
     assert revisions.load("fixture", first.revision_id) == first
 
 

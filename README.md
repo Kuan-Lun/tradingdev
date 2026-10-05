@@ -86,6 +86,7 @@ Bundled 策略仍由 Git 管理，`revision_id` 為 `null`。
 `cleanup_strategy_drafts(strategy_id)` 預設只預覽舊草稿，回傳每個 revision
 是否可清理及保留原因。先向使用者說明清單；取得明確刪除授權後，才以
 `cleanup_strategy_drafts(strategy_id, revision_ids=[...], apply=true)` 清理指定項目。
+不存在的生成策略會回傳 `strategy_not_found`，不會為該次請求建立鎖檔。
 只接受非 current、未被歷史工作或執行引用的 draft；validated、runnable、promoted
 均保留。套用時會重新檢查，不能把先前預覽視為永久有效的刪除資格。
 歷史資料不明或損壞時會阻止清理，檔案完整性有疑慮的版本也會保留。

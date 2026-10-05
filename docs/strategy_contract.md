@@ -286,8 +286,11 @@ updates. A changed preview can therefore become protected. Integrity failures,
 symlinks and unexpected files prevent deletion. An apply containing protected
 or failed items reports `success: false`; other eligible items can still be
 deleted. Filesystem deletion is not transactional and an I/O failure may leave
-a partial directory. Missing explicit IDs are reported as `missing`, making a
-repeat apply safe. Omitting IDs on apply returns `cleanup_revision_ids_required`;
+a partial directory. A missing generated strategy returns `strategy_not_found`
+before creating its lifecycle lock. Cleanup rechecks current after acquiring the
+lock and also rejects the request if the strategy disappeared in between.
+For an existing strategy, missing explicit revision IDs are reported as `missing`,
+making a repeat apply safe. Omitting IDs on apply returns `cleanup_revision_ids_required`;
 an untrustworthy reference scan or lock failure returns `strategy_cleanup_blocked`.
 No background cleanup, automatic revision merging or migration occurs.
 

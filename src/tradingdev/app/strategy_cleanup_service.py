@@ -52,19 +52,24 @@ class StrategyCleanupService:
                 error="Apply requires explicit revision_ids from a reviewed preview",
             )
         try:
+            if self._revisions.load(strategy_id) is None:
+                return self._not_found(strategy_id)
             with self._revisions.lifecycle_lock(strategy_id):
+                current = self._revisions.load(strategy_id)
+                if current is None:
+                    return self._not_found(strategy_id)
                 ids = (
                     self._revisions.revision_ids(strategy_id)
                     if revision_ids is None
                     else list(dict.fromkeys(revision_ids))
                 )
-                current = self._revisions.load(strategy_id)
-                current_id = current.revision_id if current is not None else None
                 references = referenced_revisions(
                     self._workspace, self._store, strategy_id
                 )
                 items = [
-                    self._inspect(strategy_id, revision_id, current_id, references)
+                    self._inspect(
+                        strategy_id, revision_id, current.revision_id, references
+                    )
                     for revision_id in ids
                 ]
                 if apply:
@@ -96,11 +101,19 @@ class StrategyCleanupService:
                 success=False, code="strategy_cleanup_blocked", error=str(exc)
             )
 
+    @staticmethod
+    def _not_found(strategy_id: str) -> ErrorResponse:
+        return ErrorResponse(
+            success=False,
+            code="strategy_not_found",
+            error=f"Generated strategy not found: {strategy_id}",
+        )
+
     def _inspect(
         self,
         strategy_id: str,
         revision_id: str,
-        current_id: str | None,
+        current_id: str,
         references: dict[str, list[str]],
     ) -> StrategyCleanupItem:
         reasons = list(references.get(revision_id, []))

@@ -310,3 +310,33 @@ async def test_cleanup_previews_then_deletes_only_explicit_unused_drafts(
         assert protected["revisions"][0]["reasons"] == ["current_revision"]
         selected = await client.call("get_strategy", strategy_id="cleanup_fixture")
         assert selected["success"] and selected["revision_id"] == current["revision_id"]
+
+
+@pytest.mark.parametrize("apply", [False, True], ids=["preview", "apply"])
+async def test_unknown_cleanup_strategy_is_error_without_creating_lifecycle_lock(
+    mcp_workspace: MCPWorkspace,
+    apply: bool,
+) -> None:
+    strategy_id = "cleanup_unknown_apply" if apply else "cleanup_unknown_preview"
+    generated = mcp_workspace.workspace / "generated_strategies"
+    async with mcp_workspace.connect() as client:
+        before = set(generated.rglob("*"))
+        response = await client.call(
+            "cleanup_strategy_drafts",
+            strategy_id=strategy_id,
+            revision_ids=["00000000000040008000000000000000"] if apply else None,
+            apply=apply,
+        )
+        assert response["success"] is False, response
+        assert response["code"] == "strategy_not_found", response
+        assert not (generated / ".locks" / f"{strategy_id}.lock").exists()
+        assert set(generated.rglob("*")) == before
+
+        rejected = await client.call(
+            "cleanup_strategy_drafts",
+            strategy_id=strategy_id,
+            apply=True,
+        )
+        assert rejected["success"] is False, rejected
+        assert rejected["code"] == "cleanup_revision_ids_required", rejected
+        assert set(generated.rglob("*")) == before
