@@ -122,15 +122,39 @@ Schema version 4 contains:
   job IDs and creation timestamps are not part of the specification.
 
 Typed backtest, walk-forward, parallel, and data defaults have the same digest
-whether implicit or explicit. The strategy mapping is retained under its revision
-contract. Its effective values are expanded separately into `strategy_execution`,
-so filling defaults does not modify the validated revision's original declaration.
-Because the declaration is also retained, omitted and explicit strategy parameters
-can still produce different digests even when their effective values are equal.
+whether implicit or explicit. Strategy identity and non-parameter declarations
+remain bound to the revision. Without an MCP `parameters` override, or with
+`parameters: null`, `config.strategy.parameters` retains the input configuration's
+parameter mapping while constructor defaults are expanded separately into
+`strategy_execution`. CLI execution likewise retains the parameter mapping from
+its submitted YAML, which may already contain experiment settings.
+
+An explicit MCP `parameters` mapping, including `{}`, recursively overlays the
+captured values and replaces `config.strategy.parameters` with the complete
+effective experiment parameters, including defaults. For bundled strategies this
+is the captured constructor's `config` mapping; for generated strategies it is
+the captured constructor keyword mapping. The run's `config.yaml` projection
+reflects that replacement. The revision's original YAML and evidence stay unchanged.
+Overrides can target only keys already captured from base parameters or constructor
+defaults; unknown keys at any recursively merged mapping level are rejected.
+
+Without overrides, omitted versus explicit constructor defaults in the input
+parameter mapping can produce different digests despite equal effective values.
+An explicit empty override can also differ from an omitted override if it expands
+defaults absent from that mapping. Conversely, explicit override mappings that
+produce identical full parameters have the same digest when the rest of the
+manifest is identical. The hash records the stored specification, not whether
+the caller explicitly supplied a particular override key.
+
 Nested optimization candidates override only their specified leaves, preserving
 the remaining fixed values; candidate structure and bundled model contracts are
-validated before creating a job, without running strategy constructors. Constructor
-or execution errors can still occur during the trial. Unsupported defaults or
+validated before creating a job without constructing each candidate. Submission
+also constructs generated strategies with the base execution parameters and runs
+80- and 240-row signal-contract fixtures in the calling process before job creation,
+even without parameter overrides. Worker supervision and trial timeouts do not
+cover these submission-time checks. Each generated candidate is checked again
+with its own parameters in the worker; constructor or execution errors can still
+occur during the trial. Unsupported defaults or
 candidates requiring new implicit fields are rejected. Integer candidates for
 float fields are accepted only when conversion preserves their numeric value;
 string/boolean coercion and precision loss are rejected.
@@ -165,7 +189,8 @@ the submitted request. A changed request requires a new job.
 
 `config.yaml` is a readable projection of `manifest.config`; workers do not use
 it as their source of execution settings. `config_hash` still hashes the YAML
-projection (including the original strategy declaration); resolved constructor
+projection (including the execution's strategy identity, non-parameter declarations,
+and parameter mapping described above); resolved constructor
 settings are available in the manifest's `strategy_execution` object.
 `manifest_hash` covers the complete execution request. The
 artifact's `sha256` hashes the actual `manifest.json` file bytes, including its

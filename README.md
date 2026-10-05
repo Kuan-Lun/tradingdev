@@ -76,12 +76,18 @@ Claude Desktop 範例：
 可用其 `revision_id` 查詢或執行。job、run 與策略回覆會帶回所選版本。
 參數實驗沿用已 runnable 的 revision：在 `start_backtest` 或 `start_walk_forward`
 傳入 `parameters`，只覆寫該次執行的策略參數，巢狀物件逐層合併，其餘保留基礎值。
+覆寫只能指定基礎參數或建構子預設值中已有的鍵；巢狀映射的未知鍵同樣會被拒絕，
+回傳 `invalid_execution_request`，不建立工作。
 每次執行固定完整設定，並以有效參數執行短、長兩組訊號契約檢查；
 不修改原 Python、基礎 YAML、驗證證據或 current pointer，也不建立新的 revision。
 例如同一 MACD revision 可分別傳入 `parameters={"fast_period": 12, "slow_period": 29}`
 及其他組合，結果各自保存成 run。修改程式或要保存新的基礎設定時才另存 revision。
 最佳化可覆寫搜尋範圍內的參數，其餘保留基礎值。
 Bundled 策略仍由 Git 管理，`revision_id` 為 `null`。
+
+提交生成策略時，即使沒有覆寫參數，也會先在 MCP server 程序內建構策略並執行
+訊號契約檢查；這發生於建立 job、啟動 worker 之前，不受 worker 監督或試跑逾時管控。
+詳見[策略安全模型](docs/strategy_contract.md#security-model)。
 
 `cleanup_strategy_drafts(strategy_id)` 預設只預覽舊草稿，回傳每個 revision
 是否可清理及保留原因。先向使用者說明清單；取得明確刪除授權後，才以

@@ -72,12 +72,13 @@ revision is never replaced by a later save.
 
 Execution submission captures every declared constructor default, excluding the
 injected execution context, as an explicit keyword value in
-`manifest.strategy_execution`, separately from the original
-revision declaration. Defaults must be finite JSON values; unsupported defaults
-require explicit serializable parameters or a revised strategy. Generated code
-must express configurable values as constructor parameters rather than derive
-hidden defaults from environment state. This captures declared arguments, not
-arbitrary Python behavior or dependency versions.
+`manifest.strategy_execution`. The saved revision YAML remains unchanged;
+`manifest.config.strategy.parameters` may expand to the effective captured
+parameters for an MCP experiment. Defaults must be finite JSON values;
+unsupported defaults require explicit serializable parameters or a revised
+strategy. Generated code must express configurable values as constructor
+parameters rather than derive hidden defaults from environment state. This
+captures declared arguments, not arbitrary Python behavior or dependency versions.
 
 Allowed import roots for generated strategies are intentionally small:
 
@@ -317,13 +318,20 @@ The comparison excludes the execution-managed `source_hash` and separately
 verifies that `source_path` resolves to the selected revision's source. Copy the
 saved config and apply market/date/cost changes outside the `strategy` section.
 MCP `start_backtest` and `start_walk_forward` accept a `parameters` mapping;
-nested mappings merge recursively with the base and other values replace the
-specified parameter. CLI configs provide their complete experiment parameters.
+overrides apply to the captured effective base parameters, including constructor
+defaults. When both existing and supplied values are mappings, they merge
+recursively; other values replace the specified parameter. At each merge level,
+supplied keys must already exist in the captured mapping. A constructor accepting
+`**kwargs` does not allow an override to introduce new keys. Unknown keys return
+`invalid_execution_request` without creating a job. CLI configs instead provide
+their complete experiment parameters, which must satisfy constructor binding
+and the execution checks.
 The base source, YAML, lifecycle evidence and current pointer remain unchanged.
 Each run stores its own fixed parameters and constructor settings in its manifest.
 Short and long signal-contract fixtures check the effective generated execution
-settings at submission and execution; a failure rejects the experiment without
-changing the revision's status. Static checks remain bound to the verified source.
+settings at submission and execution, including when MCP `parameters` is omitted
+or `null`; a failure rejects the experiment without changing the revision's
+status. Static checks remain bound to the verified source.
 Optimization may override only its search parameters, retaining all other base
 parameters and all other saved strategy settings. Nested parameter candidates
 recursively override only the specified fields of the fixed effective base;
@@ -383,20 +391,26 @@ revision is executable, `start_backtest`, `start_walk_forward`, and
 `start_optimization` call `StrategyLoader.resolve_execution` through
 `BacktestService.prepare_execution` to capture constructor arguments and defaults
 for the execution manifest. Loading a generated class compiles and executes its
-module-level Python in the MCP server process, before creating a job or spawning
-a worker. Optimization's parameter-grid preflight loads the class again, so
-module-level code can execute more than once during submission. This code can
-have effects even if a later preparation check rejects the request without a job.
+module-level Python in the calling process (the MCP server for tool requests).
+Before returning the manifest, `prepare_execution` also calls `check_execution`:
+for every generated strategy, it constructs strategy instances from the captured
+settings and calls `generate_signals` on 80-row and 240-row contract fixtures.
+These checks run even when MCP `parameters` is omitted or `null`.
+Optimization submissions check the captured base settings at this stage.
+Optimization's parameter-grid preflight loads the class again, so module-level
+code can execute more than once during submission. All of this happens before
+creating a job or spawning a worker, and can have effects even if a later
+preparation check rejects the request without a job.
 
-Submission does not instantiate the strategy. For scheduled jobs, workers later
-load the class and call its constructor through `create_from_execution`, then
-execute the strategy using the captured settings; optimization also constructs
-strategies for trial and parameter-combination runs. These execution steps are
-separate from the earlier validation/dry-run checks and submission-time module
-loading. Worker supervision and job cancellation do not cover code that runs in
-the MCP server before the worker exists. Generated strategies must therefore be
-reviewed as runtime code at all of these boundaries until a dedicated sandboxed
-execution layer is added.
+For scheduled jobs, workers later repeat the generated execution-contract checks,
+then construct and execute the strategy using the captured settings; generated
+optimization candidates also undergo these checks before their trial runs.
+These execution steps are separate from the earlier validation/dry-run and
+submission checks. Worker supervision, worker timeouts and job cancellation do
+not cover module loading, constructors or fixture signal generation that run in
+the calling process before the worker exists. None of these checks provides a
+process sandbox. Generated strategies must therefore be reviewed as runtime code
+at all of these boundaries until a dedicated sandboxed execution layer is added.
 
 `signal_analysis` includes row count, signal distribution, missing-signal count,
 transition count, active-signal ratio, and timestamp bounds. Use it to debug
