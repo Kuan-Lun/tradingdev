@@ -39,6 +39,10 @@ workspace/
       dataset_fingerprint.json
       pipeline_result.pkl
   feature_requests/
+  reports/
+    <report_id>/
+      report.html
+      manifest.json
 ```
 
 ## SQLite Tables
@@ -391,6 +395,67 @@ Historical runs without performance artifacts remain readable through ordinary
 run lookup, marked as lacking detailed provenance. `get_run_metrics` reports
 `performance_artifact_unavailable`; reads never migrate, unpickle or recompute
 those results. Historical values are not asserted to follow the new definitions.
+
+## Historical Observation Queries
+
+`find_runs` matches a historical effective parameter subset, strategy, symbol and
+timeframe. Each scalar scope is a separate row; fixed constructor parameters from
+the saved manifest are recursively overlaid with optimization trial parameters.
+Fitted parameters remain separate metadata. Results expose parameter provenance
+and completeness; incomplete legacy parameters are not assumed to match a filter.
+Unreadable runs produce `issues` with `complete: false` alongside readable matches.
+
+`get_run_trades` and `get_run_equity` accept `run_id`, optional `scope`, zero-based
+`offset` and `limit` (1..500). Responses carry total/matched counts and `next_offset`.
+Omitting scope chooses the saved default; an aggregate fold scope returns an error
+and available scalar scopes. Trade filters include status, direction and entry
+time; equity filters refer to bar time. Bounds are inclusive; a date-only upper
+bound includes the entire UTC date, while timestamps select exact instants. Naive
+times are UTC. Unknown timestamps do not pass a time filter.
+
+Trades retain an unmodified `record` and stable source-order `trade_id`, along with
+normalized timestamps, prices, sizes, costs and PnL. An open position's mark is
+separate from a real exit. Signal equity is account value; volume observations
+are cumulative PnL, without fabricated account capital. Queries read verified
+saved JSON only: no replay, current strategy loading, pickle, or data download.
+
+## Composable Offline Reports
+
+`get_report_sections` returns built-in section IDs and optional `standard`,
+`comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
+accepts one to eight distinct runs. Omitted/null sections select standard;
+an explicit ordered list chooses sections, including `[]` for identity and prose
+only. Unknown or duplicate sections fail. Up to 20 plain-text title/text notes
+(20000 characters total) are escaped and labelled LLM commentary. They cannot
+replace computed values or inject HTML. The client selects information and writes
+interpretation; the server renders tables, charts and document structure.
+
+All saved scopes are validated, including sources of omitted sections. Scalar
+observations and aggregate fold statistics remain distinct. Missing or corrupt
+sources fail generation. The report names selected/omitted sections rather than
+claiming every suggested section is present. Included trade tables expose all
+records, sorting, text search and local CSV export; SVG equity and drawdown charts
+and scripts are embedded for offline use. UTC times, units, unavailable reasons,
+provenance and known overlap/interpretation limits are supplied by the backend.
+
+The content digest includes source snapshots, template version, section order and
+commentary. `reports/<report_id>/report.html` and `manifest.json` are registered as
+`research_report_html` and `research_report_manifest` with IDs
+`report:<report_id>:html` and `report:<report_id>:manifest`. A single-run report
+is registered to that run; a multi-run report has no single `run_id` binding.
+The response gives path, artifact IDs
+and HTML SHA-256 without placing an unbounded document into the MCP response.
+`get_artifact` can retrieve the files; local paths are not public URLs.
+
+Publication prevents overwriting different content. Identical requests reuse an
+intact registered report; missing/modified files for a registered report are errors.
+Identical unregistered files may be registered on retry; conflicting registrations
+are rejected rather than overwritten.
+A per-report busy marker coordinates publishers. Handled write/registration
+failures roll back newly created files and rows; files and SQLite are not a single
+cross-resource transaction, and an external kill can leave a busy marker. Reads
+do not repair old output or delete the marker. CLI and dashboard use the same
+application service; LLM prose and report recipes require no new Python/HTML.
 
 ## JSON Values
 

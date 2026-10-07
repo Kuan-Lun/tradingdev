@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -17,7 +18,6 @@ from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from tests.integration.mcp_harness import MCPWorkspace
 
@@ -337,6 +337,51 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     summary = queried.result["run"]
     assert set(summary["available_metric_ids"]) >= DETAIL_METRIC_IDS
     assert DETAIL_METRIC_IDS.isdisjoint(summary["metrics"])
+    if scenario.history:
+        for tool in (
+            "find_runs",
+            "get_run_trades",
+            "get_run_equity",
+            "get_report_sections",
+            "generate_report",
+        ):
+            require_index(
+                f"{tool} returning saved history/report after completion",
+                (
+                    index
+                    for index, call in enumerate(calls)
+                    if index > done_index
+                    and call.name == tool
+                    and call.result
+                    and call.result.get("success") is True
+                    and (
+                        tool in {"find_runs", "get_report_sections"}
+                        or call.arguments.get("run_id") == run_id
+                        or call.arguments.get("run_ids") == [run_id]
+                    )
+                ),
+            )
+        trade_calls = [
+            call
+            for call in calls
+            if call.name == "get_run_trades" and call.result.get("success")
+        ]
+        assert trade_calls[0].arguments.get("limit") == 1
+        assert trade_calls[0].result["next_offset"] == 1
+        assert any(call.arguments.get("offset") == 1 for call in trade_calls[1:])
+        found = next(call for call in calls if call.name == "find_runs")
+        assert found.arguments.get("strategy_id") == scenario.strategy_id
+        assert found.arguments.get("parameters") == scenario.parameters
+        assert any(
+            row["run_id"] == run_id and row["scope"] == "full"
+            for row in found.result["runs"]
+        )
+        report = next(call for call in calls if call.name == "generate_report")
+        assert report.arguments.get("sections") == ["metrics", "trades"]
+        assert report.arguments.get("commentary") == [
+            {"title": "研究評語", "text": "本次結果僅為歷史模擬。"}
+        ]
+        assert sum(call.name == "start_backtest" for call in calls) == 1
     if scenario.repair:
         read_index = require_index(
             f"get_strategy({target}) returning success=True before repairing the draft",
@@ -426,6 +471,32 @@ def test_llm_authors_backtests_and_queries_results(
             persisted = saved["scopes"][detail.result["scope"]]["values"]
             for metric_id in DETAIL_METRIC_IDS:
                 assert detail.result["metrics"][metric_id] == persisted[metric_id]
+            if scenario.history:
+                report_call = next(
+                    call for call in reversed(calls) if call.name == "generate_report"
+                )
+                report_path = Path(report_call.result["path"])
+                assert report_path.is_relative_to(workspace.workspace / "reports")
+                assert report_path.is_file()
+                report_html = report_path.read_text(encoding="utf-8")
+                assert detail.arguments["run_id"] in report_html
+                assert "<table" in report_html
+                assert "本次結果僅為歷史模擬。" in report_html
+                observations = json.loads(
+                    (
+                        workspace.workspace
+                        / "runs"
+                        / detail.arguments["run_id"]
+                        / "observations.json"
+                    ).read_text(encoding="utf-8")
+                )["scopes"]["full"]
+                for call in calls:
+                    if call.name == "get_run_trades" and call.result.get("success"):
+                        for trade in call.result["trades"]:
+                            assert (
+                                trade["record"]
+                                == observations["trades"][trade["trade_id"]]
+                            )
             for path, original in legacy_files.items():
                 assert path.read_bytes() == original, (
                     f"Legacy recovery modified the original file: {path.name}"
