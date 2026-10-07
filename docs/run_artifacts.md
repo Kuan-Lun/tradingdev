@@ -447,6 +447,16 @@ separate from a real exit. Signal equity is account value; volume observations
 are cumulative PnL, without fabricated account capital. Queries read verified
 saved JSON only: no replay, current strategy loading, pickle, or data download.
 
+`get_run_executions` reads `records` with optional filled/ignored/rejected status,
+buy/sell side and timestamp filters. Side refers to filled order direction;
+unfilled attempts have no fill side. `get_run_account_history` reads `states`
+with timestamp filters. Both use the same scope, offset/limit and inclusive UTC
+date rules, returning availability, accounting and valuation/time semantics.
+`available` with zero rows means a recorded empty or filtered sequence; legacy
+`not_recorded` and volume `unsupported_volume_accounting` return explicit
+unavailable status with zero rows, never reconstructed history. Records remain
+aligned to their original bar indices after filtering and paging.
+
 ## Composable Offline Reports
 
 `get_report_sections` returns built-in section IDs and optional `standard`,
@@ -457,6 +467,13 @@ only. Unknown or duplicate sections fail. Up to 20 plain-text title/text notes
 (20000 characters total) are escaped and labelled LLM commentary. They cannot
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
+
+The `executions` and `account_history` sections, also in `standard`, display these
+two saved ledgers separately from paired trades. Each has independent search,
+sorting and full CSV export, with nested market/before/after fields flattened for
+execution CSV. Missing streams show their reason; `[]` shows a recorded empty
+stream. The manifest records each stream's original count, preserving null versus
+zero. Old report files retain their original template version.
 
 All saved scopes are validated, including sources of omitted sections. Scalar
 observations and aggregate fold statistics remain distinct. Missing or corrupt

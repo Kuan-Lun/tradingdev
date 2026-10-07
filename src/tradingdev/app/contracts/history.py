@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field, JsonValue
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
+from tradingdev.domain.backtest.execution_records import AccountState, ExecutionRecord
 
 
 class HistoryQueryError(ErrorResponse):
@@ -118,3 +119,28 @@ class RunEquityResponse(HistoryScopeIdentity):
     init_cash: float | None
     equity_basis: Literal["account_equity", "cumulative_pnl"]
     points: list[HistoryEquityPoint]
+
+
+class HistoryLedgerResponse(HistoryScopeIdentity):
+    """Saved generic accounting, explicitly distinguished from absent history."""
+
+    availability: Literal["available", "not_recorded", "unsupported_volume_accounting"]
+    accounting: Literal["vectorbt_generic"] | None
+    init_cash: float | None
+    date_filter_basis: Literal["timestamp"] = "timestamp"
+
+
+class RunExecutionsResponse(HistoryLedgerResponse):
+    """Native order attempts, including attempts without a fill."""
+
+    records: list[ExecutionRecord]
+    valuation_basis: Literal["requested_price_before_slippage"]
+    timestamp_semantics: Literal["bar_timestamp_not_exact_intrabar_fill"]
+
+
+class RunAccountHistoryResponse(HistoryLedgerResponse):
+    """End-of-bar balances include bars without an order attempt."""
+
+    states: list[AccountState]
+    valuation_basis: Literal["bar_close"]
+    timestamp_semantics: Literal["bar_timestamp_end_of_bar_state"]

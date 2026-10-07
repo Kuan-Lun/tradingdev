@@ -206,10 +206,21 @@ async def test_generated_strategy_full_mcp_workflow(
         ][:2]
         catalog = await client.call("get_report_sections")
         assert "trades" in catalog["templates"]["standard"]
+        executions = await client.call("get_run_executions", run_id=run_id, limit=2)
+        assert executions["availability"] == "available"
+        assert executions["records"] == observations["execution_records"][:2]
+        assert executions["valuation_basis"] == "requested_price_before_slippage"
+        accounts = await client.call("get_run_account_history", run_id=run_id, limit=2)
+        assert accounts["availability"] == "available"
+        assert accounts["states"] == observations["account_history"][:2]
+        assert accounts["states"][0]["equity"] == observations["equity_curve"][0]
+        assert {"executions", "account_history"} <= set(
+            catalog["templates"]["standard"]
+        )
         report = await client.call(
             "generate_report",
             run_ids=[run_id],
-            sections=["metrics", "trades"],
+            sections=["metrics", "trades", "executions", "account_history"],
             commentary=[{"title": "評語", "text": "這是模擬結果。"}],
         )
         assert report["success"], report
@@ -226,6 +237,8 @@ async def test_generated_strategy_full_mcp_workflow(
         assert json.loads(report_manifest["content"])["sections"] == [
             "metrics",
             "trades",
+            "executions",
+            "account_history",
         ]
         source = await client.call(
             "get_artifact",

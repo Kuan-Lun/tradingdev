@@ -361,6 +361,93 @@ class TradeHistoryService:
         except HistoryReadError as exc:
             return exc.response()
 
+    def get_run_executions(
+        self,
+        run_id: str,
+        scope: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+        status: str | None = None,
+        side: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> dict[str, Any]:
+        """Page original order attempts; unavailable history is never replayed."""
+        try:
+            _validate_page(offset, limit)
+            if status not in (None, "filled", "ignored", "rejected"):
+                raise HistoryReadError(
+                    "invalid_history_query",
+                    "status must be filled, ignored, or rejected",
+                )
+            if side not in (None, "buy", "sell"):
+                raise HistoryReadError(
+                    "invalid_history_query", "side must be buy or sell"
+                )
+            bounds = _bounds(start, end)
+            loaded = self.load_scope(run_id, scope)
+            observations = loaded.observations
+            records = observations.execution_records
+            rows = []
+            if records is not None:
+                _require_filter_timestamps(observations, bounds)
+                for record in records:
+                    if status is not None and record.status != status:
+                        continue
+                    if side is not None and record.side != side:
+                        continue
+                    timestamp = _timestamp(observations, record.bar_index)
+                    if not _in_bounds(timestamp, bounds):
+                        continue
+                    rows.append(
+                        {**record.model_dump(mode="json"), "timestamp": timestamp}
+                    )
+            return {
+                **_ledger_identity(loaded, records),
+                **_page(len(records or []), len(rows), offset, limit),
+                "records": rows[offset : offset + limit],
+                "valuation_basis": "requested_price_before_slippage",
+                "timestamp_semantics": "bar_timestamp_not_exact_intrabar_fill",
+            }
+        except HistoryReadError as exc:
+            return exc.response()
+
+    def get_run_account_history(
+        self,
+        run_id: str,
+        scope: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> dict[str, Any]:
+        """Page saved close-marked balances, including bars without orders."""
+        try:
+            _validate_page(offset, limit)
+            bounds = _bounds(start, end)
+            loaded = self.load_scope(run_id, scope)
+            observations = loaded.observations
+            states = observations.account_history
+            rows = []
+            if states is not None:
+                _require_filter_timestamps(observations, bounds)
+                for state in states:
+                    timestamp = _timestamp(observations, state.bar_index)
+                    if not _in_bounds(timestamp, bounds):
+                        continue
+                    rows.append(
+                        {**state.model_dump(mode="json"), "timestamp": timestamp}
+                    )
+            return {
+                **_ledger_identity(loaded, states),
+                **_page(len(states or []), len(rows), offset, limit),
+                "states": rows[offset : offset + limit],
+                "valuation_basis": "bar_close",
+                "timestamp_semantics": "bar_timestamp_end_of_bar_state",
+            }
+        except HistoryReadError as exc:
+            return exc.response()
+
 
 def _identity(scope: LoadedHistoryScope) -> dict[str, Any]:
     return {
@@ -372,6 +459,25 @@ def _identity(scope: LoadedHistoryScope) -> dict[str, Any]:
         "parameter_provenance": scope.parameter_provenance,
         "parameters_complete": scope.parameters_complete,
         "calendar_timezone": "UTC",
+    }
+
+
+def _ledger_identity(scope: LoadedHistoryScope, records: object) -> dict[str, Any]:
+    availability = (
+        "available"
+        if records is not None
+        else "unsupported_volume_accounting"
+        if scope.performance.mode == "volume"
+        else "not_recorded"
+    )
+    return {
+        **_identity(scope),
+        "availability": availability,
+        "accounting": "vectorbt_generic"
+        if scope.performance.mode == "signal"
+        else None,
+        "init_cash": scope.observations.init_cash,
+        "date_filter_basis": "timestamp",
     }
 
 

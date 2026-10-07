@@ -73,18 +73,31 @@ const csvCell=value=>{
  if(typeof value==='string'&&/^[=+@\\-\\t\\r]/.test(text))text="'"+text;
  return '"'+text.replaceAll('"','""')+'"';
 };
+const flattenRecord=(record,prefix='',result={})=>{
+ Object.entries(record).forEach(([key,value])=>{
+  const name=prefix?prefix+'.'+key:key;
+  if(value!==null&&typeof value==='object'&&!Array.isArray(value)){
+   flattenRecord(value,name,result);
+  }else{result[name]=value;}
+ });
+ return result;
+};
 document.querySelectorAll('[data-download]').forEach(button=>{
  button.addEventListener('click',()=>{
   const [runIndex,scopeIndex]=button.dataset.download.split(':').map(Number);
   const run=payload.runs[runIndex],scope=run.scopes[scopeIndex];
-  const rows=scope.observations.trades;
+  const dataset=button.dataset.dataset||'trades';
+  if(!['trades','execution_records','account_history'].includes(dataset))return;
+  const records=scope.observations[dataset];
+  if(!Array.isArray(records))return;
+  const rows=dataset==='trades'?records:records.map(record=>flattenRecord(record));
   const columns=Array.from(new Set(rows.flatMap(row=>Object.keys(row)))).sort();
   const text=[columns.map(csvCell).join(','),
    ...rows.map(row=>columns.map(key=>csvCell(row[key])).join(','))].join('\\r\\n');
   const blob=new Blob(['\\ufeff'+text],{type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob);
   const link=document.createElement('a');link.href=url;
-  link.download='trades_'+runIndex+'_'+scopeIndex+'.csv';link.click();
+  link.download=dataset+'_'+runIndex+'_'+scopeIndex+'.csv';link.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
  });
 });
@@ -345,6 +358,181 @@ def _trades(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
     )
 
 
+_LEDGER_SEMANTICS = (
+    "<p class='notice'>帳戶欄位採 VectorBT generic accounting（vectorbt_generic）："
+    "cash、free_cash、debt、position 與 equity 為引擎的一般資產帳本，"
+    "不是 Binance 永續合約錢包、可用保證金或清算狀態。"
+    "timestamp 是 bar 時間，不是 tick 或精確盤中成交時間。</p>"
+)
+
+
+def _saved_table(
+    rows: list[dict[str, Any]],
+    *,
+    dataset: str,
+    run_index: int,
+    scope_index: int,
+) -> str:
+    """Render every saved row with reusable search, sorting and dataset-bound CSV."""
+    identifier = f"{dataset}-{run_index}-{scope_index}"
+    headers = "".join(
+        f"<th><button data-column='{index}'>{_escape(key)}</button></th>"
+        for index, key in enumerate(rows[0])
+    )
+    body = "".join(
+        "<tr>"
+        + "".join(
+            "<td>"
+            + (_details("原始欄位", value) if key == "raw" else _value(value))
+            + "</td>"
+            for key, value in row.items()
+        )
+        + "</tr>"
+        for row in rows
+    )
+    return (
+        f"<p>已記錄 {len(rows)} 筆，全部顯示且無分頁截斷。</p>"
+        "<div class='controls'><label>篩選 "
+        f"<input data-filter='{identifier}' placeholder='狀態 / 日期 / 文字'></label>"
+        f"<button data-download='{run_index}:{scope_index}' data-dataset='{dataset}'>"
+        "下載全部原始紀錄 CSV</button></div>"
+        "<p class='muted'>點欄名排序，水平捲動查看完整欄位。CSV 不受篩選影響，"
+        "保留原始欄位與值；巢狀欄位以 before.cash、market.close 等路徑展平。"
+        "以公式字元開頭的文字加單引號避免試算表執行公式。</p>"
+        f"<div class='scroll'><table id='{identifier}' data-sortable>"
+        f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"
+    )
+
+
+def _stream_unavailable(scope: dict[str, Any], dataset: str) -> str:
+    metadata = _object(scope["metadata"].get("observations"))
+    availability_key = (
+        "execution_records_availability"
+        if dataset == "execution_records"
+        else "account_history_availability"
+    )
+    reason = metadata.get(availability_key)
+    if scope["mode"] == "volume" or reason == "unsupported_volume_accounting":
+        reason = "unsupported_volume_accounting"
+        detail = "volume 模式不提供這類資金帳戶／原生成交紀錄。"
+    else:
+        reason = "not_recorded" if reason in (None, "available") else reason
+        detail = "此保存結果未記錄這個資料流（舊產物亦可能缺少欄位），不能解讀為零筆。"
+    return (
+        "<p class='notice' data-availability='unavailable'>不可用："
+        + _escape(reason)
+        + "。"
+        + detail
+        + "報告不重跑策略，也不由交易或權益曲線回推帳戶狀態。</p>"
+    )
+
+
+def _executions(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
+    records = scope["observations"].get("execution_records")
+    intro = (
+        _LEDGER_SEMANTICS
+        + "<p>每列為一個原生 order attempt，狀態包含 filled、ignored、rejected。"
+        "反手可能是同一筆 order 同時平舊倉並開新倉；不拆成虛構成交。"
+        "OHLC 是原始 bar 的市場參考；requested_price、filled_price 與 "
+        "valuation_price 分開顯示。before/after equity 以保存的 valuation_price "
+        "估值（request price、滑價前），不是當根收盤權益；fees 為該次實際費用。"
+        "未成交的 filled_* 與 fees 保持 null，不當成零費用成交。</p>"
+    )
+    if records is None:
+        return intro + _stream_unavailable(scope, "execution_records")
+    if not records:
+        return (
+            intro + "<p data-availability='available'>已記錄：0 筆 order attempt。</p>"
+        )
+    rows = []
+    for record in records:
+        row = {
+            key: record.get(key)
+            for key in (
+                "execution_id",
+                "order_id",
+                "bar_index",
+                "status",
+                "status_info",
+                "side",
+            )
+        }
+        row["bar UTC"] = (
+            _utc(record["timestamp"]).isoformat() if record["timestamp"] else None
+        )
+        for key in ("open", "high", "low", "close"):
+            row[f"market.{key}"] = record["market"][key]
+        row.update(
+            {
+                key: record[key]
+                for key in (
+                    "requested_price",
+                    "filled_price",
+                    "filled_size",
+                    "fees",
+                    "valuation_price",
+                    "requested_size",
+                    "requested_size_kind",
+                    "requested_size_type",
+                    "requested_direction",
+                    "requested_fee_rate",
+                    "requested_fixed_fees",
+                    "requested_slippage",
+                )
+            }
+        )
+        for key in ("cash", "position", "equity", "free_cash", "debt"):
+            for phase in ("before", "after"):
+                row[f"{phase}.{key}"] = record[phase][key]
+        row["raw"] = record
+        rows.append(row)
+    return intro + _saved_table(
+        rows, dataset="execution_records", run_index=run_index, scope_index=scope_index
+    )
+
+
+def _account_history(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
+    records = scope["observations"].get("account_history")
+    intro = (
+        _LEDGER_SEMANTICS + "<p>每列保存一根 bar 結束後的帳戶狀態，"
+        "包括沒有 order 的 bar。mark_price 為 bar close；equity 是該價格下的"
+        "cash 加 asset_value，與執行紀錄的 request-price 估值分開。"
+        "表內數值直接取自保存帳本，不由報告重建。</p>"
+    )
+    if records is None:
+        return intro + _stream_unavailable(scope, "account_history")
+    if not records:
+        return (
+            intro + "<p data-availability='available'>已記錄：0 根 bar 的帳戶狀態。</p>"
+        )
+    rows = []
+    for record in records:
+        row = {
+            "bar_index": record["bar_index"],
+            "bar UTC": _utc(record["timestamp"]).isoformat()
+            if record["timestamp"]
+            else None,
+        }
+        row.update(
+            {
+                key: record[key]
+                for key in (
+                    "mark_price",
+                    "cash",
+                    "free_cash",
+                    "position",
+                    "asset_value",
+                    "equity",
+                )
+            }
+        )
+        row["raw"] = record
+        rows.append(row)
+    return intro + _saved_table(
+        rows, dataset="account_history", run_index=run_index, scope_index=scope_index
+    )
+
+
 def _scope_settings(run: dict[str, Any], scope: dict[str, Any]) -> str:
     context = _object(scope["metadata"].get("execution_context"))
     observations = scope["observations"]
@@ -535,6 +723,10 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
                 result += _charts(scope)
             elif section == "trades":
                 result += _trades(scope, ri, si)
+            elif section == "executions":
+                result += _executions(scope, ri, si)
+            elif section == "account_history":
+                result += _account_history(scope, ri, si)
             result += "</div>"
     return result
 
@@ -547,6 +739,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         "metrics": "保存績效指標",
         "equity": "權益與回撤",
         "trades": "完整交易紀錄",
+        "executions": "原生執行紀錄",
+        "account_history": "逐根帳戶狀態",
         "limitations": "假設與限制",
         "provenance": "版本、資料與來源證據",
     }
@@ -606,7 +800,14 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         .replace("\u2029", "\\u2029")
     )
     selector = ""
-    if set(payload["sections"]) & {"settings", "metrics", "equity", "trades"}:
+    if set(payload["sections"]) & {
+        "settings",
+        "metrics",
+        "equity",
+        "trades",
+        "executions",
+        "account_history",
+    }:
         selector = (
             "<div class='panel'><label for='scope-select'>選擇 run / scope</label>"
             "<select id='scope-select'>" + "".join(options) + "</select>"

@@ -342,6 +342,8 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             "find_runs",
             "get_run_trades",
             "get_run_equity",
+            "get_run_executions",
+            "get_run_account_history",
             "get_report_sections",
             "generate_report",
         ):
@@ -377,7 +379,16 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             for row in found.result["runs"]
         )
         report = next(call for call in calls if call.name == "generate_report")
-        assert report.arguments.get("sections") == ["metrics", "trades"]
+        assert report.arguments.get("sections") == [
+            "metrics",
+            "trades",
+            "executions",
+            "account_history",
+        ]
+        for name, count in (("get_run_executions", 1), ("get_run_account_history", 2)):
+            queried_history = next(call for call in calls if call.name == name)
+            assert queried_history.arguments.get("limit") == count
+            assert queried_history.result["availability"] == "available"
         assert report.arguments.get("commentary") == [
             {"title": "研究評語", "text": "本次結果僅為歷史模擬。"}
         ]
@@ -491,6 +502,17 @@ def test_llm_authors_backtests_and_queries_results(
                     ).read_text(encoding="utf-8")
                 )["scopes"]["full"]
                 for call in calls:
+                    if call.name == "get_run_executions" and call.result.get("success"):
+                        assert (
+                            call.result["records"]
+                            == observations["execution_records"][:1]
+                        )
+                    if call.name == "get_run_account_history" and call.result.get(
+                        "success"
+                    ):
+                        assert (
+                            call.result["states"] == observations["account_history"][:2]
+                        )
                     if call.name == "get_run_trades" and call.result.get("success"):
                         for trade in call.result["trades"]:
                             assert (

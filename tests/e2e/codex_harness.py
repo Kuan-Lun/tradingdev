@@ -35,6 +35,8 @@ LIFECYCLE_TOOLS = [
     "find_runs",
     "get_run_trades",
     "get_run_equity",
+    "get_run_executions",
+    "get_run_account_history",
     "get_report_sections",
     "generate_report",
     "list_artifacts",

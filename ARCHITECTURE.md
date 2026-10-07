@@ -264,6 +264,14 @@ Walk-forward 保存每個 fold 的訓練／測試結果；其摘要是各 fold �
 optimization trial overrides，不使用目前策略或重新模擬；不完整的舊參數明確標示。
 聚合 fold summary 不虛構交易序列。缺失、損毀與查找的部分成功皆有結構化回覆。
 
+Signal 引擎同時保留 VectorBT 原生 order attempts 與帳戶序列，型別位於
+`domain/backtest/execution_records.py`，與配對交易分開；啟用 logs 但不更動成交或
+倉位計算設定。成交資料核對 native orders 及現金／持倉守恆，保存為 observations
+的 optional 欄位。`get_run_executions` 與 `get_run_account_history` 共用歷史服務
+提供篩選與分頁，明確區別已記錄空序列、舊結果未記錄及 volume 不適用。
+帳戶採 generic accounting，成交前後按委託參考價估值，逐根帳戶則按收盤價估值；
+不將此資料描述為交易所錢包或保證金。
+
 `ReportService` 共用此讀取路徑，提供章節目錄、建議範本與純文字評語介面。
 MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG renderer 與不可覆寫的
 報告發佈位於 `adapters/reporting`。前端 LLM 選擇章節、順序並撰寫評價，

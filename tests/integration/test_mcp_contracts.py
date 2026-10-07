@@ -30,6 +30,8 @@ _READ_ONLY_TOOLS = {
     "find_runs",
     "get_run_trades",
     "get_run_equity",
+    "get_run_executions",
+    "get_run_account_history",
     "get_report_sections",
     "compare_runs",
     "list_artifacts",
@@ -119,7 +121,7 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
     ]
     async with mcp_workspace.connect() as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
-        assert len(tools) == 33
+        assert len(tools) == 35
         assert tools.keys() == expected_hints.keys() == client.output_schemas.keys()
         for name, tool in tools.items():
             assert tool.description and tool.description.strip(), name
