@@ -457,6 +457,16 @@ cross-resource transaction, and an external kill can leave a busy marker. Reads
 do not repair old output or delete the marker. CLI and dashboard use the same
 application service; LLM prose and report recipes require no new Python/HTML.
 
+Dashboard sessions retain the generated report ID and expected HTML SHA-256.
+On every rerun, `ReportService.get_report_download(report_id, expected_sha256=...)`
+validates the registered HTML type, fixed report path and stored hash, then reads
+and hashes the same bytes supplied to the download button. This in-process
+interface returns HTML bytes on success, or an error without content; it does not
+add document bytes to MCP responses. Missing, modified or unreadable files remove
+the download from the dashboard and display an error. A failed generation also
+clears the previous download, so an integrity error cannot fall back to a stale
+file. Reads do not repair or regenerate the report.
+
 ## JSON Values
 
 Before writing `result.json` or SQLite `runs.metrics`, metric values are

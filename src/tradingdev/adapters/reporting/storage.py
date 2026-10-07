@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class ReportPublicationError(ValueError):
-    """An explicit report identity, path, or publication failure."""
+    """An explicit report identity, path, publication, or download failure."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -34,6 +34,47 @@ def _safe_path(workspace: WorkspacePaths, *parts: str) -> Path:
                 "report_path_invalid", "Report path leaves workspace"
             )
     return path
+
+
+def read_report_html(
+    workspace: WorkspacePaths,
+    store: SQLiteStore,
+    report_id: str,
+    *,
+    expected_sha256: str,
+) -> bytes:
+    """Read registered HTML once and verify the exact bytes returned to the caller."""
+    if not isinstance(report_id, str) or not re.fullmatch(r"[0-9a-f]{64}", report_id):
+        raise ReportPublicationError("report_path_invalid", "Invalid report ID")
+    if not isinstance(expected_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_sha256
+    ):
+        raise ReportPublicationError(
+            "report_artifact_invalid", "Invalid expected report SHA-256"
+        )
+    path = _safe_path(workspace, report_id, "report.html")
+    record = store.get_artifact(f"report:{report_id}:html")
+    if record is None:
+        raise ReportPublicationError("report_not_found", "Report is not registered")
+    if (
+        record.get("artifact_type") != "research_report_html"
+        or record.get("path") != str(path)
+        or record.get("sha256") != expected_sha256
+    ):
+        raise ReportPublicationError(
+            "report_artifact_invalid", "Report registration differs from the download"
+        )
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError:
+        raise ReportPublicationError(
+            "report_artifact_invalid", "Registered report is missing"
+        ) from None
+    if hashlib.sha256(content).hexdigest() != expected_sha256:
+        raise ReportPublicationError(
+            "report_artifact_invalid", "Registered report content differs"
+        )
+    return content
 
 
 def publish_report(

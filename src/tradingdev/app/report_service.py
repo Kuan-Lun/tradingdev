@@ -8,7 +8,11 @@ import sqlite3
 from typing import Any
 
 from tradingdev.adapters.reporting.html import render_report
-from tradingdev.adapters.reporting.storage import ReportPublicationError, publish_report
+from tradingdev.adapters.reporting.storage import (
+    ReportPublicationError,
+    publish_report,
+    read_report_html,
+)
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_service import RunService
@@ -84,6 +88,35 @@ class ReportService:
                 for key, title, description in SECTION_CATALOG
             ],
             "templates": {key: list(value) for key, value in TEMPLATES.items()},
+        }
+
+    def get_report_download(
+        self, report_id: str, *, expected_sha256: str
+    ) -> dict[str, Any]:
+        """Return verified HTML bytes for an in-process download adapter.
+
+        Pass the report ID and SHA-256 returned by ``generate_report``. Success
+        contains ``content`` as bytes, ``report_id`` and ``sha256``; failures contain
+        ``code`` and ``error`` without content. This is not a JSON/MCP response.
+        Every call validates the registered identity and the exact bytes returned;
+        it neither repairs files nor regenerates historical results.
+        """
+        try:
+            content = read_report_html(
+                self._workspace,
+                self._store,
+                report_id,
+                expected_sha256=expected_sha256,
+            )
+        except ReportPublicationError as exc:
+            return _error(exc.code, str(exc))
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            return _error("report_read_failed", str(exc))
+        return {
+            "success": True,
+            "report_id": report_id,
+            "sha256": expected_sha256,
+            "content": content,
         }
 
     def generate_report(

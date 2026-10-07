@@ -55,7 +55,14 @@ def context(
     yield workspace, store, server, service, reports
 
 
-def _publish(workspace: WorkspacePaths, store: SQLiteStore) -> None:
+def _publish(
+    workspace: WorkspacePaths,
+    store: SQLiteStore,
+    *,
+    run_id: str = "run",
+    missing_entry: bool = False,
+    timestamps: bool = True,
+) -> None:
     params = {"fast": 12, "slow": 26, "nested": {"signal": 9}}
     config = {
         "strategy": {"id": "macd_fixture", "parameters": {"fast": 12}},
@@ -76,9 +83,9 @@ def _publish(workspace: WorkspacePaths, store: SQLiteStore) -> None:
             kind="generated", constructor_kwargs=params
         ),
     )
-    path = ExecutionManifestStore(workspace).publish("run", manifest)
+    path = ExecutionManifestStore(workspace).publish(run_id, manifest)
     store.create_run(
-        run_id="run",
+        run_id=run_id,
         job_id="job",
         strategy_id="macd_fixture",
         artifact_dir=path.parent,
@@ -87,8 +94,8 @@ def _publish(workspace: WorkspacePaths, store: SQLiteStore) -> None:
         dataset_id="historical-data-fingerprint",
     )
     store.create_artifact(
-        artifact_id="run:execution_manifest",
-        run_id="run",
+        artifact_id=f"{run_id}:execution_manifest",
+        run_id=run_id,
         artifact_type="execution_manifest",
         path=path,
         sha256=sha256_file(path),
@@ -109,7 +116,9 @@ def _publish(workspace: WorkspacePaths, store: SQLiteStore) -> None:
             "2024-01-01T00:00:00Z",
             "2024-01-02T00:00:00Z",
             "2024-01-03T00:00:00Z",
-        ],
+        ]
+        if timestamps
+        else None,
         trades=[
             {
                 "entry_idx": 0,
@@ -139,9 +148,11 @@ def _publish(workspace: WorkspacePaths, store: SQLiteStore) -> None:
             },
         ],
     )
+    if missing_entry:
+        observations.trades[0].pop("entry_idx")
     PerformanceStore(workspace, store).publish(
         build_artifacts(
-            "run",
+            run_id,
             manifest.manifest_hash,
             "full",
             {"full": scope},
@@ -262,6 +273,48 @@ def test_history_tool_schemas_and_real_paginated_queries(
         assert equity.init_cash == 1000 and equity.equity_basis == "account_equity"
         assert equity.total == 3 and equity.matched == 2 and equity.next_offset == 1
         assert equity.points[0].bar_index == 1 and equity.points[0].equity == 1010.0
+
+    asyncio.run(check())
+
+
+def test_trade_date_filter_excludes_individual_unknown_times_through_mcp(
+    context: tuple[
+        WorkspacePaths, SQLiteStore, FastMCP, TradeHistoryService, ReportService
+    ],
+) -> None:
+    workspace, store, server, _, _ = context
+    _publish(workspace, store, run_id="mixed", missing_entry=True)
+    _publish(workspace, store, run_id="missing_series", timestamps=False)
+
+    async def check() -> None:
+        unfiltered = RunTradesResponse.model_validate(
+            await _call(server, "get_run_trades", {"run_id": "mixed"})
+        )
+        assert unfiltered.total == unfiltered.matched == 2
+        assert [trade.trade_id for trade in unfiltered.trades] == [0, 1]
+        assert unfiltered.trades[0].entry_timestamp is None
+        selected = RunTradesResponse.model_validate(
+            await _call(
+                server,
+                "get_run_trades",
+                {
+                    "run_id": "mixed",
+                    "entry_start": "2024-01-02",
+                    "entry_end": "2024-01-02",
+                },
+            )
+        )
+        assert (selected.total, selected.matched, selected.next_offset) == (2, 1, None)
+        assert [trade.trade_id for trade in selected.trades] == [1]
+        assert selected.trades[0].entry_timestamp == "2024-01-02T00:00:00+00:00"
+        missing = HistoryQueryError.model_validate(
+            await _call(
+                server,
+                "get_run_trades",
+                {"run_id": "missing_series", "entry_start": "2024-01-01"},
+            )
+        )
+        assert missing.code == "timestamps_unavailable"
 
     asyncio.run(check())
 

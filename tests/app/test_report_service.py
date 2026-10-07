@@ -420,6 +420,152 @@ def test_registered_missing_report_is_not_silently_rebuilt(
     assert not path.exists()
 
 
+def test_report_download_returns_the_verified_snapshot_without_a_second_read(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, service = context
+    _save(context)
+    report = service.generate_report(["run"])
+    path = Path(report["path"])
+    expected = path.read_bytes()
+    original_read = Path.read_bytes
+    reads = []
+
+    def changed_after_read(target: Path) -> bytes:
+        content = original_read(target)
+        if target == path:
+            reads.append(target)
+            target.write_bytes(b"changed after the verified snapshot was read")
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", changed_after_read)
+    download = service.get_report_download(
+        report["report_id"], expected_sha256=report["sha256"]
+    )
+
+    assert download == {
+        "success": True,
+        "report_id": report["report_id"],
+        "sha256": hashlib.sha256(expected).hexdigest(),
+        "content": expected,
+    }
+    assert reads == [path]
+    assert original_read(path) != download["content"]
+
+
+@pytest.mark.parametrize("change", ["modified", "deleted", "unreadable"])
+def test_report_download_rejects_changed_or_unreadable_html(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    _, _, service = context
+    _save(context)
+    report = service.generate_report(["run"])
+    path = Path(report["path"])
+    if change == "modified":
+        path.write_bytes(b"modified")
+    elif change == "deleted":
+        path.unlink()
+    else:
+
+        def unreadable(target: Path) -> bytes:
+            raise PermissionError("Report is unreadable")
+
+        monkeypatch.setattr(Path, "read_bytes", unreadable)
+
+    download = service.get_report_download(
+        report["report_id"], expected_sha256=report["sha256"]
+    )
+
+    assert not download["success"]
+    assert download["code"] == (
+        "report_read_failed" if change == "unreadable" else "report_artifact_invalid"
+    )
+    assert "content" not in download
+    if change == "modified":
+        assert path.read_bytes() == b"modified"
+    elif change == "deleted":
+        assert not path.exists()
+
+
+@pytest.mark.parametrize("field", ["artifact_type", "path", "sha256", "deleted"])
+def test_report_download_checks_registration_and_original_expected_hash(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService], field: str
+) -> None:
+    _, store, service = context
+    _save(context)
+    report = service.generate_report(["run"])
+    with store.connect() as connection:
+        if field == "deleted":
+            connection.execute(
+                "delete from artifacts where artifact_id = ?", (report["artifact_id"],)
+            )
+        else:
+            value = "different"
+            if field == "sha256":
+                # Even replacing both bytes and the database hash cannot change
+                # the report snapshot requested by this caller.
+                Path(report["path"]).write_bytes(b"changed")
+                value = hashlib.sha256(b"changed").hexdigest()
+            connection.execute(
+                f"update artifacts set {field} = ? where artifact_id = ?",
+                (value, report["artifact_id"]),
+            )
+    download = service.get_report_download(
+        report["report_id"], expected_sha256=report["sha256"]
+    )
+
+    assert not download["success"]
+    assert download["code"] == (
+        "report_not_found" if field == "deleted" else "report_artifact_invalid"
+    )
+    assert "content" not in download
+
+
+def test_report_download_rejects_replaced_symlink_even_for_identical_bytes(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService], tmp_path: Path
+) -> None:
+    _, _, service = context
+    _save(context)
+    report = service.generate_report(["run"])
+    path = Path(report["path"])
+    outside = tmp_path / "outside.html"
+    outside.write_bytes(path.read_bytes())
+    path.unlink()
+    path.symlink_to(outside)
+
+    download = service.get_report_download(
+        report["report_id"], expected_sha256=report["sha256"]
+    )
+
+    assert download["code"] == "report_path_invalid"
+    assert "content" not in download
+
+
+@pytest.mark.parametrize(
+    ("report_id", "expected_sha256", "code"),
+    [
+        ("../outside", "a" * 64, "report_path_invalid"),
+        ("a" * 64, "not-a-hash", "report_artifact_invalid"),
+        ("a" * 64, "b" * 64, "report_not_found"),
+    ],
+)
+def test_invalid_report_download_identity_returns_error_without_content(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    report_id: str,
+    expected_sha256: str,
+    code: str,
+) -> None:
+    download = context[2].get_report_download(
+        report_id, expected_sha256=expected_sha256
+    )
+
+    assert not download["success"] and download["code"] == code
+    assert "content" not in download
+
+
 def test_busy_report_does_not_remove_another_publication_marker(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
 ) -> None:
