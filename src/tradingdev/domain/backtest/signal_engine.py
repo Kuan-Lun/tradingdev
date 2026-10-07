@@ -8,6 +8,7 @@ import numpy as np
 import vectorbt as vbt
 
 from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
+from tradingdev.domain.backtest.execution_records import extract_execution_records
 from tradingdev.domain.backtest.metrics import (
     calculate_metrics,
     calculate_metrics_from_simulation,
@@ -63,6 +64,8 @@ class SignalBacktestEngine(BaseBacktestEngine):
                 metric_metadata=analysis.metadata,
                 returns=analysis.returns,
                 timestamps=None if timestamps is None else timestamps.to_numpy(),
+                execution_records=[],
+                account_history=[],
             )
         close = market["close"].astype(float)
         if not np.all(np.isfinite(close)) or (close <= 0).any():
@@ -96,6 +99,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
             "fees": self._fees,
             "slippage": self._slippage,
             "freq": self._freq,
+            "log": True,
         }
 
         if self._position_size is not None:
@@ -126,6 +130,9 @@ class SignalBacktestEngine(BaseBacktestEngine):
 
         equity_curve = np.asarray(pf.value(), dtype=np.float64)
         trades = normalized_trades(pf.trades)
+        execution_records, account_history = extract_execution_records(
+            pf, market, timestamps
+        )
 
         return BacktestResult(
             metrics=metrics,
@@ -136,4 +143,6 @@ class SignalBacktestEngine(BaseBacktestEngine):
             mode="signal",
             metric_metadata=analysis.metadata,
             returns=analysis.returns,
+            execution_records=execution_records,
+            account_history=account_history,
         )

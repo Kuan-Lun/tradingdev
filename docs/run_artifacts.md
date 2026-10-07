@@ -368,6 +368,34 @@ return and timestamp arrays align by bar; trade indices refer to that scope's
 arrays. Open marks are separate from executed exits. Raw observations are readable
 through artifact lookup without Python pickle.
 
+New signal-mode scopes additionally save `execution_records` and `account_history`.
+Each execution record is one native VectorBT order attempt, including filled,
+ignored and rejected outcomes. A reversal may be one fill closing a position and
+opening the opposite position; it is not split into invented orders. Records keep
+bar index/time, native IDs, requested size/type/direction/price/costs, actual filled
+size/price/fees, original OHLC and cash/position/free-cash/debt/equity before and
+after the attempt. An unlimited requested size is represented by a finite/null
+value plus an explicit kind instead of emitting JSON Infinity. Unfilled attempts
+never carry executed order details. Timestamps identify the bar, not an exact
+intrabar fill or exchange order-book quote.
+
+Before/after equity is cash plus signed position valued at the saved request price
+before slippage. VectorBT's default log value is not updated after every fill;
+the new records do not enable `update_value` or change simulation sizing to obtain
+different log values. End-of-bar `account_history` comes from portfolio accessors
+and contains cash, free cash, signed position, asset value, close price and equity.
+These use VectorBT generic accounting, not exchange wallet, perpetual-contract
+margin, liquidation or funding accounting. A negative position denotes short
+base-asset quantity; it is not a stock share count. Market fields are the original
+bar, so a daily record cannot supply intraday bid/ask prices.
+
+The metadata's `observations` block declares availability and valuation/time
+semantics. Old JSON missing these optional fields loads as `null` (`not_recorded`);
+volume mode remains `null` (`unsupported_volume_accounting`). New signal runs with
+no attempts save `[]`, meaning recorded but empty. No historical field is guessed
+from paired trades. Filled transitions are checked against native orders and
+accounting identities, and saved account/bar/timestamp/equity arrays must align.
+
 `get_run_metrics` defaults to the run's saved default scope; omit `metric_ids` to
 read that scope in full. Unknown scopes and metric IDs produce structured errors
 with discovery information. Summary omission never affects calculation or storage.
