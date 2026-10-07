@@ -17,9 +17,11 @@ from tradingdev.app.feature_request_service import FeatureRequestService
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
+from tradingdev.app.report_service import ReportService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.app.trade_history_service import TradeHistoryService
 from tradingdev.mcp.prompts import SERVER_INSTRUCTIONS
 from tradingdev.mcp.strict_server import StrictFastMCP
 from tradingdev.mcp.tools import (
@@ -27,6 +29,7 @@ from tradingdev.mcp.tools import (
     backtest,
     data,
     feature_requests,
+    history,
     jobs,
     optimization,
     runs,
@@ -72,6 +75,11 @@ def create_server(workspace: WorkspacePaths | None = None) -> StrictFastMCP:
     optimization.register(mcp, optimization_service, job_service)
     jobs.register(mcp, job_service)
     runs.register(mcp, run_service)
+    history.register(
+        mcp,
+        TradeHistoryService(workspace=workspace, store=store),
+        ReportService(workspace=workspace, store=store),
+    )
     artifacts.register(mcp, artifact_service)
     feature_requests.register(mcp, feature_request_service)
     return mcp

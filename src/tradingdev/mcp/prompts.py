@@ -43,7 +43,18 @@ Strategy development workflow
    get_run_metrics(run_id, metric_ids, scope) for saved detailed results.
    The response's available_scopes lists full, fold, and trial results;
    an omitted summary field does not mean the metric was not computed.
-   Use compare_runs / list_artifacts / get_artifact as needed.
+   Use find_runs to locate historical effective parameters at run/scope level;
+   get_run_trades and get_run_equity read paginated original observations without
+   rerunning. Check incomplete discovery warnings. An open trade's final mark is
+   not an executed exit. Use compare_runs / list_artifacts / get_artifact as needed.
+   For reports, discover get_report_sections and compose generate_report(run_ids,
+   sections, commentary). Backend sections render saved metrics/charts/trades;
+   write your interpretation as plain-text commentary in the user's language.
+   Common recipes are suggestions: choose the relevant sections, their order,
+   or [] for commentary with source identity only. Omission uses the standard
+   recipe. Do not claim omitted information is included. The backend labels
+   commentary separately from calculations and renders HTML without client code.
+   Link the returned report file/artifact so users can inspect complete records.
 8. For parameter tuning, call start_optimization, poll get_job_status, and
    confirm with confirm_optimization when it reports pending_confirmation.
 

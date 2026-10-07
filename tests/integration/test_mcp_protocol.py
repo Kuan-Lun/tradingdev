@@ -181,6 +181,52 @@ async def test_generated_strategy_full_mcp_workflow(
             path = Path(artifact["path"])
             assert path.is_relative_to(mcp_workspace.workspace / "runs")
             assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"]
+        discovered = await client.call(
+            "find_runs", strategy_id=STRATEGY_ID, parameters={"fast_period": 3}
+        )
+        assert discovered["complete"] and discovered["matched"] == 1
+        assert discovered["runs"][0]["run_id"] == run_id
+        assert discovered["runs"][0]["parameters"] == {
+            "fast_period": 3,
+            "slow_period": 8,
+        }
+        records: list[dict[str, Any]] = []
+        offset: int | None = 0
+        while offset is not None:
+            page = await client.call(
+                "get_run_trades", run_id=run_id, limit=2, offset=offset
+            )
+            assert page["success"] and page["scope"] == "full"
+            records.extend(trade["record"] for trade in page["trades"])
+            offset = page["next_offset"]
+        assert records == observations["trades"]
+        equity = await client.call("get_run_equity", run_id=run_id, limit=2)
+        assert [point["equity"] for point in equity["points"]] == observations[
+            "equity_curve"
+        ][:2]
+        catalog = await client.call("get_report_sections")
+        assert "trades" in catalog["templates"]["standard"]
+        report = await client.call(
+            "generate_report",
+            run_ids=[run_id],
+            sections=["metrics", "trades"],
+            commentary=[{"title": "評語", "text": "這是模擬結果。"}],
+        )
+        assert report["success"], report
+        html = await client.call(
+            "get_artifact", artifact_id=report["artifact_id"], include_content=True
+        )
+        assert "這是模擬結果。" in html["content"]
+        assert hashlib.sha256(html["content"].encode()).hexdigest() == report["sha256"]
+        report_manifest = await client.call(
+            "get_artifact",
+            artifact_id=report["manifest_artifact_id"],
+            include_content=True,
+        )
+        assert json.loads(report_manifest["content"])["sections"] == [
+            "metrics",
+            "trades",
+        ]
         source = await client.call(
             "get_artifact",
             artifact_id=by_type["strategy_source"]["artifact_id"],

@@ -44,6 +44,7 @@ dashboard = [
 [project.scripts]
 tradingdev = "tradingdev.adapters.cli.main:main"
 tradingdev-mcp = "tradingdev.mcp.server:main"
+tradingdev-report = "tradingdev.adapters.cli.reports:main"
 
 [build-system]
 requires = ["hatchling"]

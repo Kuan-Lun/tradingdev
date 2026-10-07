@@ -13,6 +13,7 @@ artifact under workspace/runs/<run_id>/.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import plotly.graph_objects as go
@@ -37,6 +38,7 @@ from tradingdev.adapters.dashboard.analysis import (
     rolling_mdd_absolute,
 )
 from tradingdev.app.artifact_service import ArtifactService
+from tradingdev.app.report_service import ReportService
 from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.schemas import BacktestConfig
 
@@ -433,6 +435,22 @@ def main() -> None:
     artifact_service = ArtifactService()
     run = _resolve_run(run_service, requested_run_id)
     run_id = str(run["run_id"])
+
+    with st.sidebar:
+        if st.button("Generate full report with trade history"):
+            report = ReportService().generate_report([run_id])
+            if report["success"]:
+                st.session_state["_report"] = (run_id, report["path"])
+            else:
+                st.error(str(report["error"]))
+        saved_report = st.session_state.get("_report")
+        if saved_report and saved_report[0] == run_id:
+            st.download_button(
+                "Download offline HTML report",
+                Path(saved_report[1]).read_bytes(),
+                file_name=f"tradingdev-{run_id}.html",
+                mime="text/html",
+            )
 
     if (
         _PIPELINE_KEY not in st.session_state

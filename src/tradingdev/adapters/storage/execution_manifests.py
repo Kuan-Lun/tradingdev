@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -81,11 +82,23 @@ class ExecutionManifestStore:
                 temporary.unlink(missing_ok=True)
         return path
 
-    def load(self, run_id: str, *, expected_hash: str) -> ExecutionManifest:
-        """Load a complete supported manifest, rejecting altered execution settings."""
+    def load(
+        self,
+        run_id: str,
+        *,
+        expected_hash: str,
+        expected_file_sha256: str | None = None,
+    ) -> ExecutionManifest:
+        """Verify execution settings and, when registered, the same file bytes."""
         path = self.path(run_id)
         try:
-            manifest = ExecutionManifest.model_validate_json(path.read_bytes())
+            content = path.read_bytes()
+            if (
+                expected_file_sha256 is not None
+                and hashlib.sha256(content).hexdigest() != expected_file_sha256
+            ):
+                raise ManifestError("Manifest file SHA-256 differs from registration")
+            manifest = ExecutionManifest.model_validate_json(content)
         except (OSError, ValueError) as exc:
             raise ManifestError(
                 f"Cannot read valid execution manifest: {run_id}"

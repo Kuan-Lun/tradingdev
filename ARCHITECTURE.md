@@ -257,6 +257,23 @@ Walk-forward 保存每個 fold 的訓練／測試結果；其摘要是各 fold �
 
 ## 一致性、程序管理與保證範圍
 
+### 歷史查詢與報告組裝
+
+`TradeHistoryService` 從驗證過的 performance／observations JSON 與歷史 manifest
+提供參數子集查找、交易及權益分頁。參數查找按 scalar scope 展開，合併當次固定設定與
+optimization trial overrides，不使用目前策略或重新模擬；不完整的舊參數明確標示。
+聚合 fold summary 不虛構交易序列。缺失、損毀與查找的部分成功皆有結構化回覆。
+
+`ReportService` 共用此讀取路徑，提供章節目錄、建議範本與純文字評語介面。
+MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG renderer 與不可覆寫的
+報告發佈位於 `adapters/reporting`。前端 LLM 選擇章節、順序並撰寫評價，
+後端呈現既存計算、表格、圖表與来源身分。建議範本不強制，明確空章節清單亦有效；
+不宣稱未選章節已呈現。LLM 評語標記並跳脫，不能注入 HTML 或替換數值。
+
+報告內容、章節、評語與範本版本共同決定內容身分；HTML 與 manifest 保存為
+registered artifacts，重試時核对檔案及登錄完整性。報告是離線文件，不含 CDN，
+完整交易資料供本機表格搜尋、排序及 CSV 匯出。完整性核對不代表封存全部外部執行環境。
+
 ### 設定與儲存一致性
 
 Generated 策略執行時必須維持 revision 綁定的策略身分與非參數宣告；一般執行可
