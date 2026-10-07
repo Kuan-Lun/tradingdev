@@ -275,11 +275,11 @@ Signal 引擎同時保留 VectorBT 原生 order attempts 與帳戶序列，型�
 `ReportService` 共用此讀取路徑，提供章節目錄、建議範本與純文字評語介面。
 MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG renderer 與不可覆寫的
 報告發佈位於 `adapters/reporting`。前端 LLM 選擇章節、順序並撰寫評價，
-後端呈現既存計算、表格、圖表與来源身分。建議範本不強制，明確空章節清單亦有效；
+後端呈現既存計算、表格、圖表與來源身分。建議範本不強制，明確空章節清單亦有效；
 不宣稱未選章節已呈現。LLM 評語標記並跳脫，不能注入 HTML 或替換數值。
 
 報告內容、章節、評語與範本版本共同決定內容身分；HTML 與 manifest 保存為
-registered artifacts，重試時核对檔案及登錄完整性。報告是離線文件，不含 CDN，
+registered artifacts，重試時核對檔案及登錄完整性。報告是離線文件，不含 CDN，
 完整交易資料供本機表格搜尋、排序及 CSV 匯出。完整性核對不代表封存全部外部執行環境。
 
 ### 設定與儲存一致性

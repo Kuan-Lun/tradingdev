@@ -70,6 +70,7 @@ def _publish(
     timestamps: bool = True,
     summary: bool = False,
     bundled: bool = False,
+    missing_entry: bool = False,
 ) -> None:
     workspace, store, _ = storage
     params: dict[str, JsonValue] = {
@@ -135,6 +136,8 @@ def _publish(
         _trade(entry=1, exit_=2, side=-1, status="closed"),
         _trade(entry=2, exit_=3, side=1, status="closed" if volume else "open"),
     ]
+    if missing_entry:
+        trades[0].pop("entry_idx")
     if volume:
         for trade in trades:
             trade.update(entry_slippage=0.1, exit_slippage=0.11, slippage=0.21)
@@ -268,6 +271,41 @@ def test_trade_pagination_filters_and_open_marks_preserve_original_records(
     exact = service.get_run_trades("run", entry_end="2024-01-02T08:00:00+08:00")
     assert [trade["trade_id"] for trade in exact["trades"]] == [0, 1]
     assert service.get_run_trades("run", offset=100)["trades"] == []
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        {"entry_start": "2024-01-02"},
+        {"entry_end": "2024-01-02"},
+        {"entry_start": "2024-01-02", "entry_end": "2024-01-02"},
+    ],
+)
+def test_date_filter_excludes_only_legacy_trades_with_unknown_entry_time(
+    storage: tuple[WorkspacePaths, SQLiteStore, TradeHistoryService],
+    bounds: dict[str, Any],
+) -> None:
+    _publish(storage, legacy=True, missing_entry=True)
+    service = storage[2]
+    unfiltered = RunTradesResponse.model_validate(service.get_run_trades("run"))
+    assert unfiltered.total == unfiltered.matched == 3
+    assert [trade.trade_id for trade in unfiltered.trades] == [0, 1, 2]
+    assert unfiltered.trades[0].entry_timestamp is None
+    assert "entry_idx" not in unfiltered.trades[0].record
+    first = RunTradesResponse.model_validate(
+        service.get_run_trades("run", limit=1, **bounds)
+    )
+    assert (first.total, first.matched, first.next_offset) == (3, 2, 1)
+    assert [trade.trade_id for trade in first.trades] == [1]
+    second = RunTradesResponse.model_validate(
+        service.get_run_trades("run", offset=1, limit=1, **bounds)
+    )
+    assert [trade.trade_id for trade in second.trades] == [2]
+    assert second.next_offset is None
+    outside = RunTradesResponse.model_validate(
+        service.get_run_trades("run", entry_end="2024-01-01")
+    )
+    assert outside.total == 3 and outside.matched == 0 and outside.trades == []
 
 
 @pytest.mark.parametrize("volume", [False, True])

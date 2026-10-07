@@ -13,7 +13,6 @@ artifact under workspace/runs/<run_id>/.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import plotly.graph_objects as go
@@ -65,6 +64,7 @@ TIMEFRAME_MINUTES: dict[str, int] = {
 
 _PIPELINE_KEY = "_pipeline_result"
 _RUN_ID_KEY = "_run_id"
+_REPORT_KEY = "_report_download"
 
 
 def _bars_in_30_days(timeframe: str) -> int:
@@ -429,6 +429,37 @@ def _render_walk_forward(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def _render_report_download(run_id: str, service: ReportService) -> None:
+    """Keep report identity in the session and let the service verify every read."""
+    if st.button("Generate full report with trade history"):
+        st.session_state.pop(_REPORT_KEY, None)
+        report = service.generate_report([run_id])
+        if not report["success"]:
+            st.error(str(report["error"]))
+            return
+        st.session_state[_REPORT_KEY] = {
+            "run_id": run_id,
+            "report_id": report["report_id"],
+            "sha256": report["sha256"],
+        }
+    saved_report = st.session_state.get(_REPORT_KEY)
+    if not saved_report or saved_report["run_id"] != run_id:
+        return
+    download = service.get_report_download(
+        saved_report["report_id"], expected_sha256=saved_report["sha256"]
+    )
+    if not download["success"]:
+        st.session_state.pop(_REPORT_KEY, None)
+        st.error(str(download["error"]))
+        return
+    st.download_button(
+        "Download offline HTML report",
+        download["content"],
+        file_name=f"tradingdev-{run_id}.html",
+        mime="text/html",
+    )
+
+
 def main() -> None:
     requested_run_id = _parse_args()
     run_service = RunService()
@@ -437,20 +468,7 @@ def main() -> None:
     run_id = str(run["run_id"])
 
     with st.sidebar:
-        if st.button("Generate full report with trade history"):
-            report = ReportService().generate_report([run_id])
-            if report["success"]:
-                st.session_state["_report"] = (run_id, report["path"])
-            else:
-                st.error(str(report["error"]))
-        saved_report = st.session_state.get("_report")
-        if saved_report and saved_report[0] == run_id:
-            st.download_button(
-                "Download offline HTML report",
-                Path(saved_report[1]).read_bytes(),
-                file_name=f"tradingdev-{run_id}.html",
-                mime="text/html",
-            )
+        _render_report_download(run_id, ReportService())
 
     if (
         _PIPELINE_KEY not in st.session_state

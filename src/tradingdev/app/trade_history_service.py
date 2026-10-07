@@ -592,9 +592,7 @@ def _in_bounds(
     if first is None and last is None:
         return True
     if timestamp is None:
-        raise HistoryReadError(
-            "timestamps_unavailable", "Date filtering requires recorded timestamps"
-        )
+        return False
     moment = _parse_time(timestamp)
     return (first is None or moment >= first) and (last is None or moment <= last)
 
