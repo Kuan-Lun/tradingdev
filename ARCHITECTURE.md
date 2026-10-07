@@ -203,7 +203,7 @@ pending_confirmation。使用者同意後，確認工具核對 job 與 manifest�
 
 試跑逾時以 estimation_timeout 結束；等待確認逾時則標記 failed，不繼續完整搜尋。
 不可計算的指標不參與排名，沒有可排名候選時工作失敗。
-最佳化參數與確認介面見 [README](README.md#mcp-工具)。
+使用者操作範例見 [README](README.md#使用樣本外驗證與最佳化)。
 
 ### 保存與查詢結果
 
@@ -271,12 +271,29 @@ Manifest 檔案以不可覆寫的方式原子發佈，SQLite job 紀錄保存預
 檔案發佈與資料庫寫入仍是分開的操作，不構成跨資源交易。
 Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與檔案的寫入者。
 
+### MCP 回覆契約
+
 MCP 使用 StrictFastMCP 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
 `app/contracts` 的 DTO 再檢查 service 回覆，讓協定輸出可被工具 schema 驗證。
 預期的應用失敗使用穩定 code 或診斷；參數錯誤、非預期例外與回覆契約錯誤則使用
 MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受固定欄位白名單截斷。
-工具副作用標註描述實際行為，不提供授權或隔離保證；回覆包裝與判讀方式見
-[MCP 操作說明](README.md#mcp-工具)。
+
+每個工具提供 `outputSchema`。客戶端須依 `tools/list` 的 schema 讀取
+`structuredContent`：單一物件回覆直接位於根層；清單與成功／失敗聯集回覆
+放在 `structuredContent.result`。舊自訂客戶端若直接從根層讀取 `success`、
+`job_id` 等欄位，須依目前 schema 調整；此回覆格式不會遷移或改寫工作區資料。
+
+預期的操作失敗保留 `success: false` 或空 `job_id` 等工具語意，並提供穩定的
+`code`；驗證失敗的 `diagnostics` 包含 `code`、`phase` 與 `fix`。
+`get_job_status` 的 `status: not_found` 表示查無工作，`status: failed` 則表示
+找到已失敗的工作。參數格式錯誤、未預期的例外或無效回覆使用 MCP
+`isError: true`；客戶端不能只依 `isError` 判斷應用操作是否成功。
+
+工具同時標註唯讀、破壞性、冪等及外部互動提示。這些標註描述實際副作用，
+不提供授權或隔離保證。例如 `get_job_status` 可能更新失去 worker 的工作狀態，
+`ensure_data` 可能下載資料並替換不完整快取；策略驗證與 dry-run 會執行生成 Python。
+`destructiveHint: false` 表示不覆寫或刪除既有內容；會替換狀態或驗證證據的工具
+也標示為 `true`，不只限於刪除檔案。
 
 ### 程序控制與清理
 
