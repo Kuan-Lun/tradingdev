@@ -7,6 +7,7 @@ checks corrupt one piece of evidence at a time without launching another job.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sqlite3
 from contextlib import closing
@@ -22,6 +23,9 @@ from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.e2e.test_llm_workflows import assert_workflow
 from tests.integration.mcp_harness import MCPWorkspace, temporary_mcp_workspace
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.report_service import ReportService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -200,6 +204,135 @@ def test_workflow_verifier_accepts_completed_backtest(
 ) -> None:
     assert_workflow(completed_workflow.calls, completed_workflow.scenario)
     completed_workflow.verify()
+
+
+@pytest.fixture
+def workflow_report(
+    completed_workflow: CompletedWorkflow,
+) -> Iterator[tuple[dict[str, Any], SQLiteStore]]:
+    """Add a report temporarily without changing the shared completed run."""
+    workspace = WorkspacePaths(completed_workflow.workspace.workspace)
+    store = SQLiteStore(workspace)
+    original_artifacts = store.list_artifacts()
+    original_ids = {item["artifact_id"] for item in original_artifacts}
+    reports = workspace.root / "reports"
+    reports_existed = reports.exists()
+    original_files = set(reports.rglob("*"))
+    result = ReportService(workspace=workspace, store=store).generate_report(
+        [completed_workflow.run_id],
+        sections=["trades", "metrics"],
+        commentary=[{"title": "Workflow review", "text": "Review saved observations."}],
+    )
+    assert result["success"], result
+    report_ids = [result["artifact_id"], result["manifest_artifact_id"]]
+    new_ids = [
+        artifact_id for artifact_id in report_ids if artifact_id not in original_ids
+    ]
+    try:
+        yield result, store
+    finally:
+        with store.connect() as connection:
+            connection.executemany(
+                "DELETE FROM artifacts WHERE artifact_id = ?",
+                [(artifact_id,) for artifact_id in new_ids],
+            )
+        directory = reports / result["report_id"]
+        for filename in ("report.html", "manifest.json"):
+            path = directory / filename
+            if path not in original_files:
+                path.unlink(missing_ok=True)
+        if directory not in original_files:
+            directory.rmdir()
+        if not reports_existed:
+            reports.rmdir()
+        assert store.list_artifacts() == original_artifacts
+        assert set(reports.rglob("*")) == original_files
+
+
+def test_workflow_verifier_accepts_saved_custom_report(
+    completed_workflow: CompletedWorkflow,
+    workflow_report: tuple[dict[str, Any], SQLiteStore],
+) -> None:
+    result, _ = workflow_report
+    assert Path(result["path"]).is_relative_to(
+        completed_workflow.workspace.workspace / "reports"
+    )
+    completed_workflow.verify()
+
+
+@pytest.mark.parametrize("field", ["path", "report_id"])
+def test_workflow_verifier_rejects_report_registration_corruption(
+    completed_workflow: CompletedWorkflow,
+    workflow_report: tuple[dict[str, Any], SQLiteStore],
+    field: str,
+) -> None:
+    result, store = workflow_report
+    artifact_id = result["artifact_id"]
+    artifact = store.get_artifact(artifact_id)
+    assert artifact is not None
+    unrelated = completed_workflow.workspace.workspace / "unrelated_report.html"
+    assert not unrelated.exists()
+    try:
+        with store.connect() as connection:
+            if field == "path":
+                unrelated.write_bytes(Path(result["path"]).read_bytes())
+                connection.execute(
+                    "UPDATE artifacts SET path = ? WHERE artifact_id = ?",
+                    (str(unrelated), artifact_id),
+                )
+            else:
+                metadata = {**artifact["metadata"], "report_id": "../runs"}
+                connection.execute(
+                    "UPDATE artifacts SET metadata = ? WHERE artifact_id = ?",
+                    (json.dumps(metadata), artifact_id),
+                )
+        with pytest.raises(AssertionError, match="Report (path|ID)"):
+            completed_workflow.verify()
+    finally:
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE artifacts SET path = ?, metadata = ? WHERE artifact_id = ?",
+                (artifact["path"], json.dumps(artifact["metadata"]), artifact_id),
+            )
+        unrelated.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("field", ["run_ids", "available_scopes", "html_sha256"])
+def test_workflow_verifier_rejects_report_manifest_corruption(
+    completed_workflow: CompletedWorkflow,
+    workflow_report: tuple[dict[str, Any], SQLiteStore],
+    field: str,
+) -> None:
+    result, store = workflow_report
+    artifact_id = result["manifest_artifact_id"]
+    artifact = store.get_artifact(artifact_id)
+    assert artifact is not None
+    path = Path(artifact["path"])
+    original = path.read_bytes()
+    manifest = json.loads(original)
+    replacements: dict[str, Any] = {
+        "run_ids": ["another-run"],
+        "available_scopes": {completed_workflow.run_id: ["another-scope"]},
+        "html_sha256": "0" * 64,
+    }
+    manifest[field] = replacements[field]
+    try:
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        # Keep the registry SHA valid: semantic linkage must independently fail.
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
+                (hashlib.sha256(path.read_bytes()).hexdigest(), artifact_id),
+            )
+        with pytest.raises(AssertionError, match="Report (run IDs|scopes|HTML digest)"):
+            completed_workflow.verify()
+    finally:
+        path.write_bytes(original)
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
+                (artifact["sha256"], artifact_id),
+            )
 
 
 def test_workflow_verifier_rejects_incorrect_signals(
