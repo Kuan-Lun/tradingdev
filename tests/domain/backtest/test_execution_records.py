@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -11,8 +12,11 @@ import pytest
 import vectorbt as vbt
 from pydantic import ValidationError
 
-from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.adapters.storage.performance import PerformanceStore
+from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
+from tradingdev.adapters.storage.performance import (
+    PerformanceArtifactError,
+    PerformanceStore,
+)
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.domain.backtest.execution_records import (
     ExecutionRecord,
@@ -59,6 +63,7 @@ def test_buy_reverse_close_and_open_final_have_native_fill_accounting() -> None:
     assert [record.side for record in records] == ["buy", "sell", "buy", "buy"]
     assert [record.bar_index for record in records] == [1, 2, 3, 4]
     assert [record.order_id for record in records] == [0, 1, 2, 3]
+    assert all(record.valuation_price == record.requested_price for record in records)
     first, reverse, close, last = records
     assert first.timestamp == "2024-01-01T16:00:00+00:00"
     assert first.market.open == first.requested_price == 110.0
@@ -339,6 +344,70 @@ def test_observation_validation_rejects_untrustworthy_execution_data(
         first["status"] = "rejected"
     with pytest.raises(ValidationError):
         ScopeObservations.model_validate(payload)
+
+
+def _change_valuation_price(record: dict[str, Any], price: float) -> None:
+    record["valuation_price"] = price
+    for side in ("before", "after"):
+        state = record[side]
+        state["equity"] = state["cash"] + state["position"] * price
+
+
+@pytest.mark.parametrize("nearby", [False, True], ids=["different_mark", "one_ulp"])
+def test_execution_valuation_must_equal_request_even_with_consistent_equity(
+    nearby: bool,
+) -> None:
+    _, observations = scope_from_backtest(_engine().run(_market()))
+    payload = observations.model_dump(mode="json")
+    record = payload["execution_records"][0]
+    price = record["requested_price"]
+    _change_valuation_price(
+        record, math.nextafter(price, math.inf) if nearby else price * 2.0
+    )
+    # Both equity snapshots remain arithmetically consistent with the wrong mark.
+    message = "Execution valuation price differs from requested price"
+    with pytest.raises(ValidationError, match=message):
+        ExecutionRecord.model_validate(record)
+    with pytest.raises(ValidationError, match=message):
+        ScopeObservations.model_validate(payload)
+
+
+def test_saved_observations_reject_different_execution_mark_with_valid_sha(
+    tmp_path: Path,
+) -> None:
+    result = _engine().run(_market())
+    scope, observations = scope_from_backtest(result)
+    workspace = WorkspacePaths(tmp_path)
+    store = SQLiteStore(workspace)
+    store.create_run(
+        run_id="ledger",
+        job_id="ledger",
+        strategy_id="fixture",
+        artifact_dir=workspace.runs / "ledger",
+        metrics=result.metrics,
+    )
+    details = PerformanceStore(workspace, store)
+    details.publish(
+        build_artifacts("ledger", None, "full", {"full": scope}, {"full": observations})
+    )
+    assert details.load_observations("ledger").scopes["full"] == observations
+    path = workspace.runs / "ledger" / "observations.json"
+    payload = json.loads(path.read_bytes())
+    record = payload["scopes"]["full"]["execution_records"][0]
+    _change_valuation_price(record, record["requested_price"] * 2.0)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    # A matching registry digest must not substitute for semantic validation.
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
+            (sha256_file(path), "ledger:observations_json"),
+        )
+    with pytest.raises(
+        PerformanceArtifactError,
+        match="Execution valuation price differs from requested price",
+    ) as error:
+        details.load_observations("ledger")
+    assert error.value.code == "performance_artifact_invalid"
 
 
 def test_json_publication_and_reload_preserve_execution_records_without_pickle(

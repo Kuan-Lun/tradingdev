@@ -92,6 +92,9 @@ class ExecutionRecord(ExecutionModel):
             raise ValueError("Unfilled executions cannot contain order details")
         if (self.requested_size_kind == "finite") != (self.requested_size is not None):
             raise ValueError("Requested size and its kind disagree")
+        # Both fields copy the same native request price, without arithmetic.
+        if self.valuation_price != self.requested_price:
+            raise ValueError("Execution valuation price differs from requested price")
         for state in (self.before, self.after):
             _check_equal(
                 state.equity,
