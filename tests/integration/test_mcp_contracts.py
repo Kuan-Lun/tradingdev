@@ -27,6 +27,10 @@ _READ_ONLY_TOOLS = {
     "get_run",
     "get_metric_catalog",
     "get_run_metrics",
+    "find_runs",
+    "get_run_trades",
+    "get_run_equity",
+    "get_report_sections",
     "compare_runs",
     "list_artifacts",
     "get_artifact",
@@ -49,6 +53,7 @@ _MUTATING_HINTS = {
     "confirm_optimization": (False, True, True, True),
     "cancel_job": (False, True, True, False),
     "record_feature_request": (False, False, False, False),
+    "generate_report": (False, False, True, False),
 }
 
 
@@ -114,7 +119,7 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
     ]
     async with mcp_workspace.connect() as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
-        assert len(tools) == 28
+        assert len(tools) == 33
         assert tools.keys() == expected_hints.keys() == client.output_schemas.keys()
         for name, tool in tools.items():
             assert tool.description and tool.description.strip(), name
