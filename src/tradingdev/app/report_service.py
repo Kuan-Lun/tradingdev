@@ -19,7 +19,7 @@ from tradingdev.app.run_service import RunService
 from tradingdev.app.trade_history_service import HistoryReadError, TradeHistoryService
 
 REPORT_SCHEMA_VERSION = 1
-TEMPLATE_VERSION = "4"
+TEMPLATE_VERSION = "5"
 SECTION_CATALOG = (
     (
         "overview",
@@ -45,6 +45,16 @@ SECTION_CATALOG = (
         "trades",
         "完整交易",
         "All trades with raw fields, sort, filter and offline CSV export.",
+    ),
+    (
+        "executions",
+        "執行紀錄",
+        "Native order attempts, prices, fees and before/after account transitions.",
+    ),
+    (
+        "account_history",
+        "逐根帳戶狀態",
+        "Saved end-of-bar VectorBT cash, position and equity; not exchange margin.",
     ),
     (
         "limitations",
@@ -202,6 +212,12 @@ class ReportService:
                             "trade_count": len(scope["observations"]["trades"])
                             if scope["observations"] is not None
                             else None,
+                            "execution_record_count": _record_count(
+                                scope["observations"], "execution_records"
+                            ),
+                            "account_history_count": _record_count(
+                                scope["observations"], "account_history"
+                            ),
                         }
                         for scope in run["scopes"]
                     }
@@ -335,3 +351,10 @@ def _encode(value: dict[str, Any]) -> bytes:
 
 def _error(code: str, message: str) -> dict[str, Any]:
     return {"success": False, "code": code, "error": message}
+
+
+def _record_count(observations: dict[str, Any] | None, field: str) -> int | None:
+    """Keep an unavailable stream distinct from a recorded stream with zero rows."""
+    if observations is None or observations.get(field) is None:
+        return None
+    return len(observations[field])

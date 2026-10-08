@@ -50,11 +50,18 @@ Generated code must:
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
 
-Backtest execution requires finite, strictly positive prices: signal mode checks
-`open` and `close`; volume mode checks OHLC, using `close` for missing `open`,
-`high`, or `low`. When supplied, the `timestamp` column or DatetimeIndex must
-contain valid, nonmissing, unique, increasing timestamps; they are normalized to
-UTC.
+Backtest execution requires finite, strictly positive prices. Signal mode checks
+`close` and any supplied `open` across all bars, using `close` for execution when
+the `open` column is absent. On bars with logged order attempts (filled, ignored
+or rejected), execution-record validation additionally requires nonmissing `high`
+and `low` values to be finite and strictly positive. Absent or missing values
+(including NaN) are recorded as `null` in those market fields, without filling
+them from `close`. This additional high/low check does not apply to bars without
+logged order attempts. Volume mode checks OHLC across all bars, using `close` for
+absent `open`, `high`, or `low` columns.
+
+When supplied, the `timestamp` column or DatetimeIndex must contain valid,
+nonmissing, unique, increasing timestamps; they are normalized to UTC.
 
 Volume mode applies optional `size_weight` values to the following bar with
 `shift(1).fillna(1.0)`. The resulting weights must be finite and strictly positive;

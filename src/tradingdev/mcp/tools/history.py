@@ -10,7 +10,9 @@ from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.history import (
     FindRunsResponse,
     HistoryQueryError,
+    RunAccountHistoryResponse,
     RunEquityResponse,
+    RunExecutionsResponse,
     RunTradesResponse,
 )
 from tradingdev.app.contracts.reports import (
@@ -118,6 +120,66 @@ def register(
         if result.get("success") is False:
             return HistoryQueryError.model_validate(result)
         return RunEquityResponse.model_validate(result)
+
+    @mcp.tool(annotations=read_only)
+    def get_run_executions(
+        run_id: str,
+        scope: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+        status: Literal["filled", "ignored", "rejected"] | None = None,
+        side: Literal["buy", "sell"] | None = None,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> RunExecutionsResponse | HistoryQueryError:
+        """Read saved order attempts, fill costs and before/after account states.
+
+        Distinct from paired trades: one reversal fill may close and open positions.
+        OHLC are bar market references, requested_price is before slippage, and
+        filled_price is simulated execution. Equity marks before/after at the
+        request price. Time identifies the bar, not an exact intrabar execution.
+        Generic VectorBT accounting is not an exchange margin wallet. Check
+        availability: legacy/volume results may not record this ledger. Never
+        reconstructs absent records. limit 1..500; inclusive UTC dates, a date-only
+        end includes the whole day. side filters filled orders only.
+        """
+        result = history.get_run_executions(
+            run_id,
+            scope=scope,
+            offset=offset,
+            limit=limit,
+            status=status,
+            side=side,
+            start=start,
+            end=end,
+        )
+        if result.get("success") is False:
+            return HistoryQueryError.model_validate(result)
+        return RunExecutionsResponse.model_validate(result)
+
+    @mcp.tool(annotations=read_only)
+    def get_run_account_history(
+        run_id: str,
+        scope: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> RunAccountHistoryResponse | HistoryQueryError:
+        """Read saved end-of-bar cash, free cash, signed position and equity.
+
+        Equity/asset_value use bar close. This is VectorBT generic accounting,
+        not exchange margin, funding or liquidation balances. Check availability
+        before interpreting an empty page; old or volume-mode results have no
+        account ledger. No replay or reconstruction. limit 1..500. Date-only end
+        includes the entire UTC day; timestamp bounds are inclusive instants.
+        """
+        result = history.get_run_account_history(
+            run_id, scope=scope, offset=offset, limit=limit, start=start, end=end
+        )
+        if result.get("success") is False:
+            return HistoryQueryError.model_validate(result)
+        return RunAccountHistoryResponse.model_validate(result)
 
     @mcp.tool(annotations=read_only)
     def get_report_sections() -> ReportSectionCatalog:

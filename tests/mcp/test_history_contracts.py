@@ -19,7 +19,9 @@ from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.history import (
     FindRunsResponse,
     HistoryQueryError,
+    RunAccountHistoryResponse,
     RunEquityResponse,
+    RunExecutionsResponse,
     RunTradesResponse,
 )
 from tradingdev.app.contracts.reports import ReportResponse, ReportSectionCatalog
@@ -190,6 +192,8 @@ def test_history_tool_schemas_and_real_paginated_queries(
             "find_runs",
             "get_run_trades",
             "get_run_equity",
+            "get_run_executions",
+            "get_run_account_history",
             "get_report_sections",
             "generate_report",
         }
@@ -273,6 +277,16 @@ def test_history_tool_schemas_and_real_paginated_queries(
         assert equity.init_cash == 1000 and equity.equity_basis == "account_equity"
         assert equity.total == 3 and equity.matched == 2 and equity.next_offset == 1
         assert equity.points[0].bar_index == 1 and equity.points[0].equity == 1010.0
+        executions = RunExecutionsResponse.model_validate(
+            await _call(server, "get_run_executions", {"run_id": "run"})
+        )
+        assert executions.availability == "not_recorded"
+        assert executions.records == [] and executions.total == 0
+        accounts = RunAccountHistoryResponse.model_validate(
+            await _call(server, "get_run_account_history", {"run_id": "run"})
+        )
+        assert accounts.availability == "not_recorded"
+        assert accounts.states == [] and accounts.total == 0
 
     asyncio.run(check())
 
@@ -390,6 +404,18 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
             "invalid_history_query",
         ),
         ("get_run_equity", {"run_id": "missing"}, "run_not_found"),
+        ("get_run_executions", {"run_id": "missing"}, "run_not_found"),
+        ("get_run_account_history", {"run_id": "missing"}, "run_not_found"),
+        (
+            "get_run_executions",
+            {"run_id": "run", "limit": 501},
+            "invalid_history_query",
+        ),
+        (
+            "get_run_account_history",
+            {"run_id": "run", "offset": -1},
+            "invalid_history_query",
+        ),
         ("generate_report", {"run_ids": []}, "invalid_report_runs"),
         (
             "generate_report",
@@ -430,6 +456,9 @@ def test_expected_application_errors_match_advertised_union(
         ("get_run_trades", {"run_id": "run", "direction": "both"}),
         ("get_run_trades", {"run_id": "run", "status": "filled"}),
         ("get_run_equity", {"run_id": "run", "limit": 1.5}),
+        ("get_run_executions", {"run_id": "run", "status": "open"}),
+        ("get_run_executions", {"run_id": "run", "side": "long"}),
+        ("get_run_account_history", {}),
         ("generate_report", {"run_ids": "run"}),
         (
             "generate_report",
@@ -478,6 +507,8 @@ def test_strict_boundary_rejects_unknown_names_for_every_history_tool(
         "find_runs",
         "get_run_trades",
         "get_run_equity",
+        "get_run_executions",
+        "get_run_account_history",
         "get_report_sections",
         "generate_report",
     ],
@@ -497,7 +528,12 @@ def test_service_schema_drift_is_not_returned_as_an_unvalidated_payload(
     target = reports if name in {"generate_report", "get_report_sections"} else service
     monkeypatch.setattr(target, name, lambda *_args, **_kwargs: broken)
     arguments: dict[str, Any] = {}
-    if name in {"get_run_trades", "get_run_equity"}:
+    if name in {
+        "get_run_trades",
+        "get_run_equity",
+        "get_run_executions",
+        "get_run_account_history",
+    }:
         arguments["run_id"] = "run"
     if name == "generate_report":
         arguments["run_ids"] = ["run"]

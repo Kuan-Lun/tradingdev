@@ -207,6 +207,13 @@ walk-forward 的 `validation` 設定。結果應同時查看訓練表現與樣�
 同參數可能對應不同期間、成本與版本，須先選定結果；最佳化的每個 trial 也可單獨查閱。
 `get_run_trades` 與 `get_run_equity` 分頁讀取原始紀錄，每頁最多 500 筆，無須重跑。
 交易包含進出場時間、成交價格、數量、費用及損益；未平倉的期末估值會分開標示。
+新 signal 回測也保存逐次委託／成交與每根 K 線帳戶狀態：
+`get_run_executions` 可查市場 OHLC、委託／成交價格、數量、手續費，
+以及前後現金、持倉、可用現金、債務與權益；`get_run_account_history`
+可查看逐根收盤時的資金與持倉變化。這些是 VectorBT 模擬帳戶記帳，
+不是交易所永續合約的保證金或資金費率帳本；時間為 K 線時間，非盤中逐筆成交時間。
+舊回測未保存的帳本會回傳 `not_recorded`，volume 模式回傳
+`unsupported_volume_accounting`；不會由配對交易猜出缺失的帳戶資料。
 資料缺失或損毀會回報原因，查找結果若不完整也會列出問題，不能視為沒有交易。
 
 Server 提供 HTML 範本與圖表。助手先以 `get_report_sections` 查詢章節及
@@ -218,7 +225,8 @@ Server 提供 HTML 範本與圖表。助手先以 `get_report_sections` 查詢�
 包括保存的指標、交易、權益與執行設定。即使 `sections=[]`，這些資料仍在檔案中，
 省略章節不會從分享的 HTML 移除資料。
 `commentary` 接受純文字 `title`／`text`，報告標示為 LLM 評語，與後端計算分開；
-助手不需要撰寫 HTML。可選章節包括設定、完整指標、權益／回撤、交易與限制。
+助手不需要撰寫 HTML。可選章節包括設定、完整指標、權益／回撤、配對交易、
+逐次成交 `executions`、逐根帳戶 `account_history` 與限制。
 選取交易章節時，交易表可展開、搜尋、排序、下載 CSV；
 HTML 不需連線或安裝圖表套件即可閱讀。
 

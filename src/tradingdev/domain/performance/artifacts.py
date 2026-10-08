@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+# Pydantic resolves these nested schemas at runtime.
+from tradingdev.domain.backtest.execution_records import (  # noqa: TC001
+    AccountState,
+    ExecutionRecord,
+)
 from tradingdev.domain.performance.catalog import METRIC_CATALOG
 from tradingdev.shared.utils.json_values import (
     normalize_json_object,
@@ -119,6 +125,8 @@ class ScopeObservations(ArtifactModel):
     returns: list[float | None] | None
     timestamps: list[str] | None
     trades: list[dict[str, JsonValue]]
+    execution_records: list[ExecutionRecord] | None = None
+    account_history: list[AccountState] | None = None
 
     @model_validator(mode="after")
     def aligned_observations(self) -> Self:
@@ -152,7 +160,42 @@ class ScopeObservations(ArtifactModel):
                         raise ValueError(
                             f"Trade {key} lies outside the observation sequence"
                         )
+        if self.execution_records is not None:
+            previous_id = previous_bar = previous_order = -1
+            for record in self.execution_records:
+                self._aligned_record(record.bar_index, record.timestamp, count)
+                if (
+                    record.execution_id <= previous_id
+                    or record.bar_index < previous_bar
+                ):
+                    raise ValueError("Execution records must have ordered unique IDs")
+                previous_id, previous_bar = record.execution_id, record.bar_index
+                if record.order_id is not None:
+                    if record.order_id <= previous_order:
+                        raise ValueError("Filled order IDs must be unique and ordered")
+                    previous_order = record.order_id
+        if self.account_history is not None:
+            if len(self.account_history) != count:
+                raise ValueError(
+                    "Account and equity observations have different lengths"
+                )
+            for index, state in enumerate(self.account_history):
+                self._aligned_record(state.bar_index, state.timestamp, count)
+                if state.bar_index != index:
+                    raise ValueError("Account states must follow the bar sequence")
+                equity = self.equity_curve[index]
+                if equity is None or not math.isclose(
+                    state.equity, equity, rel_tol=1e-10, abs_tol=1e-8
+                ):
+                    raise ValueError("Account equity differs from saved equity curve")
         return self
+
+    def _aligned_record(self, index: int, timestamp: str | None, count: int) -> None:
+        if not 0 <= index < count:
+            raise ValueError("Execution/account index lies outside the bar sequence")
+        expected = self.timestamps[index] if self.timestamps is not None else None
+        if timestamp != expected:
+            raise ValueError("Execution/account timestamp differs from its bar")
 
 
 class ObservationsBundle(ArtifactModel):
@@ -218,6 +261,8 @@ def scope_from_backtest(
             else None,
             "timestamps": _timestamps(result),
             "trades": [normalize_json_object(trade) for trade in result.trades],
+            "execution_records": result.execution_records,
+            "account_history": result.account_history,
         }
     )
     metadata = normalize_json_object(result.metric_metadata)
@@ -226,6 +271,16 @@ def scope_from_backtest(
         "trade_count": len(observations.trades),
         "start_date": observations.timestamps[0] if observations.timestamps else None,
         "end_date": observations.timestamps[-1] if observations.timestamps else None,
+        "execution_records_availability": _execution_availability(
+            result.mode, observations.execution_records
+        ),
+        "account_history_availability": _execution_availability(
+            result.mode, observations.account_history
+        ),
+        "accounting": "vectorbt_generic" if result.mode == "signal" else None,
+        "execution_equity_mark": "requested_price_before_slippage",
+        "account_history_mark": "bar_close",
+        "execution_timestamp_semantics": "bar_timestamp_not_exact_intrabar_fill",
     }
     scope = PerformanceScope.model_validate(
         {
@@ -239,6 +294,14 @@ def scope_from_backtest(
         }
     )
     return scope, observations
+
+
+def _execution_availability(mode: str, values: object) -> str:
+    if values is not None:
+        return "available"
+    if mode == "volume":
+        return "unsupported_volume_accounting"
+    return "not_recorded"
 
 
 def build_artifacts(

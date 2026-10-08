@@ -47,6 +47,10 @@ Strategy development workflow
    get_run_trades and get_run_equity read paginated original observations without
    rerunning. Check incomplete discovery warnings. An open trade's final mark is
    not an executed exit. Use compare_runs / list_artifacts / get_artifact as needed.
+   get_run_executions reads native order attempts, fill prices/costs and before/after
+   balances; get_run_account_history reads close-marked end-of-bar account states.
+   They are separate from paired trades. Check availability; never reconstruct
+   absent legacy records. VectorBT generic balances are not exchange margin wallets.
    For reports, discover get_report_sections and compose generate_report(run_ids,
    sections, commentary). Backend sections render saved metrics/charts/trades;
    write your interpretation as plain-text commentary in the user's language.

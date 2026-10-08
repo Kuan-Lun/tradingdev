@@ -9,6 +9,11 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
+    from tradingdev.domain.backtest.execution_records import (
+        AccountState,
+        ExecutionRecord,
+    )
+
 
 @dataclass
 class BacktestResult:
@@ -29,6 +34,10 @@ class BacktestResult:
             per-metric reasons for unavailable values.
         returns: Simple per-bar returns aligned to ``timestamps``; ``None``
             without a capital basis. Daily risk statistics aggregate these.
+        execution_records: Native order attempts and account transitions; ``None``
+            when not recorded, and an empty list when recorded without orders.
+        account_history: Per-bar generic VectorBT cash, assets and equity; these
+            are not exchange wallet balances or perpetual margin snapshots.
     """
 
     metrics: dict[str, Any]
@@ -39,3 +48,5 @@ class BacktestResult:
     mode: str = "signal"
     metric_metadata: dict[str, Any] = field(default_factory=dict)
     returns: npt.NDArray[np.float64] | None = None
+    execution_records: list[ExecutionRecord] | None = None
+    account_history: list[AccountState] | None = None
