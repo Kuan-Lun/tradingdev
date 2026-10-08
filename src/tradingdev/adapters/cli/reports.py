@@ -18,7 +18,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--sections",
         nargs="*",
-        help="Section IDs in display order; omit for standard, empty for prose only.",
+        help=(
+            "Section IDs in display order; omit for standard, empty for identity "
+            "and prose. All loaded data remains embedded in HTML."
+        ),
     )
     parser.add_argument("--commentary-json", type=Path)
     args = parser.parse_args(argv)
