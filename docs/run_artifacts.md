@@ -439,7 +439,12 @@ Omitting scope chooses the saved default; an aggregate fold scope returns an err
 and available scalar scopes. Trade filters include status, direction and entry
 time; equity filters refer to bar time. Bounds are inclusive; a date-only upper
 bound includes the entire UTC date, while timestamps select exact instants. Naive
-times are UTC. Unknown timestamps do not pass a time filter.
+times are UTC. When the scope has a timestamp array, individual trades with an
+unknown entry time (for example, a legacy record without `entry_idx`) do not pass
+an entry-time filter. If the entire scope's `timestamps` array is `null`, supplying
+any time bound to either query returns `timestamps_unavailable`, rather than an
+empty filtered page. Without time bounds, both queries can return observations
+with unknown timestamps.
 
 Trades retain an unmodified `record` and stable source-order `trade_id`, along with
 normalized timestamps, prices, sizes, costs and PnL. An open position's mark is
@@ -462,11 +467,19 @@ aligned to their original bar indices after filtering and paging.
 `get_report_sections` returns built-in section IDs and optional `standard`,
 `comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
 accepts one to eight distinct runs. Omitted/null sections select standard;
-an explicit ordered list chooses sections, including `[]` for identity and prose
-only. Unknown or duplicate sections fail. Up to 20 plain-text title/text notes
+an explicit ordered list chooses visible sections. With `[]`, no optional sections
+are rendered; fixed report/source identity metadata and any supplied commentary
+remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/text notes
 (20000 characters total) are escaped and labelled LLM commentary. They cannot
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
+
+Section selection determines the visible presentation without pruning the loaded
+or embedded data. Every HTML report embeds the complete loaded payload as JSON,
+including all scopes of the requested runs, saved metrics, trades, equity and
+execution configuration, even for `sections=[]`.
+Omitting a section does not remove its underlying data from the HTML; recipients
+of the file can still read that embedded data.
 
 The `executions` and `account_history` sections, also in `standard`, display these
 two saved ledgers separately from paired trades. Each has independent search,

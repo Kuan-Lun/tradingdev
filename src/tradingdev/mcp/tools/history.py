@@ -206,9 +206,13 @@ def register(
         """Compose an offline HTML report from 1..8 saved runs and client prose.
 
         Discover section IDs/recipes with get_report_sections. Omit sections for
-        the standard recipe, provide IDs in desired order, or [] for commentary
-        with source identity only. commentary contains plain-text title/text
-        objects (at most 20, total 20,000 characters); HTML is escaped and text is
+        the standard recipe, provide IDs in desired order, or [] to render no
+        built-in sections while keeping source identity and supplied commentary.
+        Every report embeds the complete loaded data for all scopes of the runs,
+        including saved trades, equity and execution configuration, even with [].
+        Section selection does not remove underlying data from the HTML.
+        Commentary contains plain-text title/text objects (at most 20, total
+        20,000 characters); HTML is escaped and text is
         labelled client interpretation, distinct from recorded calculations.
         Selected trade tables contain all records with local CSV download.
         Returns a registered artifact and local path. Existing backtests remain

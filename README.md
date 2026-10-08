@@ -218,12 +218,17 @@ walk-forward 的 `validation` 設定。結果應同時查看訓練表現與樣�
 
 Server 提供 HTML 範本與圖表。助手先以 `get_report_sections` 查詢章節及
 `standard`、`comparison`、`trades` 常用組合，再用 `generate_report` 指定最多 8 個 run。
-省略 `sections` 使用標準範本；明確提供清單可決定順序，`[]` 可僅保留來源身分與評語。
+省略 `sections` 使用標準範本；明確提供清單可決定順序，`[]` 不顯示可選章節，
+仍顯示報告與來源身分資訊，以及有提供的評語。
 這些組合是建議，助手可以依情境決定採用哪些章節。
+章節選擇決定可見內容；所選 run 全部已載入 scope 的資料仍完整內嵌於 HTML，
+包括保存的指標、交易、權益與執行設定。即使 `sections=[]`，這些資料仍在檔案中，
+省略章節不會從分享的 HTML 移除資料。
 `commentary` 接受純文字 `title`／`text`，報告標示為 LLM 評語，與後端計算分開；
 助手不需要撰寫 HTML。可選章節包括設定、完整指標、權益／回撤、配對交易、
 逐次成交 `executions`、逐根帳戶 `account_history` 與限制。
-交易表可展開、搜尋、排序、下載 CSV；HTML 不需連線或安裝圖表套件即可閱讀。
+選取交易章節時，交易表可展開、搜尋、排序、下載 CSV；
+HTML 不需連線或安裝圖表套件即可閱讀。
 
 CLI 使用相同服務：
 
@@ -284,10 +289,10 @@ Binance API 與 Yahoo Finance 資料來源；可請助手列出來源，選擇�
 | `runs/` | 每次執行的設定、結果與相關產物 |
 | `tradingdev.sqlite` | 工作、結果與產物的查詢索引 |
 
-MCP 的 `--workspace` 優先於環境變數 `TRADINGDEV_WORKSPACE`；兩者都未設定時，
-使用啟動目錄下的 `workspace/`。CLI 與 Dashboard 使用該環境變數，沒有
-`--workspace` 參數。每次開新終端機時，請重新設定環境變數，或在自己的 shell
-設定中保存它。
+MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
+`TRADINGDEV_WORKSPACE`；兩者都未設定時，使用啟動目錄下的 `workspace/`。
+回測 CLI 與 Dashboard 使用同一環境變數及預設目錄，但沒有 `--workspace` 參數。
+每次開新終端機時，請重新設定環境變數，或在自己的 shell 設定中保存它。
 
 若需要另外存放行情，可設定 `TRADINGDEV_DATA_ROOT`，預設使用其下的 `raw/` 與
 `processed/`；CLI 的圖表快取也會跟隨這個環境變數。
