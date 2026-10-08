@@ -7,10 +7,15 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+import yaml
 
 from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.execution_submission import (
+    ExecutionSubmissionService,
+    PreparedExecution,
+)
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
@@ -100,6 +105,107 @@ def _service(
         project_root=tmp_path,
     )
     return service, job_store, runner
+
+
+def test_prepared_optimization_keeps_search_after_original_config_changes(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "strategy.yaml"
+    config_path.write_text(
+        "strategy:\n  id: fixture\nbacktest:\n  symbol: ETH/USDT\n"
+        "  timeframe: 4h\n  start_date: '2024-01-01'\n"
+        "  end_date: '2024-12-31'\n  init_cash: 10000\n  periods_per_year: 365\n",
+        encoding="utf-8",
+    )
+    service, store, runner = _service(
+        tmp_path,
+        metadata={"status": "runnable", "config_path": str(config_path)},
+    )
+    ranges = {"window": [10, 20]}
+    prepared = service.prepare_optimization(
+        strategy_id="fixture",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        param_ranges=ranges,
+        optimization_metric="sharpe_ratio",
+        train_start="2024-01-01",
+        train_end="2024-02-01",
+        test_start="2024-02-02",
+        test_end="2024-03-01",
+    )
+    assert isinstance(prepared, PreparedExecution)
+    assert store.list_all_jobs() == []
+    assert list(store.workspace.runs.iterdir()) == []
+    assert runner.calls == []
+    expected = prepared.manifest.model_dump(mode="json")
+    ranges["window"].append(30)
+    config_path.write_text("invalid: [yaml", encoding="utf-8")
+
+    submitted = ExecutionSubmissionService(store, cast("ProcessRunner", runner)).submit(
+        prepared, job_id="confirmed_search"
+    )
+
+    assert submitted["job_id"] == "confirmed_search"
+    assert store.load_manifest("confirmed_search").model_dump(mode="json") == expected
+    job = store.get_job("confirmed_search")
+    assert job is not None
+    assert job["total_combinations"] == 2
+    assert job["original_config_path"] == str(config_path)
+    assert runner.calls == [
+        ("tradingdev.mcp.workers.optimization", ("confirmed_search",))
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("id", "another_strategy", "strategy.id"),
+        ("revision_id", "another_revision", "revision_id"),
+        ("class_name", "AnotherStrategy", "class_name"),
+        ("source_path", "/another/strategy.py", "source_path"),
+    ],
+)
+def test_optimization_rejects_configuration_identity_changed_after_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    config_path = tmp_path / "strategy.yaml"
+    config_path.write_text(
+        "strategy:\n  id: fixture\nbacktest:\n  symbol: ETH/USDT\n"
+        "  timeframe: 4h\n  start_date: '2024-01-01'\n"
+        "  end_date: '2024-12-31'\n  init_cash: 10000\n  periods_per_year: 365\n",
+        encoding="utf-8",
+    )
+    service, store, runner = _service(
+        tmp_path,
+        metadata={"status": "runnable", "config_path": str(config_path)},
+    )
+    original = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    original["strategy"][field] = value
+    monkeypatch.setattr(
+        "tradingdev.app.optimization_service.load_config", lambda _path: original
+    )
+
+    response = service.start_optimization(
+        strategy_id="fixture",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        param_ranges={"window": [10]},
+        optimization_metric="sharpe_ratio",
+        train_start="2024-01-01",
+        train_end="2024-02-01",
+        test_start="2024-02-02",
+        test_end="2024-03-01",
+    )
+
+    assert response["code"] == "invalid_optimization_request"
+    assert message in response["message"]
+    assert store.list_all_jobs() == []
+    assert list(store.workspace.runs.iterdir()) == []
+    assert runner.calls == []
 
 
 def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> None:

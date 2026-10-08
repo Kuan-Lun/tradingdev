@@ -139,6 +139,11 @@ worker 執行時再次檢查資格。指定 revision 不存在時不會退回 cu
 提交先套用交易對、期間等請求設定，再解析資料位置與策略建構子參數，形成 manifest。
 設定無效時回傳結構化錯誤；工作建立後若程序啟動失敗，則保存 failed 紀錄並回報例外。
 
+JobService 與 OptimizationService 將準備和提交分開：prepare 方法只回傳
+PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmissionService
+共用建立 job、啟動 worker 與啟動失敗紀錄。提交已準備的內容時不重新解析 YAML，
+也不重新選取 current revision；start 方法組合這兩個步驟。
+
 ```mermaid
 sequenceDiagram
     participant MCP as MCP tool
@@ -279,6 +284,11 @@ MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG renderer 與不�
 不宣稱未選章節已呈現。章節選擇決定可見內容，不裁減載入或內嵌資料；
 即使清單為空，HTML 仍內嵌已載入 run 的完整 scope、觀察值與執行設定。
 LLM 評語標記並跳脫，不能注入 HTML 或替換數值。
+
+報告章節、標題與建議範本集中於 domain/presentation；application service 與
+HTML renderer 使用同一份目錄。adapters/presentation 提供文件外殼、文字與 JSON
+跳脫及值格式化，報告特有的圖表與表格留在 adapters/reporting。
+提供 LLM 的策略程式／YAML 範例仍屬於策略契約，不與使用者文件範本混用。
 
 報告內容、章節、評語與範本版本共同決定內容身分；HTML 與 manifest 保存為
 registered artifacts，重試時核對檔案及登錄完整性。報告是離線文件，不含 CDN，

@@ -35,6 +35,8 @@ from tradingdev.domain.performance.artifacts import (
 from tradingdev.shared.utils.json_values import normalize_json_object
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from tradingdev.domain.backtest.pipeline_result import PipelineResult
 
 logger = logging.getLogger(__name__)
@@ -169,6 +171,10 @@ class JobStore:
         self._store.upsert_job(record_payload)
         logger.debug("Created job %s", job_id)
         return record_payload
+
+    def submission_lock(self, job_id: str) -> AbstractContextManager[None]:
+        """Serialize one job's creation and launch through the storage adapter."""
+        return self._manifests.submission_lock(job_id)
 
     def load_manifest(self, job_id: str) -> ExecutionManifest:
         """Read a job's pinned specification; legacy jobs cannot resume execution."""

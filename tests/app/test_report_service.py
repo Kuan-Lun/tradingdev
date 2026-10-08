@@ -237,6 +237,27 @@ def test_optional_sections_order_and_commentary_are_saved_and_escaped(
     assert service.get_report_sections()["templates"]["standard"]
 
 
+def test_catalog_titles_and_recipes_match_the_rendered_document(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    _save(context)
+    catalog = service.get_report_sections()
+    section_ids = [section["id"] for section in catalog["sections"]]
+    assert catalog["templates"]["standard"] == section_ids
+    for selected in catalog["templates"].values():
+        report = service.generate_report(["run"], sections=selected)
+        assert report["success"], report
+        content = Path(report["path"]).read_text()
+        for section in catalog["sections"]:
+            heading = (
+                f"<section data-section='{section['id']}'><h2>{section['title']}</h2>"
+            )
+            assert (heading in content) == (section["id"] in selected)
+    catalog["sections"][0]["title"] = "呼叫端修改"
+    assert service.get_report_sections()["sections"][0]["title"] == "總覽"
+
+
 @pytest.mark.parametrize("sections", [["unknown"], ["metrics", "metrics"]])
 def test_invalid_section_selection_does_not_publish(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from dataclasses import asdict
 from typing import Any
 
 from tradingdev.adapters.reporting.html import render_report
@@ -17,61 +18,12 @@ from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_service import RunService
 from tradingdev.app.trade_history_service import HistoryReadError, TradeHistoryService
-
-REPORT_SCHEMA_VERSION = 1
-TEMPLATE_VERSION = "5"
-SECTION_CATALOG = (
-    (
-        "overview",
-        "總覽",
-        "Run identity, recorded coverage and default-scope comparison.",
-    ),
-    (
-        "settings",
-        "設定",
-        "Recorded data, effective parameters and execution assumptions.",
-    ),
-    (
-        "metrics",
-        "保存指標",
-        "Original values, units, definitions and unavailable reasons.",
-    ),
-    (
-        "equity",
-        "權益與回撤",
-        "All saved equity points and a derived drawdown visualization.",
-    ),
-    (
-        "trades",
-        "完整交易",
-        "All trades with raw fields, sort, filter and offline CSV export.",
-    ),
-    (
-        "executions",
-        "執行紀錄",
-        "Native order attempts, prices, fees and before/after account transitions.",
-    ),
-    (
-        "account_history",
-        "逐根帳戶狀態",
-        "Saved end-of-bar VectorBT cash, position and equity; not exchange margin.",
-    ),
-    (
-        "limitations",
-        "限制",
-        "Known limits and unknown assumptions; no invented conclusions.",
-    ),
-    (
-        "provenance",
-        "來源證據",
-        "Strategy/run versions, data IDs and registered source hashes.",
-    ),
+from tradingdev.domain.presentation.reports import (
+    REPORT_RECIPES,
+    REPORT_SCHEMA_VERSION,
+    REPORT_SECTIONS,
+    REPORT_TEMPLATE_VERSION,
 )
-TEMPLATES = {
-    "standard": [row[0] for row in SECTION_CATALOG],
-    "comparison": ["overview", "metrics", "equity", "provenance"],
-    "trades": ["overview", "trades", "provenance"],
-}
 
 
 class ReportService:
@@ -93,11 +45,8 @@ class ReportService:
         """Offer recipes without requiring their use or accepting raw HTML."""
         return {
             "success": True,
-            "sections": [
-                {"id": key, "title": title, "description": description}
-                for key, title, description in SECTION_CATALOG
-            ],
-            "templates": {key: list(value) for key, value in TEMPLATES.items()},
+            "sections": [asdict(section) for section in REPORT_SECTIONS.values()],
+            "templates": {key: list(value) for key, value in REPORT_RECIPES.items()},
         }
 
     def get_report_download(
@@ -150,12 +99,12 @@ class ReportService:
             return _error(
                 "invalid_report_runs", "Provide one to eight distinct run IDs"
             )
-        selected = list(TEMPLATES["standard"]) if sections is None else sections
+        selected = list(REPORT_RECIPES["standard"]) if sections is None else sections
         if (
             not isinstance(selected, list)
             or any(not isinstance(key, str) for key in selected)
             or len(set(selected)) != len(selected)
-            or set(selected) - {row[0] for row in SECTION_CATALOG}
+            or set(selected) - REPORT_SECTIONS.keys()
         ):
             return _error(
                 "invalid_report_sections", "Select unique built-in section IDs"
@@ -189,7 +138,7 @@ class ReportService:
             scope_count = sum(len(run["scopes"]) for run in payload["runs"])
             manifest = {
                 "schema_version": REPORT_SCHEMA_VERSION,
-                "template_version": TEMPLATE_VERSION,
+                "template_version": REPORT_TEMPLATE_VERSION,
                 "report_id": report_id,
                 "run_ids": run_ids,
                 "content_sha256": report_id,
@@ -198,7 +147,7 @@ class ReportService:
                 "scope_count": scope_count,
                 "sections": list(selected),
                 "omitted_sections": [
-                    row[0] for row in SECTION_CATALOG if row[0] not in selected
+                    key for key in REPORT_SECTIONS if key not in selected
                 ],
                 "available_data": {
                     run["identity"]["run_id"]: {
@@ -330,7 +279,7 @@ class ReportService:
                 )
         return {
             "schema_version": REPORT_SCHEMA_VERSION,
-            "template_version": TEMPLATE_VERSION,
+            "template_version": REPORT_TEMPLATE_VERSION,
             "runs": runs,
             "default_scope_comparison": comparison,
         }
