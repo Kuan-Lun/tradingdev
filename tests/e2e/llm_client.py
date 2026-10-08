@@ -142,7 +142,7 @@ def _tool_summary(call: ToolCall) -> str:
     if isinstance(result, dict):
         fields = [
             f"{key}={_short_text(str(result[key]))}"
-            for key in ("success", "status", "error", "job_id", "run_id")
+            for key in ("success", "status", "error", "plan_id", "job_id", "run_id")
             if key in result and isinstance(result[key], (str, bool, int, float))
         ]
         diagnostics = result.get("diagnostics")

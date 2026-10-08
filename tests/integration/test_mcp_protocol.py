@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import yaml
 
+from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.mcp_harness import SimulatedUserApproval
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -26,6 +29,10 @@ RUN_ARGUMENTS = {
     "start_date": "2024-01-01",
     "end_date": "2024-01-08",
 }
+
+PREPARE_ARGUMENTS = RUN_ARGUMENTS | execution_options(
+    {"fast_period": 3, "slow_period": 8}
+)
 
 
 async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
@@ -78,14 +85,16 @@ async def test_generated_strategy_full_mcp_workflow(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     cache_path = mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
         assert {
             "get_strategy_contract",
             "save_strategy",
             "validate_strategy",
             "dry_run_strategy",
-            "start_backtest",
+            "prepare_backtest",
             "get_job_status",
             "get_artifact",
         } <= tools.keys()
@@ -108,7 +117,9 @@ async def test_generated_strategy_full_mcp_workflow(
         assert not (await client.call("promote_strategy", strategy_id=STRATEGY_ID))[
             "success"
         ]
-        assert not (await client.call("start_backtest", **RUN_ARGUMENTS))["job_id"]
+        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
+            "success"
+        ]
         assert await client.call("list_jobs") == []
         await make_runnable(client, saved["revision_id"])
         promoted = await client.call(
@@ -124,12 +135,12 @@ async def test_generated_strategy_full_mcp_workflow(
         )
         assert data["success"] and data["rows"] > 0
         assert data["processed_path"] == str(cache_path)
-        started = await client.call(
-            "start_backtest", **RUN_ARGUMENTS, revision_id=saved["revision_id"]
+        prepared = await client.call(
+            "prepare_backtest", **PREPARE_ARGUMENTS, revision_id=saved["revision_id"]
         )
-        assert started["revision_id"] == saved["revision_id"]
+        started = await confirm_prepared(client, prepared)
         assert len(started["manifest_hash"]) == 64
-        assert started["job_id"] and started["data_available"], started
+        assert started["job_id"], started
         completed = await client.wait_for_job(started["job_id"])
         assert completed["status"] == "done", completed
         assert completed["revision_id"] == saved["revision_id"]
@@ -266,7 +277,7 @@ async def test_generated_strategy_full_mcp_workflow(
             include_content=True,
         )
         manifest = json.loads(manifest_artifact["content"])
-        assert manifest["schema_version"] == 4
+        assert manifest["schema_version"] == 5
         assert manifest["strategy_execution"]["constructor_kwargs"] == {
             "fast_period": 3,
             "slow_period": 8,
@@ -286,7 +297,9 @@ async def test_generated_strategy_full_mcp_workflow(
         assert inspection["market"]["rows"] == len(sample_ohlcv_with_kd)
 
     # Persist across MCP sessions; a new draft does not inherit old approval.
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         assert (await client.call("get_job_status", job_id=started["job_id"]))[
             "status"
         ] == "done"
@@ -307,21 +320,26 @@ async def test_generated_strategy_full_mcp_workflow(
         )
         assert old["metadata"]["status"] == "promoted"
         assert old["source_code"] == code
-        rerun = await client.call(
-            "start_backtest", **RUN_ARGUMENTS, revision_id=saved["revision_id"]
+        rerun_prepared = await client.call(
+            "prepare_backtest", **PREPARE_ARGUMENTS, revision_id=saved["revision_id"]
         )
+        rerun = await confirm_prepared(client, rerun_prepared)
         rerun_done = await client.wait_for_job(rerun["job_id"])
         assert rerun_done["status"] == "done"
         assert rerun_done["revision_id"] == saved["revision_id"]
         assert rerun_done["metrics"] == completed["metrics"]
-        assert not (await client.call("start_backtest", **RUN_ARGUMENTS))["job_id"]
+        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
+            "success"
+        ]
         assert Path(by_type["strategy_source"]["path"]).read_text() == code
 
 
 async def test_rejected_drafts_diagnostics_and_repair(
     mcp_workspace: MCPWorkspace,
 ) -> None:
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         code, config_text, saved = await save_example(client)
         before = {
             path: path.read_bytes()
@@ -414,17 +432,22 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     cache = mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         await save_example(client)
         await make_runnable(client)
+        prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        assert prepared["success"], prepared
         cache.write_bytes(b"invalid parquet")
-        started = await client.call("start_backtest", **RUN_ARGUMENTS)
+        started = await confirm_prepared(client, prepared)
         failed = await client.wait_for_job(started["job_id"])
         assert failed["status"] == "failed", failed
         assert failed["error"]
         assert await client.call("list_runs") == []
         mcp_workspace.seed_market(sample_ohlcv_with_kd)
-        started = await client.call("start_backtest", **RUN_ARGUMENTS)
+        prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        started = await confirm_prepared(client, prepared)
         cancelled = await client.call("cancel_job", job_id=started["job_id"])
         assert cancelled["success"] and cancelled["process_terminated"], cancelled
         assert (await client.call("get_job_status", job_id=started["job_id"]))[
@@ -438,7 +461,9 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
 async def test_real_quality_gates_reject_invalid_llm_output(
     mcp_workspace: MCPWorkspace,
 ) -> None:
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         code, config_text, _ = await save_example(client)
         await client.call(
             "save_strategy",
@@ -451,7 +476,9 @@ async def test_real_quality_gates_reject_invalid_llm_output(
         codes = {item["code"] for item in rejected["diagnostics"]}
         assert {"ruff_failed", "mypy_failed"} <= codes
         assert "contract_execution_error" not in codes
-        assert not (await client.call("start_backtest", **RUN_ARGUMENTS))["job_id"]
+        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
+            "success"
+        ]
         malformed = await client.session.call_tool(
             "save_strategy", {"strategy_id": STRATEGY_ID}
         )
@@ -466,7 +493,9 @@ async def test_walk_forward_runs_through_real_worker(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         code, config_text, _ = await save_example(client)
         config = yaml.safe_load(config_text)
         config["validation"] = {"n_splits": 2, "train_ratio": 0.6}
@@ -477,11 +506,11 @@ async def test_walk_forward_runs_through_real_worker(
             yaml_config=yaml.safe_dump(config),
         )
         await make_runnable(client)
-        wrong_mode = await client.call("start_backtest", **RUN_ARGUMENTS)
-        assert not wrong_mode["job_id"]
-        assert "start_walk_forward" in wrong_mode["message"]
-        started = await client.call("start_walk_forward", **RUN_ARGUMENTS)
-        assert started["job_id"], started
+        wrong_mode = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        assert not wrong_mode["success"]
+        assert "prepare_walk_forward" in wrong_mode["error"]
+        prepared = await client.call("prepare_walk_forward", **PREPARE_ARGUMENTS)
+        started = await confirm_prepared(client, prepared)
         completed = await client.wait_for_job(started["job_id"])
         assert completed["status"] == "done", completed
         assert completed["default_scope"] == "test_summary"

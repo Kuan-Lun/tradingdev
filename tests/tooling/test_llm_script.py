@@ -41,7 +41,7 @@ def test_03_excluded():
 
 
 def _script_environment(tmp_path: Path) -> dict[str, str]:
-    """Install both model-test paths as isolated, entirely offline fixtures."""
+    """Install model-test paths as isolated, entirely offline fixtures."""
     (tmp_path / "scripts").mkdir()
     (tmp_path / "tests/e2e").mkdir(parents=True)
     shutil.copy2(
@@ -59,6 +59,14 @@ def _script_environment(tmp_path: Path) -> dict[str, str]:
         "pytestmark = pytest.mark.live_llm\n"
         "def test_cleanup_only():\n"
         "    Path('cleanup.ran').write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests/e2e/test_llm_execution_plans.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_execution_plan_only():\n"
+        "    Path('execution_plan.ran').write_text('done', encoding='utf-8')\n",
         encoding="utf-8",
     )
     environment = {
@@ -141,8 +149,10 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
     assert not (tmp_path / "second.ran").exists()
 
 
-def test_script_selects_cleanup_scenario_without_running_authoring_suite(
+@pytest.mark.parametrize("scenario", ["cleanup", "execution_plan"])
+def test_script_selects_scenario_without_running_authoring_suite(
     tmp_path: Path,
+    scenario: str,
 ) -> None:
     environment = _script_environment(tmp_path)
     result = subprocess.run(
@@ -153,7 +163,7 @@ def test_script_selects_cleanup_scenario_without_running_authoring_suite(
             "--llm-model",
             "offline-fixture",
             "-k",
-            "cleanup_only",
+            f"{scenario}_only",
             "-p",
             "no:cacheprovider",
         ],
@@ -167,6 +177,6 @@ def test_script_selects_cleanup_scenario_without_running_authoring_suite(
         check=False,
     )
     assert result.returncode == pytest.ExitCode.OK, result.stdout
-    assert "1 passed, 3 deselected" in result.stdout
-    assert (tmp_path / "cleanup.ran").read_text() == "done"
+    assert "1 passed, 4 deselected" in result.stdout
+    assert (tmp_path / f"{scenario}.ran").read_text() == "done"
     assert not (tmp_path / "completed.ran").exists()

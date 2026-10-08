@@ -29,6 +29,36 @@ def finite_strategy_value(value: object) -> JsonValue:
     )
 
 
+def merge_strategy_parameters(
+    captured: dict[str, JsonValue], overrides: object
+) -> dict[str, JsonValue]:
+    """Return detached effective values using the execution overlay semantics.
+
+    Objects recursively replace only named existing entries, so an empty object
+    preserves a captured object. Other JSON values replace the whole entry,
+    including arrays. Neither argument is modified.
+    """
+    target = finite_strategy_value(captured)
+    updates = finite_strategy_value(overrides)
+    if not isinstance(target, dict) or not isinstance(updates, dict):
+        raise ValueError("Strategy parameters must be a mapping")
+    _overlay_parameters(target, updates)
+    return target
+
+
+def _overlay_parameters(
+    target: dict[str, JsonValue], overrides: dict[str, JsonValue]
+) -> None:
+    for name, value in overrides.items():
+        if name not in target:
+            raise ValueError(f"Unknown strategy parameter: {name}")
+        previous = target[name]
+        if isinstance(previous, dict) and isinstance(value, dict):
+            _overlay_parameters(previous, value)
+        else:
+            target[name] = value
+
+
 class StrategyExecution(BaseModel):
     """Effective values, excluding the engine and parallel policy injections.
 

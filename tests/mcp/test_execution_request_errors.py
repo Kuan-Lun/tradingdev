@@ -1,37 +1,53 @@
-"""Invalid fixed execution settings are structured rejections, not tool failures."""
+"""Preparation services preserve failures before any plan or worker is published."""
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-from mcp.server.fastmcp import FastMCP
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.loader import StrategyLoader
-from tradingdev.mcp.tools import backtest, optimization
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
     from tradingdev.domain.strategies.schemas import StrategySpec
 
 
-def _start_arguments(tool: str) -> dict[str, Any]:
+class _Preparation:
+    """Dispatch to real preparation services without pretending to be MCP wire I/O."""
+
+    def __init__(self, jobs: JobService, optimizer: OptimizationService) -> None:
+        self.jobs = jobs
+        self.optimizer = optimizer
+
+    def call(
+        self, tool: str, arguments: dict[str, Any]
+    ) -> PreparedExecution | dict[str, Any]:
+        if tool == "prepare_optimization":
+            return self.optimizer.prepare_optimization(**arguments)
+        if tool == "prepare_walk_forward":
+            return self.jobs.prepare_walk_forward(**arguments)
+        assert tool == "prepare_backtest"
+        return self.jobs.prepare_backtest(**arguments)
+
+
+def _prepare_arguments(tool: str) -> dict[str, Any]:
     arguments: dict[str, Any] = {
         "strategy_id": "kd_crossover",
         "symbol": "BTC/USDT",
         "timeframe": "1h",
     }
-    if tool == "start_optimization":
+    if tool == "prepare_optimization":
         arguments.update(
             param_ranges={"k_period": [3, 5]},
             optimization_metric="total_return",
@@ -69,12 +85,12 @@ def _broken_config(path: Path, failure: str) -> Any:
 
 
 @pytest.mark.parametrize(
-    "tool", ["start_backtest", "start_walk_forward", "start_optimization"]
+    "tool", ["prepare_backtest", "prepare_walk_forward", "prepare_optimization"]
 )
 @pytest.mark.parametrize(
     "failure", ["malformed_yaml", "invalid_encoding", "unreadable_file", "missing_file"]
 )
-def test_real_catalog_load_failures_remain_structured_at_the_mcp_boundary(
+def test_real_catalog_load_failures_remain_structured_at_preparation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str, failure: str
 ) -> None:
     bundled = tmp_path / "bundled"
@@ -87,10 +103,8 @@ def test_real_catalog_load_failures_remain_structured_at_the_mcp_boundary(
     gate = StrategyService(store.workspace)
     gate._catalog = BundledStrategyCatalog(bundled)
     jobs = JobService(job_store=store, strategy_service=gate)
-    server = FastMCP("catalog-load-errors")
-    backtest.register(server, jobs)
-    optimization.register(
-        server, OptimizationService(job_store=store, strategy_service=gate), jobs
+    service = _Preparation(
+        jobs, OptimizationService(job_store=store, strategy_service=gate)
     )
     if failure in {"unreadable_file", "missing_file"}:
         read_text = Path.read_text
@@ -108,14 +122,14 @@ def test_real_catalog_load_failures_remain_structured_at_the_mcp_boundary(
         pytest.fail("Catalog loading failure must not start a worker")
 
     monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
-    arguments = {**_start_arguments(tool), "strategy_id": "fixture"}
-    result = asyncio.run(server.call_tool(tool, arguments))
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    arguments = {**_prepare_arguments(tool), "strategy_id": "fixture"}
+    result = service.call(tool, arguments)
+    assert isinstance(result, dict)
+    payload = result
     assert payload["job_id"] == ""
     assert payload["code"] == (
         "invalid_optimization_request"
-        if tool == "start_optimization"
+        if tool == "prepare_optimization"
         else "invalid_execution_request"
     )
     assert payload["message"]
@@ -124,7 +138,7 @@ def test_real_catalog_load_failures_remain_structured_at_the_mcp_boundary(
 
 
 @pytest.mark.parametrize(
-    "tool", ["start_backtest", "start_walk_forward", "start_optimization"]
+    "tool", ["prepare_backtest", "prepare_walk_forward", "prepare_optimization"]
 )
 def test_real_catalog_missing_strategy_retains_its_distinct_rejection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
@@ -133,19 +147,17 @@ def test_real_catalog_missing_strategy_retains_its_distinct_rejection(
     gate = StrategyService(store.workspace)
     gate._catalog = BundledStrategyCatalog(tmp_path / "empty-bundled")
     jobs = JobService(job_store=store, strategy_service=gate)
-    server = FastMCP("catalog-missing-strategy")
-    backtest.register(server, jobs)
-    optimization.register(
-        server, OptimizationService(job_store=store, strategy_service=gate), jobs
+    service = _Preparation(
+        jobs, OptimizationService(job_store=store, strategy_service=gate)
     )
 
     def unexpected_spawn(*_args: object) -> None:
         pytest.fail("Missing strategy must not start a worker")
 
     monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
-    result = asyncio.run(server.call_tool(tool, _start_arguments(tool)))
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    result = service.call(tool, _prepare_arguments(tool))
+    assert isinstance(result, dict)
+    payload = result
     assert payload["job_id"] == ""
     assert payload["code"] == "strategy_not_executable"
     assert store.list_all_jobs() == []
@@ -153,7 +165,7 @@ def test_real_catalog_missing_strategy_retains_its_distinct_rejection(
 
 
 @pytest.mark.parametrize(
-    "tool", ["start_backtest", "start_walk_forward", "start_optimization"]
+    "tool", ["prepare_backtest", "prepare_walk_forward", "prepare_optimization"]
 )
 @pytest.mark.parametrize(
     "failure",
@@ -172,10 +184,8 @@ def test_primary_config_load_errors_are_structured_before_submission(
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
     jobs = JobService(job_store=store)
-    server = FastMCP("config-load-errors")
-    backtest.register(server, jobs)
-    optimization.register(server, OptimizationService(job_store=store), jobs)
-    module = "optimization_service" if tool == "start_optimization" else "job_service"
+    service = _Preparation(jobs, OptimizationService(job_store=store))
+    module = "optimization_service" if tool == "prepare_optimization" else "job_service"
     monkeypatch.setattr(
         f"tradingdev.app.{module}.load_config",
         lambda path: _broken_config(path, failure),
@@ -185,13 +195,13 @@ def test_primary_config_load_errors_are_structured_before_submission(
         pytest.fail("Invalid configuration must not start a worker")
 
     monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
-    result = asyncio.run(server.call_tool(tool, _start_arguments(tool)))
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    result = service.call(tool, _prepare_arguments(tool))
+    assert isinstance(result, dict)
+    payload = result
     assert payload["job_id"] == ""
     assert payload["code"] == (
         "invalid_optimization_request"
-        if tool == "start_optimization"
+        if tool == "prepare_optimization"
         else "invalid_execution_request"
     )
     assert payload["message"]
@@ -215,8 +225,9 @@ def test_fallback_config_load_errors_are_structured_before_submission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
-    server = FastMCP("fallback-config-errors")
-    backtest.register(server, JobService(job_store=store))
+    service = _Preparation(
+        JobService(job_store=store), OptimizationService(job_store=store)
+    )
     reads: list[str] = []
 
     def read(path: Path) -> Any:
@@ -231,11 +242,11 @@ def test_fallback_config_load_errors_are_structured_before_submission(
         pytest.fail("Invalid fallback configuration must not start a worker")
 
     monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
-    result = asyncio.run(
-        server.call_tool("start_walk_forward", _start_arguments("start_walk_forward"))
+    result = service.call(
+        "prepare_walk_forward", _prepare_arguments("prepare_walk_forward")
     )
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    assert isinstance(result, dict)
+    payload = result
     assert payload["job_id"] == ""
     assert payload["code"] == "invalid_execution_request"
     assert reads == ["config.yaml", "walkforward_config.yaml"]
@@ -243,43 +254,45 @@ def test_fallback_config_load_errors_are_structured_before_submission(
     assert not list(store.workspace.runs.iterdir())
 
 
-@pytest.mark.parametrize("tool", ["start_backtest", "start_walk_forward"])
+@pytest.mark.parametrize("tool", ["prepare_backtest", "prepare_walk_forward"])
 def test_valid_configuration_with_wrong_mode_remains_a_mode_rejection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
-    server = FastMCP("config-mode-errors")
-    backtest.register(server, JobService(job_store=store))
+    service = _Preparation(
+        JobService(job_store=store), OptimizationService(job_store=store)
+    )
 
     def read(path: Path) -> dict[str, Any]:
         config = load_config(path)
-        if tool == "start_backtest":
+        if tool == "prepare_backtest":
             config["validation"] = {}
         else:
             config.pop("validation", None)
         return config
 
     monkeypatch.setattr("tradingdev.app.job_service.load_config", read)
-    if tool in {"start_backtest", "start_walk_forward"}:
+    if tool in {"prepare_backtest", "prepare_walk_forward"}:
 
         def unexpected_spawn(*_args: object) -> None:
             pytest.fail("Wrong run mode must not start a worker")
 
         monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
-    result = asyncio.run(server.call_tool(tool, _start_arguments(tool)))
-    assert isinstance(result, tuple)
-    assert result[1]["result"]["code"] == "invalid_run_mode"
+    result = service.call(tool, _prepare_arguments(tool))
+    assert isinstance(result, dict)
+    assert result["code"] == "invalid_run_mode"
     assert store.list_all_jobs() == []
     assert not list(store.workspace.runs.iterdir())
 
 
-@pytest.mark.parametrize("tool", ["start_backtest", "start_walk_forward"])
+@pytest.mark.parametrize("tool", ["prepare_backtest", "prepare_walk_forward"])
 def test_mode_selection_and_submission_use_the_same_config_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
-    server = FastMCP("config-snapshot")
-    backtest.register(server, JobService(job_store=store))
+    service = _Preparation(
+        JobService(job_store=store), OptimizationService(job_store=store)
+    )
     reads: list[Path] = []
 
     def read(path: Path) -> dict[str, Any]:
@@ -295,15 +308,16 @@ def test_mode_selection_and_submission_use_the_same_config_read(
         "spawn_module",
         lambda *_args: WorkerHandle(1234, 100.0, "a" * 32),
     )
-    result = asyncio.run(server.call_tool(tool, _start_arguments(tool)))
-    assert isinstance(result, tuple)
-    manifest = store.load_manifest(result[1]["result"]["job_id"])
+    result = service.call(tool, _prepare_arguments(tool))
+    assert isinstance(result, PreparedExecution)
+    manifest = result.manifest
+    assert store.list_all_jobs() == []
     assert manifest.config["random_seed"] == 77
-    assert len(reads) == (2 if tool == "start_walk_forward" else 1)
+    assert len(reads) == (2 if tool == "prepare_walk_forward" else 1)
 
 
 @pytest.mark.parametrize(
-    "tool", ["start_backtest", "start_walk_forward", "start_optimization"]
+    "tool", ["prepare_backtest", "prepare_walk_forward", "prepare_optimization"]
 )
 @pytest.mark.parametrize("invalid", ["nonfinite", "invalid_parallel"])
 def test_invalid_execution_config_is_rejected_before_job_creation(
@@ -311,9 +325,7 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
     job_service = JobService(job_store=store)
-    server = FastMCP("execution-errors")
-    backtest.register(server, job_service)
-    optimization.register(server, OptimizationService(job_store=store), job_service)
+    service = _Preparation(job_service, OptimizationService(job_store=store))
 
     def invalid_config(path: Path) -> dict[str, Any]:
         config = load_config(path)
@@ -321,11 +333,11 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
             config["backtest"]["fees"] = float("nan")
         else:
             config["parallel"] = {"reserve_cores": "not-an-integer"}
-        if tool == "start_walk_forward":
+        if tool == "prepare_walk_forward":
             config["validation"] = {}
         return config
 
-    module = "optimization_service" if tool == "start_optimization" else "job_service"
+    module = "optimization_service" if tool == "prepare_optimization" else "job_service"
     monkeypatch.setattr(f"tradingdev.app.{module}.load_config", invalid_config)
 
     def unexpected_spawn(*_args: object) -> None:
@@ -337,7 +349,7 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
         "symbol": "BTC/USDT",
         "timeframe": "1h",
     }
-    if tool == "start_optimization":
+    if tool == "prepare_optimization":
         arguments.update(
             param_ranges={"k_period": [3, 5]},
             optimization_metric="total_return",
@@ -348,13 +360,13 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
         )
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
-    result = asyncio.run(server.call_tool(tool, arguments))
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    result = service.call(tool, arguments)
+    assert isinstance(result, dict)
+    payload = result
     assert payload["job_id"] == ""
     expected = (
         "invalid_optimization_request"
-        if tool == "start_optimization"
+        if tool == "prepare_optimization"
         else "invalid_execution_request"
     )
     assert payload["code"] == expected
@@ -363,7 +375,7 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
 
 
 @pytest.mark.parametrize(
-    "tool", ["start_backtest", "start_walk_forward", "start_optimization"]
+    "tool", ["prepare_backtest", "prepare_walk_forward", "prepare_optimization"]
 )
 @pytest.mark.parametrize(
     "failure",
@@ -376,9 +388,7 @@ def test_strategy_binding_failure_is_structured_before_job_creation(
     gate = StrategyService(store.workspace)
     jobs = JobService(job_store=store, strategy_service=gate)
     optimizer = OptimizationService(job_store=store, strategy_service=gate)
-    server = FastMCP("execution-binding-errors")
-    backtest.register(server, jobs)
-    optimization.register(server, optimizer, jobs)
+    service = _Preparation(jobs, optimizer)
     original_resolve = gate.resolve_executable
     source_path = Path(original_resolve("kd_crossover").source_path)
     original_read_bytes = Path.read_bytes
@@ -411,7 +421,7 @@ def test_strategy_binding_failure_is_structured_before_job_creation(
 
     monkeypatch.setattr(gate, "resolve_executable", resolve)
     monkeypatch.setattr(Path, "read_bytes", read_bytes)
-    module = "optimization_service" if tool == "start_optimization" else "job_service"
+    module = "optimization_service" if tool == "prepare_optimization" else "job_service"
     monkeypatch.setattr(f"tradingdev.app.{module}.load_config", config)
 
     def unexpected_spawn(*_args: object) -> None:
@@ -423,7 +433,7 @@ def test_strategy_binding_failure_is_structured_before_job_creation(
         "symbol": "BTC/USDT",
         "timeframe": "1h",
     }
-    if tool == "start_optimization":
+    if tool == "prepare_optimization":
         arguments.update(
             param_ranges={"k_period": [3, 5]},
             optimization_metric="total_return",
@@ -435,14 +445,14 @@ def test_strategy_binding_failure_is_structured_before_job_creation(
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
 
-    result = asyncio.run(server.call_tool(tool, arguments))
+    result = service.call(tool, arguments)
 
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    assert isinstance(result, dict)
+    payload = result
     assert payload["job_id"] == ""
     assert payload["code"] == (
         "invalid_optimization_request"
-        if tool == "start_optimization"
+        if tool == "prepare_optimization"
         else "invalid_execution_request"
     )
     if failure == "stale_revision":
@@ -460,10 +470,10 @@ def test_strategy_binding_failure_is_structured_before_job_creation(
 @pytest.mark.parametrize(
     ("tool", "loader_method"),
     [
-        ("start_backtest", "resolve_execution"),
-        ("start_walk_forward", "resolve_execution"),
-        ("start_optimization", "resolve_execution"),
-        ("start_optimization", "validate_parameter_grid"),
+        ("prepare_backtest", "resolve_execution"),
+        ("prepare_walk_forward", "resolve_execution"),
+        ("prepare_optimization", "resolve_execution"),
+        ("prepare_optimization", "validate_parameter_grid"),
     ],
 )
 @pytest.mark.parametrize("failure_type", [ImportError, RuntimeError, OSError])
@@ -476,9 +486,7 @@ def test_strategy_loading_failure_is_structured_before_job_creation(
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
     job_service = JobService(job_store=store)
-    server = FastMCP("execution-loading-errors")
-    backtest.register(server, job_service)
-    optimization.register(server, OptimizationService(job_store=store), job_service)
+    service = _Preparation(job_service, OptimizationService(job_store=store))
 
     def fail_loading(*_args: object) -> None:
         raise failure_type("Strategy module cannot be loaded at submission")
@@ -494,7 +502,7 @@ def test_strategy_loading_failure_is_structured_before_job_creation(
         "symbol": "BTC/USDT",
         "timeframe": "1h",
     }
-    if tool == "start_optimization":
+    if tool == "prepare_optimization":
         arguments.update(
             param_ranges={"k_period": [3, 5]},
             optimization_metric="total_return",
@@ -506,14 +514,14 @@ def test_strategy_loading_failure_is_structured_before_job_creation(
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
 
-    result = asyncio.run(server.call_tool(tool, arguments))
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    result = service.call(tool, arguments)
+    assert isinstance(result, dict)
+    payload = result
     assert payload["job_id"] == ""
     assert "Strategy module cannot be loaded at submission" in payload["message"]
     assert payload["code"] == (
         "invalid_optimization_request"
-        if tool == "start_optimization"
+        if tool == "prepare_optimization"
         else "invalid_execution_request"
     )
     assert store.list_all_jobs() == []

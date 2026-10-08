@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
 from tests.e2e.test_llm_workflows import assert_workflow
+from tests.integration.execution_fixtures import execution_options
 
 
 def _repair_evidence() -> list[ToolCall]:
@@ -40,15 +43,35 @@ def _repair_evidence() -> list[ToolCall]:
             {"success": True, "status": "runnable", "revision_id": "revision_a"},
         ),
         ToolCall(
-            "start_backtest",
+            "prepare_backtest",
             {
                 **versioned,
                 "symbol": "BTC/USDT",
                 "timeframe": "1h",
                 "start_date": "2024-01-01",
                 "end_date": "2024-01-08",
+                **execution_options(SCENARIOS["repair"].parameters),
             },
-            {"job_id": "job", "revision_id": "revision_a", "manifest_hash": "a" * 64},
+            {
+                "success": True,
+                "status": "ready",
+                "plan_id": "plan",
+                "manifest_hash": "a" * 64,
+                "confirmation_text": "確認本次參數與歷史模擬期間。",
+                "html_path": "/fixture/confirmation.html",
+                "artifact_id": "plan:confirmation",
+                "preflight": {"status": "passed"},
+            },
+        ),
+        ToolCall(
+            "request_execution_confirmation",
+            {"plan_id": "plan"},
+            {
+                "success": True,
+                "plan_id": "plan",
+                "job_id": "job",
+                "manifest_hash": "a" * 64,
+            },
         ),
         ToolCall(
             "get_job_status",
@@ -183,13 +206,22 @@ def test_failed_lookup_does_not_count_as_reading_the_draft() -> None:
         (3, ("save_strategy", "strategy_id='llm_repair'", "success=True")),
         (4, ("validate_strategy", "status='validated'", "after save_strategy")),
         (5, ("dry_run_strategy", "status='runnable'", "after validate_strategy")),
-        (6, ("start_backtest", "nonempty job_id", "after successful dry_run_strategy")),
+        (6, ("prepare_backtest", "ready plan_id", "after successful dry_run_strategy")),
         (
             7,
-            ("get_job_status", "job_id='job'", "status='done'", "after start_backtest"),
+            ("request_execution_confirmation", "plan_id='plan'", "nonempty job_id"),
         ),
-        (8, ("get_run", "run_id='run'", "after get_job_status reported done")),
-        (9, ("list_artifacts", "run_id='run'", "nonempty result")),
+        (
+            8,
+            (
+                "get_job_status",
+                "job_id='job'",
+                "status='done'",
+                "after request_execution_confirmation",
+            ),
+        ),
+        (9, ("get_run", "run_id='run'", "after get_job_status reported done")),
+        (10, ("list_artifacts", "run_id='run'", "nonempty result")),
     ],
     ids=[
         "contract",
@@ -198,7 +230,8 @@ def test_failed_lookup_does_not_count_as_reading_the_draft() -> None:
         "save",
         "validate",
         "dry-run",
-        "start",
+        "prepare",
+        "confirm",
         "done",
         "query",
         "artifacts",
@@ -218,7 +251,7 @@ def test_missing_step_reports_required_tool_target_and_outcome(
 
 @pytest.mark.parametrize(
     ("event_index", "actual_status", "expected_status"),
-    [(4, "draft", "validated"), (5, "validated", "runnable"), (7, "failed", "done")],
+    [(4, "draft", "validated"), (5, "validated", "runnable"), (8, "failed", "done")],
 )
 def test_wrong_status_reports_the_required_status(
     event_index: int, actual_status: str, expected_status: str
@@ -255,10 +288,10 @@ def test_repair_order_failure_explains_read_diagnose_save_sequence() -> None:
     assert "precede successful save_strategy" in str(error.value)
 
 
-@pytest.mark.parametrize("event_index", [4, 5, 6, 7, 8])
+@pytest.mark.parametrize("event_index", [4, 5, 8, 9])
 def test_mixed_revisions_cannot_supply_workflow_evidence(event_index: int) -> None:
     calls = _repair_evidence()
-    if event_index == 8:
+    if event_index == 9:
         calls[event_index].result["run"]["revision_id"] = "revision_b"
     else:
         calls[event_index].result["revision_id"] = "revision_b"
@@ -266,11 +299,11 @@ def test_mixed_revisions_cannot_supply_workflow_evidence(event_index: int) -> No
         assert_workflow(calls, SCENARIOS["repair"])
 
 
-@pytest.mark.parametrize("event_index", [6, 7, 8])
+@pytest.mark.parametrize("event_index", [6, 7, 8, 9])
 def test_different_manifests_cannot_supply_workflow_evidence(event_index: int) -> None:
     calls = _repair_evidence()
     result = calls[event_index].result
-    payload = result["run"] if event_index == 8 else result
+    payload = result["run"] if event_index == 9 else result
     payload["manifest_hash"] = "b" * 64
     with pytest.raises(AssertionError):
         assert_workflow(calls, SCENARIOS["repair"])
@@ -281,12 +314,12 @@ def test_parameter_experiment_requires_explicit_overrides_and_original_revision(
 ):
     scenario = replace(SCENARIOS["repair"], experiment=True)
     calls = _repair_evidence()
-    with pytest.raises(AssertionError, match="start_backtest arguments differ"):
+    with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
         assert_workflow(calls, scenario)
     calls[6].arguments["parameters"] = scenario.overrides
     assert_workflow(calls, scenario)
     calls[6].arguments["revision_id"] = "another_revision"
-    with pytest.raises(AssertionError, match="start_backtest arguments differ"):
+    with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
         assert_workflow(calls, scenario)
 
 
@@ -302,4 +335,136 @@ def test_parameter_experiment_cannot_resave_after_base_is_runnable() -> None:
         )
     )
     with pytest.raises(AssertionError, match="reuse the runnable revision"):
+        assert_workflow(calls, scenario)
+
+
+@pytest.mark.parametrize("location", ["arguments", "result"])
+def test_confirmation_of_another_plan_cannot_supply_execution_evidence(
+    location: str,
+) -> None:
+    calls = _repair_evidence()
+    getattr(calls[7], location)["plan_id"] = "another_plan"
+    with pytest.raises(AssertionError, match="request_execution_confirmation"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_model_supplied_approval_does_not_count_as_user_confirmation() -> None:
+    calls = _repair_evidence()
+    calls[7].arguments["approved"] = True
+    with pytest.raises(AssertionError, match="request_execution_confirmation"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize(
+    "field", ["confirmation_text", "html_path", "artifact_id", "preflight"]
+)
+def test_preparation_requires_reviewable_confirmation_evidence(field: str) -> None:
+    calls = _repair_evidence()
+    calls[6].result.pop(field)
+    with pytest.raises(AssertionError):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_workflow_accepts_sdk_decoded_metadata_and_parameter_arguments() -> None:
+    scenario = replace(SCENARIOS["repair"], experiment=True)
+    calls = _repair_evidence()
+    arguments = calls[6].arguments
+    arguments["presentation"] = json.dumps(arguments["presentation"])
+    arguments["parameters"] = json.dumps(scenario.overrides)
+    arguments["backtest_overrides"] = "null"
+    arguments["minimum_history_bars"] = "20"
+    arguments["sample_bars"] = "128"
+    original = dict(arguments)
+    assert_workflow(calls, scenario)
+    assert calls[6].arguments == original, "Raw model evidence must remain available"
+
+
+@pytest.mark.parametrize(
+    "presentation",
+    [
+        None,
+        "not JSON",
+        "{",
+        "[]",
+        '"string only"',
+        "null",
+        "{}",
+        '{"title":"研究","summary":"說明","parameter_descriptions":{}}',
+        {
+            "title": "研究",
+            "summary": "說明",
+            "parameter_descriptions": {"/fast_period": {"label": "快線"}},
+        },
+    ],
+)
+def test_workflow_rejects_invalid_or_incomplete_presentation(
+    presentation: Any,
+) -> None:
+    calls = _repair_evidence()
+    calls[6].arguments["presentation"] = presentation
+    with pytest.raises(AssertionError):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_workflow_does_not_convert_nested_strategy_parameter_strings() -> None:
+    scenario = replace(SCENARIOS["repair"], experiment=True)
+    calls = _repair_evidence()
+    calls[6].arguments["parameters"] = json.dumps(
+        {name: str(value) for name, value in scenario.overrides.items()}
+    )
+    with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
+        assert_workflow(calls, scenario)
+
+
+def test_history_workflow_accepts_sdk_encoded_report_and_query_arguments() -> None:
+    scenario = replace(SCENARIOS["repair"], history=True)
+    calls = _repair_evidence()
+    calls.extend(
+        [
+            ToolCall(
+                "find_runs",
+                {
+                    "strategy_id": scenario.strategy_id,
+                    "parameters": json.dumps(scenario.parameters),
+                },
+                {"success": True, "runs": [{"run_id": "run", "scope": "full"}]},
+            ),
+            ToolCall(
+                "get_run_trades",
+                {"run_id": "run", "limit": "1"},
+                {"success": True, "next_offset": 1},
+            ),
+            ToolCall(
+                "get_run_trades",
+                {"run_id": "run", "offset": "1"},
+                {"success": True, "next_offset": None},
+            ),
+            ToolCall("get_run_equity", {"run_id": "run"}, {"success": True}),
+            ToolCall(
+                "get_run_executions",
+                {"run_id": "run", "limit": "1"},
+                {"success": True, "availability": "available"},
+            ),
+            ToolCall(
+                "get_run_account_history",
+                {"run_id": "run", "limit": "2"},
+                {"success": True, "availability": "available"},
+            ),
+            ToolCall("get_report_sections", {}, {"success": True}),
+            ToolCall(
+                "generate_report",
+                {
+                    "run_ids": '["run"]',
+                    "sections": '["metrics","trades","executions","account_history"]',
+                    "commentary": json.dumps(
+                        [{"title": "研究評語", "text": "本次結果僅為歷史模擬。"}]
+                    ),
+                },
+                {"success": True},
+            ),
+        ]
+    )
+    assert_workflow(calls, scenario)
+    calls[-1].arguments["run_ids"] = '["another-run"]'
+    with pytest.raises(AssertionError, match="generate_report"):
         assert_workflow(calls, scenario)

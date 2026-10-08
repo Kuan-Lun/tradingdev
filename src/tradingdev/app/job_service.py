@@ -22,6 +22,7 @@ from tradingdev.app.execution_submission import (
     PreparedExecution,
 )
 from tradingdev.app.job_config import (
+    apply_backtest_overrides,
     apply_run_overrides,
     bind_strategy_revision,
 )
@@ -47,7 +48,6 @@ class JobService:
         "downloading_data",
         "running_backtest",
         "estimating",
-        "pending_confirmation",
         "optimizing",
         "testing_oos",
     }
@@ -92,6 +92,7 @@ class JobService:
         end_date: str,
         revision_id: str | None = None,
         parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Prepare and submit a simple backtest job."""
         prepared = self.prepare_backtest(
@@ -102,6 +103,7 @@ class JobService:
             end_date=end_date,
             revision_id=revision_id,
             parameters=parameters,
+            backtest_overrides=backtest_overrides,
         )
         return self._submit_prepared(prepared)
 
@@ -115,6 +117,7 @@ class JobService:
         end_date: str,
         revision_id: str | None = None,
         parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> PreparedExecution | dict[str, Any]:
         """Capture a simple backtest without creating a job or launching a worker."""
         try:
@@ -138,7 +141,7 @@ class JobService:
             return {
                 "job_id": "",
                 "message": (
-                    "Config contains validation settings; use start_walk_forward."
+                    "Config contains validation settings; use prepare_walk_forward."
                 ),
                 "data_available": False,
                 "code": "invalid_run_mode",
@@ -153,6 +156,7 @@ class JobService:
             walk_forward=False,
             spec=spec,
             parameters=parameters,
+            backtest_overrides=backtest_overrides,
         )
 
     def start_walk_forward(
@@ -165,6 +169,7 @@ class JobService:
         end_date: str,
         revision_id: str | None = None,
         parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Prepare and submit a walk-forward job."""
         prepared = self.prepare_walk_forward(
@@ -175,6 +180,7 @@ class JobService:
             end_date=end_date,
             revision_id=revision_id,
             parameters=parameters,
+            backtest_overrides=backtest_overrides,
         )
         return self._submit_prepared(prepared)
 
@@ -188,6 +194,7 @@ class JobService:
         end_date: str,
         revision_id: str | None = None,
         parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> PreparedExecution | dict[str, Any]:
         """Capture a walk-forward without creating a job or launching a worker."""
         try:
@@ -227,6 +234,7 @@ class JobService:
             walk_forward=True,
             spec=spec,
             parameters=parameters,
+            backtest_overrides=backtest_overrides,
         )
 
     def get_job_status(self, job_id: str) -> dict[str, Any]:
@@ -332,22 +340,6 @@ class JobService:
         elif status == "estimating":
             response["total_combinations"] = job.get("total_combinations")
             response["message"] = "Running trial combination to estimate total time..."
-        elif status == "pending_confirmation":
-            response.update(
-                {
-                    "time_per_combo": job.get("time_per_combo"),
-                    "total_combinations": job.get("total_combinations"),
-                    "estimated_total_seconds": job.get("estimated_total_seconds"),
-                    "n_parallel_workers": job.get("n_parallel_workers"),
-                    "message": (
-                        f"Trial run took {job.get('time_per_combo')}s per combo. "
-                        f"Estimated total: {job.get('estimated_total_seconds')}s for "
-                        f"{job.get('total_combinations')} combinations using "
-                        f"{job.get('n_parallel_workers')} workers. "
-                        "Call confirm_optimization(job_id) to proceed."
-                    ),
-                }
-            )
         elif status == "optimizing":
             response["completed"] = job.get("completed", 0)
             response["total_combinations"] = job.get("total_combinations")
@@ -384,45 +376,6 @@ class JobService:
                 summary["completed"] = job.get("completed", 0)
             summaries.append(summary)
         return summaries
-
-    def confirm_optimization(self, job_id: str) -> dict[str, Any]:
-        """Mark an optimization job as confirmed."""
-        job = self._job_store.get_job(job_id)
-        if job is None:
-            return {
-                "success": False,
-                "error": f"No job with ID: {job_id}",
-                "code": "job_not_found",
-            }
-        status = str(job["status"])
-        if status == "estimation_timeout":
-            return {
-                "success": False,
-                "error": "Trial run timed out.",
-                "code": "estimation_timeout",
-            }
-        if status != "pending_confirmation":
-            return {
-                "success": False,
-                "error": f"Job status is '{status}', expected 'pending_confirmation'.",
-                "code": "invalid_job_state",
-            }
-        try:
-            self._job_store.load_manifest(job_id)
-        except (OSError, ValueError) as exc:
-            return {
-                "success": False,
-                "error": f"Execution specification is invalid: {exc}",
-                "code": "execution_manifest_invalid",
-            }
-        self._job_store.update_job(job_id, confirmed=True)
-        return {
-            "success": True,
-            "message": (
-                f"Optimization confirmed. Running {job.get('total_combinations', '?')} "
-                f"combinations with {job.get('n_parallel_workers', '?')} workers."
-            ),
-        }
 
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued or running background job."""
@@ -503,6 +456,7 @@ class JobService:
         walk_forward: bool,
         spec: StrategySpec,
         parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> PreparedExecution | dict[str, Any]:
         kind: Literal["backtest", "walk_forward"] = (
             "walk_forward" if walk_forward else "backtest"
@@ -516,6 +470,7 @@ class JobService:
                 start_date=start_date,
                 end_date=end_date,
             )
+            apply_backtest_overrides(effective_config, backtest_overrides)
             manifest = BacktestService(
                 data_service=self._data_service,
                 strategy_gate=self._strategy_service,

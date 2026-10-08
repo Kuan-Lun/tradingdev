@@ -275,9 +275,7 @@ def test_cancel_rejects_worker_without_control_identity(
     assert job["status"] == "running_backtest"
 
 
-@pytest.mark.parametrize(
-    "status", ["queued", "running_backtest", "pending_confirmation"]
-)
+@pytest.mark.parametrize("status", ["queued", "running_backtest", "optimizing"])
 def test_job_status_detects_reused_pid_as_terminated_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
@@ -375,7 +373,7 @@ def test_running_job_without_any_worker_identity_cannot_claim_cancellation(
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
     store.create_job(job_id="worker")
-    store.update_job("worker", status="pending_confirmation")
+    store.update_job("worker", status="optimizing")
 
     response = JobService(job_store=store).cancel_job("worker")
 

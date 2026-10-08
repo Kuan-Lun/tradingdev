@@ -19,6 +19,7 @@ from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.execution import (
     StrategyExecution,
     finite_strategy_value,
+    merge_strategy_parameters,
 )
 from tradingdev.shared.paths import resolve_workspace_root
 from tradingdev.shared.utils.json_values import strict_json_value
@@ -153,7 +154,7 @@ class StrategyLoader:
         target = kwargs.get("config") if execution.kind == "bundled" else kwargs
         if not isinstance(target, dict):
             raise ValueError("Strategy does not expose searchable parameters")
-        self._overlay_parameters(target, overrides)
+        target.update(merge_strategy_parameters(target, overrides))
         selected = StrategyExecution(kind=execution.kind, constructor_kwargs=kwargs)
         self.validate_parameter_overrides(strategy_cfg, selected, {})
         return selected
@@ -215,7 +216,7 @@ class StrategyLoader:
             target = kwargs.get("config") if execution.kind == "bundled" else kwargs
             if not isinstance(target, dict):
                 raise ValueError("Strategy does not expose searchable parameters")
-            self._overlay_parameters(target, parameter_overrides)
+            target.update(merge_strategy_parameters(target, parameter_overrides))
         signature = signature or inspect.signature(cls)
         injected = {"backtest_engine", "parallel_config"}
         if injected.intersection(kwargs):
@@ -253,18 +254,6 @@ class StrategyLoader:
         if execution.constructor_kwargs.get("fit_config") is not None:
             models["fit_config"] = self._bundled_config_model(cls, suffix="FitConfig")
         return models
-
-    @staticmethod
-    def _overlay_parameters(target: dict[str, Any], overrides: dict[str, Any]) -> None:
-        """Replace selected leaves while retaining captured nested defaults."""
-        for name, value in overrides.items():
-            if name not in target:
-                raise ValueError(f"Unknown strategy parameter: {name}")
-            previous = target[name]
-            if isinstance(previous, dict) and isinstance(value, dict):
-                StrategyLoader._overlay_parameters(previous, value)
-            else:
-                target[name] = finite_strategy_value(value)
 
     @staticmethod
     def _restore_model(model: type[BaseModel], values: object) -> BaseModel:

@@ -42,9 +42,11 @@ flowchart LR
 | ---- | -------- |
 | `mcp/server.py`、`mcp/tools/` | 組裝 services、註冊工具、驗證協定輸入與輸出 |
 | `mcp/workers/` | 背景工作入口、狀態更新及流程協調；最佳化 worker 直接協調搜尋與樣本外測試 |
-| `app/` | 策略生命週期、設定固定、工作提交、結果保存與查詢；`contracts/` 定義回覆 DTO |
+| `app/` | 策略生命週期、設定固定、限時試跑、確認計畫、工作提交、結果保存與查詢；`contracts/` 定義回覆 DTO |
 | `domain/strategies/` | 策略介面、來源探索與載入、參數解析、訊號契約及 bundled strategies |
 | `domain/execution.py`、`domain/randomness.py` | 執行規格與完整性檢查、每次執行的亂數 context |
+| `domain/execution_plan.py`、`domain/preflight.py` | 確認內容與執行身分綁定、限時試跑請求及覆蓋證據 |
+| `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
 | `domain/data/`、`domain/indicators/`、`domain/ml/` | 行情與特徵資料處理、技術指標、模型及訓練邏輯 |
@@ -69,6 +71,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | ---- | ---------- |
 | Strategy revision | 一份生成策略的固定程式與基礎設定，由 StrategyService 管理狀態與驗證證據 |
 | Execution manifest | 一次執行的固定請求，綁定策略身分、有效設定、建構子參數及可選的最佳化規格 |
+| Execution plan | 通過短試跑的固定 manifest、使用者確認文件與證據，附有效期限及獨立確認狀態 |
 | Job | 背景工作的進度、程序身分與控制紀錄，由 JobService／OptimizationService 提交，透過 JobStore 保存 |
 | Run | 一次已保存的執行結果，記錄策略、設定與資料來源資訊，由 RunService 查詢 |
 | Artifact | 與執行或研究相關的檔案及其索引，由 ArtifactService 提供探索與讀取 |
@@ -133,32 +136,75 @@ worker 執行時再次檢查資格。指定 revision 不存在時不會退回 cu
 省略 revision 時則在該操作開始時選定 current。詳細狀態與覆寫規則見
 [策略生命週期](docs/strategy_contract.md#lifecycle)。
 
-### 提交與執行回測
+### 準備、確認與執行回測
 
 一般回測與 walk-forward 共用 BacktestService、JobStore 與背景回測 worker。
-提交先套用交易對、期間等請求設定，再解析資料位置與策略建構子參數，形成 manifest。
-設定無效時回傳結構化錯誤；工作建立後若程序啟動失敗，則保存 failed 紀錄並回報例外。
+MCP 先以 `prepare_backtest`、`prepare_walk_forward` 或 `prepare_optimization`
+準備執行計畫：套用交易對、期間等請求設定，再解析資料位置與策略建構子參數，形成 manifest。
+ExecutionPlanService 經 PreflightService 完成受限試跑，確認程序已停止並清理臨時內容後，
+才發佈白話文字與 HTML 確認文件。準備不建立正式 job 或 run；失敗回傳結構化錯誤。
 
 JobService 與 OptimizationService 將準備和提交分開：prepare 方法只回傳
 PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmissionService
 共用建立 job、啟動 worker 與啟動失敗紀錄。提交已準備的內容時不重新解析 YAML，
-也不重新選取 current revision；start 方法組合這兩個步驟。
+也不重新選取 current revision；application service 的 start 方法仍組合這兩個步驟，
+但 MCP 不暴露直接啟動工具。原本的 MCP `start_backtest`、`start_walk_forward`、
+`start_optimization` 與 `confirm_optimization` 已移除。
+
+PreflightService 將設定準備、策略匯入、生成策略訊號契約、受限行情取得、實際引擎執行
+與結果序列化放入受監督的子程序；預設總預算為 60 秒，程序清理另計。
+一般回測試跑一段行情，walk-forward 試跑一組訓練／測試分段，最佳化試跑第一組候選的
+訓練與保留測試區間。每個區間須達到請求宣告的最低歷史資料需求，且受總 K 線筆數預算限制。
+試跑用本次設定的行情資料管道，不以人工資料替代失敗的資料取得；離線測試可替代 provider，
+不能因此宣稱已驗證真實外部資料。零交易仍可準備成功，但必須指出成交與交易成本路徑未覆蓋。
+短樣本不保證完整期間、所有分段或所有候選一定成功，也不是完整 Python sandbox。
+
+確認計畫保存不可變 manifest、試跑證據及呈現內容；計畫摘要共同綁定這些資料。
+模型提供策略名稱、摘要與每個參數的白話名稱／說明／單位，後端提供全部有效數值、
+必備章節及實際檢查結果。參數說明必須完整對應固定建構子與搜尋候選的各個葉節點，
+包括巢狀設定及內建策略的訓練設定；遺漏時回傳可供模型補齊的欄位路徑。
+搜尋候選先套用與策略載入相同的純參數合併函數，再呈現完整有效值；巢狀映射未指定的
+欄位保留原值，空映射不清除既有映射，清單與其他值則整體取代。
+這些說明隨計畫保存，不改寫策略 revision 的 YAML。使用者可用自然語言要求調整，
+不必閱讀程式、內部變數或設定檔。文字與 HTML 共讀同一份具型別的確認文件，
+核心章節不可省略；技術身分與檔案位置放在獨立資訊區。
+
+`request_execution_confirmation` 要求客戶端支援 MCP form elicitation，透過該介面的
+明確接受與勾選回覆提交計畫。模型不能用工具參數傳入 `confirmed: true` 代替確認；
+不支援 form、拒絕、取消、無效回覆或協定失敗都不啟動工作。協定錯誤可重新要求確認。
+伺服器信任客戶端將表單交給使用者；協定本身不能證明任意客戶端的回覆一定由真人操作。
+計畫預設一小時有效，確認時再次核對設定、策略完整性與資格。一次只允許一個確認互動，
+重複提交已成功計畫回傳原 job，不重複執行。修改程式或有效設定須重新準備、試跑及確認。
+提交使用固定的計畫 ID 作為 job ID。若 worker 已啟動但最後的計畫狀態寫入失敗，
+回覆仍提供原 job 與警告；計畫查詢保留 submitting 及該 job ID。
+重新要求確認時，只有相同 manifest 且保存完整 worker 控制身分的既有 job，
+才能補寫 submitted 並回傳原工作，不能重新啟動。只有 queued 紀錄但缺少控制身分，
+或程序啟動失敗時，會提供既有 job ID 供查詢，不宣稱已成功啟動。
 
 ```mermaid
 sequenceDiagram
+    participant User as 使用者
     participant MCP as MCP tool
-    participant Submit as JobService
+    participant Plan as ExecutionPlanService
+    participant Preflight as 限時試跑程序
+    participant Submit as ExecutionSubmissionService
     participant Execute as BacktestService
     participant Store as JobStore
     participant Supervisor
     participant Worker
-    MCP->>Submit: 提交策略與執行設定
-    Submit->>Execute: prepare_execution
-    Execute-->>Submit: 固定的 manifest
+    MCP->>Plan: prepare_* 策略與執行設定
+    Plan->>Preflight: 固定設定並完成受限試跑
+    Preflight-->>Plan: manifest、試跑證據與清理確認
+    Plan-->>MCP: 計畫與文字／HTML 確認內容
+    MCP->>User: form elicitation 顯示確認內容
+    User-->>MCP: 明確接受
+    MCP->>Plan: 核對本次確認與固定計畫
+    Plan->>Submit: 提交已確認 manifest
     Submit->>Store: 發佈 manifest 並建立 queued job
     Submit->>Supervisor: 經 ProcessRunner 啟動
     Supervisor->>Worker: 在獨立程序群組執行 job ID
-    Submit-->>MCP: job ID 與 manifest hash
+    Submit-->>Plan: job ID 與 manifest hash
+    Plan-->>MCP: 原計畫的執行身分
     Worker->>Store: 載入 manifest 並核對工作綁定
     Worker->>Execute: run_manifest
     Execute-->>Worker: 回測結果與執行來源資訊
@@ -193,20 +239,22 @@ volume 模式使用專案的逐筆模擬與帳本。Walk-forward 由 WalkForward
 `domain/ml`；訊號、暖機期及資料使用規則由策略契約定義。
 
 CLI 直接同步呼叫 BacktestService，再交 ArtifactService 保存結果；
+CLI 命令本身是明確的執行請求，不使用 MCP 的確認互動。
 它共用策略資格檢查、manifest 與績效模型，但不經 supervisor 或背景 job 狀態流程。
 
-### 最佳化的試跑與確認
+### 最佳化執行
 
-OptimizationService 在提交前固定搜尋參數、訓練／測試期間、指標方向與等待政策，
+OptimizationService 在準備時固定搜尋參數、訓練／測試期間、指標方向與第一組估時計算時限，
 並檢查候選參數結構。搜尋之外的有效設定保持固定。最佳化使用自己的訓練／測試切分，
 不能同時套用 walk-forward 設定；候選檢查也不代表所有策略建構與執行一定成功。
 
-最佳化 worker 載入資料後，以第一組參數試跑估時，在記憶體保留試跑結果並進入
-pending_confirmation。使用者同意後，確認工具核對 job 與 manifest，
-讓原 worker 繼續搜尋剩餘組合。它依 manifest 記錄的最大化或最小化方向選出參數，
-再進行樣本外測試，保存各 trial 與選定參數的測試結果。
+MCP 的最佳化與其他回測共用前述計畫與確認流程，正式 worker 不再等待第二次確認。
+使用者接受後，worker 才下載正式資料並執行完整搜尋；短試跑證據不取代正式 trial 結果。
+worker 依 manifest 記錄的最大化或最小化方向選出參數，再進行樣本外測試，
+保存各 trial 與選定參數的測試結果。
+第一組正式訓練計算用於估時，受 manifest 的試跑時限約束；其餘候選及保留區間測試
+不受此時限限制。這與確認前涵蓋整個準備程序的 60 秒預算不同。
 
-試跑逾時以 estimation_timeout 結束；等待確認逾時則標記 failed，不繼續完整搜尋。
 不可計算的指標不參與排名，沒有可排名候選時工作失敗。
 使用者操作範例見 [README](README.md#使用樣本外驗證與最佳化)。
 
@@ -361,8 +409,9 @@ Manifest 固定請求；來源 hash、資料指紋與套件版本提供追蹤依
 
 策略驗證與 dry-run 會執行生成 Python。提交時會載入策略模組、解析建構子設定，
 並在建立 job、啟動 worker 前，以 80 與 240 筆 fixture 建構生成策略、執行訊號檢查；
-未提供參數覆寫的提交也會執行這些檢查。這些程式在呼叫端程序內執行，MCP 請求即
-在 server 程序內，不受尚未啟動的 worker supervisor、試跑逾時或 job 取消管控。
+未提供參數覆寫的提交也會執行這些檢查。MCP 準備請求在受監督的 preflight 子程序內
+完成這些步驟，納入準備時限；直接呼叫 application service 或 CLI 時仍在呼叫端程序內
+執行，不會自動套用 MCP 準備時限。獨立的策略驗證與 dry-run 工具不屬於 preflight。
 最佳化提交另檢查候選參數結構；worker 評估生成策略候選時再以該組參數執行訊號契約檢查。
 靜態政策檢查、workspace 路徑與背景程序監督都不是完整 sandbox；
 實際安全模型見 [策略安全模型](docs/strategy_contract.md#security-model)。

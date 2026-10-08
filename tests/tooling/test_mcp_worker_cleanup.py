@@ -56,7 +56,7 @@ def _record_control(workspace: mcp_harness.MCPWorkspace, handle: WorkerHandle) -
     return start
 
 
-@pytest.mark.parametrize("status", ["done", "failed", "pending_confirmation"])
+@pytest.mark.parametrize("status", ["done", "failed", "optimizing"])
 def test_cleanup_requests_matching_worker_even_when_job_is_terminal(
     worker_cleanup: tuple[mcp_harness.MCPWorkspace, JobStore, WorkerHandle, Mock],
     status: str,

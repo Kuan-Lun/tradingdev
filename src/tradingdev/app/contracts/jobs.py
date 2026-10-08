@@ -1,8 +1,8 @@
 """Public job responses, distinct from persisted worker control records."""
 
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import JsonValue
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 
@@ -11,7 +11,6 @@ type JobState = Literal[
     "downloading_data",
     "running_backtest",
     "estimating",
-    "pending_confirmation",
     "optimizing",
     "testing_oos",
     "done",
@@ -19,48 +18,6 @@ type JobState = Literal[
     "cancelled",
     "estimation_timeout",
 ]
-
-
-class BacktestStarted(ContractModel):
-    """A worker was accepted; poll job status before reading a completed run."""
-
-    job_id: Annotated[str, Field(min_length=1)]
-    revision_id: str | None = None
-    manifest_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    message: str
-    data_available: bool
-
-
-class BacktestRejected(ContractModel):
-    """No job was created; correct the request before trying again."""
-
-    job_id: Literal[""]
-    message: str
-    data_available: Literal[False]
-    code: Literal[
-        "strategy_not_executable", "invalid_run_mode", "invalid_execution_request"
-    ]
-
-
-class OptimizationStarted(ContractModel):
-    """An estimation worker was accepted; full search requires confirmation."""
-
-    job_id: Annotated[str, Field(min_length=1)]
-    revision_id: str | None = None
-    manifest_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    optimization_metric: str
-    direction: Literal["maximize", "minimize"]
-    message: str
-    total_combinations: Annotated[int, Field(gt=0)]
-
-
-class OptimizationRejected(ContractModel):
-    """No optimization job was created."""
-
-    job_id: Literal[""]
-    message: str
-    total_combinations: Literal[0]
-    code: Literal["strategy_not_executable", "invalid_optimization_request"]
 
 
 class JobSummary(ContractModel):
@@ -133,13 +90,6 @@ class JobNotFound(ContractModel):
     status: Literal["not_found"]
     error: str
     code: Literal["job_not_found"]
-
-
-class OptimizationConfirmed(ContractModel):
-    """The existing estimated job has permission to begin full search."""
-
-    success: Literal[True]
-    message: str
 
 
 class JobActionFailed(ErrorResponse):

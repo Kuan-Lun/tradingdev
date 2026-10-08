@@ -6,13 +6,16 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, JsonValue, create_model
 
 from tradingdev.domain.backtest.schemas import ParallelConfig
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
-from tradingdev.domain.strategies.execution import StrategyExecution
+from tradingdev.domain.strategies.execution import (
+    StrategyExecution,
+    merge_strategy_parameters,
+)
 from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
@@ -165,6 +168,29 @@ def test_nested_model_defaults_are_captured_and_grid_overlays_preserve_them() ->
     actual = vars(strategy)["_config"].model.model_dump()
     assert actual == {**model, "max_depth": 4}
     assert model["max_depth"] == 6
+
+
+def test_parameter_merge_preserves_nested_defaults_and_detaches_both_inputs() -> None:
+    captured: dict[str, JsonValue] = {
+        "model": {"depth": 6, "rates": [0.1, 0.2]},
+        "empty": {},
+    }
+    overrides = {"model": {"rates": [0.3]}, "empty": {}}
+    selected = merge_strategy_parameters(captured, overrides)
+    assert selected == {"model": {"depth": 6, "rates": [0.3]}, "empty": {}}
+    rates = selected["model"]
+    assert isinstance(rates, dict)
+    values = rates["rates"]
+    assert isinstance(values, list)
+    values.append(0.4)
+    assert captured == {"model": {"depth": 6, "rates": [0.1, 0.2]}, "empty": {}}
+    assert overrides == {"model": {"rates": [0.3]}, "empty": {}}
+
+
+def test_empty_object_candidate_retains_captured_nested_values() -> None:
+    assert merge_strategy_parameters(
+        {"settings": {"x": 2, "y": 3}}, {"settings": {}}
+    ) == {"settings": {"x": 2, "y": 3}}
 
 
 @pytest.mark.parametrize(

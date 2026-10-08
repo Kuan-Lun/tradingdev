@@ -16,7 +16,11 @@ from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
     PreparedExecution,
 )
-from tradingdev.app.job_config import apply_run_overrides, bind_strategy_revision
+from tradingdev.app.job_config import (
+    apply_backtest_overrides,
+    apply_run_overrides,
+    bind_strategy_revision,
+)
 from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
@@ -40,6 +44,7 @@ class OptimizationService:
         job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
         strategy_loader: StrategyLoader | None = None,
+        data_service: DataService | None = None,
         project_root: Path | None = None,
     ) -> None:
         self._job_store = job_store or get_default_job_store()
@@ -52,6 +57,7 @@ class OptimizationService:
         self._strategy_loader = strategy_loader or StrategyLoader(
             workspace_root=self._job_store.workspace.root
         )
+        self._data_service = data_service or DataService(self._job_store.workspace)
         self._submission = ExecutionSubmissionService(
             self._job_store, self._process_runner
         )
@@ -69,6 +75,8 @@ class OptimizationService:
         test_start: str,
         test_end: str,
         revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Prepare and submit a parameter optimization worker."""
         prepared = self.prepare_optimization(
@@ -82,6 +90,8 @@ class OptimizationService:
             test_start=test_start,
             test_end=test_end,
             revision_id=revision_id,
+            parameters=parameters,
+            backtest_overrides=backtest_overrides,
         )
         if isinstance(prepared, dict):
             return prepared
@@ -95,7 +105,7 @@ class OptimizationService:
             "direction": optimization.direction,
             "message": (
                 f"Optimization started. {total_combinations} parameter combinations. "
-                "A trial run will estimate total time; use get_job_status() to check."
+                "Use get_job_status() to follow the search."
             ),
             "total_combinations": total_combinations,
         }
@@ -113,6 +123,8 @@ class OptimizationService:
         test_start: str,
         test_end: str,
         revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> PreparedExecution | dict[str, Any]:
         """Capture a validated search without creating a job or launching a worker."""
         try:
@@ -169,12 +181,16 @@ class OptimizationService:
                 # Optimization bounds are calendar days, including the final day.
                 end_date=f"{test_end}T23:59:59.999999",
             )
+            apply_backtest_overrides(effective_config, backtest_overrides)
             manifest = BacktestService(
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
-                data_service=DataService(self._job_store.workspace),
+                data_service=self._data_service,
             ).prepare_execution(
-                effective_config, kind="optimization", optimization=optimization
+                effective_config,
+                kind="optimization",
+                optimization=optimization,
+                parameters=parameters,
             )
             strategy_config = manifest.config_copy()["strategy"]
             names = list(optimization.param_ranges)

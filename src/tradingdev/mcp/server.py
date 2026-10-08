@@ -13,10 +13,10 @@ from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import get_sqlite_store
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.data_service import DataService
+from tradingdev.app.execution_plan_service import ExecutionPlanService
 from tradingdev.app.feature_request_service import FeatureRequestService
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
-from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
@@ -26,12 +26,11 @@ from tradingdev.mcp.prompts import SERVER_INSTRUCTIONS
 from tradingdev.mcp.strict_server import StrictFastMCP
 from tradingdev.mcp.tools import (
     artifacts,
-    backtest,
     data,
+    execution,
     feature_requests,
     history,
     jobs,
-    optimization,
     runs,
     strategy,
     strategy_cleanup,
@@ -60,10 +59,7 @@ def create_server(workspace: WorkspacePaths | None = None) -> StrictFastMCP:
         data_service=data_service,
         job_store=job_store,
     )
-    optimization_service = OptimizationService(
-        strategy_service=strategy_service,
-        job_store=job_store,
-    )
+    execution_service = ExecutionPlanService(workspace, job_store=job_store)
     run_service = RunService(workspace=workspace, store=store)
     artifact_service = ArtifactService(workspace=workspace, store=store)
     feature_request_service = FeatureRequestService(workspace=workspace, store=store)
@@ -71,8 +67,7 @@ def create_server(workspace: WorkspacePaths | None = None) -> StrictFastMCP:
     strategy.register(mcp, strategy_service, _PACKAGE_ROOT)
     strategy_cleanup.register(mcp, StrategyCleanupService(workspace, store=store))
     data.register(mcp, data_service)
-    backtest.register(mcp, job_service)
-    optimization.register(mcp, optimization_service, job_service)
+    execution.register(mcp, execution_service)
     jobs.register(mcp, job_service)
     runs.register(mcp, run_service)
     history.register(

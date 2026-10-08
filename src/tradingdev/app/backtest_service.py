@@ -117,7 +117,7 @@ class BacktestService:
         config = deepcopy(raw_config)
         run_config = BacktestRunConfig.model_validate(config)
         if run_config.is_walk_forward and kind == "backtest":
-            msg = "Config contains validation settings; use start_walk_forward."
+            msg = "Config contains validation settings; use prepare_walk_forward."
             raise ValueError(msg)
         if kind == "walk_forward" and not run_config.is_walk_forward:
             msg = "Config has no validation section for walk-forward."

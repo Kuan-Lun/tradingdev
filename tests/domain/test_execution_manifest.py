@@ -554,8 +554,6 @@ def test_search_order_defaults_roundtrip_and_derived_combination_count() -> None
     assert ExecutionManifest.model_validate_json(manifest.model_dump_json()) == manifest
     assert search.direction == "maximize"
     assert search.trial_timeout_seconds == 300
-    assert search.confirmation_timeout_seconds == 1800
-    assert search.confirmation_poll_interval == 2.0
 
 
 @pytest.mark.parametrize(
@@ -563,8 +561,6 @@ def test_search_order_defaults_roundtrip_and_derived_combination_count() -> None
     [
         "direction",
         "trial_timeout_seconds",
-        "confirmation_timeout_seconds",
-        "confirmation_poll_interval",
     ],
 )
 def test_saved_search_cannot_omit_defaulted_policy_fields(field: str) -> None:
@@ -589,11 +585,9 @@ def test_saved_search_cannot_omit_defaulted_policy_fields(field: str) -> None:
         {"train_end": "2024-02-28"},
         {"test_start": "2024-03-02"},
         {"trial_timeout_seconds": 301},
-        {"confirmation_timeout_seconds": 1801},
-        {"confirmation_poll_interval": 1.0},
     ],
 )
-def test_search_and_confirmation_choices_change_digest(change: dict[str, Any]) -> None:
+def test_search_choices_change_digest(change: dict[str, Any]) -> None:
     original = ExecutionManifest.create(
         strategy_execution=_strategy_execution(),
         kind="optimization",
@@ -651,7 +645,7 @@ def test_new_optimization_targets_resolve_catalog_direction(
         strategy_execution=_strategy_execution(),
         optimization=_search(optimization_metric=metric),
     )
-    assert manifest.schema_version == 4
+    assert manifest.schema_version == 5
     assert manifest.optimization is not None
     assert manifest.optimization.direction == direction
 
