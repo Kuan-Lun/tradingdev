@@ -184,6 +184,8 @@ walk-forward 的 `validation` 設定。結果應同時查看訓練表現與樣�
 | 查摘要以外的指標 | 「查詢這個 run 的所有可用指標，說明定義、單位與無法計算的原因。」 |
 | 比較兩次實驗 | 「比較這兩次回測的損益與回撤，說明差異與比較限制。」 |
 | 檢查實際設定 | 「這次回測用了哪個策略版本、參數與成本？」 |
+| 找指定參數的交易 | 「找出 fast_period=12、slow_period=29 的歷史結果，分頁查看每筆進出場、數量、費用。」 |
+| 開啟完整報告 | 「使用內建範本生成這兩個 run 的離線 HTML，保留完整交易表並加入你的研究評語。」 |
 
 解讀結果時請留意：
 
@@ -198,6 +200,39 @@ walk-forward 的 `validation` 設定。結果應同時查看訓練表現與樣�
 
 執行時的設定與結果會保留，但行情、套件及環境未完整封存，
 日後重跑不保證得到完全相同的數字。詳細定義見[執行結果與產物](docs/run_artifacts.md)。
+
+### 交易紀錄與 HTML 報告
+
+`find_runs` 可依策略、參數子集、標的與週期找出已保存的 run／scope。
+同參數可能對應不同期間、成本與版本，須先選定結果；最佳化的每個 trial 也可單獨查閱。
+`get_run_trades` 與 `get_run_equity` 分頁讀取原始紀錄，每頁最多 500 筆，無須重跑。
+交易包含進出場時間、成交價格、數量、費用及損益；未平倉的期末估值會分開標示。
+資料缺失或損毀會回報原因，查找結果若不完整也會列出問題，不能視為沒有交易。
+
+Server 提供 HTML 範本與圖表。助手先以 `get_report_sections` 查詢章節及
+`standard`、`comparison`、`trades` 常用組合，再用 `generate_report` 指定最多 8 個 run。
+省略 `sections` 使用標準範本；明確提供清單可決定順序，`[]` 不顯示可選章節，
+仍顯示報告與來源身分資訊，以及有提供的評語。
+這些組合是建議，助手可以依情境決定採用哪些章節。
+章節選擇決定可見內容；所選 run 全部已載入 scope 的資料仍完整內嵌於 HTML，
+包括保存的指標、交易、權益與執行設定。即使 `sections=[]`，這些資料仍在檔案中，
+省略章節不會從分享的 HTML 移除資料。
+`commentary` 接受純文字 `title`／`text`，報告標示為 LLM 評語，與後端計算分開；
+助手不需要撰寫 HTML。可選章節包括設定、完整指標、權益／回撤、交易與限制。
+選取交易章節時，交易表可展開、搜尋、排序、下載 CSV；
+HTML 不需連線或安裝圖表套件即可閱讀。
+
+CLI 使用相同服務：
+
+```bash
+uv run tradingdev-report --workspace /absolute/path/to/tradingdev-workspace \
+  --run-id YOUR_RUN_ID --sections overview metrics equity trades provenance
+```
+
+CLI 可用 `--commentary-json notes.json` 加入評語陣列。
+工具回傳本機 HTML 路徑及 artifact ID；遠端 MCP 的檔案須由客戶端透過
+`get_artifact` 取得，不把 server 本機路徑當成公開網址。報告保存於 `workspace/reports/`，
+同來源、章節與評語重用同一報告；來源、內容或範本版本改變會產生新的報告。
 
 ### 開啟 Dashboard
 
@@ -217,7 +252,8 @@ uv run --locked --extra dashboard streamlit run src/tradingdev/adapters/dashboar
   -- --run-id "YOUR_RUN_ID"
 ```
 
-請將 `YOUR_RUN_ID` 換成助手查到的實際值。最佳化結果請透過對話查詢，
+側邊欄也可生成並下載同一份標準 HTML 報告。
+請將 `YOUR_RUN_ID` 換成助手查到的實際值。最佳化結果請透過對話查詢或生成 HTML 報告，
 目前不產生 Dashboard 所需的圖表產物。結束圖表服務時，在終端機按 `Ctrl+C`。
 
 ## 資料與工作區
@@ -245,10 +281,10 @@ Binance API 與 Yahoo Finance 資料來源；可請助手列出來源，選擇�
 | `runs/` | 每次執行的設定、結果與相關產物 |
 | `tradingdev.sqlite` | 工作、結果與產物的查詢索引 |
 
-MCP 的 `--workspace` 優先於環境變數 `TRADINGDEV_WORKSPACE`；兩者都未設定時，
-使用啟動目錄下的 `workspace/`。CLI 與 Dashboard 使用該環境變數，沒有
-`--workspace` 參數。每次開新終端機時，請重新設定環境變數，或在自己的 shell
-設定中保存它。
+MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
+`TRADINGDEV_WORKSPACE`；兩者都未設定時，使用啟動目錄下的 `workspace/`。
+回測 CLI 與 Dashboard 使用同一環境變數及預設目錄，但沒有 `--workspace` 參數。
+每次開新終端機時，請重新設定環境變數，或在自己的 shell 設定中保存它。
 
 若需要另外存放行情，可設定 `TRADINGDEV_DATA_ROOT`，預設使用其下的 `raw/` 與
 `processed/`；CLI 的圖表快取也會跟隨這個環境變數。

@@ -16,6 +16,7 @@ class Scenario:
     repair: bool = False
     legacy: bool = False
     experiment: bool = False
+    history: bool = False
 
     @property
     def strategy_id(self) -> str:
@@ -44,6 +45,18 @@ class Scenario:
             if self.experiment
             else ""
         )
+        history = (
+            "接著以 find_runs 依策略與本次參數查回同一 run_id/full scope。"
+            "呼叫 get_run_trades(run_id,scope=full,limit=1)，若有 next_offset，"
+            "再用它讀下一頁。呼叫 get_run_equity 查前兩根觀測。"
+            "最後先呼叫 get_report_sections，然後 generate_report，"
+            "run_ids=[這個run_id]、sections=[metrics,trades]（字串陣列），"
+            "commentary=[{title:研究評語,text:本次結果僅為歷史模擬。}]。"
+            "由後端產生指定章節及你的評語，"
+            "確認success及回傳path後才結束。不重跑策略、不另寫報告程式。"
+            if self.history
+            else "不需要額外取得 artifact 內容或撰寫回測報告。"
+        )
         return f"""請透過 TradingDev MCP 開發策略 {self.strategy_id}。
 {preparation}
 讀取 get_strategy_contract，依照契約完成 Python 與 YAML。{self.requirement}
@@ -64,8 +77,8 @@ symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
 持續 get_job_status 查詢直到 done，再以回傳的 run_id 呼叫 get_run，
 以及 list_artifacts。一般回覆只有摘要；接著呼叫 get_metric_catalog(mode=signal)，
 再以 get_run_metrics 查同一 run_id 的 daily_pnl_mean、total_volume、n_days，
-確認這些未列於摘要的指標仍可查詢。確認結果後就結束，只回答「完成」與 run_id。
-不得只啟動工作就結束；不需要額外取得 artifact 內容或撰寫回測報告。
+確認這些未列於摘要的指標仍可查詢。{history}
+確認結果後就結束，只回答「完成」與 run_id。不得只啟動工作就結束。
 只能透過 MCP 工具撰寫與執行，不使用 shell 或直接編輯檔案。
 直接呼叫工具，不敘述計畫或重貼程式碼；程式、YAML 與 request_summary 保持精簡，
 但不得省略需求或驗證步驟。
@@ -77,6 +90,13 @@ _SMA_REQUIREMENT = (
     "小於時每根=-1，相等或資料不足20根時=0。不得修改輸入資料或使用未來資料。"
 )
 SCENARIOS = {
+    "history": Scenario(
+        "history",
+        {"fast_period": 5, "slow_period": 20},
+        {"fast_period": 3, "slow_period": 8},
+        _SMA_REQUIREMENT,
+        history=True,
+    ),
     "experiment": Scenario(
         "experiment",
         {"fast_period": 5, "slow_period": 20},

@@ -1,0 +1,41 @@
+"""Public identity of a reproducible, offline report artifact."""
+
+from typing import Literal
+
+from tradingdev.app.contracts.common import ContractModel
+
+
+class ReportResponse(ContractModel):
+    """A report and its source manifest, never an unbounded HTML tool response."""
+
+    success: Literal[True]
+    report_id: str
+    artifact_id: str
+    manifest_artifact_id: str
+    path: str
+    sha256: str
+    run_ids: list[str]
+    scope_count: int
+
+
+class ReportSection(ContractModel):
+    """A backend-rendered section that clients may select without writing HTML."""
+
+    id: str
+    title: str
+    description: str
+
+
+class ReportSectionCatalog(ContractModel):
+    """Common recipes are suggestions; an explicit empty selection is valid."""
+
+    success: Literal[True]
+    sections: list[ReportSection]
+    templates: dict[str, list[str]]
+
+
+class ReportCommentary(ContractModel):
+    """Client-authored interpretation, displayed separately from computed values."""
+
+    title: str
+    text: str

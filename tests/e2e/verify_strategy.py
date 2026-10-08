@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import re
 import sys
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -21,6 +24,65 @@ from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
+
+_REPORT_FILES = {
+    "research_report_html": ("html", "report.html"),
+    "research_report_manifest": ("manifest", "manifest.json"),
+}
+
+
+def _report_path(workspace: WorkspacePaths, artifact: dict[str, Any]) -> str:
+    """Require the two fixed content-addressed report paths."""
+    report_id = artifact["metadata"].get("report_id")
+    assert isinstance(report_id, str) and re.fullmatch(r"[0-9a-f]{64}", report_id), (
+        "Report ID must be a SHA-256 digest"
+    )
+    suffix, filename = _REPORT_FILES[artifact["artifact_type"]]
+    assert artifact["artifact_id"] == f"report:{report_id}:{suffix}", (
+        "Report artifact ID differs"
+    )
+    expected = workspace.root
+    for part in ("reports", report_id, filename):
+        expected /= part
+        assert not expected.is_symlink(), "Report path cannot contain symlinks"
+    assert Path(artifact["path"]) == expected, "Report path differs from fixed location"
+    assert expected.resolve().is_relative_to(workspace.root), (
+        "Report path leaves workspace"
+    )
+    return report_id
+
+
+def _verify_reports(
+    workspace: WorkspacePaths, run: dict[str, Any], artifacts: list[dict[str, Any]]
+) -> None:
+    """Independently verify report scope/run linkage and saved hashes."""
+    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    for artifact in artifacts:
+        if artifact["artifact_type"] not in _REPORT_FILES:
+            continue
+        report_id = _report_path(workspace, artifact)
+        grouped.setdefault(report_id, {})[artifact["artifact_type"]] = artifact
+    run_id = run["run_id"]
+    for report_id, pair in grouped.items():
+        assert pair.keys() == _REPORT_FILES.keys(), (
+            "Report must retain HTML and manifest"
+        )
+        html_artifact = pair["research_report_html"]
+        manifest = json.loads(
+            Path(pair["research_report_manifest"]["path"]).read_bytes()
+        )
+        assert manifest["schema_version"] == 1, "Report manifest schema differs"
+        assert manifest["report_id"] == manifest["content_sha256"] == report_id, (
+            "Report digest differs"
+        )
+        assert manifest["run_ids"] == [run_id], "Report run IDs differ"
+        assert manifest["available_scopes"] == {run_id: run["available_scopes"]}, (
+            "Report scopes differ"
+        )
+        content = Path(html_artifact["path"]).read_bytes()
+        assert hashlib.sha256(content).hexdigest() == manifest["html_sha256"], (
+            "Report HTML digest differs"
+        )
 
 
 def verify(root: Path) -> None:
@@ -155,8 +217,14 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     } <= by_type.keys()
     for artifact in artifacts:
         path = Path(artifact["path"])
-        assert path.is_relative_to(workspace.runs)
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"]
+        if artifact["artifact_type"] in _REPORT_FILES:
+            _report_path(workspace, artifact)
+        else:
+            assert path.is_relative_to(workspace.runs)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"], (
+            f"Artifact SHA differs: {artifact['artifact_id']}"
+        )
+    _verify_reports(workspace, run, artifacts)
     assert (
         Path(by_type["strategy_source"]["path"]).read_bytes()
         == Path(spec.source_path).read_bytes()
