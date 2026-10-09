@@ -349,7 +349,7 @@ validation:
     )
     service, _data_service, _strategy_loader, _strategy = _service(tmp_path)
 
-    with pytest.raises(ValueError, match="start_walk_forward"):
+    with pytest.raises(ValueError, match="prepare_walk_forward"):
         service.run_config(config_path)
 
 

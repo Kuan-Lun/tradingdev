@@ -2,37 +2,25 @@
 
 from __future__ import annotations
 
-import html
-import json
 from datetime import UTC, datetime
 from typing import Any
 
+from tradingdev.adapters.presentation.html import (
+    details_html,
+    escape,
+    json_text,
+    pairs_html,
+    render_html_document,
+    value_html,
+)
+from tradingdev.domain.presentation.reports import REPORT_SECTIONS
+
 _STYLE = """
-:root{color-scheme:light;--ink:#172b45;--muted:#5a6d83;--line:#dce5ef}
-*{box-sizing:border-box}body{margin:0;background:#f4f7fb;color:var(--ink);
-font:15px/1.65 system-ui,-apple-system,"PingFang TC",sans-serif}
-main{max-width:1250px;margin:auto;padding:35px 25px 65px}
-h1{font-size:32px;line-height:1.25;margin:10px 0}h2{font-size:22px}
-h3{font-size:17px}header{margin-bottom:25px}p{margin:9px 0}
-section,.panel{background:white;border:1px solid var(--line);border-radius:12px;
-padding:23px;margin-top:20px}.muted,small{color:var(--muted)}
-.notice{border-left:4px solid #c88a21;padding:13px 17px;background:#fff4df}
-.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:15px 0}
-button,select,input{font:inherit;padding:7px 10px;border:1px solid var(--line);
-border-radius:5px;background:white;color:var(--ink)}button{cursor:pointer}
-.scroll{overflow:auto;max-height:620px}table{border-collapse:collapse;width:100%;
-font-size:13px}th,td{padding:9px 11px;border-bottom:1px solid var(--line);
-text-align:left;vertical-align:top}th{white-space:nowrap;background:#edf3fa}
-thead{position:sticky;top:0}td{overflow-wrap:anywhere}pre{white-space:pre-wrap;
-overflow-wrap:anywhere;background:#f4f7fb;padding:12px;font-size:12px}
-code{font-size:12px;overflow-wrap:anywhere}details{margin:8px 0}
-summary{cursor:pointer}.metric{font-variant-numeric:tabular-nums}
+.metric{font-variant-numeric:tabular-nums}
 svg{width:100%;height:auto;display:block}svg text{font-size:12px;fill:#52657a}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:20px}.scope[hidden]{display:none}
-.badge{background:#e8f0fa;padding:3px 8px;border-radius:15px;font-size:12px}
-@media(max-width:750px){main{padding:20px 12px}.two{grid-template-columns:1fr}}
-@media print{body{background:white}.scope[hidden]{display:block}.scroll{max-height:none}
-.controls{display:none}section{break-inside:avoid}}
+@media(max-width:750px){.two{grid-template-columns:1fr}}
+@media print{.scope[hidden]{display:block}}
 """
 _SCRIPT = """
 'use strict';
@@ -104,54 +92,18 @@ document.querySelectorAll('[data-download]').forEach(button=>{
 """
 
 
-def _escape(value: object) -> str:
-    return html.escape(str(value), quote=True)
-
-
-def _json(value: object) -> str:
-    return json.dumps(
-        value, ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2
-    )
-
-
-def _details(title: str, value: object) -> str:
-    return (
-        f"<details><summary>{_escape(title)}</summary>"
-        f"<pre>{_escape(_json(value))}</pre></details>"
-    )
-
-
 def _object(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
-
-
-def _value(value: Any) -> str:
-    if value is None:
-        return "未知／未記錄"
-    if isinstance(value, dict | list):
-        return _escape(_json(value))
-    return _escape(value)
-
-
-def _pairs(values: dict[str, Any]) -> str:
-    return (
-        "<table><tbody>"
-        + "".join(
-            f"<tr><th>{_escape(key)}</th><td>{_value(value)}</td></tr>"
-            for key, value in values.items()
-        )
-        + "</tbody></table>"
-    )
 
 
 def _format_metric(value: Any, unit: str) -> str:
     if value is None:
         return "N/A"
     if isinstance(value, dict):
-        return _escape(_json(value))
+        return escape(json_text(value))
     if isinstance(value, int | float):
         return f"{value:.4%}" if unit == "fraction" else f"{value:,.8g}"
-    return _escape(value)
+    return escape(value)
 
 
 def _metrics(scope: dict[str, Any]) -> str:
@@ -163,9 +115,9 @@ def _metrics(scope: dict[str, Any]) -> str:
         reason = unavailable.get(key, "未記錄原因") if value is None else ""
         description = definition["description"]
         rows.append(
-            f"<tr><th>{_escape(key)}</th><td class='metric'>"
-            f"{_format_metric(value, unit)}</td><td>{_escape(unit)}</td>"
-            f"<td>{_escape(reason)}</td><td>{_escape(description)}</td></tr>"
+            f"<tr><th>{escape(key)}</th><td class='metric'>"
+            f"{_format_metric(value, unit)}</td><td>{escape(unit)}</td>"
+            f"<td>{escape(reason)}</td><td>{escape(description)}</td></tr>"
         )
     note = (
         "折疊摘要為每個 test fold 的描述統計（mean/std/min/max/valid_count），"
@@ -191,7 +143,7 @@ def _chart(
 ) -> str:
     valid = [float(value) for value in values if value is not None]
     if not valid:
-        return f"<p>{_escape(title)}：沒有可繪製的有限數值。</p>"
+        return f"<p>{escape(title)}：沒有可繪製的有限數值。</p>"
     low, high = min(valid), max(valid)
     padding = (high - low) * 0.08 or max(abs(high) * 0.05, 1.0)
     low, high = low - padding, high + padding
@@ -233,14 +185,14 @@ def _chart(
         else f"bar {len(values) - 1}"
     )
     return (
-        f"<h3>{_escape(title)} <small>({_escape(unit)})</small></h3>"
-        f'<svg role="img" aria-label="{_escape(title)}" '
-        f'viewBox="0 0 {width} {height}"><title>{_escape(title)}</title>'
+        f"<h3>{escape(title)} <small>({escape(unit)})</small></h3>"
+        f'<svg role="img" aria-label="{escape(title)}" '
+        f'viewBox="0 0 {width} {height}"><title>{escape(title)}</title>'
         + "".join(lines)
         + paths
-        + f'<text x="{left}" y="{height - 12}">{_escape(first)}</text>'
+        + f'<text x="{left}" y="{height - 12}">{escape(first)}</text>'
         + f'<text x="{width - right}" y="{height - 12}" text-anchor="end">'
-        + _escape(last)
+        + escape(last)
         + "</text></svg>"
     )
 
@@ -333,13 +285,15 @@ def _trades(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
     if not rows:
         return prefix + "<p>本範圍沒有保存交易紀錄。</p>"
     headers = "".join(
-        f"<th><button data-column='{i}'>{_escape(key)}</button></th>"
+        f"<th><button data-column='{i}'>{escape(key)}</button></th>"
         for i, key in enumerate(rows[0])
     )
     body = "".join(
         "<tr>"
         + "".join(
-            f"<td>{_details('原始欄位', value) if key == 'raw' else _value(value)}</td>"
+            "<td>"
+            + (details_html("原始欄位", value) if key == "raw" else value_html(value))
+            + "</td>"
             for key, value in row.items()
         )
         + "</tr>"
@@ -376,14 +330,14 @@ def _saved_table(
     """Render every saved row with reusable search, sorting and dataset-bound CSV."""
     identifier = f"{dataset}-{run_index}-{scope_index}"
     headers = "".join(
-        f"<th><button data-column='{index}'>{_escape(key)}</button></th>"
+        f"<th><button data-column='{index}'>{escape(key)}</button></th>"
         for index, key in enumerate(rows[0])
     )
     body = "".join(
         "<tr>"
         + "".join(
             "<td>"
-            + (_details("原始欄位", value) if key == "raw" else _value(value))
+            + (details_html("原始欄位", value) if key == "raw" else value_html(value))
             + "</td>"
             for key, value in row.items()
         )
@@ -420,7 +374,7 @@ def _stream_unavailable(scope: dict[str, Any], dataset: str) -> str:
         detail = "此保存結果未記錄這個資料流（舊產物亦可能缺少欄位），不能解讀為零筆。"
     return (
         "<p class='notice' data-availability='unavailable'>不可用："
-        + _escape(reason)
+        + escape(reason)
         + "。"
         + detail
         + "報告不重跑策略，也不由交易或權益曲線回推帳戶狀態。</p>"
@@ -579,21 +533,21 @@ def _scope_settings(run: dict[str, Any], scope: dict[str, Any]) -> str:
     data = config.get("data")
     return (
         "<div class='two'><div><h3>資料與實際覆蓋</h3>"
-        + _pairs(coverage)
-        + _details("保存資料來源設定", data)
+        + pairs_html(coverage)
+        + details_html("保存資料來源設定", data)
         + "<p class='notice'>暖機／區間前資料：保存產物沒有標準化暖機證據，"
         "因此未知；不能由第一筆交易日期推定暖機長度。</p></div>"
         + "<div><h3>有效參數與執行設定</h3>"
-        + _pairs(
+        + pairs_html(
             {
                 "parameters": scope["parameters"],
                 "parameter_provenance": scope["parameter_provenance"],
                 "parameters_complete": scope["parameters_complete"],
             }
         )
-        + _pairs(controls)
+        + pairs_html(controls)
         + "</div></div>"
-        + _details("全部保存 scope 中繼資料", scope["metadata"])
+        + details_html("全部保存 scope 中繼資料", scope["metadata"])
     )
 
 
@@ -652,10 +606,10 @@ _LIMITATIONS = (
 def _overview(payload: dict[str, Any]) -> str:
     comparison = payload["default_scope_comparison"]
     result = "".join(
-        f"<p class='notice'>{_escape(note)}</p>" for note in _overlap_warnings(payload)
+        f"<p class='notice'>{escape(note)}</p>" for note in _overlap_warnings(payload)
     )
     for run in payload["runs"]:
-        result += _pairs(
+        result += pairs_html(
             {
                 "run_id": run["identity"]["run_id"],
                 "default_scope": run["default_scope"],
@@ -668,13 +622,13 @@ def _overview(payload: dict[str, Any]) -> str:
             "<h3>保存預設範圍比較</h3><p>保留每個 run 的預設 scope，"
             "不合併或重算績效。comparable 依指標定義與設定判斷，"
             "仍須核對日期及資料差異。</p>"
-            + _pairs(
+            + pairs_html(
                 {
                     "comparable": comparison["comparable"],
                     "context_differences": comparison["context_differences"],
                 }
             )
-            + _details("完整比較與每指標相容性原因", comparison)
+            + details_html("完整比較與每指標相容性原因", comparison)
         )
     return result
 
@@ -685,17 +639,17 @@ def _provenance(payload: dict[str, Any]) -> str:
         identity = run["identity"]
         result += (
             "<h3>"
-            + _escape(identity["run_id"])
+            + escape(identity["run_id"])
             + "</h3>"
-            + _pairs(identity)
-            + _pairs(
+            + pairs_html(identity)
+            + pairs_html(
                 {
                     "manifest_integrity": "verified"
                     if identity["manifest_hash"]
                     else "unknown / legacy"
                 }
             )
-            + _details("Artifact SHA-256 來源", run["provenance"])
+            + details_html("Artifact SHA-256 來源", run["provenance"])
         )
     return result
 
@@ -707,8 +661,8 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
             result += (
                 f"<div class='scope' data-scope='scope-{ri}-{si}'"
                 f"{' hidden' if ri or si else ''}>"
-                f"<h3>{_escape(run['identity']['run_id'])} · "
-                f"{_escape(scope['scope_id'])}</h3>"
+                f"<h3>{escape(run['identity']['run_id'])} · "
+                f"{escape(scope['scope_id'])}</h3>"
             )
             if section == "settings":
                 result += _scope_settings(run, scope)
@@ -733,17 +687,6 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
 
 def render_report(payload: dict[str, Any], report_id: str) -> str:
     """Render chosen built-ins and escaped commentary, with minimal fixed provenance."""
-    titles = {
-        "overview": "總覽",
-        "settings": "設定與資料覆蓋",
-        "metrics": "保存績效指標",
-        "equity": "權益與回撤",
-        "trades": "完整交易紀錄",
-        "executions": "原生執行紀錄",
-        "account_history": "逐根帳戶狀態",
-        "limitations": "假設與限制",
-        "provenance": "版本、資料與來源證據",
-    }
     options = []
     identities = []
     for ri, run in enumerate(payload["runs"]):
@@ -757,8 +700,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         for si, scope in enumerate(run["scopes"]):
             options.append(
                 f"<option value='scope-{ri}-{si}'>"
-                f"{_escape(identity['run_id'])} / "
-                f"{_escape(scope['scope_id'])} ({scope['kind']})</option>"
+                f"{escape(identity['run_id'])} / "
+                f"{escape(scope['scope_id'])} ({scope['kind']})</option>"
             )
     sections = []
     for key in payload["sections"]:
@@ -771,9 +714,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         else:
             content = _scoped_section(payload, key)
         sections.append(
-            f"<section data-section='{key}'><h2>{titles[key]}</h2>"
-            + content
-            + "</section>"
+            f"<section data-section='{key}'>"
+            f"<h2>{escape(REPORT_SECTIONS[key].title)}</h2>" + content + "</section>"
         )
     commentary = ""
     if payload["commentary"]:
@@ -783,22 +725,14 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
             "不將評語視為回測計算證據。</p>"
             + "".join(
                 "<article><h3>"
-                + _escape(note["title"])
+                + escape(note["title"])
                 + "</h3><p style='white-space:pre-wrap'>"
-                + _escape(note["text"])
+                + escape(note["text"])
                 + "</p></article>"
                 for note in payload["commentary"]
             )
             + "</section>"
         )
-    encoded = (
-        _json(payload)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-        .replace("\u2028", "\\u2028")
-        .replace("\u2029", "\\u2029")
-    )
     selector = ""
     if set(payload["sections"]) & {
         "settings",
@@ -813,22 +747,17 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
             "<select id='scope-select'>" + "".join(options) + "</select>"
             "<p class='muted'>切換選取章節的範圍；列印時展開全部範圍。</p></div>"
         )
-    return (
-        "<!doctype html><html lang='zh-Hant'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
-        "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;\">"
-        "<title>TradingDev · 保存回測報告</title><style>" + _STYLE + "</style>"
-        "</head><body><main><header><span class='badge'>"
+    body = (
+        "<header><span class='badge'>"
         "TRADINGDEV · SAVED EVIDENCE</span><h1>保存回測研究報告</h1>"
         "<p>資料取自已驗證 JSON 產物；不重跑策略、不載入 pickle，"
         "也不讀取目前策略設定。僅顯示呼叫端選取的章節；未選取章節不表示資料不存在。</p>"
-        f"<p class='muted'>Report SHA-256 <code>{report_id}</code></p>"
-        + _pairs(
+        f"<p class='muted'>Report SHA-256 <code>{escape(report_id)}</code></p>"
+        + pairs_html(
             {
                 "selected_sections": payload["sections"],
                 "omitted_sections": [
-                    key for key in titles if key not in payload["sections"]
+                    key for key in REPORT_SECTIONS if key not in payload["sections"]
                 ],
                 "source_identities": identities,
             }
@@ -839,7 +768,13 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         + commentary
         + "<footer><p class='muted'>獨立 reports 目錄的 JSON manifest "
         "保存 HTML SHA-256、"
-        "章節與評語；原回測產物不改寫。原始資料保留於內嵌 JSON。</p></footer></main>"
-        "<script id='report-data' type='application/json'>" + encoded + "</script>"
-        "<script>" + _SCRIPT + "</script></body></html>"
+        "章節與評語；原回測產物不改寫。原始資料保留於內嵌 JSON。</p></footer>"
+    )
+    return render_html_document(
+        title="TradingDev · 保存回測報告",
+        body=body,
+        style=_STYLE,
+        script=_SCRIPT,
+        data=payload,
+        data_id="report-data",
     )

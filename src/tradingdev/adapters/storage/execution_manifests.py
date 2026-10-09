@@ -6,13 +6,18 @@ import hashlib
 import json
 import os
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
+from filelock import FileLock
+
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
@@ -81,6 +86,18 @@ class ExecutionManifestStore:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         return path
+
+    @contextmanager
+    def submission_lock(self, run_id: str) -> Iterator[None]:
+        """Serialize job publication and launch; retain the lock inode for waiters."""
+        path = self.path(run_id).with_name(".submission.lock")
+        if path.is_symlink():
+            raise ManifestError("Execution submission lock must not be a symlink")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # This coordinates submitters; it is not a filesystem/SQLite transaction.
+        with FileLock(path, timeout=30):
+            self.path(run_id)
+            yield
 
     def load(
         self,

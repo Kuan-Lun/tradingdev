@@ -22,7 +22,12 @@ from tests.e2e.codex_harness import verify_generated_strategy
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.e2e.test_llm_workflows import assert_workflow
-from tests.integration.mcp_harness import MCPWorkspace, temporary_mcp_workspace
+from tests.integration.execution_fixtures import execution_options
+from tests.integration.mcp_harness import (
+    MCPWorkspace,
+    SimulatedUserApproval,
+    temporary_mcp_workspace,
+)
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.report_service import ReportService
@@ -117,7 +122,8 @@ async def _complete_workflow(
     workspace: MCPWorkspace, scenario: Scenario
 ) -> CompletedWorkflow:
     calls: list[ToolCall] = []
-    async with workspace.connect() as client:
+    approval = SimulatedUserApproval()
+    async with workspace.connect(elicitation_callback=approval) as client:
 
         async def call(name: str, **arguments: Any) -> Any:
             result = await client.call(name, **arguments)
@@ -157,17 +163,23 @@ async def _complete_workflow(
                 name, strategy_id=scenario.strategy_id, revision_id=saved["revision_id"]
             )
             assert result["success"], result
-        started = await call(
-            "start_backtest",
+        prepared = await call(
+            "prepare_backtest",
             strategy_id=scenario.strategy_id,
             revision_id=saved["revision_id"],
             symbol="BTC/USDT",
             timeframe="1h",
             start_date="2024-01-01",
             end_date="2024-01-08",
+            **execution_options(scenario.parameters),
             **({"parameters": scenario.overrides} if scenario.experiment else {}),
         )
+        assert prepared["success"], prepared
+        started = await call(
+            "request_execution_confirmation", plan_id=prepared["plan_id"]
+        )
         assert started["job_id"], started
+        assert len(approval.requests) == 1
         finished = await client.wait_for_job(started["job_id"])
         assert finished["status"] == "done", finished
         await call("get_job_status", job_id=started["job_id"])

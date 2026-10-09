@@ -39,6 +39,11 @@ workspace/
       dataset_fingerprint.json
       pipeline_result.pkl
   feature_requests/
+  execution_plans/
+    <plan_id>/
+      confirmation.txt
+      confirmation.html
+      .approval.lock
   reports/
     <report_id>/
       report.html
@@ -60,6 +65,9 @@ workspace/
   execution `manifest_hash`.
 - `artifacts`: run and non-run artifact metadata, path, sha256, and metadata JSON.
 - `events`: job-scoped structured events.
+- `execution_plans`: immutable plan payload, independent approval state,
+  active confirmation token, submitted job ID, error, and the saved text/HTML
+  digests. The plan payload includes its manifest, preflight evidence and document.
 
 `job_id` and `run_id` are currently the same for completed backtest and
 optimization jobs. `get_job_status(job_id)` returns the `run_id` once a run is
@@ -77,12 +85,27 @@ or migrate old revisions. The per-strategy `.locks` files coordinate saves,
 validation, status updates and cleanup; they stay outside deletable revision
 directories and are never unlinked while another process might use their inode.
 
-Successful `start_backtest`, `start_walk_forward`, and `start_optimization`
-responses include the required `manifest_hash`. Job status, job lists, and run
+Successful MCP `prepare_backtest`, `prepare_walk_forward`, and
+`prepare_optimization` responses include the required `manifest_hash` and a
+`plan_id`; they do not create a job. `request_execution_confirmation` returns the
+job ID only after the client accepts the confirmation form. Job status, job lists, and run
 records carry the same digest; historical entries without an execution manifest
 return `null`. Historical results remain readable, but old jobs cannot resume
-through the new workers or proceed through optimization confirmation. Submit a
-new job to execute them under a fixed specification.
+through the new workers. Prepare a new plan to execute through MCP under a fixed
+specification. The old MCP `start_backtest`, `start_walk_forward`,
+`start_optimization` and `confirm_optimization` tools are removed.
+
+Persisted legacy jobs with `status: pending_confirmation` are incompatible with
+the current job response contracts and are not migrated. `get_job_status` and
+`cancel_job` reject their responses at the MCP boundary; even one such record
+causes the entire `list_jobs` response to fail validation. Preparing another plan
+in the same workspace does not repair those records. After using the version that
+created the jobs to stop its workers and server and verify cleanup, preserve the
+old workspace at its original location and configure the new MCP server with a
+fresh `--workspace` directory. Do not copy the old SQLite database or worker
+control files into it. The new workspace does not automatically import strategies
+or history; old result files remain in the preserved workspace. This is a new
+workspace recovery path, not an in-place migration or resumption of old jobs.
 
 `.workers/<launch_token>` stores the startup identity, worker startup response,
 optional cancellation request (`stop`), and final cleanup acknowledgement. These
@@ -103,7 +126,7 @@ Before spawning a background worker, the service publishes
 `runs/<job_id>/manifest.json` and records its hash in the job. Publication never
 replaces a different existing manifest. Atomic publication applies to the manifest
 file; file publication and the database job write do not form one transaction.
-Schema version 4 contains:
+Schema version 5 contains:
 
 - `kind`: `backtest`, `walk_forward`, or `optimization`.
 - `config`: the effective strategy identity and source hash, backtest settings,
@@ -117,12 +140,16 @@ Schema version 4 contains:
   object and are supplied from the manifest's execution configuration.
 - `optimization`: `null` for other kinds; otherwise the parameter ranges,
   optimization metric, `train_start`/`train_end`/`test_start`/`test_end`,
-  catalog-defined `direction: maximize|minimize`, `trial_timeout_seconds: 300`,
-  `confirmation_timeout_seconds: 1800`, and `confirmation_poll_interval: 2.0`.
-  These timeout and polling values are fixed at submission. Parameter names are
+  catalog-defined `direction: maximize|minimize`, and `trial_timeout_seconds: 300`.
+  This timeout is fixed at preparation and limits only the first training
+  candidate used to estimate the formal search duration. Remaining candidates
+  and held-out evaluation do not use that deadline. It is separate from the
+  complete preflight-process budget. Parameter names are
   sorted; the caller's candidate order within each range is preserved.
+  Confirmation timeout/polling fields are removed: the worker no longer owns
+  the user-confirmation interaction.
 - `manifest_hash`: SHA-256 of canonical JSON over all the preceding fields and
-  `schema_version: 4`, excluding the hash field itself. Object keys are sorted;
+  `schema_version: 5`, excluding the hash field itself. Object keys are sorted;
   job IDs and creation timestamps are not part of the specification.
 
 Typed backtest, walk-forward, parallel, and data defaults have the same digest
@@ -152,11 +179,12 @@ the caller explicitly supplied a particular override key.
 
 Nested optimization candidates override only their specified leaves, preserving
 the remaining fixed values; candidate structure and bundled model contracts are
-validated before creating a job without constructing each candidate. Submission
+validated before creating a job without constructing each candidate. Preparation
 also constructs generated strategies with the base execution parameters and runs
-80- and 240-row signal-contract fixtures in the calling process before job creation,
-even without parameter overrides. Worker supervision and trial timeouts do not
-cover these submission-time checks. Each generated candidate is checked again
+80- and 240-row signal-contract fixtures, even without parameter overrides.
+MCP preparation places these checks in the supervised preflight subprocess and
+includes them in the preparation time budget. Direct application-service/CLI
+execution does not acquire that MCP-specific preparation deadline. Each generated candidate is checked again
 with its own parameters in the worker; constructor or execution errors can still
 occur during the trial. Unsupported defaults or
 candidates requiring new implicit fields are rejected. Integer candidates for
@@ -178,16 +206,16 @@ Manifest decoding preserves stored JSON without reapplying today's config defaul
 Before execution, current runtime models must accept the saved config and effective
 strategy settings without adding fields or changing values. New required/defaulted
 fields or incompatible normalization cause execution to fail, not reinterpret the
-request. Schema version 4 requires the version, effective strategy fields,
+request. Schema version 5 requires the version, effective strategy fields,
 performance settings, the fixed optimization direction, and the canonical
-top-level `random_seed`; versions 1/2/3 or unknown versions require a new submission. No manifest is migrated
+top-level `random_seed`; versions 1/2/3/4 or unknown versions require a new submission. No manifest is migrated
 in place, and historical result metadata remains readable.
 
 Workers receive only a job ID and load this fixed manifest path. They verify the
 supported schema, content digest, expected job hash, and strategy/mode identity
-before execution. Optimization confirmation and result persistence verify the
+before execution. Plan confirmation and result persistence verify the
 same binding. Missing, modified, or unsupported manifests fail execution;
-confirmation returns `execution_manifest_invalid`. Changing the original YAML,
+plan confirmation refuses to submit invalid content. Changing the original YAML,
 the current strategy pointer, or the neighboring `config.yaml` does not redefine
 the submitted request. A changed request requires a new job.
 
@@ -206,6 +234,152 @@ fingerprints do not make those inputs immutable or guarantee identical results
 on a later run. Integrity verification assumes the job's expected digest remains
 trusted; it is not a security boundary against someone controlling both the
 database and workspace files.
+
+## Execution Plans and Confirmation Documents
+
+`ExecutionPlan` schema version 1 binds a unique 32-character `plan_id`, the full
+execution manifest, `original_config_path`, `PreflightReceipt`,
+`ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
+The hash covers canonical JSON of every field except itself. The document and
+preflight hashes must identify the same manifest; the document also identifies
+the same plan. Plans currently expire one hour after preparation. The content
+does not change when approval state changes.
+
+`PreflightService` runs preparation and sample execution in a supervised child
+with a default 60-second budget, including imports, configuration resolution,
+generated signal-contract checks, sample data acquisition, engine execution and
+result serialization. Process cleanup has its own deadline. Success is returned
+only after verified worker cleanup. The request supplies
+`minimum_history_bars` and `sample_bars` (default 1024, allowed 64–4096), with
+the minimum required history bounded by that total budget. Every actual sample
+window must satisfy the declared history requirement. A split execution needs
+enough total budget for its training and test windows separately.
+
+The sample uses the selected market-data pipeline and effective settings.
+It searches bounded calendar windows within the requested dates, continuing
+past empty market-closure windows until it reaches the bar budget or end date.
+Cached Parquet data is read in batches, interpreting timezone-naive timestamps
+as UTC just like ordinary loading. Feature caches project only the timestamp
+and requested value column, retaining exact matches to selected market bars.
+Join cardinality is checked before materializing duplicate-key expansions;
+exact left joins and forward/backward fill keep the ordinary loading semantics.
+Sampling does not rewrite source market or feature caches.
+
+Each crawler implements `fetch_sample(..., max_rows=...)` independently of full
+history loading, enforcing bounds before constructing sample frames and honoring
+inclusive endpoints, including a single timestamp. Custom providers must also
+implement this method. API paths use bounded pages or time windows; Yahoo and
+Deribit streamed JSON responses have a 4 MiB ceiling. Streamed sample requests
+reject redirects and extra HTTP compression before reading the body, avoiding
+client buffering or decoding before the size checks. Binance Vision
+prefers daily archives, falling back to a monthly archive on a missing daily
+file. Downloads stream into spooled temporary files with identity HTTP encoding.
+Each selected CSV is scanned in batches of at most 1024 rows, retaining only
+the earliest requested bars even when stored rows are out of order. Later-date
+archives are not read once the output budget is satisfied. Downloads are limited
+to 16 MiB per archive and 32 MiB per `fetch_sample` call; declared CSV expansion
+is limited to 128 MiB. Exceeding a limit fails preparation.
+An archive is still downloaded in full before parsing, so sample bar counts do
+not imply proportionate network traffic. These are application-level resource
+controls, not an operating-system memory limit or a Python sandbox.
+Backtests sample one window; walk-forward samples one train/test fold;
+optimization samples its first candidate on both training and held-out periods.
+Temporary sample results, data and tool caches live in an independent temporary
+directory, outside regular run history. The child's `TMPDIR`, `TMP` and `TEMP`
+also point inside that directory, containing standard temporary files created
+by third-party model training without changing the parent's environment.
+Successful, failed and timed-out workers
+are stopped and verified before their files are deleted. If process cleanup
+cannot be verified, the directory is retained and the operation reports failure;
+file cleanup failure is also an error. No successful sample publishes a regular
+job or run. This process supervision is not a complete generated-Python sandbox.
+
+The receipt records:
+
+- `manifest_hash`, elapsed seconds, requested/used sample bars and declared
+  minimum history;
+- `data_origin: market_data`, provider ID, and actual `windows` with role,
+  start/end timestamps and row count;
+- `checked_paths`: backend-issued check codes for configuration, signals,
+  actual engine execution and serialization, plus generated signal-contract
+  checks, walk-forward fitting or optimization candidate binding when applicable;
+- observed trade count, optional native execution-record count and whether the
+  sample exercised the trading path;
+- tested/total fold or candidate counts, and explicit coverage warnings.
+
+`market_data` means the configured data pipeline was used. Offline tests may
+substitute the provider; their receipts do not prove live external-market
+verification. Zero trades alone do not fail preparation: the document says the
+engine completed but this sample did not cover the strategy's trade/cost path.
+Optimization additionally requires the first candidate's sampled training
+objective to be available and finite. Otherwise preparation fails with
+`unrankable_sample_objective`, even if another candidate or the full training
+period could yield a rankable value. Enlarge the sample within its allowed budget
+or revise the settings and prepare again. A zero-trade sample can therefore fail
+when the selected objective cannot be calculated without trades.
+The document also states that remaining dates, folds and candidate combinations
+may still fail during full execution. Sample success is not a profitability claim.
+
+`ConfirmationPresentation` accepts only model-authored title, summary and
+`parameter_descriptions`. Description keys are JSON pointers relative to captured
+constructor arguments; each value contains a label, explanation and optional
+unit, never an executable parameter value. Labels must distinguish values and
+cover every scalar, null or empty-container leaf, including nested bundled
+`config`/`fit_config` and the union of effective optimization candidate leaves.
+Candidate presentation and strategy loading share the same pure parameter merge:
+partial objects preserve unnamed captured fields, empty objects preserve an
+existing object, and non-object values replace the complete entry. Each search
+group displays its merged candidate values; it does not present a partial
+override as a complete replacement. Missing or
+extra descriptions return `invalid_confirmation_presentation` with
+`required_parameter_paths`, allowing the model to repair wording without changing
+the source revision. Model units do not rescale captured values.
+
+The backend builds a typed document with fixed strategy, market, parameters,
+execution, validation, optimization, preflight and limitations sections.
+Non-applicable sections remain explicit. Known cost/rate semantics have backend
+formatters; unknown effective setting fields fail preparation rather than being
+silently omitted. Model explanations are labelled separately from backend
+values and successful-check evidence. Parameter/settings keys and YAML are not
+the user interface. Both text and HTML render the same document; technical
+identity and file paths are outside the main explanation, in HTML details and
+machine metadata. The HTML is offline, escapes text and disables scripts.
+
+`execution_plans/<plan_id>/confirmation.txt` and `confirmation.html` preserve the
+reviewable documents. The HTML is registered as `execution_confirmation` under
+`<plan_id>:confirmation_html`, without a run ID. Reads verify plan identity and
+both saved file digests. File publication and SQLite updates are separate
+resources; publication rolls back its new directory on handled failure.
+
+Plan states are `ready`, `awaiting_confirmation`, `submitting`, `submitted`,
+`cancelled`, or `failed`. A retained `.approval.lock` and state comparison
+serialize transitions; only one confirmation can be active. Confirmation checks
+expiry and current executable-source integrity before asking and again before
+submitting. A live server-owned challenge binds the response to the same plan
+content; a model-supplied boolean is not an approval credential. Repeating a
+successful submission returns its original job ID rather than launching twice.
+The deterministic job ID equals the plan ID. If worker launch succeeds but the
+final `submitted` state write fails, the response still identifies that job and
+warns about the pending state update. Plan lookup retains `submitting` and exposes
+the job ID. A later confirmation request can reconcile an existing job only when
+its manifest matches and it has a complete worker-control identity; it records
+`submitted` and returns the same job without another launch. Failed launches or
+queued records lacking that identity remain inspectable through the returned job
+ID but are not reported as successfully started work.
+
+`request_execution_confirmation` requires advertised MCP form elicitation.
+Only an accepted response with the explicit approval field set to true submits
+the fixed manifest. Unsupported clients, declined/cancelled forms and malformed
+responses never launch work. Each form response has a separate 300-second
+(five-minute) deadline, independent of the plan's one-hour lifetime. A form timeout
+returns `confirmation_failed`, launches no job and releases the active interaction
+back to `ready`; the user can request confirmation again while the plan remains
+valid. Protocol errors likewise release the interaction; a rejected form cancels
+the plan. The server relies on
+the client to present the form to the user and cannot prove arbitrary clients
+obtained a human decision. Source or effective-setting changes require a new
+plan, fresh sample evidence and another confirmation. CLI commands are explicit
+execution requests and do not use this MCP interaction.
 
 ## MCP Lookup
 
@@ -303,8 +477,10 @@ Optimization `result.json` includes the best parameters, training metrics,
 out-of-sample metrics, objective and fixed direction. Its complete numerical
 projection remains in SQLite; `get_run` and completed `get_job_status` select a
 summary at read time, so their `metrics` are not the entire `result.json` payload.
-Parameters outside the search grid retain their YAML values; selection
-uses training results, and only the selected parameters are evaluated out of
+Parameters outside the search grid retain the effective base values captured in
+the manifest, including constructor defaults and any `parameters` overrides
+applied during preparation. Selection uses training results, and only the selected
+parameters are evaluated out of
 sample. Every training trial retains its full result in the performance and
 observation artifacts; selection references the saved winning trial without
 discarding other trials.

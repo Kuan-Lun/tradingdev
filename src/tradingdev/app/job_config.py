@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from tradingdev.app.strategy_service import StrategyNotExecutableError
+from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.strategies.schemas import StrategyMetadata
 
 if TYPE_CHECKING:
@@ -123,3 +124,22 @@ def apply_run_overrides(
             if isinstance(market, dict):
                 market.update(symbol=symbol, timeframe=timeframe)
     return effective_config
+
+
+def apply_backtest_overrides(
+    config: dict[str, Any], overrides: dict[str, Any] | None
+) -> None:
+    """Apply explicit execution settings without changing revision declarations."""
+    if overrides is None:
+        return
+    allowed = BacktestConfig.model_fields.keys() - {
+        "symbol",
+        "timeframe",
+        "start_date",
+        "end_date",
+    }
+    unknown = overrides.keys() - allowed
+    if unknown:
+        raise ValueError(f"Unknown backtest overrides: {', '.join(sorted(unknown))}")
+    config["backtest"].update(deepcopy(overrides))
+    BacktestConfig.model_validate(config["backtest"])

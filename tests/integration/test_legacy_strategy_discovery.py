@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.integration.execution_fixtures import execution_options
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -102,14 +104,15 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
             assert rejected["success"] is False
             assert rejected["code"] == "strategy_revision_required"
         rejected_run = await client.call(
-            "start_backtest",
+            "prepare_backtest",
             strategy_id=_LEGACY_ID,
             symbol="BTC/USDT",
             timeframe="1h",
             start_date="2024-01-01",
             end_date="2024-01-02",
+            **execution_options({}),
         )
-        assert rejected_run["job_id"] == ""
+        assert rejected_run["success"] is False
         assert rejected_run["code"] == "strategy_not_executable"
         assert await client.call("list_jobs") == []
         missing_revision = await client.call(

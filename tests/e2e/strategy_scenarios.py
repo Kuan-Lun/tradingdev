@@ -39,7 +39,7 @@ class Scenario:
         else:
             preparation = "請先查詢策略清單。"
         experiment = (
-            f"本次為參數實驗：start_backtest 必須額外傳 parameters={self.overrides}。"
+            f"本次為參數實驗：prepare_backtest 必須額外傳 parameters={self.overrides}。"
             "沿用剛通過 dry-run 的 revision_id；不得為這次參數修改另存 revision，"
             "原 YAML 基礎參數保持不變。"
             if self.experiment
@@ -69,14 +69,21 @@ mode=signal、fees=0、slippage=0、periods_per_year=365。
 random_seed=42 放在 YAML 頂層，與 strategy、backtest 同層。
 data.requirements.features 為空。
 完成 save_strategy、validate_strategy、dry_run_strategy；若有錯誤請讀取診斷修正，
-每次 save 取得的新 revision_id 必須傳給 validate、dry-run 與 start_backtest，
+每次 save 取得的新 revision_id 必須傳給 validate、dry-run 與 prepare_backtest，
 確認各工具回覆的 revision_id 一致，直到 runnable。不 promote。
 啟動前核對 validate／dry-run 回覆的 effective_config 與上述所有設定一致；
 若不一致，修改 YAML 後重新 save、validate、dry-run，不可直接接受預設值。
-接著你必須親自透過 MCP start_backtest 啟動這個策略，
+接著透過 MCP prepare_backtest 準備這個策略的執行計畫，
 symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
+minimum_history_bars=20、sample_bars=128；presentation 必須提供中文 title、summary，
+及 parameter_descriptions；以每個建構子參數的 JSON pointer 為 key
+（例如 /fast_period、/slow_period 或 /lookback），各自提供 label、description、unit。
+說明每個參數的白話意義與單位，不要把程式識別字當作唯一說明。
 {experiment}
 本次行情已預先放入後端快取，不下載行情、不使用外部資料。
+取得 success=true、status=ready 的 plan_id 後，呼叫
+request_execution_confirmation(plan_id)。這會向測試客戶端的模擬使用者提出確認，
+不能自行傳 approved 或 confirmed。收到成功且非空 job_id 後才查詢正式工作。
 持續 get_job_status 查詢直到 done，再以回傳的 run_id 呼叫 get_run，
 以及 list_artifacts。一般回覆只有摘要；接著呼叫 get_metric_catalog(mode=signal)，
 再以 get_run_metrics 查同一 run_id 的 daily_pnl_mean、total_volume、n_days，

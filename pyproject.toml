@@ -80,6 +80,11 @@ module = ["empyrical.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# Locked PyArrow 20.0.0 has no py.typed marker or stubs for the sample scanner.
+module = ["pyarrow", "pyarrow.dataset"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = [
     "vectorbt.*",
     "ccxt.*",

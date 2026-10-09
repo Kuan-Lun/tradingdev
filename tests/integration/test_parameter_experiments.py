@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
+from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.mcp_harness import SimulatedUserApproval
 from tests.integration.test_mcp_protocol import (
     RUN_ARGUMENTS,
     STRATEGY_ID,
@@ -31,7 +33,9 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
     walk_forward: bool,
 ) -> None:
     mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         code, yaml_config, saved = await save_example(client)
         if walk_forward:
             config = yaml.safe_load(yaml_config)
@@ -56,17 +60,18 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
             ]
         }
         revisions = set((root / "revisions").iterdir())
-        tool = "start_walk_forward" if walk_forward else "start_backtest"
+        tool = "prepare_walk_forward" if walk_forward else "prepare_backtest"
         hashes = set()
         for fast_period in (2, 5):
-            started = await client.call(
+            prepared = await client.call(
                 tool,
                 **RUN_ARGUMENTS,
                 revision_id=revision_id,
                 parameters={"fast_period": fast_period},
+                **execution_options({"fast_period": fast_period, "slow_period": 8}),
             )
+            started = await confirm_prepared(client, prepared)
             assert started["job_id"], started
-            assert started["revision_id"] == revision_id
             hashes.add(started["manifest_hash"])
             done = await client.wait_for_job(started["job_id"])
             assert done["status"] == "done", done
@@ -94,8 +99,9 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
             **RUN_ARGUMENTS,
             revision_id=revision_id,
             parameters={"unknown_parameter": 1},
+            **execution_options({"fast_period": 3, "slow_period": 8}),
         )
-        assert rejected["job_id"] == "", rejected
+        assert rejected["success"] is False, rejected
         assert rejected["code"] == "invalid_execution_request"
         assert {job["job_id"] for job in await client.call("list_jobs")} == {
             job["job_id"] for job in jobs_before

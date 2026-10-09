@@ -11,12 +11,12 @@ import pytest
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
-from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
-from tradingdev.mcp.tools import jobs, optimization
+from tradingdev.mcp.tools import jobs
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -61,7 +61,6 @@ def test_job_output_rejects_unknown_fields_and_invalid_state(
         "downloading_data",
         "running_backtest",
         "estimating",
-        "pending_confirmation",
         "optimizing",
         "testing_oos",
         "done",
@@ -150,59 +149,33 @@ def test_cancel_contract_does_not_claim_success_when_identity_missing(
     assert persisted is not None and persisted["status"] == "running_backtest"
 
 
-def test_confirmation_returns_structured_failure_for_unversioned_job(
-    job_service: JobService,
-) -> None:
-    store = job_service._job_store
-    store.create_job(job_id="legacy", job_type="optimization")
-    store.update_job("legacy", status="pending_confirmation")
-    server = FastMCP("contract-test")
-    optimization.register(server, OptimizationService(job_store=store), job_service)
-
-    result = asyncio.run(server.call_tool("confirm_optimization", {"job_id": "legacy"}))
-
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
-    assert not payload["success"]
-    assert payload["code"] == "execution_manifest_invalid"
-    persisted = store.get_job("legacy")
-    assert persisted is not None
-    assert persisted.get("confirmed") is not True
+def test_old_confirmation_tool_is_no_longer_registered(job_service: JobService) -> None:
+    server = FastMCP("retired-confirmation")
+    jobs.register(server, job_service)
+    with pytest.raises(ToolError, match="Unknown tool"):
+        asyncio.run(server.call_tool("confirm_optimization", {"job_id": "legacy"}))
 
 
 @pytest.mark.parametrize("metric", ["max_drawdown", "daily_pnl_mean"])
-def test_start_optimization_exposes_catalog_objective_direction_through_mcp(
-    job_service: JobService, monkeypatch: pytest.MonkeyPatch, metric: str
+def test_optimization_preparation_preserves_catalog_objective_direction(
+    job_service: JobService, metric: str
 ) -> None:
     store = job_service._job_store
-    server = FastMCP("optimization-direction")
-    optimization.register(server, OptimizationService(job_store=store), job_service)
-    monkeypatch.setattr(
-        ProcessRunner,
-        "spawn_module",
-        lambda *args: WorkerHandle(2468, 100.0, "a" * 32),
+    prepared = OptimizationService(job_store=store).prepare_optimization(
+        strategy_id="kd_crossover",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        param_ranges={"k_period": [3, 5]},
+        optimization_metric=metric,
+        train_start="2024-01-01",
+        train_end="2024-01-03",
+        test_start="2024-01-04",
+        test_end="2024-01-07",
     )
-    result = asyncio.run(
-        server.call_tool(
-            "start_optimization",
-            {
-                "strategy_id": "kd_crossover",
-                "symbol": "BTC/USDT",
-                "timeframe": "1h",
-                "param_ranges": {"k_period": [3, 5]},
-                "optimization_metric": metric,
-                "train_start": "2024-01-01",
-                "train_end": "2024-01-03",
-                "test_start": "2024-01-04",
-                "test_end": "2024-01-07",
-            },
-        )
-    )
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    assert isinstance(prepared, PreparedExecution), prepared
     expected = "minimize" if metric == "max_drawdown" else "maximize"
-    assert payload["direction"] == expected
-    assert payload["optimization_metric"] == metric
-    manifest = store.load_manifest(payload["job_id"])
+    manifest = prepared.manifest
     assert manifest.optimization is not None
+    assert manifest.optimization.optimization_metric == metric
     assert manifest.optimization.direction == expected
+    assert store.list_all_jobs() == []

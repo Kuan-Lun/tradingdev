@@ -15,7 +15,7 @@ class SaveStrategyInput(BaseModel):
 
 
 class BacktestInput(BaseModel):
-    """Input contract for starting a backtest-like job."""
+    """Input contract for preparing a backtest-like execution."""
 
     strategy_id: str
     revision_id: str | None = None
@@ -24,10 +24,11 @@ class BacktestInput(BaseModel):
     start_date: str
     end_date: str
     parameters: dict[str, JsonValue] | None = None
+    backtest_overrides: dict[str, JsonValue] | None = None
 
 
 class OptimizationInput(BaseModel):
-    """Input contract for starting parameter optimization."""
+    """Input contract for preparing parameter optimization."""
 
     strategy_id: str
     revision_id: str | None = None
@@ -39,3 +40,5 @@ class OptimizationInput(BaseModel):
     train_end: str
     test_start: str
     test_end: str
+    parameters: dict[str, JsonValue] | None = None
+    backtest_overrides: dict[str, JsonValue] | None = None

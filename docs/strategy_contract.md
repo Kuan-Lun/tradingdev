@@ -257,12 +257,21 @@ data:
    marks the strategy runnable when it passes.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
-5. `start_backtest` / `start_walk_forward` / `start_optimization`: execute only
-   runnable or promoted generated strategies, and promoted bundled strategies.
-   The gate is enforced
-   again at execution time inside `BacktestService`, so the CLI and subprocess
-   workers cannot bypass the lifecycle, and the config's `source_path` must
-   match the selected revision's source.
+5. `prepare_backtest` / `prepare_walk_forward` / `prepare_optimization`: capture
+   an execution manifest, perform a bounded sample run, and prepare a plain-language
+   confirmation and HTML artifact. Only runnable or promoted generated strategies,
+   and promoted bundled strategies, are eligible. Preparation creates a plan,
+   without creating a formal job or run.
+6. `request_execution_confirmation(plan_id)`: asks the MCP client to show a form
+   with an unchecked approval field. Only an accepted form with `approved: true`
+   submits the captured manifest. Decline, cancellation, timeout, malformed responses,
+   and clients without form elicitation do not launch a job. The server trusts the
+   client to obtain the user's response; a model-supplied approval argument is not
+   accepted. The CLI remains an explicit execution interface without this MCP form.
+
+The lifecycle gate is enforced again at execution time inside `BacktestService`,
+so the CLI and subprocess workers cannot bypass it, and the config's `source_path`
+must match the selected revision's source.
 
 Pass the `revision_id` returned by saving to get, validate, dry-run, promote,
 and execution tools. Omitting it selects current once at the start of that
@@ -275,7 +284,7 @@ validation and dry-run records for the selected revision. Editing revision files
 directly invalidates them; repair through a new save. An unknown explicit
 revision never falls back to current. Submitted jobs, worker configs, completed
 runs and strategy source artifacts remain tied to the selected revision when
-current changes, including during optimization confirmation.
+current changes, including while a prepared plan awaits confirmation.
 
 `cleanup_strategy_drafts(strategy_id, revision_ids=None, apply=False)` previews
 retention decisions. Applying requires an explicit nonempty `revision_ids` list
@@ -302,13 +311,14 @@ making a repeat apply safe. Omitting IDs on apply returns `cleanup_revision_ids_
 an untrustworthy reference scan or lock failure returns `strategy_cleanup_blocked`.
 No background cleanup, automatic revision merging or migration occurs.
 
-Each submission also fixes an execution manifest containing that strategy
+Each preparation fixes an execution manifest containing that strategy
 identity, source hash, effective config with defaults, and any optimization
 search specification. Effective constructor values, including nested bundled
 parameter/fit-model defaults, are stored separately in `strategy_execution` and
-consumed without filling new defaults in the worker. The start response returns
-its `manifest_hash`, which
-also appears on job status and completed runs. Workers recheck the manifest
+consumed without filling new defaults in the worker. The preparation and approval
+responses return the same `manifest_hash`, which also appears on job status and
+completed runs. Approval rechecks captured source and configuration integrity.
+Workers recheck the manifest
 against the submitted job and recheck strategy eligibility before execution.
 Changing a separate runtime YAML after submission does not change the job;
 submit a new job to change execution settings. The run's `config.yaml` is an
@@ -324,13 +334,16 @@ and checking a new revision, even if identity and parameters are unchanged.
 The comparison excludes the execution-managed `source_hash` and separately
 verifies that `source_path` resolves to the selected revision's source. Copy the
 saved config and apply market/date/cost changes outside the `strategy` section.
-MCP `start_backtest` and `start_walk_forward` accept a `parameters` mapping;
+MCP `prepare_backtest`, `prepare_walk_forward`, and `prepare_optimization` accept
+a `parameters` mapping;
 overrides apply to the captured effective base parameters, including constructor
 defaults. When both existing and supplied values are mappings, they merge
 recursively; other values replace the specified parameter. At each merge level,
 supplied keys must already exist in the captured mapping. A constructor accepting
 `**kwargs` does not allow an override to introduce new keys. Unknown keys return
-`invalid_execution_request` without creating a job. CLI configs instead provide
+`invalid_execution_request` for backtest/walk-forward preparation or
+`invalid_optimization_request` for optimization preparation, without creating
+a job. CLI configs instead provide
 their complete experiment parameters, which must satisfy constructor binding
 and the execution checks.
 The base source, YAML, lifecycle evidence and current pointer remain unchanged.
@@ -339,20 +352,41 @@ Short and long signal-contract fixtures check the effective generated execution
 settings at submission and execution, including when MCP `parameters` is omitted
 or `null`; a failure rejects the experiment without changing the revision's
 status. Static checks remain bound to the verified source.
-Optimization may override only its search parameters, retaining all other base
-parameters and all other saved strategy settings. Nested parameter candidates
+Optimization search candidates override only their selected parameters, retaining
+all other captured base parameters and saved strategy settings. Nested candidates
 recursively override only the specified fields of the fixed effective base;
 other nested fields retain their captured values. Validation evidence covers
 the base parameters; generated optimization candidates also pass the short and
 long signal-contract fixtures before execution. Optimization fixes candidate lists,
 metric, calendar training/test ranges, the metric's minimization or maximization
-direction, and confirmation
-policy in the manifest. A config with `validation` settings cannot also request
+direction in the manifest. Version 5 does not contain an in-worker confirmation
+wait policy: the user approves the complete search before its worker starts.
+A config with `validation` settings cannot also request
 optimization; choose walk-forward or supply a config using the optimization
 training/test split alone. The complete request does not freeze imported Python
 dependencies, the engine environment, market data, or RNG state, and therefore
 does not guarantee fully reproducible results. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
+
+Every preparation requires `presentation` and `minimum_history_bars`; `sample_bars`
+defaults to 1024 and is bounded from 64 to 4096. Presentation has a `title`, `summary`,
+and `parameter_descriptions`, which maps the union of captured constructor and
+effective candidate leaves to a distinct readable `label`, a `description`, and
+optional `unit`. Keys are
+JSON pointers relative to `strategy_execution.constructor_kwargs`: for example,
+`/fast_period` for a generated strategy or `/config/k_period` for a bundled strategy.
+The confirmation builder rejects missing or extra descriptions. The assistant
+supplies this technical mapping; the user reviews readable names, values and units.
+Optional `backtest_overrides` capture execution costs and settings in the same plan.
+
+The preflight receipt records sampled date windows, checked paths, candidate/fold
+coverage, trade and execution-record counts, and limitations. Each sampled window
+must meet the declared minimum history. A zero-trade sample may pass its signal and
+engine checks, but the receipt says that the trading path was not exercised.
+Walk-forward and optimization samples cover only the reported fold and candidate;
+they do not establish that all later runs will pass. `get_execution_plan` reads the
+fixed confirmation, while `cancel_execution_plan` cancels an unsubmitted plan.
+Changing requested parameters requires a new preparation and approval.
 
 Legacy flat source/metadata/config files are not migrated or overwritten. They
 cannot execute using their old lifecycle state. `list_strategies` discovers
@@ -393,31 +427,29 @@ still import and execute generated Python to check class loading, constructor
 behavior, BaseStrategy inheritance, input immutability, signal values, and smoke
 dataframe output.
 
-Submission is another code-execution boundary. After checking that the selected
-revision is executable, `start_backtest`, `start_walk_forward`, and
-`start_optimization` call `StrategyLoader.resolve_execution` through
-`BacktestService.prepare_execution` to capture constructor arguments and defaults
-for the execution manifest. Loading a generated class compiles and executes its
-module-level Python in the calling process (the MCP server for tool requests).
-Before returning the manifest, `prepare_execution` also calls `check_execution`:
-for every generated strategy, it constructs strategy instances from the captured
-settings and calls `generate_signals` on 80-row and 240-row contract fixtures.
-These checks run even when MCP `parameters` is omitted or `null`.
-Optimization submissions check the captured base settings at this stage.
-Optimization's parameter-grid preflight loads the class again, so module-level
-code can execute more than once during submission. All of this happens before
-creating a job or spawning a worker, and can have effects even if a later
-preparation check rejects the request without a job.
+Preparation is another code-execution boundary. MCP preparation runs under a
+supervised subprocess with a 60-second budget covering imports, constructor/default
+capture, generated signal-contract checks, sample engine execution and serialization.
+`StrategyLoader.resolve_execution` and `BacktestService.prepare_execution` load
+generated module-level Python and create strategy instances. Generated strategies
+also run 80-row and 240-row contract fixtures with the captured settings, including
+when `parameters` is omitted or `null`. Optimization checks the captured base and
+the sampled candidate. Module-level code can execute more than once. These actions
+can have effects even when preparation fails without creating a formal job.
+
+The supervised timeout and process cleanup bound the sample attempt; they do not
+isolate filesystem or network access. Validation, dry-run, and direct Python/CLI
+preparation continue to execute generated Python in their calling process. A
+workspace path is an output location, not a security boundary.
 
 For scheduled jobs, workers later repeat the generated execution-contract checks,
 then construct and execute the strategy using the captured settings; generated
 optimization candidates also undergo these checks before their trial runs.
-These execution steps are separate from the earlier validation/dry-run and
-submission checks. Worker supervision, worker timeouts and job cancellation do
-not cover module loading, constructors or fixture signal generation that run in
-the calling process before the worker exists. None of these checks provides a
-process sandbox. Generated strategies must therefore be reviewed as runtime code
-at all of these boundaries until a dedicated sandboxed execution layer is added.
+These execution steps are separate from validation, dry-run and sample checks.
+The approval gate controls formal submission; it does not make earlier generated
+code execution safe. None of these checks provides a process sandbox. Generated
+strategies must therefore be reviewed as runtime code at all of these boundaries
+until a dedicated sandboxed execution layer is added.
 
 `signal_analysis` includes row count, signal distribution, missing-signal count,
 transition count, active-signal ratio, and timestamp bounds. Use it to debug

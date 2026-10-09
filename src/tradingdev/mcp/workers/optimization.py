@@ -1,15 +1,16 @@
 """Subprocess worker that executes a parameter optimization job.
 
-Start jobs through the MCP start_optimization tool. Its application service uses
+Start jobs through prepare_optimization and request_execution_confirmation.
+The submission service uses
 ProcessRunner to launch a supervisor, which starts this worker and supplies
 TRADINGDEV_WORKER_IDENTITY. Running this module directly is not supported.
 
 The worker verifies the job's immutable execution manifest (populated by
-start_optimization) and uses it for every phase:
+the approved execution plan) and uses it for every phase:
 
 1. Downloads / loads OHLCV data
 2. Runs a single trial combo with a 5-minute timeout
-3. Reports estimated total time and waits for user confirmation
+3. Reports estimated total time for the already approved search
 4. Runs all remaining combos in parallel batches
 5. Selects the best params and runs an out-of-sample test
 6. Persists results to job_store
@@ -393,42 +394,11 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
 
     job_store.update_job(
         job_id,
-        status="pending_confirmation",
+        status="optimizing",
         time_per_combo=round(time_per_combo, 2),
         estimated_total_seconds=estimated_total_seconds,
         n_parallel_workers=n_jobs,
     )
-
-    # --- Phase 6: wait for confirmation ---
-    confirmation_start = time.monotonic()
-    confirmed = False
-    while (
-        time.monotonic() - confirmation_start
-        < optimization.confirmation_timeout_seconds
-    ):
-        current_job = job_store.get_job(job_id)
-        if current_job is None:
-            logger.error("Job %s disappeared from store", job_id)
-            return
-        if current_job.get("confirmed"):
-            confirmed = True
-            break
-        time.sleep(optimization.confirmation_poll_interval)
-
-    if not confirmed:
-        job_store.update_job(
-            job_id,
-            status="failed",
-            error=(
-                "No confirmation received within "
-                f"{optimization.confirmation_timeout_seconds}s. Job cancelled."
-            ),
-            ended_at=_now_iso(),
-        )
-        logger.warning("Job %s: confirmation timeout", job_id)
-        return
-
-    logger.info("Job %s confirmed, running optimization", job_id)
 
     # --- Phase 7: run all combos in parallel batches ---
     job_store.update_job(

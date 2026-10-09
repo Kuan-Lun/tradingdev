@@ -13,8 +13,12 @@ import yaml
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
+from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
-from tests.integration.mcp_harness import temporary_mcp_workspace
+from tests.integration.mcp_harness import (
+    SimulatedUserApproval,
+    temporary_mcp_workspace,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -85,6 +89,7 @@ async def seed_legacy_strategy(
 
 def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     """Require actual successful tool results in order, not a model's summary."""
+    calls = effective_workflow_calls(calls)
     target = f"strategy_id={scenario.strategy_id!r}"
 
     def require_index(description: str, indices: Iterator[int]) -> int:
@@ -216,19 +221,21 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 and call.result.get("revision_id") == revision_id
             ),
         )
-    start_index = require_index(
-        f"start_backtest for {target} returning a nonempty job_id "
+    prepare_index = require_index(
+        f"prepare_backtest for {target} returning a ready plan_id "
         "after successful dry_run_strategy",
         (
             index
             for index, call in enumerate(calls)
             if index > previous
-            and call.name == "start_backtest"
+            and call.name == "prepare_backtest"
             and call.result
-            and call.result.get("job_id")
+            and call.result.get("success") is True
+            and call.result.get("status") == "ready"
+            and call.result.get("plan_id")
         ),
     )
-    started = calls[start_index]
+    prepared = calls[prepare_index]
     expected_arguments: dict[str, Any] = {
         "strategy_id": scenario.strategy_id,
         "revision_id": revision_id,
@@ -242,20 +249,52 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         assert not any(
             call.name == "save_strategy" for call in calls[previous + 1 :]
         ), "Parameter experiments must reuse the runnable revision"
-    actual_arguments = dict(started.arguments)
-    if actual_arguments.get("parameters") is None:
-        actual_arguments.pop("parameters", None)
+    actual_arguments = dict(prepared.arguments)
+    presentation = actual_arguments.pop("presentation", None)
+    assert isinstance(presentation, dict), "Prepared plan requires presentation"
+    assert presentation.get("title") and presentation.get("summary")
+    assert set(presentation.get("parameter_descriptions", {})) == {
+        f"/{name}" for name in scenario.parameters
+    }, "Presentation must explain every captured parameter"
+    assert actual_arguments.pop("minimum_history_bars", None) == 20
+    assert actual_arguments.pop("sample_bars", None) == 128
+    for optional in ("parameters", "backtest_overrides"):
+        if actual_arguments.get(optional) is None:
+            actual_arguments.pop(optional, None)
     assert actual_arguments == expected_arguments, (
-        f"start_backtest arguments differ for {target}: "
-        f"expected {expected_arguments!r}; got {started.arguments!r}"
+        f"prepare_backtest arguments differ for {target}: "
+        f"expected {expected_arguments!r}; got {prepared.arguments!r}"
     )
-    assert started.result["revision_id"] == revision_id
-    manifest_hash = started.result.get("manifest_hash")
+    manifest_hash = prepared.result.get("manifest_hash")
     assert isinstance(manifest_hash, str) and len(manifest_hash) == 64
+    plan_id = prepared.result["plan_id"]
+    assert prepared.result.get("confirmation_text")
+    assert prepared.result.get("html_path") and prepared.result.get("artifact_id")
+    assert prepared.result.get("preflight"), (
+        "Preparation must retain preflight evidence"
+    )
+    assert not prepared.result.get("job_id"), "Preparing must not launch a formal job"
+    start_index = require_index(
+        f"request_execution_confirmation(plan_id={plan_id!r}) returning a nonempty "
+        "job_id after prepare_backtest",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index > prepare_index
+            and call.name == "request_execution_confirmation"
+            and call.arguments == {"plan_id": plan_id}
+            and call.result
+            and call.result.get("success") is True
+            and call.result.get("plan_id") == plan_id
+            and call.result.get("job_id")
+        ),
+    )
+    started = calls[start_index]
+    assert started.result["manifest_hash"] == manifest_hash
     job_id = started.result["job_id"]
     done_index = require_index(
         f"get_job_status(job_id={job_id!r}) returning status='done' "
-        f"after start_backtest for {target}",
+        f"after request_execution_confirmation for {target}",
         (
             index
             for index, call in enumerate(calls)
@@ -392,7 +431,8 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         assert report.arguments.get("commentary") == [
             {"title": "研究評語", "text": "本次結果僅為歷史模擬。"}
         ]
-        assert sum(call.name == "start_backtest" for call in calls) == 1
+        assert sum(call.name == "prepare_backtest" for call in calls) == 1
+        assert sum(call.name == "request_execution_confirmation" for call in calls) == 1
     if scenario.repair:
         read_index = require_index(
             f"get_strategy({target}) returning success=True before repairing the draft",
@@ -455,8 +495,9 @@ def test_llm_authors_backtests_and_queries_results(
                 return codex_calls(
                     await run_codex(workspace.root, scenario.prompt, **options)
                 )
-            async with workspace.connect() as client:
-                return await run_local_model(
+            approval = SimulatedUserApproval()
+            async with workspace.connect(elicitation_callback=approval) as client:
+                calls = await run_local_model(
                     client,
                     scenario.prompt,
                     base_url=pytestconfig.getoption("llm_base_url"),
@@ -464,6 +505,8 @@ def test_llm_authors_backtests_and_queries_results(
                     reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
+            assert len(approval.requests) == 1, "Expected one simulated user approval"
+            return calls
 
         calls = asyncio.run(run())
         try:

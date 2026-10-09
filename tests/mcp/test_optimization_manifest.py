@@ -172,7 +172,6 @@ def test_optimization_worker_ignores_mutable_config_and_search_copies(
         "fixture",
         param_ranges={"direction": [99]},
         optimization_metric="profit_factor",
-        confirmed=True,
     )
     captured: list[dict[str, Any]] = []
     evaluations: list[tuple[dict[str, Any], str, str, str, dict[str, Any]]] = []
@@ -332,7 +331,6 @@ def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
     expected: int | None,
 ) -> None:
     store, manifest = _queued_job(tmp_path, monkeypatch, metric="max_drawdown")
-    store.update_job("fixture", confirmed=True)
     assert manifest.optimization is not None
     assert manifest.optimization.direction == "minimize"
 
@@ -451,7 +449,6 @@ def test_optimization_failure_restores_alarm_without_partial_performance_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     store, _ = _queued_job(tmp_path, monkeypatch)
-    store.update_job("fixture", confirmed=True)
 
     def load(
         self: DataService, config: dict[str, Any], bt: BacktestConfig

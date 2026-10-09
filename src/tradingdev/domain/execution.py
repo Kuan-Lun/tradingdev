@@ -66,7 +66,7 @@ def _resolve_config(value: object) -> dict[str, JsonValue]:
 
 
 class OptimizationSpec(BaseModel):
-    """The complete search and confirmation policy for one optimization."""
+    """The complete search and estimation policy for one optimization."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
@@ -78,8 +78,6 @@ class OptimizationSpec(BaseModel):
     test_end: dt.date
     direction: Literal["maximize", "minimize"]
     trial_timeout_seconds: int = Field(default=300, gt=0, strict=True)
-    confirmation_timeout_seconds: int = Field(default=1800, gt=0, strict=True)
-    confirmation_poll_interval: float = Field(default=2.0, gt=0, strict=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -178,7 +176,7 @@ class ExecutionManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal[4]
+    schema_version: Literal[5]
     kind: ExecutionKind
     config: dict[str, JsonValue]
     strategy_execution: StrategyExecution
@@ -238,14 +236,14 @@ class ExecutionManifest(BaseModel):
                 assert isinstance(backtest, dict)
                 search.validate_new_request(backtest)
             payload = {
-                "schema_version": 4,
+                "schema_version": 5,
                 "kind": kind,
                 "config": resolved,
                 "strategy_execution": strategy.model_dump(mode="python"),
                 "optimization": search.model_dump(mode="python") if search else None,
             }
             return cls(
-                schema_version=4,
+                schema_version=5,
                 kind=kind,
                 config=resolved,
                 strategy_execution=strategy,

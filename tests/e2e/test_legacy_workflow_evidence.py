@@ -9,6 +9,7 @@ import pytest
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
 from tests.e2e.test_llm_workflows import assert_workflow
+from tests.integration.execution_fixtures import execution_options
 
 
 @pytest.fixture
@@ -51,15 +52,35 @@ def legacy_calls() -> list[ToolCall]:
             {**identity, "success": True, "status": "runnable"},
         ),
         ToolCall(
-            "start_backtest",
+            "prepare_backtest",
             {
                 **identity,
                 "symbol": "BTC/USDT",
                 "timeframe": "1h",
                 "start_date": "2024-01-01",
                 "end_date": "2024-01-08",
+                **execution_options(SCENARIOS["legacy"].parameters),
             },
-            {**identity, "job_id": "job-1", "manifest_hash": "a" * 64},
+            {
+                "success": True,
+                "status": "ready",
+                "plan_id": "plan-1",
+                "manifest_hash": "a" * 64,
+                "confirmation_text": "確認本次歷史研究設定。",
+                "html_path": "/fixture/confirmation.html",
+                "artifact_id": "plan:confirmation",
+                "preflight": {"status": "passed"},
+            },
+        ),
+        ToolCall(
+            "request_execution_confirmation",
+            {"plan_id": "plan-1"},
+            {
+                "success": True,
+                "plan_id": "plan-1",
+                "job_id": "job-1",
+                "manifest_hash": "a" * 64,
+            },
         ),
         ToolCall(
             "get_job_status",

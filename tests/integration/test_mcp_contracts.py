@@ -8,6 +8,8 @@ import pytest
 from jsonschema import Draft202012Validator, ValidationError, validate
 from mcp import ClientSession
 
+from tests.integration.execution_fixtures import execution_options
+
 if TYPE_CHECKING:
     from mcp.types import ListToolsResult, PaginatedRequestParams
 
@@ -19,6 +21,7 @@ _READ_ONLY_TOOLS = {
     "get_strategy_contract",
     "list_strategies",
     "get_strategy",
+    "get_execution_plan",
     "list_available_data",
     "list_data_sources",
     "inspect_dataset",
@@ -48,11 +51,12 @@ _MUTATING_HINTS = {
     "promote_strategy": (False, True, True, False),
     "cleanup_strategy_drafts": (False, True, True, False),
     "ensure_data": (False, True, False, True),
-    "start_backtest": (False, True, False, True),
-    "start_walk_forward": (False, True, False, True),
-    "start_optimization": (False, True, False, True),
+    "prepare_backtest": (False, False, False, True),
+    "prepare_walk_forward": (False, False, False, True),
+    "prepare_optimization": (False, False, False, True),
     "get_job_status": (False, True, True, False),
-    "confirm_optimization": (False, True, True, True),
+    "request_execution_confirmation": (False, True, True, True),
+    "cancel_execution_plan": (False, True, True, False),
     "cancel_job": (False, True, True, False),
     "record_feature_request": (False, False, False, False),
     "generate_report": (False, False, True, False),
@@ -121,7 +125,16 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
     ]
     async with mcp_workspace.connect() as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
-        assert len(tools) == 35
+        assert len(tools) == 37
+        assert (
+            not {
+                "start_backtest",
+                "start_walk_forward",
+                "start_optimization",
+                "confirm_optimization",
+            }
+            & tools.keys()
+        )
         assert tools.keys() == expected_hints.keys() == client.output_schemas.keys()
         for name, tool in tools.items():
             assert tool.description and tool.description.strip(), name
@@ -160,6 +173,7 @@ async def test_application_errors_follow_advertised_output_schemas(
         "timeframe": "1h",
         "start_date": "2024-01-01",
         "end_date": "2024-01-08",
+        **execution_options({}),
     }
     failures: list[tuple[str, dict[str, Any], str, object]] = [
         (name, missing_strategy, "success", False)
@@ -194,11 +208,17 @@ async def test_application_errors_follow_advertised_output_schemas(
             ),
             ("get_job_status", missing_job, "status", "not_found"),
             ("cancel_job", missing_job, "success", False),
-            ("confirm_optimization", missing_job, "success", False),
-            ("start_backtest", run_arguments, "job_id", ""),
-            ("start_walk_forward", run_arguments, "job_id", ""),
+            ("get_execution_plan", {"plan_id": "missing_plan"}, "success", False),
             (
-                "start_optimization",
+                "request_execution_confirmation",
+                {"plan_id": "missing_plan"},
+                "success",
+                False,
+            ),
+            ("prepare_backtest", run_arguments, "success", False),
+            ("prepare_walk_forward", run_arguments, "success", False),
+            (
+                "prepare_optimization",
                 {
                     **missing_strategy,
                     "symbol": "BTC/USDT",
@@ -209,9 +229,10 @@ async def test_application_errors_follow_advertised_output_schemas(
                     "train_end": "2024-01-03",
                     "test_start": "2024-01-04",
                     "test_end": "2024-01-08",
+                    **execution_options({}),
                 },
-                "job_id",
-                "",
+                "success",
+                False,
             ),
             (
                 "save_strategy",
@@ -243,7 +264,7 @@ async def test_missing_required_inputs_are_mcp_errors_without_side_effects(
     async with mcp_workspace.connect() as client:
         tools = (await client.session.list_tools()).tools
         required_tools = [tool for tool in tools if tool.inputSchema.get("required")]
-        assert {"save_strategy", "start_backtest", "record_feature_request"} <= {
+        assert {"save_strategy", "prepare_backtest", "record_feature_request"} <= {
             tool.name for tool in required_tools
         }
         for tool in required_tools:

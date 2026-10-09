@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -18,6 +19,16 @@ from tests.e2e.test_llm_cleanup import (
     verify_cleanup_history,
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
+
+
+def test_successful_cleanup_accepts_sdk_encoded_selector_and_boolean(
+    calls: list[ToolCall], seed: CleanupSeed
+) -> None:
+    calls[2].arguments["revision_ids"] = json.dumps([seed.eligible_id])
+    calls[2].arguments["apply"] = "true"
+    original = dict(calls[2].arguments)
+    assert_cleanup_workflow(calls, seed)
+    assert calls[2].arguments == original
 
 
 @pytest.fixture
@@ -201,7 +212,7 @@ def test_wrong_applied_flag_is_not_success(
 
 
 @pytest.mark.parametrize(
-    "tool", ["save_strategy", "validate_strategy", "start_backtest", "ensure_data"]
+    "tool", ["save_strategy", "validate_strategy", "prepare_backtest", "ensure_data"]
 )
 def test_extra_mutations_are_rejected(
     calls: list[ToolCall], seed: CleanupSeed, tool: str

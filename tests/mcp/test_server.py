@@ -98,9 +98,9 @@ def test_revision_selectors_are_advertised_in_tool_schemas(runtime_root: Path) -
         "validate_strategy",
         "dry_run_strategy",
         "promote_strategy",
-        "start_backtest",
-        "start_walk_forward",
-        "start_optimization",
+        "prepare_backtest",
+        "prepare_walk_forward",
+        "prepare_optimization",
     ):
         schema = tools[name].inputSchema
         assert "revision_id" in schema["properties"]
@@ -110,15 +110,16 @@ def test_revision_selectors_are_advertised_in_tool_schemas(runtime_root: Path) -
     assert "revision_id" in saved_schema["$defs"]["StrategySaveSuccess"]["required"]
 
 
-def test_execution_manifest_hash_is_required_for_accepted_jobs(
+def test_execution_manifest_hash_is_required_for_prepared_and_accepted_plans(
     runtime_root: Path,
 ) -> None:
     server = create_server(WorkspacePaths(runtime_root / "workspace"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     for name, contract in (
-        ("start_backtest", "BacktestStarted"),
-        ("start_walk_forward", "BacktestStarted"),
-        ("start_optimization", "OptimizationStarted"),
+        ("prepare_backtest", "PlanResponse"),
+        ("prepare_walk_forward", "PlanResponse"),
+        ("prepare_optimization", "PlanResponse"),
+        ("request_execution_confirmation", "PlanStarted"),
     ):
         schema = tools[name].outputSchema
         assert schema is not None

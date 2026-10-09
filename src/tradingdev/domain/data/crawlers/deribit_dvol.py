@@ -3,11 +3,18 @@
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pandas as pd
 
 from tradingdev.domain.data.crawlers.base import BaseCrawler
+from tradingdev.domain.data.crawlers.sampling import (
+    SAMPLE_BATCH_ROWS,
+    sample_frame,
+    sample_range,
+    stream_sample_json,
+)
 from tradingdev.shared.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -133,6 +140,113 @@ class DeribitDVOLCrawler(BaseCrawler):
 
         logger.info("Total DVOL candles fetched: %d", len(df))
         return df
+
+    def fetch_sample(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        *,
+        max_rows: int,
+        timestamps: pd.DatetimeIndex | None = None,
+    ) -> pd.DataFrame:
+        """Fetch earliest DVOL rows, optionally restricted to exact timestamps.
+
+        Deribit paginates backwards. Finish each bounded chronological window
+        before advancing so a small sample cannot select only its newest bars.
+        Target timestamps let sparse market samples skip unrelated DVOL windows.
+        """
+        start_utc, end_utc = sample_range(start, end, max_rows)
+        resolution = _TIMEFRAME_MAP.get(timeframe)
+        if resolution is None:
+            raise ValueError(
+                f"Unsupported timeframe '{timeframe}'. "
+                f"Supported: {list(_TIMEFRAME_MAP)}"
+            )
+        interval_ms = (86_400 if resolution == "1D" else int(resolution)) * 1000
+        cursor = -(-pd.Timestamp(start_utc).value // 1_000_000)
+        stop = pd.Timestamp(end_utc).value // 1_000_000
+        targets: set[int] | None = None
+        if timestamps is not None:
+            if len(timestamps) > max_rows:
+                raise ValueError("DVOL sample target count exceeds max_rows")
+            normalized = pd.to_datetime(timestamps, utc=True).as_unit("ns")
+            # Preserve exact joins: a nanosecond target with no millisecond
+            # representation cannot match any provider timestamp.
+            targets = {
+                timestamp.value // 1_000_000
+                for timestamp in normalized
+                if not pd.isna(timestamp)
+                and timestamp.value % 1_000_000 == 0
+                and cursor <= timestamp.value // 1_000_000 <= stop
+            }
+        selected: dict[int, list[Any]] = {}
+        while cursor <= stop and len(selected) < max_rows:
+            if targets is not None:
+                pending = [timestamp for timestamp in targets if timestamp >= cursor]
+                if not pending:
+                    break
+                cursor = min(pending)
+            limit = min(max_rows - len(selected), SAMPLE_BATCH_ROWS)
+            window_end = min(stop, cursor + limit * interval_ms - 1)
+            rows = self._fetch_sample_window(
+                symbol, resolution, cursor, window_end, limit
+            )
+            for timestamp, row in rows.items():
+                if targets is None or timestamp in targets:
+                    selected.setdefault(timestamp, row)
+            cursor = window_end + 1
+        return sample_frame(list(selected.values()), _DVOL_COLUMNS, unit="ms")
+
+    def _fetch_sample_window(
+        self,
+        symbol: str,
+        resolution: str,
+        start_ms: int,
+        end_ms: int,
+        row_limit: int,
+    ) -> dict[int, list[Any]]:
+        """Read a finite window, bounding both pages and retained unique rows."""
+        selected: dict[int, list[Any]] = {}
+        page_end = end_ms
+        while page_end >= start_ms:
+            payload = stream_sample_json(
+                self._client,
+                _BASE_URL,
+                {
+                    "currency": symbol.upper(),
+                    "start_timestamp": start_ms,
+                    "end_timestamp": page_end,
+                    "resolution": resolution,
+                },
+            )
+            if payload.get("error"):
+                raise ValueError(f"Deribit sample error: {payload['error']}")
+            result = payload["result"]
+            data = result["data"]
+            if not isinstance(data, list) or len(data) > row_limit:
+                raise ValueError(
+                    "Deribit sample response exceeds the requested row limit"
+                )
+            for row in data:
+                if not isinstance(row, list) or len(row) != len(_DVOL_COLUMNS):
+                    raise ValueError("Invalid Deribit sample candle")
+                timestamp = int(row[0])
+                if start_ms <= timestamp <= page_end:
+                    if timestamp not in selected and len(selected) == row_limit:
+                        raise ValueError("Deribit sample window exceeds its row limit")
+                    selected.setdefault(timestamp, row)
+            continuation = result.get("continuation")
+            if continuation is None:
+                break
+            next_end = int(continuation)
+            if next_end >= page_end:
+                raise ValueError("Deribit sample pagination did not advance")
+            page_end = next_end
+            if page_end >= start_ms:
+                time.sleep(_REQUEST_DELAY)
+        return selected
 
     def save_raw(self, df: pd.DataFrame, output_path: Path) -> None:
         """Save raw DVOL data as CSV.

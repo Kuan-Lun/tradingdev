@@ -70,12 +70,12 @@ class WalkForwardValidator:
         results: list[WalkForwardResult] = []
 
         for i, (train_df, test_df) in enumerate(splits):
-            result = self._run_fold(i, strategy, train_df, test_df)
+            result = self.run_fold(i, strategy, train_df, test_df)
             results.append(result)
 
         return results
 
-    def _run_fold(
+    def run_fold(
         self,
         fold_idx: int,
         strategy: BaseStrategy,

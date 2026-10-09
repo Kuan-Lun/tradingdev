@@ -3,7 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ $# -lt 1 || ( "$1" != codex && "$1" != local ) ]]; then
     echo 'Usage: scripts/check-llm.sh codex|local [pytest options]' >&2
-    echo 'Codex example: scripts/check-llm.sh codex --llm-model gpt-5.6-luna' >&2
+    echo 'Codex example (execution-plan cases currently require local):' >&2
+    echo '  scripts/check-llm.sh codex --llm-model gpt-5.6-luna \' >&2
+    echo '    -k "not test_llm_prepares_confirms_and_queries_execution_plan"' >&2
     echo 'Local example (verified with Ollama):' >&2
     echo '  scripts/check-llm.sh local --llm-model qwen3.8:27b \' >&2
     echo '    --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900' >&2
@@ -13,5 +15,6 @@ provider=$1
 shift
 exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" -u -m pytest \
     tests/e2e/test_llm_workflows.py tests/e2e/test_llm_cleanup.py \
+    tests/e2e/test_llm_execution_plans.py \
     --llm-provider "$provider" -m live_llm \
     -x -vv --capture=tee-sys --tb=short --durations=3 "$@"

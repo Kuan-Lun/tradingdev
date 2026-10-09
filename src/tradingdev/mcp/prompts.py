@@ -17,9 +17,9 @@ list. Select one per config via data.requirements.market.source:
   Yahoo Finance chart API. Symbols follow Yahoo conventions (e.g. "AAPL",
   "2330.TW", "ES=F", "^GSPC"); supported timeframes include 1m-90m, 1h, 1d,
   1wk, 1mo.
-Use ensure_data(symbol, timeframe, start_date, end_date, source=...) to
-pre-cache data and inspect_dataset(config_path) to check cache and feature
-health before starting long jobs. Additional feature inputs (e.g. dvol,
+Preparation loads a bounded sample; do not pre-download full history merely
+to obtain confirmation. ensure_data can explicitly pre-cache user-requested
+data and inspect_dataset checks cache and feature health. Additional inputs (e.g. dvol,
 funding_rate) are declared in data.requirements.features.
 
 Strategy development workflow
@@ -34,10 +34,23 @@ Strategy development workflow
    re-runs the contract on a longer fixture, returns signal_analysis, and
    marks the strategy runnable.
 5. Optionally call promote_strategy to pin a runnable strategy as promoted.
-6. Call start_backtest for simple configs or start_walk_forward for configs
-   with validation sections. Execution accepts only runnable or promoted
-   strategies; this gate is enforced at execution time on every entry point,
-   so drafts cannot run even outside MCP.
+6. Call prepare_backtest for simple configs, prepare_walk_forward for configs
+   with validation sections, or prepare_optimization for a parameter search.
+   Execution accepts only runnable or promoted strategies. Supply the actual
+   minimum history needed by the strategy, and human-language parameter labels,
+   descriptions and units through presentation (including constructor defaults).
+   Resolve missing parameter paths from the returned structured error; do not
+   ask the user to fill Python keys or YAML. The backend freezes all effective
+   settings and runs a time-bounded market-data/engine trial before producing
+   confirmation_text and an HTML artifact. Repair preparation errors first.
+   Present the backend text and HTML link without inventing or omitting settings.
+   A zero-trade sample or a representative fold is limited evidence, not proof
+   that every data period, fold or optimization candidate will succeed.
+   Call request_execution_confirmation(plan_id) to collect actual human consent
+   through MCP form elicitation. Never answer the form on the user's behalf.
+   No full job starts on decline, cancellation, timeout or unsupported clients.
+   Natural-language edits require a new plan and successful trial; never change
+   the approved plan. An expired plan must also be prepared again.
 7. Poll get_job_status (cancel_job to abort), then inspect list_runs /
    get_run for summaries. Use get_metric_catalog to discover metrics and
    get_run_metrics(run_id, metric_ids, scope) for saved detailed results.
@@ -59,11 +72,11 @@ Strategy development workflow
    recipe. Do not claim omitted information is included. The backend labels
    commentary separately from calculations and renders HTML without client code.
    Link the returned report file/artifact so users can inspect complete records.
-8. For parameter tuning, call start_optimization, poll get_job_status, and
-   confirm with confirm_optimization when it reports pending_confirmation.
+8. Optimization follows the same prepare/confirm flow. The approved search
+   continues without a second confirmation after its first full-history trial.
 
-For individual parameter experiments, pass parameters to start_backtest or
-start_walk_forward with the same runnable revision_id. Nested parameter mappings
+For individual parameter experiments, pass parameters to prepare_backtest or
+prepare_walk_forward with the same runnable revision_id. Nested parameter mappings
 merge recursively with the base values. Each run fixes its effective settings
 in its manifest and checks the generated signal contract at both fixture depths;
 the saved revision and current pointer stay unchanged. Save a new strategy

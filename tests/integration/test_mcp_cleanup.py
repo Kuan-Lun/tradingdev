@@ -12,7 +12,12 @@ import anyio
 import psutil
 import pytest
 
-from tests.integration.mcp_harness import temporary_mcp_workspace, worker_is_alive
+from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.mcp_harness import (
+    SimulatedUserApproval,
+    temporary_mcp_workspace,
+    worker_is_alive,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -21,7 +26,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.anyio]
 
 
 class ForcedCleanupError(RuntimeError):
-    """Deliberate failure while a real optimization worker awaits confirmation."""
+    """Deliberate failure while a real worker is paused by a test startup gate."""
 
 
 def _exception_leaves(error: BaseException) -> list[BaseException]:
@@ -43,7 +48,9 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
         with temporary_mcp_workspace() as workspace:
             root = workspace.root
             workspace.seed_market(sample_ohlcv_with_kd)
-            async with workspace.connect() as client:
+            async with workspace.connect(
+                elicitation_callback=SimulatedUserApproval()
+            ) as client:
                 contract = await client.call("get_strategy_contract")
                 saved = await client.call(
                     "save_strategy",
@@ -55,8 +62,8 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
                 for tool in ("validate_strategy", "dry_run_strategy"):
                     checked = await client.call(tool, strategy_id="cleanup_strategy")
                     assert checked["success"], checked
-                started = await client.call(
-                    "start_optimization",
+                prepared = await client.call(
+                    "prepare_optimization",
                     strategy_id="cleanup_strategy",
                     symbol="BTC/USDT",
                     timeframe="1h",
@@ -66,17 +73,22 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
                     train_end="2024-01-03",
                     test_start="2024-01-04",
                     test_end="2024-01-07",
+                    **execution_options({"fast_period": 10, "slow_period": 30}),
                 )
+                assert prepared["success"], prepared
+                # Keep the formal worker alive deterministically, independently
+                # of grid-search speed. The supervisor, child process, MCP,
+                # confirmation, identity checks and cleanup remain real.
+                guard = workspace.root / "python-guard" / "sitecustomize.py"
+                guard.write_text(
+                    guard.read_text() + "\nif sys.orig_argv[1:3] == "
+                    "['-m', 'tradingdev.mcp.workers.optimization']:\n"
+                    + "    import time\n    time.sleep(120)\n"
+                )
+                started = await confirm_prepared(client, prepared)
                 assert started["job_id"], started
-                with anyio.fail_after(120):
-                    while True:
-                        status = await client.call(
-                            "get_job_status", job_id=started["job_id"]
-                        )
-                        assert status["status"] not in {"failed", "done"}, status
-                        if status["status"] == "pending_confirmation":
-                            break
-                        await anyio.sleep(0.1)
+                status = await client.call("get_job_status", job_id=started["job_id"])
+                assert status["status"] == "queued", status
                 with closing(
                     sqlite3.connect(workspace.workspace / "tradingdev.sqlite")
                 ) as connection:
