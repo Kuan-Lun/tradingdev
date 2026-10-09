@@ -244,10 +244,18 @@ window must satisfy the declared history requirement. A split execution needs
 enough total budget for its training and test windows separately.
 
 The sample uses the selected market-data pipeline and effective settings.
+It searches bounded calendar windows within the requested dates, continuing
+past empty market-closure windows until it reaches the bar budget or end date.
+Cached Parquet data is read in batches, interpreting timezone-naive timestamps
+as UTC just like ordinary loading. Sampling does not rewrite the source cache;
+feature acquisition follows the timestamps of the selected market bars.
 Backtests sample one window; walk-forward samples one train/test fold;
 optimization samples its first candidate on both training and held-out periods.
 Temporary sample results, data and tool caches live in an independent temporary
-directory, outside regular run history. Successful, failed and timed-out workers
+directory, outside regular run history. The child's `TMPDIR`, `TMP` and `TEMP`
+also point inside that directory, containing standard temporary files created
+by third-party model training without changing the parent's environment.
+Successful, failed and timed-out workers
 are stopped and verified before their files are deleted. If process cleanup
 cannot be verified, the directory is retained and the operation reports failure;
 file cleanup failure is also an error. No successful sample publishes a regular

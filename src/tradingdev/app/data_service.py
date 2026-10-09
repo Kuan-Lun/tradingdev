@@ -16,12 +16,12 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_file,
     sha256_text,
 )
+from tradingdev.app.market_sample import load_market_sample
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
 from tradingdev.domain.data.crawlers.registry import create_crawler
 from tradingdev.domain.data.data_manager import DataManager, market_data_filename
 from tradingdev.domain.data.loader import DataLoader
-from tradingdev.domain.data.processor import DataProcessor
 from tradingdev.domain.data.requirements import (
     DataRequirement,
     FeatureSpec,
@@ -184,7 +184,7 @@ class DataService:
         max_rows: int,
         output_dir: Path,
     ) -> LoadedDataset:
-        """Read cached historical bars or fetch only a bounded interval.
+        """Find cached or fetched historical bars through bounded interval searches.
 
         Sample files and fetched features live under output_dir. Existing market
         and feature caches are only read; the yearly cache manager is not used.
@@ -203,69 +203,13 @@ class DataService:
         # Normal data loading constructs the provider even on a cache hit.
         # Check that boundary here too, without calling its network fetch.
         crawler = create_crawler(requirements.market.source, sample_config)
-        match = re.fullmatch(r"(\d+)(s|m|h|d|w|wk|mo|M)", request.timeframe)
-        if match is None:
-            raise ValueError(f"Unsupported sample timeframe: {request.timeframe}")
-        units = {
-            "s": 1,
-            "m": 60,
-            "h": 3600,
-            "d": 86400,
-            "w": 604800,
-            "wk": 604800,
-            "mo": 2678400,
-            "M": 2678400,
-        }
-        seconds = int(match[1]) * units[match[2]]
-        if seconds <= 0:
-            raise ValueError("Sample timeframe must be positive")
-        start = pd.Timestamp(request.start_date)
-        start = (
-            start.tz_localize("UTC")
-            if start.tzinfo is None
-            else start.tz_convert("UTC")
-        )
-        end = pd.Timestamp(request.end_date)
-        end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
-        # Allow market closures without requesting the original full interval.
-        end = min(end, start + pd.Timedelta(seconds=seconds * max_rows * 3))
+        frame = load_market_sample(request, data_config, crawler, max_rows=max_rows)
         request = request.model_copy(
             update={
-                "start_date": start.to_pydatetime(),
-                "end_date": end.to_pydatetime(),
+                "start_date": frame["timestamp"].iloc[0].to_pydatetime(),
+                "end_date": frame["timestamp"].iloc[-1].to_pydatetime(),
             }
         )
-        frames = []
-        for year in range(start.year, end.year + 1):
-            for partial in (False, True):
-                path = Path(data_config.processed_dir) / market_data_filename(
-                    request.symbol, request.timeframe, year, partial=partial
-                )
-                if path.exists():
-                    frames.append(
-                        pd.read_parquet(
-                            path,
-                            filters=[
-                                ("timestamp", ">=", start.to_pydatetime()),
-                                ("timestamp", "<=", end.to_pydatetime()),
-                            ],
-                        )
-                    )
-                    break
-        frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-        if frame.empty:
-            raw = crawler.fetch(
-                request.symbol, request.timeframe, request.start_date, request.end_date
-            )
-            frame = DataProcessor().process(raw)
-        frame = frame.sort_values("timestamp").drop_duplicates("timestamp")
-        frame = (
-            frame[(frame["timestamp"] >= start) & (frame["timestamp"] <= end)]
-            .head(max_rows)
-            .copy()
-        )
-        if frame.empty:
-            raise ValueError("No historical bars are available in the sample window")
         output_dir.mkdir(parents=True, exist_ok=True)
         for index, feature in enumerate(requirements.features):
             selected = feature
