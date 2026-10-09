@@ -95,6 +95,18 @@ through the new workers. Prepare a new plan to execute through MCP under a fixed
 specification. The old MCP `start_backtest`, `start_walk_forward`,
 `start_optimization` and `confirm_optimization` tools are removed.
 
+Persisted legacy jobs with `status: pending_confirmation` are incompatible with
+the current job response contracts and are not migrated. `get_job_status` and
+`cancel_job` reject their responses at the MCP boundary; even one such record
+causes the entire `list_jobs` response to fail validation. Preparing another plan
+in the same workspace does not repair those records. After using the version that
+created the jobs to stop its workers and server and verify cleanup, preserve the
+old workspace at its original location and configure the new MCP server with a
+fresh `--workspace` directory. Do not copy the old SQLite database or worker
+control files into it. The new workspace does not automatically import strategies
+or history; old result files remain in the preserved workspace. This is a new
+workspace recovery path, not an in-place migration or resumption of old jobs.
+
 `.workers/<launch_token>` stores the startup identity, worker startup response,
 optional cancellation request (`stop`), and final cleanup acknowledgement. These
 small records remain in a regular workspace so later sessions can verify cleanup
