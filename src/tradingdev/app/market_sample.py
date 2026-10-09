@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -56,8 +56,9 @@ def load_market_sample(
             if width >= (end - cursor).total_seconds()
             else cursor + timedelta(seconds=width)
         )
-        fetched: pd.DataFrame | None = None
         for year in range(cursor.year, stop.year + 1):
+            year_start = max(cursor, datetime(year, 1, 1, tzinfo=UTC))
+            year_end = min(stop, datetime(year, 12, 31, 23, 59, 59, 999999, tzinfo=UTC))
             complete = False
             for partial in (False, True):
                 path = Path(config.processed_dir) / market_data_filename(
@@ -73,20 +74,22 @@ def load_market_sample(
             if len(selected) >= max_rows:
                 break
             if not complete:
-                if fetched is None:
-                    # Fetch a contiguous window once to preserve midnight ends,
-                    # but consume each year only after checking its own cache.
-                    raw = crawler.fetch(request.symbol, request.timeframe, cursor, stop)
-                    fetched = pd.DataFrame()
-                    if not raw.empty:
-                        raw = raw.copy()
-                        raw["timestamp"] = pd.to_datetime(raw["timestamp"], utc=True)
-                        fetched = DataProcessor().process(raw)
-                        fetched = fetched.loc[
-                            fetched["timestamp"].between(cursor, stop)
-                        ]
-                if not fetched.empty:
-                    frame = fetched.loc[fetched["timestamp"].dt.year == year]
+                # Providers sample only this missing year, so a result cap cannot
+                # be consumed by an earlier year whose complete cache takes priority.
+                raw = crawler.fetch_sample(
+                    request.symbol,
+                    request.timeframe,
+                    year_start,
+                    year_end,
+                    max_rows=max_rows,
+                )
+                if len(raw) > max_rows:
+                    raise ValueError("Market provider exceeded the sample row budget")
+                if not raw.empty:
+                    raw = raw.copy()
+                    raw["timestamp"] = pd.to_datetime(raw["timestamp"], utc=True)
+                    frame = DataProcessor().process(raw)
+                    frame = frame.loc[frame["timestamp"].between(year_start, year_end)]
                     selected = _accumulate(selected, frame, max_rows)
             if len(selected) >= max_rows:
                 break

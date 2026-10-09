@@ -43,7 +43,7 @@ def test_sample_reads_year_cache_without_fetching_or_modifying_it(
         pytest.fail("A sample must not use the yearly downloader or fetch cached data")
 
     class Crawler:
-        fetch = staticmethod(unexpected)
+        fetch_sample = staticmethod(unexpected)
 
     monkeypatch.setattr(
         "tradingdev.app.data_service.create_crawler", lambda *_args: Crawler()
@@ -68,11 +68,17 @@ def test_sample_cache_miss_fetches_short_interval_without_creating_year_cache(
     requested: list[tuple[datetime, datetime]] = []
 
     class Crawler:
-        def fetch(
-            self, symbol: str, timeframe: str, start: datetime, end: datetime
+        def fetch_sample(
+            self,
+            symbol: str,
+            timeframe: str,
+            start: datetime,
+            end: datetime,
+            *,
+            max_rows: int,
         ) -> pd.DataFrame:
             requested.append((start, end))
-            return sample_ohlcv_df.copy()
+            return sample_ohlcv_df.head(max_rows).copy()
 
     monkeypatch.setattr(
         "tradingdev.app.data_service.create_crawler", lambda *_args: Crawler()
@@ -103,6 +109,28 @@ def test_sample_checks_provider_even_when_bars_are_cached(
             max_rows=64,
             output_dir=tmp_path / "sample",
         )
+
+
+def test_sample_rejects_provider_that_exceeds_requested_row_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sample_ohlcv_df: pd.DataFrame,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "source")
+    data = DataService(workspace)
+
+    class Crawler:
+        def fetch_sample(self, *_args: Any, **_kwargs: Any) -> pd.DataFrame:
+            return sample_ohlcv_df.head(65).copy()
+
+    monkeypatch.setattr(
+        "tradingdev.app.data_service.create_crawler", lambda *_args: Crawler()
+    )
+    output = tmp_path / "sample"
+    with pytest.raises(ValueError, match="provider exceeded the sample row budget"):
+        data.load_sample({}, _config(), max_rows=64, output_dir=output)
+    assert not output.exists()
+    assert not list(workspace.processed_data.iterdir())
 
 
 def test_sample_missing_feature_is_fetched_only_into_sample_directory(
@@ -137,6 +165,9 @@ def test_sample_missing_feature_is_fetched_only_into_sample_directory(
             return pd.DataFrame(
                 {"timestamp": sample_ohlcv_df["timestamp"], "dvol_close": 50.0}
             )
+
+        def fetch_sample(self, *, max_rows: int, **kwargs: Any) -> pd.DataFrame:
+            return self.fetch(**kwargs).head(max_rows)
 
         def save_raw(self, frame: pd.DataFrame, path: Path) -> None:
             path.write_text(frame.to_csv(index=False))

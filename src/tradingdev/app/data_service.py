@@ -11,6 +11,7 @@ from typing import Any
 
 import pandas as pd
 
+from tradingdev.adapters.storage.feature_samples import read_feature_sample
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
     sha256_file,
@@ -204,14 +205,20 @@ class DataService:
         # Check that boundary here too, without calling its network fetch.
         crawler = create_crawler(requirements.market.source, sample_config)
         frame = load_market_sample(request, data_config, crawler, max_rows=max_rows)
+        features = [
+            feature.model_copy(update={"path": str(self._default_dvol_path(request))})
+            if feature.type == "dvol" and not feature.path
+            else feature
+            for feature in requirements.features
+        ]
         request = request.model_copy(
             update={
-                "start_date": frame["timestamp"].iloc[0].to_pydatetime(),
-                "end_date": frame["timestamp"].iloc[-1].to_pydatetime(),
+                "start_date": frame["timestamp"].iloc[0],
+                "end_date": frame["timestamp"].iloc[-1],
             }
         )
         output_dir.mkdir(parents=True, exist_ok=True)
-        for index, feature in enumerate(requirements.features):
+        for index, feature in enumerate(features):
             selected = feature
             if feature.type == "dvol" and (
                 not feature.path or not self._resolve_data_path(feature.path).exists()
@@ -222,9 +229,9 @@ class DataService:
                         "raw_path": str(output_dir / f"feature-{index}.csv"),
                     }
                 )
-            frame = self._merge_feature(frame, selected, request)
-        if len(frame) > max_rows:
-            raise ValueError("Feature joins exceeded the sample row budget")
+            frame = self._merge_feature(
+                frame, selected, request, sample_max_rows=max_rows
+            )
         processed_path = output_dir / "sample.parquet"
         frame.to_parquet(processed_path, index=False)
         # This identity describes the exact sample, not the full requested data.
@@ -342,9 +349,27 @@ class DataService:
         frame: pd.DataFrame,
         feature: FeatureSpec,
         request: MarketDataRequest,
+        *,
+        sample_max_rows: int | None = None,
     ) -> pd.DataFrame:
-        if feature.type == "dvol":
-            feature_df = self._load_or_fetch_dvol(feature, request)
+        path = self._resolve_data_path(feature.path) if feature.path else None
+        if sample_max_rows is not None and path is not None and path.exists():
+            merged = read_feature_sample(
+                path,
+                timestamps=frame["timestamp"],
+                column=feature.column,
+                max_rows=sample_max_rows,
+                fallback_column="dvol_close" if feature.type == "dvol" else None,
+            )
+        elif feature.type == "dvol":
+            feature_df = self._load_or_fetch_dvol(
+                feature,
+                request,
+                sample_max_rows=sample_max_rows,
+                sample_timestamps=pd.DatetimeIndex(frame["timestamp"].unique())
+                if sample_max_rows is not None
+                else None,
+            )
             value_column = feature.column
             if (
                 value_column not in feature_df.columns
@@ -365,6 +390,15 @@ class DataService:
             )
             merged = feature_df[["timestamp", feature.column]]
 
+        if sample_max_rows is not None:
+            merged = merged.loc[merged["timestamp"].isin(frame["timestamp"])]
+            counts = merged["timestamp"].value_counts()
+            expected_rows = sum(
+                max(int(counts.get(timestamp, 0)), 1)
+                for timestamp in frame["timestamp"]
+            )
+            if expected_rows > sample_max_rows:
+                raise ValueError("Feature joins exceeded the sample row budget")
         result = frame.merge(merged, on="timestamp", how="left")
         result[feature.column] = result[feature.column].ffill().bfill()
         return result
@@ -373,6 +407,9 @@ class DataService:
         self,
         feature: FeatureSpec,
         request: MarketDataRequest,
+        *,
+        sample_max_rows: int | None = None,
+        sample_timestamps: pd.DatetimeIndex | None = None,
     ) -> pd.DataFrame:
         processed_path = (
             self._resolve_data_path(feature.path)
@@ -380,16 +417,36 @@ class DataService:
             else self._default_dvol_path(request)
         )
         if processed_path.exists():
+            if sample_max_rows is not None and sample_timestamps is not None:
+                return read_feature_sample(
+                    processed_path,
+                    timestamps=pd.Series(sample_timestamps),
+                    column=feature.column,
+                    fallback_column="dvol_close",
+                    max_rows=sample_max_rows,
+                )
             return self._loader.load_parquet(processed_path)
 
         crawler = DeribitDVOLCrawler()
         currency = request.symbol.split("/")[0]
-        raw = crawler.fetch(
-            symbol=currency,
-            timeframe=request.timeframe,
-            start=request.start_date,
-            end=request.end_date,
-        )
+        if sample_max_rows is None:
+            raw = crawler.fetch(
+                symbol=currency,
+                timeframe=request.timeframe,
+                start=request.start_date,
+                end=request.end_date,
+            )
+        else:
+            raw = crawler.fetch_sample(
+                symbol=currency,
+                timeframe=request.timeframe,
+                start=request.start_date,
+                end=request.end_date,
+                max_rows=sample_max_rows,
+                timestamps=sample_timestamps,
+            )
+            if len(raw) > sample_max_rows:
+                raise ValueError("Feature provider exceeded the sample row budget")
         raw_path = (
             self._resolve_data_path(feature.raw_path)
             if feature.raw_path

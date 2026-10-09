@@ -55,6 +55,17 @@ def _service(
             # Providers return untyped empty frames on non-trading windows.
             return result if not result.empty else pd.DataFrame(columns=frame.columns)
 
+        def fetch_sample(
+            self,
+            symbol: str,
+            timeframe: str,
+            begin: datetime,
+            stop: datetime,
+            *,
+            max_rows: int,
+        ) -> pd.DataFrame:
+            return self.fetch(symbol, timeframe, begin, stop).head(max_rows)
+
     monkeypatch.setattr(
         "tradingdev.app.data_service.create_crawler", lambda *_: Crawler()
     )
@@ -98,7 +109,7 @@ def test_monthly_sample_clips_to_requested_dates_before_arithmetic(
     )
     pd.testing.assert_frame_equal(result.frame.reset_index(drop=True), frame)
     if not cached:
-        assert len(calls) == 1
+        assert len(calls) == 2
         assert calls[0][0] == pd.Timestamp("2024-01-01", tz="UTC")
         assert calls[-1][1] == pd.Timestamp("2025-12-31", tz="UTC")
 
@@ -229,7 +240,7 @@ def test_provider_errors_are_not_treated_as_closed_market(
     )
 
     class BrokenCrawler:
-        def fetch(self, *_args: Any) -> pd.DataFrame:
+        def fetch_sample(self, *_args: Any, **_kwargs: Any) -> pd.DataFrame:
             raise RuntimeError("provider unavailable")
 
     monkeypatch.setattr(

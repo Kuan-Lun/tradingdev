@@ -247,8 +247,29 @@ The sample uses the selected market-data pipeline and effective settings.
 It searches bounded calendar windows within the requested dates, continuing
 past empty market-closure windows until it reaches the bar budget or end date.
 Cached Parquet data is read in batches, interpreting timezone-naive timestamps
-as UTC just like ordinary loading. Sampling does not rewrite the source cache;
-feature acquisition follows the timestamps of the selected market bars.
+as UTC just like ordinary loading. Feature caches project only the timestamp
+and requested value column, retaining exact matches to selected market bars.
+Join cardinality is checked before materializing duplicate-key expansions;
+exact left joins and forward/backward fill keep the ordinary loading semantics.
+Sampling does not rewrite source market or feature caches.
+
+Each crawler implements `fetch_sample(..., max_rows=...)` independently of full
+history loading, enforcing bounds before constructing sample frames and honoring
+inclusive endpoints, including a single timestamp. Custom providers must also
+implement this method. API paths use bounded pages or time windows; Yahoo and
+Deribit streamed JSON responses have a 4 MiB ceiling. Streamed sample requests
+reject redirects and extra HTTP compression before reading the body, avoiding
+client buffering or decoding before the size checks. Binance Vision
+prefers daily archives, falling back to a monthly archive on a missing daily
+file. Downloads stream into spooled temporary files with identity HTTP encoding.
+Each selected CSV is scanned in batches of at most 1024 rows, retaining only
+the earliest requested bars even when stored rows are out of order. Later-date
+archives are not read once the output budget is satisfied. Downloads are limited
+to 16 MiB per archive and 32 MiB per `fetch_sample` call; declared CSV expansion
+is limited to 128 MiB. Exceeding a limit fails preparation.
+An archive is still downloaded in full before parsing, so sample bar counts do
+not imply proportionate network traffic. These are application-level resource
+controls, not an operating-system memory limit or a Python sandbox.
 Backtests sample one window; walk-forward samples one train/test fold;
 optimization samples its first candidate on both training and held-out periods.
 Temporary sample results, data and tool caches live in an independent temporary
