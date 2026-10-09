@@ -226,3 +226,4 @@ def test_parent_retains_files_when_worker_cleanup_cannot_be_verified(
     assert caught.value.code == "preflight_cleanup_failed"
     assert directory.is_dir()
     assert (directory / "request.json").is_file()
+    assert (directory / "tmp").is_dir()

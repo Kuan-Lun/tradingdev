@@ -57,6 +57,8 @@ class PreflightService:
         directory = Path(mkdtemp(prefix="tradingdev-preflight-"))
         cleanup_verified = True
         try:
+            temporary_directory = directory / "tmp"
+            temporary_directory.mkdir()
             request_path = directory / "request.json"
             result_path = directory / "result.json"
             request_path.write_text(
@@ -72,6 +74,9 @@ class PreflightService:
                 self._project_root,
                 workspace=WorkspacePaths(directory),
                 env_overrides={
+                    "TMPDIR": str(temporary_directory),
+                    "TMP": str(temporary_directory),
+                    "TEMP": str(temporary_directory),
                     "NUMBA_CACHE_DIR": str(directory / "numba-cache"),
                     "MPLCONFIGDIR": str(directory / "matplotlib"),
                     "MYPY_CACHE_DIR": str(directory / "mypy-cache"),
