@@ -341,7 +341,9 @@ defaults. When both existing and supplied values are mappings, they merge
 recursively; other values replace the specified parameter. At each merge level,
 supplied keys must already exist in the captured mapping. A constructor accepting
 `**kwargs` does not allow an override to introduce new keys. Unknown keys return
-`invalid_execution_request` without creating a job. CLI configs instead provide
+`invalid_execution_request` for backtest/walk-forward preparation or
+`invalid_optimization_request` for optimization preparation, without creating
+a job. CLI configs instead provide
 their complete experiment parameters, which must satisfy constructor binding
 and the execution checks.
 The base source, YAML, lifecycle evidence and current pointer remain unchanged.

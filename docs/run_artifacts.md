@@ -297,10 +297,16 @@ The receipt records:
 
 `market_data` means the configured data pipeline was used. Offline tests may
 substitute the provider; their receipts do not prove live external-market
-verification. Zero trades do not fail preparation: the document says the engine
-completed but this sample did not cover the strategy's trade/cost path. The
-document also states that remaining dates, folds and candidate combinations may
-still fail during full execution. Sample success is not a profitability claim.
+verification. Zero trades alone do not fail preparation: the document says the
+engine completed but this sample did not cover the strategy's trade/cost path.
+Optimization additionally requires the first candidate's sampled training
+objective to be available and finite. Otherwise preparation fails with
+`unrankable_sample_objective`, even if another candidate or the full training
+period could yield a rankable value. Enlarge the sample within its allowed budget
+or revise the settings and prepare again. A zero-trade sample can therefore fail
+when the selected objective cannot be calculated without trades.
+The document also states that remaining dates, folds and candidate combinations
+may still fail during full execution. Sample success is not a profitability claim.
 
 `ConfirmationPresentation` accepts only model-authored title, summary and
 `parameter_descriptions`. Description keys are JSON pointers relative to captured
@@ -352,8 +358,12 @@ ID but are not reported as successfully started work.
 `request_execution_confirmation` requires advertised MCP form elicitation.
 Only an accepted response with the explicit approval field set to true submits
 the fixed manifest. Unsupported clients, declined/cancelled forms and malformed
-responses never launch work. Protocol errors release the active interaction so
-the user can try again; a rejected form cancels the plan. The server relies on
+responses never launch work. Each form response has a separate 300-second
+(five-minute) deadline, independent of the plan's one-hour lifetime. A form timeout
+returns `confirmation_failed`, launches no job and releases the active interaction
+back to `ready`; the user can request confirmation again while the plan remains
+valid. Protocol errors likewise release the interaction; a rejected form cancels
+the plan. The server relies on
 the client to present the form to the user and cannot prove arbitrary clients
 obtained a human decision. Source or effective-setting changes require a new
 plan, fresh sample evidence and another confirmation. CLI commands are explicit
@@ -455,8 +465,10 @@ Optimization `result.json` includes the best parameters, training metrics,
 out-of-sample metrics, objective and fixed direction. Its complete numerical
 projection remains in SQLite; `get_run` and completed `get_job_status` select a
 summary at read time, so their `metrics` are not the entire `result.json` payload.
-Parameters outside the search grid retain their YAML values; selection
-uses training results, and only the selected parameters are evaluated out of
+Parameters outside the search grid retain the effective base values captured in
+the manifest, including constructor defaults and any `parameters` overrides
+applied during preparation. Selection uses training results, and only the selected
+parameters are evaluated out of
 sample. Every training trial retains its full result in the performance and
 observation artifacts; selection references the saved winning trial without
 discarding other trials.

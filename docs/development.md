@@ -42,9 +42,16 @@ Codex runner 尚未接通表單 callback，這些證據不代表 Codex 表單整
 入口即時顯示進度與耗時，第一個失敗就停止並顯示原因；要跑完全部情境可加
 `--maxfail=0`。
 
+Codex 執行時須明確排除上述兩個 local-only 執行計畫情境：
+
 ```bash
-./scripts/check-llm.sh codex --llm-model gpt-5.6-luna
+./scripts/check-llm.sh codex --llm-model gpt-5.6-luna \
+  -k 'not test_llm_prepares_confirms_and_queries_execution_plan'
 ```
+
+未排除時，這兩個測試會直接拒絕非 local provider，與客戶端是否支援 elicitation
+無關；其餘 Codex 情境仍須具備各自要求的能力，能力不足會失敗，不會默默略過。
+不加篩選的完整入口目前須使用 local；下列 local 命令會涵蓋全部情境。
 
 本地測試已驗證支援 Ollama 的 Qwen3.8 27B。模型可用 `ollama pull qwen3.8:27b` 安裝。
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
@@ -83,7 +90,8 @@ Local 每輪固定傳送模型採樣 `seed=42`，與策略執行的 `random_seed
 測試 client 會把錯誤回饋模型，要求重新產生下一個工具呼叫，整段對話最多兩次。
 恢復時保留已完成工具的歷史，不重新派發、不切換 provider，也不重設時間或工具次數上限。
 其他 HTTP 錯誤及逾時仍會失敗。失敗輸出附保存的設定與執行規格，之後照常清理臨時工作區。
-快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；移除此選項才涵蓋全部情境。
+快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；local 移除此選項才涵蓋全部情境。
+Codex 要檢查其餘完整情境時，則使用上述排除 local-only 測試的 `-k` 條件。
 `-k history` 驗證模型查回指定參數、翻頁交易、讀取權益與章節目錄，並請後端產生
 自選章節及 LLM 評語的 HTML；對照保存的原始交易，確認沒有再次啟動回測。
 同一情境也讀取原生成交與逐根帳戶頁，並選用這兩個報告章節；回覆逐欄對照

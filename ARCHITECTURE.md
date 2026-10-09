@@ -365,8 +365,10 @@ registered artifacts，重試時核對檔案及登錄完整性。報告是離線
 
 Generated 策略執行時必須維持 revision 綁定的策略身分與非參數宣告；一般執行可
 調整 `strategy.parameters`，市場、期間與成本可在策略宣告之外覆寫。
-最佳化只允許搜尋範圍內的參數變化。提交時固定有效預設值與
-絕對資料路徑，worker 以 manifest 作為執行設定來源，也不追蹤稍後的 current pointer；
+最佳化準備先將 `parameters` 覆寫合併至含建構子預設值的有效基礎參數，再固定於
+manifest；搜尋候選只覆寫各自指定的欄位，未搜尋的參數保留該次捕捉的基礎值。
+提交時固定有效預設值與絕對資料路徑，worker 以 manifest 作為執行設定來源，
+也不追蹤稍後的 current pointer；
 它仍會讀取所選 revision 的基礎設定，以檢查內容完整性與宣告一致性。
 執行產物中的 `config.yaml` 是 manifest 的檢視副本，不是另一份可修改工作內容的設定。
 
@@ -409,8 +411,10 @@ Supervisor 負責正常退出、失敗與取消後的群組清理；控制請求
 
 目前監督機制依賴 POSIX process groups 與 `waitid(WNOWAIT)`，
 以尚未回收的直屬 child 維持程序身分，避免檢查與終止之間的 PID／群組重用。
-外部強殺 supervisor、後代自行脫離 session，以及提交時在 server 內執行的策略模組
-不在這項清理保證內。控制檔案與狀態證據見 [執行產物契約](docs/run_artifacts.md#workspace-layout)。
+MCP 計畫準備時的策略模組載入、建構與訊號契約檢查在受監督的 preflight 子程序內執行。
+獨立策略驗證、dry-run，以及直接 application-service／CLI 路徑在呼叫端程序內執行的
+策略程式不受這項監督涵蓋；外部強殺 supervisor 或後代自行脫離 session 也不在
+清理保證內。控制檔案與狀態證據見 [執行產物契約](docs/run_artifacts.md#workspace-layout)。
 
 ### 可重現性與策略執行安全
 
