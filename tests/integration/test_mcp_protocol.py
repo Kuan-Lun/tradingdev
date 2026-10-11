@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import yaml
 
+from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.mcp_harness import SimulatedUserApproval
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -26,6 +29,10 @@ RUN_ARGUMENTS = {
     "start_date": "2024-01-01",
     "end_date": "2024-01-08",
 }
+
+PREPARE_ARGUMENTS = RUN_ARGUMENTS | execution_options(
+    {"fast_period": 3, "slow_period": 8}
+)
 
 
 async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
@@ -44,7 +51,7 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"]["parameters"] = {"fast_period": 3, "slow_period": 8}
     config["backtest"]["symbol"] = "ETH/USDT"
-    config["backtest"]["random_seed"] = 42
+    config["random_seed"] = 42
     config_text = yaml.safe_dump(config)
     saved = await client.call(
         "save_strategy",
@@ -58,11 +65,15 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
     return code, config_text, dict(saved)
 
 
-async def make_runnable(client: MCPClient) -> None:
-    validated = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
+async def make_runnable(client: MCPClient, revision_id: str | None = None) -> None:
+    validated = await client.call(
+        "validate_strategy", strategy_id=STRATEGY_ID, revision_id=revision_id
+    )
     assert validated["success"], json.dumps(validated, indent=2)
     assert validated["status"] == "validated"
-    dry_run = await client.call("dry_run_strategy", strategy_id=STRATEGY_ID)
+    dry_run = await client.call(
+        "dry_run_strategy", strategy_id=STRATEGY_ID, revision_id=revision_id
+    )
     assert dry_run["success"], json.dumps(dry_run, indent=2)
     assert dry_run["status"] == "runnable"
     assert dry_run["signal_analysis"]["rows"] == 240
@@ -74,14 +85,16 @@ async def test_generated_strategy_full_mcp_workflow(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     cache_path = mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
         assert {
             "get_strategy_contract",
             "save_strategy",
             "validate_strategy",
             "dry_run_strategy",
-            "start_backtest",
+            "prepare_backtest",
             "get_job_status",
             "get_artifact",
         } <= tools.keys()
@@ -104,10 +117,16 @@ async def test_generated_strategy_full_mcp_workflow(
         assert not (await client.call("promote_strategy", strategy_id=STRATEGY_ID))[
             "success"
         ]
-        assert not (await client.call("start_backtest", **RUN_ARGUMENTS))["job_id"]
+        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
+            "success"
+        ]
         assert await client.call("list_jobs") == []
-        await make_runnable(client)
-        promoted = await client.call("promote_strategy", strategy_id=STRATEGY_ID)
+        await make_runnable(client, saved["revision_id"])
+        promoted = await client.call(
+            "promote_strategy",
+            strategy_id=STRATEGY_ID,
+            revision_id=saved["revision_id"],
+        )
         assert promoted["success"] and promoted["status"] == "promoted"
         assert "binance_vision" in await client.call("list_data_sources")
         data = await client.call(
@@ -116,15 +135,35 @@ async def test_generated_strategy_full_mcp_workflow(
         )
         assert data["success"] and data["rows"] > 0
         assert data["processed_path"] == str(cache_path)
-        started = await client.call("start_backtest", **RUN_ARGUMENTS)
-        assert started["job_id"] and started["data_available"], started
+        prepared = await client.call(
+            "prepare_backtest", **PREPARE_ARGUMENTS, revision_id=saved["revision_id"]
+        )
+        started = await confirm_prepared(client, prepared)
+        assert len(started["manifest_hash"]) == 64
+        assert started["job_id"], started
         completed = await client.wait_for_job(started["job_id"])
         assert completed["status"] == "done", completed
+        assert completed["revision_id"] == saved["revision_id"]
+        assert completed["manifest_hash"] == started["manifest_hash"]
         assert completed["metrics"]["total_trades"] > 0
         run_id = completed["run_id"]
         run = (await client.call("get_run", run_id=run_id))["run"]
         assert run["strategy_id"] == STRATEGY_ID
+        assert run["revision_id"] == saved["revision_id"]
+        assert run["manifest_hash"] == started["manifest_hash"]
         assert run["metrics"] == completed["metrics"]
+        assert run["details_available"] is True
+        assert run["default_scope"] == "full"
+        assert "daily_pnl_mean" not in run["metrics"]
+        assert "daily_pnl_mean" in run["available_metric_ids"]
+        detail = await client.call(
+            "get_run_metrics",
+            run_id=run_id,
+            metric_ids=["daily_pnl_mean", "total_volume", "n_days"],
+        )
+        assert detail["success"] and detail["scope"] == "full"
+        assert set(detail["metrics"]) == {"daily_pnl_mean", "total_volume", "n_days"}
+        assert detail["metadata"]["providers"]["empyrical-reloaded"]
         artifacts = await client.call("list_artifacts", run_id=run_id)
         by_type = {item["artifact_type"]: item for item in artifacts}
         assert {
@@ -133,11 +172,85 @@ async def test_generated_strategy_full_mcp_workflow(
             "strategy_source",
             "dataset_fingerprint",
             "pipeline_result",
+            "execution_manifest",
+            "performance_json",
+            "observations_json",
         } <= by_type.keys()
+        performance = json.loads(Path(by_type["performance_json"]["path"]).read_text())
+        values = performance["scopes"]["full"]["values"]
+        assert detail["metrics"] == {key: values[key] for key in detail["metrics"]}
+        assert json.loads(Path(by_type["result_json"]["path"]).read_text()) == values
+        raw = await client.call(
+            "get_artifact",
+            artifact_id=by_type["observations_json"]["artifact_id"],
+            include_content=True,
+        )
+        observations = json.loads(raw["content"])["scopes"]["full"]
+        assert len(observations["equity_curve"]) == len(observations["returns"])
+        assert len(observations["returns"]) == len(observations["timestamps"])
         for artifact in artifacts:
             path = Path(artifact["path"])
             assert path.is_relative_to(mcp_workspace.workspace / "runs")
             assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"]
+        discovered = await client.call(
+            "find_runs", strategy_id=STRATEGY_ID, parameters={"fast_period": 3}
+        )
+        assert discovered["complete"] and discovered["matched"] == 1
+        assert discovered["runs"][0]["run_id"] == run_id
+        assert discovered["runs"][0]["parameters"] == {
+            "fast_period": 3,
+            "slow_period": 8,
+        }
+        records: list[dict[str, Any]] = []
+        offset: int | None = 0
+        while offset is not None:
+            page = await client.call(
+                "get_run_trades", run_id=run_id, limit=2, offset=offset
+            )
+            assert page["success"] and page["scope"] == "full"
+            records.extend(trade["record"] for trade in page["trades"])
+            offset = page["next_offset"]
+        assert records == observations["trades"]
+        equity = await client.call("get_run_equity", run_id=run_id, limit=2)
+        assert [point["equity"] for point in equity["points"]] == observations[
+            "equity_curve"
+        ][:2]
+        catalog = await client.call("get_report_sections")
+        assert "trades" in catalog["templates"]["standard"]
+        executions = await client.call("get_run_executions", run_id=run_id, limit=2)
+        assert executions["availability"] == "available"
+        assert executions["records"] == observations["execution_records"][:2]
+        assert executions["valuation_basis"] == "requested_price_before_slippage"
+        accounts = await client.call("get_run_account_history", run_id=run_id, limit=2)
+        assert accounts["availability"] == "available"
+        assert accounts["states"] == observations["account_history"][:2]
+        assert accounts["states"][0]["equity"] == observations["equity_curve"][0]
+        assert {"executions", "account_history"} <= set(
+            catalog["templates"]["standard"]
+        )
+        report = await client.call(
+            "generate_report",
+            run_ids=[run_id],
+            sections=["metrics", "trades", "executions", "account_history"],
+            commentary=[{"title": "評語", "text": "這是模擬結果。"}],
+        )
+        assert report["success"], report
+        html = await client.call(
+            "get_artifact", artifact_id=report["artifact_id"], include_content=True
+        )
+        assert "這是模擬結果。" in html["content"]
+        assert hashlib.sha256(html["content"].encode()).hexdigest() == report["sha256"]
+        report_manifest = await client.call(
+            "get_artifact",
+            artifact_id=report["manifest_artifact_id"],
+            include_content=True,
+        )
+        assert json.loads(report_manifest["content"])["sections"] == [
+            "metrics",
+            "trades",
+            "executions",
+            "account_history",
+        ]
         source = await client.call(
             "get_artifact",
             artifact_id=by_type["strategy_source"]["artifact_id"],
@@ -150,13 +263,28 @@ async def test_generated_strategy_full_mcp_workflow(
             include_content=True,
         )
         effective = yaml.safe_load(config_artifact["content"])
+        assert effective["strategy"]["revision_id"] == saved["revision_id"]
         assert effective["strategy"]["parameters"] == {
             "fast_period": 3,
             "slow_period": 8,
         }
         assert effective["backtest"]["symbol"] == "BTC/USDT"
-        assert effective["backtest"]["end_date"] == "2024-01-08"
+        assert effective["backtest"]["end_date"].startswith("2024-01-08")
         assert effective["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
+        manifest_artifact = await client.call(
+            "get_artifact",
+            artifact_id=by_type["execution_manifest"]["artifact_id"],
+            include_content=True,
+        )
+        manifest = json.loads(manifest_artifact["content"])
+        assert manifest["schema_version"] == 5
+        assert manifest["strategy_execution"]["constructor_kwargs"] == {
+            "fast_period": 3,
+            "slow_period": 8,
+        }
+        assert manifest["kind"] == "backtest"
+        assert manifest["manifest_hash"] == started["manifest_hash"]
+        assert manifest["config"] == effective
         assert (
             yaml.safe_load(Path(saved["yaml_path"]).read_text())["backtest"]["symbol"]
             == "ETH/USDT"
@@ -168,8 +296,10 @@ async def test_generated_strategy_full_mcp_workflow(
         assert inspection["market_available"]
         assert inspection["market"]["rows"] == len(sample_ohlcv_with_kd)
 
-    # Persist across MCP sessions; draft revisions invalidate prior approval.
-    async with mcp_workspace.connect() as client:
+    # Persist across MCP sessions; a new draft does not inherit old approval.
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         assert (await client.call("get_job_status", job_id=started["job_id"]))[
             "status"
         ] == "done"
@@ -184,14 +314,32 @@ async def test_generated_strategy_full_mcp_workflow(
             yaml_config=config_text,
         )
         assert revision["status"] == "draft"
-        assert not (await client.call("start_backtest", **RUN_ARGUMENTS))["job_id"]
+        assert revision["revision_id"] != saved["revision_id"]
+        old = await client.call(
+            "get_strategy", strategy_id=STRATEGY_ID, revision_id=saved["revision_id"]
+        )
+        assert old["metadata"]["status"] == "promoted"
+        assert old["source_code"] == code
+        rerun_prepared = await client.call(
+            "prepare_backtest", **PREPARE_ARGUMENTS, revision_id=saved["revision_id"]
+        )
+        rerun = await confirm_prepared(client, rerun_prepared)
+        rerun_done = await client.wait_for_job(rerun["job_id"])
+        assert rerun_done["status"] == "done"
+        assert rerun_done["revision_id"] == saved["revision_id"]
+        assert rerun_done["metrics"] == completed["metrics"]
+        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
+            "success"
+        ]
         assert Path(by_type["strategy_source"]["path"]).read_text() == code
 
 
 async def test_rejected_drafts_diagnostics_and_repair(
     mcp_workspace: MCPWorkspace,
 ) -> None:
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         code, config_text, saved = await save_example(client)
         before = {
             path: path.read_bytes()
@@ -224,6 +372,34 @@ async def test_rejected_drafts_diagnostics_and_repair(
         assert not rejected["success"] and rejected["status"] == "draft"
         assert "banned_import" in {item["code"] for item in rejected["diagnostics"]}
         assert not marker.exists(), "Rejected code must never be imported"
+        removed_import = code.replace(
+            "from __future__ import annotations",
+            "from __future__ import annotations\n\nimport pandas_ta",
+        )
+        await client.call(
+            "save_strategy",
+            strategy_id=STRATEGY_ID,
+            code=removed_import,
+            yaml_config=config_text,
+        )
+        rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
+        assert not rejected["success"] and rejected["status"] == "draft"
+        import_diagnostic = next(
+            item
+            for item in rejected["diagnostics"]
+            if item["code"] == "import_not_allowed"
+        )
+        assert import_diagnostic["message"] == "import not allowed: pandas_ta"
+        assert "talib" in import_diagnostic["fix"]
+        for root in (
+            "__future__",
+            "collections",
+            "dataclasses",
+            "enum",
+            "statistics",
+            "typing_extensions",
+        ):
+            assert root in import_diagnostic["fix"]
         bad_signal = code.replace('result["signal"] = 0', 'result["signal"] = 7')
         await client.call(
             "save_strategy",
@@ -237,15 +413,17 @@ async def test_rejected_drafts_diagnostics_and_repair(
             item["code"] for item in rejected["diagnostics"]
         }
         assert all(item.get("fix") for item in rejected["diagnostics"])
-        await client.call(
+        repaired = await client.call(
             "save_strategy", strategy_id=STRATEGY_ID, code=code, yaml_config=config_text
         )
-        await make_runnable(client)
+        await make_runnable(client, repaired["revision_id"])
+        metadata_path = Path(repaired["py_path"]).parent / "metadata.json"
+        assert json.loads(metadata_path.read_text())["status"] == "runnable"
         assert (
-            json.loads(Path(saved["py_path"]).with_suffix(".json").read_text())[
+            json.loads((Path(saved["py_path"]).parent / "metadata.json").read_text())[
                 "status"
             ]
-            == "runnable"
+            == "draft"
         )
 
 
@@ -254,17 +432,22 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     cache = mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         await save_example(client)
         await make_runnable(client)
+        prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        assert prepared["success"], prepared
         cache.write_bytes(b"invalid parquet")
-        started = await client.call("start_backtest", **RUN_ARGUMENTS)
+        started = await confirm_prepared(client, prepared)
         failed = await client.wait_for_job(started["job_id"])
         assert failed["status"] == "failed", failed
         assert failed["error"]
         assert await client.call("list_runs") == []
         mcp_workspace.seed_market(sample_ohlcv_with_kd)
-        started = await client.call("start_backtest", **RUN_ARGUMENTS)
+        prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        started = await confirm_prepared(client, prepared)
         cancelled = await client.call("cancel_job", job_id=started["job_id"])
         assert cancelled["success"] and cancelled["process_terminated"], cancelled
         assert (await client.call("get_job_status", job_id=started["job_id"]))[
@@ -278,7 +461,9 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
 async def test_real_quality_gates_reject_invalid_llm_output(
     mcp_workspace: MCPWorkspace,
 ) -> None:
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         code, config_text, _ = await save_example(client)
         await client.call(
             "save_strategy",
@@ -291,7 +476,9 @@ async def test_real_quality_gates_reject_invalid_llm_output(
         codes = {item["code"] for item in rejected["diagnostics"]}
         assert {"ruff_failed", "mypy_failed"} <= codes
         assert "contract_execution_error" not in codes
-        assert not (await client.call("start_backtest", **RUN_ARGUMENTS))["job_id"]
+        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
+            "success"
+        ]
         malformed = await client.session.call_tool(
             "save_strategy", {"strategy_id": STRATEGY_ID}
         )
@@ -306,7 +493,9 @@ async def test_walk_forward_runs_through_real_worker(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect() as client:
+    async with mcp_workspace.connect(
+        elicitation_callback=SimulatedUserApproval()
+    ) as client:
         code, config_text, _ = await save_example(client)
         config = yaml.safe_load(config_text)
         config["validation"] = {"n_splits": 2, "train_ratio": 0.6}
@@ -317,13 +506,29 @@ async def test_walk_forward_runs_through_real_worker(
             yaml_config=yaml.safe_dump(config),
         )
         await make_runnable(client)
-        wrong_mode = await client.call("start_backtest", **RUN_ARGUMENTS)
-        assert not wrong_mode["job_id"]
-        assert "start_walk_forward" in wrong_mode["message"]
-        started = await client.call("start_walk_forward", **RUN_ARGUMENTS)
-        assert started["job_id"], started
+        wrong_mode = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        assert not wrong_mode["success"]
+        assert "prepare_walk_forward" in wrong_mode["error"]
+        prepared = await client.call("prepare_walk_forward", **PREPARE_ARGUMENTS)
+        started = await confirm_prepared(client, prepared)
         completed = await client.wait_for_job(started["job_id"])
         assert completed["status"] == "done", completed
-        assert completed["metrics"]["n_folds"] == 2
+        assert completed["default_scope"] == "test_summary"
+        assert set(completed["available_scopes"]) == {
+            "fold/0/train",
+            "fold/0/test",
+            "fold/1/train",
+            "fold/1/test",
+            "test_summary",
+        }
+        summary = await client.call("get_run_metrics", run_id=completed["run_id"])
+        assert summary["metadata"]["n_folds"] == 2
+        assert summary["kind"] == "fold_summary"
+        assert summary["metrics"]["total_pnl"]["valid_count"] == 2
+        fold = await client.call(
+            "get_run_metrics", run_id=completed["run_id"], scope="fold/0/test"
+        )
+        assert fold["kind"] == "backtest" and fold["split"] == "test"
+        assert isinstance(fold["metrics"]["total_pnl"], float)
         artifacts = await client.call("list_artifacts", run_id=completed["run_id"])
         assert any(item["artifact_type"] == "pipeline_result" for item in artifacts)

@@ -32,10 +32,12 @@ class StrategyDiagnostic(BaseModel):
 class ValidationResult(BaseModel):
     """Structured validation result persisted with strategy metadata."""
 
+    revision_id: str
     checked_at: str
     success: bool
     diagnostics: list[StrategyDiagnostic] = Field(default_factory=list)
     signal_analysis: dict[str, Any] = Field(default_factory=dict)
+    effective_config: dict[str, Any] | None = None
 
     @property
     def has_error(self) -> bool:
@@ -49,6 +51,7 @@ class StrategyMetadata(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     strategy_id: str
+    revision_id: str
     class_name: str
     artifact_type: str = "generated_strategy"
     status: StrategyStatus
@@ -67,6 +70,7 @@ class StrategySpec(BaseModel):
     """Runtime strategy source and config pointer."""
 
     strategy_id: str
+    revision_id: str | None = None
     class_name: str
     source_path: str
     config_path: str

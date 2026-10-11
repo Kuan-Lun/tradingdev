@@ -8,6 +8,7 @@ import ccxt
 import pandas as pd
 
 from tradingdev.domain.data.crawlers.base import BaseCrawler
+from tradingdev.domain.data.crawlers.sampling import sample_frame, sample_range
 from tradingdev.shared.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -84,6 +85,47 @@ class BinanceAPICrawler(BaseCrawler):
 
         logger.info("Total candles fetched: %d", len(df))
         return df
+
+    def fetch_sample(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        *,
+        max_rows: int,
+    ) -> pd.DataFrame:
+        """Fetch the earliest unique candles using bounded CCXT pages."""
+        start_utc, end_utc = sample_range(start, end, max_rows)
+        since_ms = -(-pd.Timestamp(start_utc).value // 1_000_000)
+        end_ms = pd.Timestamp(end_utc).value // 1_000_000
+        selected: dict[int, list[object]] = {}
+        while since_ms <= end_ms and len(selected) < max_rows:
+            limit = min(max_rows - len(selected), _BATCH_LIMIT)
+            candles: list[list[object]] = self._exchange.fetch_ohlcv(
+                symbol, timeframe, since=since_ms, limit=limit
+            )
+            if len(candles) > limit:
+                raise ValueError(
+                    "Binance sample response exceeds the requested row limit"
+                )
+            if not candles:
+                break
+            last_ms = since_ms - 1
+            for candle in candles:
+                if len(candle) != len(_OHLCV_COLUMNS):
+                    raise ValueError("Invalid Binance sample candle")
+                timestamp = int(candle[0])  # type: ignore[call-overload]
+                last_ms = max(last_ms, timestamp)
+                if since_ms <= timestamp <= end_ms:
+                    selected.setdefault(timestamp, candle)
+            if last_ms < since_ms:
+                raise ValueError("Binance sample pagination did not advance")
+            if len(candles) < limit or last_ms >= end_ms or len(selected) == max_rows:
+                break
+            since_ms = last_ms + 1
+            time.sleep(self._exchange.rateLimit / 1000)
+        return sample_frame(list(selected.values()), _OHLCV_COLUMNS, unit="ms")
 
     def save_raw(self, df: pd.DataFrame, output_path: Path) -> None:
         """Save raw OHLCV data as CSV.

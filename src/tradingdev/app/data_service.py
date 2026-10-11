@@ -11,11 +11,13 @@ from typing import Any
 
 import pandas as pd
 
+from tradingdev.adapters.storage.feature_samples import read_feature_sample
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
     sha256_file,
     sha256_text,
 )
+from tradingdev.app.market_sample import load_market_sample
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
 from tradingdev.domain.data.crawlers.registry import create_crawler
@@ -87,6 +89,43 @@ class DataService:
             features=[],
         )
 
+    def execution_config(
+        self,
+        raw_config: dict[str, Any],
+        backtest_config: BacktestConfig,
+    ) -> dict[str, Any]:
+        """Resolve data locations now, without fetching or versioning their contents."""
+        data = self.data_config(raw_config).model_dump(mode="json")
+        for key in ("raw_dir", "processed_dir"):
+            data[key] = str(self._resolve_data_path(data[key]))
+        requirements = self.requirements(raw_config, backtest_config)
+        request = self._request_from_backtest(backtest_config)
+        features = []
+        for feature in requirements.features:
+            resolved = feature.model_dump(mode="json")
+            path = (
+                self._resolve_data_path(feature.path)
+                if feature.path
+                else self._default_dvol_path(request)
+                if feature.type == "dvol"
+                else None
+            )
+            resolved["path"] = str(path) if path is not None else None
+            raw_path = (
+                self._resolve_data_path(feature.raw_path)
+                if feature.raw_path
+                else path.with_suffix(".csv")
+                if feature.type == "dvol" and path is not None
+                else None
+            )
+            resolved["raw_path"] = str(raw_path) if raw_path is not None else None
+            features.append(resolved)
+        data["requirements"] = {
+            "market": requirements.market.model_dump(mode="json"),
+            "features": features,
+        }
+        return data
+
     def load(
         self,
         raw_config: dict[str, Any],
@@ -137,6 +176,66 @@ class DataService:
             processed_path=processed_path,
             dataset_id=self._dataset_id(request, requirements),
         )
+
+    def load_sample(
+        self,
+        raw_config: dict[str, Any],
+        backtest_config: BacktestConfig,
+        *,
+        max_rows: int,
+        output_dir: Path,
+    ) -> LoadedDataset:
+        """Find cached or fetched historical bars through bounded interval searches.
+
+        Sample files and fetched features live under output_dir. Existing market
+        and feature caches are only read; the yearly cache manager is not used.
+        """
+        if not 1 <= max_rows <= 4096:
+            raise ValueError("Sample size must be between 1 and 4096 rows")
+        data_config = self.data_config(raw_config)
+        requirements = self.requirements(raw_config, backtest_config)
+        request = self._request_from_backtest(backtest_config)
+        sample_config = data_config.model_copy(
+            update={
+                "raw_dir": str(output_dir / "raw"),
+                "processed_dir": str(output_dir / "processed"),
+            }
+        )
+        # Normal data loading constructs the provider even on a cache hit.
+        # Check that boundary here too, without calling its network fetch.
+        crawler = create_crawler(requirements.market.source, sample_config)
+        frame = load_market_sample(request, data_config, crawler, max_rows=max_rows)
+        features = [
+            feature.model_copy(update={"path": str(self._default_dvol_path(request))})
+            if feature.type == "dvol" and not feature.path
+            else feature
+            for feature in requirements.features
+        ]
+        request = request.model_copy(
+            update={
+                "start_date": frame["timestamp"].iloc[0],
+                "end_date": frame["timestamp"].iloc[-1],
+            }
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for index, feature in enumerate(features):
+            selected = feature
+            if feature.type == "dvol" and (
+                not feature.path or not self._resolve_data_path(feature.path).exists()
+            ):
+                selected = feature.model_copy(
+                    update={
+                        "path": str(output_dir / f"feature-{index}.parquet"),
+                        "raw_path": str(output_dir / f"feature-{index}.csv"),
+                    }
+                )
+            frame = self._merge_feature(
+                frame, selected, request, sample_max_rows=max_rows
+            )
+        processed_path = output_dir / "sample.parquet"
+        frame.to_parquet(processed_path, index=False)
+        # This identity describes the exact sample, not the full requested data.
+        return LoadedDataset(frame, processed_path, sha256_file(processed_path))
 
     def list_available_data(self) -> list[dict[str, Any]]:
         """List cached OHLCV parquet files from the workspace data root."""
@@ -250,9 +349,27 @@ class DataService:
         frame: pd.DataFrame,
         feature: FeatureSpec,
         request: MarketDataRequest,
+        *,
+        sample_max_rows: int | None = None,
     ) -> pd.DataFrame:
-        if feature.type == "dvol":
-            feature_df = self._load_or_fetch_dvol(feature, request)
+        path = self._resolve_data_path(feature.path) if feature.path else None
+        if sample_max_rows is not None and path is not None and path.exists():
+            merged = read_feature_sample(
+                path,
+                timestamps=frame["timestamp"],
+                column=feature.column,
+                max_rows=sample_max_rows,
+                fallback_column="dvol_close" if feature.type == "dvol" else None,
+            )
+        elif feature.type == "dvol":
+            feature_df = self._load_or_fetch_dvol(
+                feature,
+                request,
+                sample_max_rows=sample_max_rows,
+                sample_timestamps=pd.DatetimeIndex(frame["timestamp"].unique())
+                if sample_max_rows is not None
+                else None,
+            )
             value_column = feature.column
             if (
                 value_column not in feature_df.columns
@@ -273,6 +390,15 @@ class DataService:
             )
             merged = feature_df[["timestamp", feature.column]]
 
+        if sample_max_rows is not None:
+            merged = merged.loc[merged["timestamp"].isin(frame["timestamp"])]
+            counts = merged["timestamp"].value_counts()
+            expected_rows = sum(
+                max(int(counts.get(timestamp, 0)), 1)
+                for timestamp in frame["timestamp"]
+            )
+            if expected_rows > sample_max_rows:
+                raise ValueError("Feature joins exceeded the sample row budget")
         result = frame.merge(merged, on="timestamp", how="left")
         result[feature.column] = result[feature.column].ffill().bfill()
         return result
@@ -281,6 +407,9 @@ class DataService:
         self,
         feature: FeatureSpec,
         request: MarketDataRequest,
+        *,
+        sample_max_rows: int | None = None,
+        sample_timestamps: pd.DatetimeIndex | None = None,
     ) -> pd.DataFrame:
         processed_path = (
             self._resolve_data_path(feature.path)
@@ -288,16 +417,36 @@ class DataService:
             else self._default_dvol_path(request)
         )
         if processed_path.exists():
+            if sample_max_rows is not None and sample_timestamps is not None:
+                return read_feature_sample(
+                    processed_path,
+                    timestamps=pd.Series(sample_timestamps),
+                    column=feature.column,
+                    fallback_column="dvol_close",
+                    max_rows=sample_max_rows,
+                )
             return self._loader.load_parquet(processed_path)
 
         crawler = DeribitDVOLCrawler()
         currency = request.symbol.split("/")[0]
-        raw = crawler.fetch(
-            symbol=currency,
-            timeframe=request.timeframe,
-            start=request.start_date,
-            end=request.end_date,
-        )
+        if sample_max_rows is None:
+            raw = crawler.fetch(
+                symbol=currency,
+                timeframe=request.timeframe,
+                start=request.start_date,
+                end=request.end_date,
+            )
+        else:
+            raw = crawler.fetch_sample(
+                symbol=currency,
+                timeframe=request.timeframe,
+                start=request.start_date,
+                end=request.end_date,
+                max_rows=sample_max_rows,
+                timestamps=sample_timestamps,
+            )
+            if len(raw) > sample_max_rows:
+                raise ValueError("Feature provider exceeded the sample row budget")
         raw_path = (
             self._resolve_data_path(feature.raw_path)
             if feature.raw_path

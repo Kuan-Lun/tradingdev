@@ -32,10 +32,12 @@ from tradingdev.adapters.dashboard.analysis import (
     cumulative_pnl,
     cumulative_pnl_pct,
     filter_by_month,
+    metric_cards,
     monthly_volume,
     rolling_mdd_absolute,
 )
 from tradingdev.app.artifact_service import ArtifactService
+from tradingdev.app.report_service import ReportService
 from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.schemas import BacktestConfig
 
@@ -62,6 +64,7 @@ TIMEFRAME_MINUTES: dict[str, int] = {
 
 _PIPELINE_KEY = "_pipeline_result"
 _RUN_ID_KEY = "_run_id"
+_REPORT_KEY = "_report_download"
 
 
 def _bars_in_30_days(timeframe: str) -> int:
@@ -132,31 +135,19 @@ def _render_charts(  # noqa: PLR0915
     raw_config: dict[str, Any],
 ) -> None:
     """Render KPI row and 5 chart tabs for a single BacktestResult."""
-    metrics = result.metrics
     is_volume_mode = result.mode == "volume"
 
     # --- KPI row ----------------------------------------------------------
-    cols = st.columns(6)
-    if is_volume_mode:
-        cols[0].metric("Total P&L", f"{metrics['total_pnl']:+,.0f} USDT")
-    else:
-        cols[0].metric("Total Return", f"{metrics['total_return']:.2%}")
-    cols[1].metric("Sharpe", f"{metrics['sharpe_ratio']:.3f}")
-    if is_volume_mode:
-        cols[2].metric("Max DD", f"{metrics['max_drawdown']:,.0f} USDT")
-    else:
-        cols[2].metric("Max DD", f"{metrics['max_drawdown']:.2%}")
-    cols[3].metric("Win Rate", f"{metrics['win_rate']:.1%}")
-    cols[4].metric("Trades", f"{metrics['total_trades']:,}")
-    cols[5].metric(
-        "Volume",
-        f"{metrics['total_volume']:,.0f}",
-    )
+    cards = metric_cards(result.metrics, mode=result.mode)
+    for column, (label, value) in zip(st.columns(len(cards)), cards, strict=True):
+        column.metric(label, value)
+    st.caption("Monetary values and traded volume use the market's quote currency.")
 
     # --- Prepare data -----------------------------------------------------
     equity = build_equity_series(result.equity_curve, result.timestamps)
     trades_df = build_trades_df(result.trades, result.timestamps)
     eq_view, tr_view = filter_by_month(equity, trades_df, month)
+    closed_trades = tr_view.loc[tr_view["status"] == "closed"]
 
     # --- Monthly target ---------------------------------------------------
     monthly_target: float | None = None
@@ -208,12 +199,15 @@ def _render_charts(  # noqa: PLR0915
 
     # -- Tab 2: Trade PnL histogram
     with tab_hist:
-        if tr_view.empty:
-            st.info("No trades in selected period.")
+        if closed_trades.empty:
+            st.info("No closed trades in selected period.")
         else:
-            pnl_col = tr_view["net_pnl"]
-            if unit == "%" and tr_view["size_quote"].sum() > 0:
-                pnl_col = tr_view["net_pnl"] / tr_view["size_quote"] * 100
+            pnl_col = closed_trades["net_pnl"]
+            if unit == "%" and closed_trades["size_quote"].sum() > 0:
+                notionals = closed_trades["size_quote"].where(
+                    closed_trades["size_quote"] > 0
+                )
+                pnl_col = closed_trades["net_pnl"] / notionals * 100
                 x_label = "Per-trade PnL (%)"
             else:
                 x_label = "Per-trade PnL"
@@ -435,12 +429,46 @@ def _render_walk_forward(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def _render_report_download(run_id: str, service: ReportService) -> None:
+    """Keep report identity in the session and let the service verify every read."""
+    if st.button("Generate full report with trade history"):
+        st.session_state.pop(_REPORT_KEY, None)
+        report = service.generate_report([run_id])
+        if not report["success"]:
+            st.error(str(report["error"]))
+            return
+        st.session_state[_REPORT_KEY] = {
+            "run_id": run_id,
+            "report_id": report["report_id"],
+            "sha256": report["sha256"],
+        }
+    saved_report = st.session_state.get(_REPORT_KEY)
+    if not saved_report or saved_report["run_id"] != run_id:
+        return
+    download = service.get_report_download(
+        saved_report["report_id"], expected_sha256=saved_report["sha256"]
+    )
+    if not download["success"]:
+        st.session_state.pop(_REPORT_KEY, None)
+        st.error(str(download["error"]))
+        return
+    st.download_button(
+        "Download offline HTML report",
+        download["content"],
+        file_name=f"tradingdev-{run_id}.html",
+        mime="text/html",
+    )
+
+
 def main() -> None:
     requested_run_id = _parse_args()
     run_service = RunService()
     artifact_service = ArtifactService()
     run = _resolve_run(run_service, requested_run_id)
     run_id = str(run["run_id"])
+
+    with st.sidebar:
+        _render_report_download(run_id, ReportService())
 
     if (
         _PIPELINE_KEY not in st.session_state

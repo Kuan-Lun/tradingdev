@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import pandas as pd
+
+    from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 
 
 class TestKDStrategy:
@@ -78,6 +81,66 @@ class TestKDStrategy:
 
 
 class TestKDStrategyFit:
+    @pytest.mark.parametrize("first", [0.5, None, float("nan"), float("inf")])
+    def test_fit_minimizes_drawdown_and_excludes_missing_metrics(
+        self,
+        sample_ohlcv_with_kd: pd.DataFrame,
+        monkeypatch: pytest.MonkeyPatch,
+        first: float | None,
+    ) -> None:
+        from tradingdev.domain.strategies.bundled.kd_strategy import strategy as module
+
+        scores = iter([first, 0.1])
+        engine = cast(
+            "BaseBacktestEngine",
+            SimpleNamespace(
+                run=lambda frame: SimpleNamespace(
+                    metrics={"max_drawdown": next(scores)}
+                )
+            ),
+        )
+        monkeypatch.setattr(module, "estimate_n_jobs", lambda *args, **kwargs: 1)
+        strategy = KDStrategy(
+            config=KDStrategyConfig(),
+            fit_config=KDFitConfig(
+                k_period_range=[9, 14],
+                d_period_range=[3],
+                smooth_k_range=[3],
+                overbought_range=[80.0],
+                oversold_range=[20.0],
+                target_metric="max_drawdown",
+            ),
+            backtest_engine=engine,
+        )
+        strategy.fit(sample_ohlcv_with_kd)
+        assert strategy.get_parameters()["k_period"] == 14
+
+    def test_fit_all_missing_metrics_fails(
+        self, sample_ohlcv_with_kd: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tradingdev.domain.strategies.bundled.kd_strategy import strategy as module
+
+        engine = cast(
+            "BaseBacktestEngine",
+            SimpleNamespace(
+                run=lambda frame: SimpleNamespace(metrics={"sharpe_ratio": None})
+            ),
+        )
+        monkeypatch.setattr(module, "estimate_n_jobs", lambda *args, **kwargs: 1)
+        strategy = KDStrategy(
+            config=KDStrategyConfig(),
+            fit_config=KDFitConfig(
+                k_period_range=[9],
+                d_period_range=[3],
+                smooth_k_range=[3],
+                overbought_range=[80.0],
+                oversold_range=[20.0],
+            ),
+            backtest_engine=engine,
+        )
+        with pytest.raises(ValueError, match="No parameter combination.*finite"):
+            strategy.fit(sample_ohlcv_with_kd)
+
     def test_fit_without_fit_config_is_noop(
         self, sample_ohlcv_with_kd: pd.DataFrame
     ) -> None:
@@ -96,7 +159,9 @@ class TestKDStrategyFit:
             oversold_range=[20.0],
             target_metric="sharpe_ratio",
         )
-        engine = SignalBacktestEngine(init_cash=10_000.0, fees=0.0, slippage=0.0)
+        engine = SignalBacktestEngine(
+            init_cash=10_000.0, fees=0.0, slippage=0.0, periods_per_year=365
+        )
         strategy = KDStrategy(
             config=KDStrategyConfig(),
             fit_config=fit_config,
@@ -129,7 +194,9 @@ class TestKDStrategyFit:
             overbought_range=[80.0],
             oversold_range=[20.0],
         )
-        engine = SignalBacktestEngine(init_cash=10_000.0, fees=0.0, slippage=0.0)
+        engine = SignalBacktestEngine(
+            init_cash=10_000.0, fees=0.0, slippage=0.0, periods_per_year=365
+        )
         strategy = KDStrategy(
             config=KDStrategyConfig(),
             fit_config=fit_config,

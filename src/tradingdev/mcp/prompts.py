@@ -17,9 +17,9 @@ list. Select one per config via data.requirements.market.source:
   Yahoo Finance chart API. Symbols follow Yahoo conventions (e.g. "AAPL",
   "2330.TW", "ES=F", "^GSPC"); supported timeframes include 1m-90m, 1h, 1d,
   1wk, 1mo.
-Use ensure_data(symbol, timeframe, start_date, end_date, source=...) to
-pre-cache data and inspect_dataset(config_path) to check cache and feature
-health before starting long jobs. Additional feature inputs (e.g. dvol,
+Preparation loads a bounded sample; do not pre-download full history merely
+to obtain confirmation. ensure_data can explicitly pre-cache user-requested
+data and inspect_dataset checks cache and feature health. Additional inputs (e.g. dvol,
 funding_rate) are declared in data.requirements.features.
 
 Strategy development workflow
@@ -34,22 +34,78 @@ Strategy development workflow
    re-runs the contract on a longer fixture, returns signal_analysis, and
    marks the strategy runnable.
 5. Optionally call promote_strategy to pin a runnable strategy as promoted.
-6. Call start_backtest for simple configs or start_walk_forward for configs
-   with validation sections. Execution accepts only runnable or promoted
-   strategies; this gate is enforced at execution time on every entry point,
-   so drafts cannot run even outside MCP.
+6. Call prepare_backtest for simple configs, prepare_walk_forward for configs
+   with validation sections, or prepare_optimization for a parameter search.
+   Execution accepts only runnable or promoted strategies. Supply the actual
+   minimum history needed by the strategy, and human-language parameter labels,
+   descriptions and units through presentation (including constructor defaults).
+   Resolve missing parameter paths from the returned structured error; do not
+   ask the user to fill Python keys or YAML. The backend freezes all effective
+   settings and runs a time-bounded market-data/engine trial before producing
+   confirmation_text and an HTML artifact. Repair preparation errors first.
+   Present the backend text and HTML link without inventing or omitting settings.
+   A zero-trade sample or a representative fold is limited evidence, not proof
+   that every data period, fold or optimization candidate will succeed.
+   Call request_execution_confirmation(plan_id) to collect actual human consent
+   through MCP form elicitation. Never answer the form on the user's behalf.
+   No full job starts on decline, cancellation, timeout or unsupported clients.
+   Natural-language edits require a new plan and successful trial; never change
+   the approved plan. An expired plan must also be prepared again.
 7. Poll get_job_status (cancel_job to abort), then inspect list_runs /
-   get_run / compare_runs / list_artifacts / get_artifact as needed.
-8. For parameter tuning, call start_optimization, poll get_job_status, and
-   confirm with confirm_optimization when it reports pending_confirmation.
+   get_run for summaries. Use get_metric_catalog to discover metrics and
+   get_run_metrics(run_id, metric_ids, scope) for saved detailed results.
+   The response's available_scopes lists full, fold, and trial results;
+   an omitted summary field does not mean the metric was not computed.
+   Use find_runs to locate historical effective parameters at run/scope level;
+   get_run_trades and get_run_equity read paginated original observations without
+   rerunning. Check incomplete discovery warnings. An open trade's final mark is
+   not an executed exit. Use compare_runs / list_artifacts / get_artifact as needed.
+   get_run_executions reads native order attempts, fill prices/costs and before/after
+   balances; get_run_account_history reads close-marked end-of-bar account states.
+   They are separate from paired trades. Check availability; never reconstruct
+   absent legacy records. VectorBT generic balances are not exchange margin wallets.
+   For reports, discover get_report_sections and compose generate_report(run_ids,
+   sections, commentary). Backend sections render saved metrics/charts/trades;
+   write your interpretation as plain-text commentary in the user's language.
+   Common recipes are suggestions: choose the relevant sections, their order,
+   or [] for commentary with source identity only. Omission uses the standard
+   recipe. Do not claim omitted information is included. The backend labels
+   commentary separately from calculations and renders HTML without client code.
+   Link the returned report file/artifact so users can inspect complete records.
+8. Optimization follows the same prepare/confirm flow. The approved search
+   continues without a second confirmation after its first full-history trial.
+
+For individual parameter experiments, pass parameters to prepare_backtest or
+prepare_walk_forward with the same runnable revision_id. Nested parameter mappings
+merge recursively with the base values. Each run fixes its effective settings
+in its manifest and checks the generated signal contract at both fixture depths;
+the saved revision and current pointer stay unchanged. Save a new strategy
+revision when changing source or the base configuration, not for each trial.
 
 Signals use 1 = long, -1 = short, 0 = flat, and must never use data after
 the bar being signalled. Strategy parameters live only in YAML
 strategy.parameters. Generated strategies must remain in workspace/.
 
+Performance metrics use Empyrical for return/risk statistics and VectorBT for
+closed-trade statistics. Set backtest.periods_per_year for observed UTC daily
+returns (365 for continuously traded crypto; choose the appropriate calendar
+for other markets); this factor is independent of bar timeframe. risk_free_rate
+and required_return are annual decimal rates. Missing annualization leaves
+annualized metrics unavailable. Volume mode has no initial capital; use amount
+PnL and drawdown, not capital-return ratios. Inspect saved definitions, settings
+and unavailable reasons before interpreting nulls, and inspect comparability
+reasons before comparing runs. Fold summaries describe fold distributions and
+are not recalculated whole-period returns. Query saved values before deciding
+whether another execution is needed; do not treat unavailable metrics as zero.
+
 Compute standard indicators with tradingdev.domain.indicators (sma, ema,
-rsi, macd, bollinger_bands, atr, adx, stochastic). If you import pandas_ta
-directly, select its output columns by name and pass talib=False.
+rsi, macd, bollinger_bands, atr, adx, stochastic), backed by TA-Lib. Preserve
+TA-Lib's warm-up and NaN behavior: keep signals flat until all required values
+are finite, and never backfill indicators from future rows. Direct talib
+imports are allowed; pass float64 NumPy arrays to its Function API, unpack
+multi-output tuples (MACD: line, signal, histogram; BBANDS: upper, middle,
+lower; STOCH: k, d), and align output arrays with the input index. pandas_ta
+imports are no longer supported.
 
 Always reply in the user's language.
 """

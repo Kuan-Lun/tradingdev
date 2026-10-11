@@ -67,7 +67,7 @@ def test_server_instances_keep_generated_strategies_in_their_workspace(
         )
         assert isinstance(saved_result, tuple)
         assert isinstance(saved_result[1], dict)
-        assert saved_result[1]["success"] is True
+        assert saved_result[1]["result"]["success"] is True
         first_result = await first.call_tool(
             "get_strategy", {"strategy_id": "isolated_strategy"}
         )
@@ -76,11 +76,53 @@ def test_server_instances_keep_generated_strategies_in_their_workspace(
         )
         assert isinstance(first_result, tuple)
         assert isinstance(first_result[1], dict)
-        assert first_result[1]["success"] is True
+        assert first_result[1]["result"]["success"] is True
         assert isinstance(second_result, tuple)
         assert isinstance(second_result[1], dict)
-        assert second_result[1]["success"] is False
+        assert second_result[1]["result"]["success"] is False
 
     asyncio.run(check())
-    assert (first_workspace.generated_strategies / "isolated_strategy.py").is_file()
-    assert not (second_workspace.generated_strategies / "isolated_strategy.py").exists()
+    assert list(
+        (first_workspace.generated_strategies / "isolated_strategy" / "revisions").glob(
+            "*/strategy.py"
+        )
+    )
+    assert not (second_workspace.generated_strategies / "isolated_strategy").exists()
+
+
+def test_revision_selectors_are_advertised_in_tool_schemas(runtime_root: Path) -> None:
+    server = create_server(WorkspacePaths(runtime_root / "workspace"))
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    for name in (
+        "get_strategy",
+        "validate_strategy",
+        "dry_run_strategy",
+        "promote_strategy",
+        "prepare_backtest",
+        "prepare_walk_forward",
+        "prepare_optimization",
+    ):
+        schema = tools[name].inputSchema
+        assert "revision_id" in schema["properties"]
+        assert "revision_id" not in schema.get("required", [])
+    saved_schema = tools["save_strategy"].outputSchema
+    assert saved_schema is not None
+    assert "revision_id" in saved_schema["$defs"]["StrategySaveSuccess"]["required"]
+
+
+def test_execution_manifest_hash_is_required_for_prepared_and_accepted_plans(
+    runtime_root: Path,
+) -> None:
+    server = create_server(WorkspacePaths(runtime_root / "workspace"))
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    for name, contract in (
+        ("prepare_backtest", "PlanResponse"),
+        ("prepare_walk_forward", "PlanResponse"),
+        ("prepare_optimization", "PlanResponse"),
+        ("request_execution_confirmation", "PlanStarted"),
+    ):
+        schema = tools[name].outputSchema
+        assert schema is not None
+        accepted = schema["$defs"][contract]
+        assert "manifest_hash" in accepted["required"]
+        assert accepted["properties"]["manifest_hash"]["pattern"] == "^[0-9a-f]{64}$"

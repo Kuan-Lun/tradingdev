@@ -2,36 +2,40 @@
 
 from __future__ import annotations
 
-from datetime import date
+from itertools import product
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any
+
+import yaml
+from pydantic import ValidationError
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
-from tradingdev.app.job_config import apply_run_overrides, write_job_config
+from tradingdev.app.backtest_service import BacktestService
+from tradingdev.app.data_service import DataService
+from tradingdev.app.execution_submission import (
+    ExecutionSubmissionService,
+    PreparedExecution,
+)
+from tradingdev.app.job_config import (
+    apply_backtest_overrides,
+    apply_run_overrides,
+    bind_strategy_revision,
+)
 from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
     StrategyService,
 )
-from tradingdev.domain.backtest.schemas import BacktestRunConfig
+from tradingdev.domain.execution import ManifestError, OptimizationSpec
+from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
+
+if TYPE_CHECKING:
+    from tradingdev.domain.strategies.schemas import StrategySpec
 
 
 class OptimizationService:
     """Create background optimization jobs."""
-
-    _VALID_METRICS = frozenset(
-        {
-            "total_return",
-            "total_pnl",
-            "annual_return",
-            "sharpe_ratio",
-            "max_drawdown",
-            "win_rate",
-            "profit_factor",
-        }
-    )
 
     def __init__(
         self,
@@ -39,6 +43,8 @@ class OptimizationService:
         strategy_service: StrategyService | None = None,
         job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
+        strategy_loader: StrategyLoader | None = None,
+        data_service: DataService | None = None,
         project_root: Path | None = None,
     ) -> None:
         self._job_store = job_store or get_default_job_store()
@@ -47,6 +53,13 @@ class OptimizationService:
         )
         self._process_runner = process_runner or ProcessRunner(
             project_root, workspace=self._job_store.workspace
+        )
+        self._strategy_loader = strategy_loader or StrategyLoader(
+            workspace_root=self._job_store.workspace.root
+        )
+        self._data_service = data_service or DataService(self._job_store.workspace)
+        self._submission = ExecutionSubmissionService(
+            self._job_store, self._process_runner
         )
 
     def start_optimization(
@@ -61,120 +74,160 @@ class OptimizationService:
         train_end: str,
         test_start: str,
         test_end: str,
+        revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Start a parameter optimization worker."""
-        config_path, error = self._resolve_strategy_config(strategy_id)
-        if config_path is None:
-            return {"job_id": "", "message": error, "total_combinations": 0}
-        validation_error = self._validate_request(
-            param_ranges,
-            optimization_metric,
-            train_start,
-            train_end,
-            test_start,
-            test_end,
-        )
-        if validation_error:
-            return {"job_id": "", "message": validation_error, "total_combinations": 0}
-
-        total_combinations = 1
-        for values in param_ranges.values():
-            total_combinations *= len(values)
-
-        effective_config = apply_run_overrides(
-            load_config(config_path),
+        """Prepare and submit a parameter optimization worker."""
+        prepared = self.prepare_optimization(
+            strategy_id=strategy_id,
             symbol=symbol,
             timeframe=timeframe,
-            start_date=train_start,
-            # Optimization bounds are calendar days, including the final day.
-            end_date=f"{test_end}T23:59:59.999999",
-        )
-        BacktestRunConfig.model_validate(effective_config)
-        job_id = uuid4().hex[:12]
-        effective_path = write_job_config(
-            self._job_store.workspace.runs / job_id, effective_config
-        )
-        self._job_store.create_job(
-            job_id=job_id,
-            strategy_name=strategy_id,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=train_start,
-            end_date=test_end,
-            config_path=str(effective_path),
-        )
-        self._job_store.update_job(
-            job_id,
-            job_type="optimization",
-            original_config_path=str(config_path),
             param_ranges=param_ranges,
             optimization_metric=optimization_metric,
             train_start=train_start,
             train_end=train_end,
             test_start=test_start,
             test_end=test_end,
-            total_combinations=total_combinations,
+            revision_id=revision_id,
+            parameters=parameters,
+            backtest_overrides=backtest_overrides,
         )
-        try:
-            identity = self._process_runner.spawn_module(
-                "tradingdev.mcp.workers.optimization",
-                job_id,
-            )
-        except BaseException as exc:
-            # Interruptions must not leave a job queued after startup cleanup.
-            self._job_store.update_job(
-                job_id,
-                status="failed",
-                error=f"Worker failed to start: {type(exc).__name__}: {exc}",
-            )
-            raise
-        self._job_store.update_job(job_id, **identity.job_fields())
+        if isinstance(prepared, dict):
+            return prepared
+        optimization = prepared.manifest.optimization
+        assert optimization is not None
+        submitted = self._submission.submit(prepared)
+        total_combinations = optimization.total_combinations
         return {
-            "job_id": job_id,
+            **submitted,
+            "optimization_metric": optimization.optimization_metric,
+            "direction": optimization.direction,
             "message": (
                 f"Optimization started. {total_combinations} parameter combinations. "
-                "A trial run will estimate total time; use get_job_status() to check."
+                "Use get_job_status() to follow the search."
             ),
             "total_combinations": total_combinations,
         }
 
-    def _resolve_strategy_config(self, strategy_id: str) -> tuple[Path | None, str]:
-        try:
-            spec = self._strategy_service.resolve_executable(strategy_id)
-        except StrategyNotExecutableError as exc:
-            return None, str(exc)
-        path = Path(spec.config_path)
-        return (path, "") if path.exists() else (None, f"Config not found: {path}")
-
-    def _validate_request(
+    def prepare_optimization(
         self,
+        *,
+        strategy_id: str,
+        symbol: str,
+        timeframe: str,
         param_ranges: dict[str, list[Any]],
-        metric: str,
+        optimization_metric: str,
         train_start: str,
         train_end: str,
         test_start: str,
         test_end: str,
-    ) -> str:
-        if not param_ranges:
-            return "param_ranges must not be empty."
-        for name, values in param_ranges.items():
-            if not isinstance(values, list) or not values:
-                return f"param_ranges['{name}'] must be a non-empty list."
-        if metric not in self._VALID_METRICS:
-            return (
-                f"Invalid metric '{metric}'. Choose from: {sorted(self._VALID_METRICS)}"
-            )
+        revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
+    ) -> PreparedExecution | dict[str, Any]:
+        """Capture a validated search without creating a job or launching a worker."""
         try:
-            ts = date.fromisoformat(train_start)
-            te = date.fromisoformat(train_end)
-            vs = date.fromisoformat(test_start)
-            ve = date.fromisoformat(test_end)
-        except ValueError as exc:
-            return f"Invalid date format: {exc}"
-        if not (ts < te < vs < ve):
-            return (
-                "Dates must satisfy: train_start < train_end < test_start < test_end "
-                "(inclusive calendar days, without overlap). "
-                f"Got: {train_start}, {train_end}, {test_start}, {test_end}"
+            spec, error = self._resolve_strategy_config(strategy_id, revision_id)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return {
+                "job_id": "",
+                "message": str(exc),
+                "total_combinations": 0,
+                "code": "invalid_optimization_request",
+            }
+        if spec is None:
+            return {
+                "job_id": "",
+                "message": error,
+                "total_combinations": 0,
+                "code": "strategy_not_executable",
+            }
+        try:
+            optimization = OptimizationSpec.model_validate(
+                {
+                    "param_ranges": param_ranges,
+                    "optimization_metric": optimization_metric,
+                    "train_start": train_start,
+                    "train_end": train_end,
+                    "test_start": test_start,
+                    "test_end": test_end,
+                }
             )
-        return ""
+        except ValidationError as exc:
+            return {
+                "job_id": "",
+                "message": str(exc),
+                "total_combinations": 0,
+                "code": "invalid_optimization_request",
+            }
+
+        config_path = Path(spec.config_path)
+        try:
+            raw_config = load_config(config_path)
+            if not isinstance(raw_config, dict):
+                raise ValueError("YAML config must be a mapping")
+            bind_strategy_revision(raw_config, spec)
+            if raw_config.get("validation") is not None:
+                raise ValueError(
+                    "Optimization config must not contain validation settings; "
+                    "use a config without walk-forward validation."
+                )
+            effective_config = apply_run_overrides(
+                raw_config,
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=train_start,
+                # Optimization bounds are calendar days, including the final day.
+                end_date=f"{test_end}T23:59:59.999999",
+            )
+            apply_backtest_overrides(effective_config, backtest_overrides)
+            manifest = BacktestService(
+                strategy_gate=self._strategy_service,
+                strategy_loader=self._strategy_loader,
+                data_service=self._data_service,
+            ).prepare_execution(
+                effective_config,
+                kind="optimization",
+                optimization=optimization,
+                parameters=parameters,
+            )
+            strategy_config = manifest.config_copy()["strategy"]
+            names = list(optimization.param_ranges)
+            candidates = (optimization.param_ranges[name] for name in names)
+            combinations = (
+                dict(zip(names, combination, strict=True))
+                for combination in product(*candidates)
+            )
+            try:
+                self._strategy_loader.validate_parameter_grid(
+                    strategy_config, manifest.strategy_execution, combinations
+                )
+            except Exception as exc:
+                raise ManifestError(
+                    f"Invalid strategy optimization settings: {exc}"
+                ) from exc
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+            yaml.YAMLError,
+            StrategyNotExecutableError,
+        ) as exc:
+            return {
+                "job_id": "",
+                "message": str(exc),
+                "total_combinations": 0,
+                "code": "invalid_optimization_request",
+            }
+        return PreparedExecution(manifest, config_path)
+
+    def _resolve_strategy_config(
+        self, strategy_id: str, revision_id: str | None
+    ) -> tuple[StrategySpec | None, str]:
+        try:
+            spec = self._strategy_service.resolve_executable(strategy_id, revision_id)
+        except StrategyNotExecutableError as exc:
+            return None, str(exc)
+        path = Path(spec.config_path)
+        return (spec, "") if path.exists() else (None, f"Config not found: {path}")

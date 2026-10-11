@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -11,7 +13,12 @@ import yaml
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
-from tests.integration.mcp_harness import temporary_mcp_workspace
+from tests.e2e.workflow_arguments import effective_workflow_calls
+from tests.e2e.workflow_diagnostics import workflow_diagnostics
+from tests.integration.mcp_harness import (
+    SimulatedUserApproval,
+    temporary_mcp_workspace,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -19,6 +26,8 @@ if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPWorkspace
 
 pytestmark = pytest.mark.live_llm
+
+DETAIL_METRIC_IDS = {"daily_pnl_mean", "total_volume", "n_days"}
 
 
 async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None:
@@ -39,8 +48,48 @@ async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None
         assert saved["success"] and saved["status"] == "draft", saved
 
 
+async def seed_legacy_strategy(
+    workspace: MCPWorkspace, scenario: Scenario
+) -> dict[Path, bytes]:
+    """Create untouched pre-revision files solely inside the test workspace."""
+    async with workspace.connect() as client:
+        contract = await client.call("get_strategy_contract")
+    generated = workspace.workspace / "generated_strategies"
+    configs = workspace.workspace / "configs"
+    generated.mkdir(parents=True, exist_ok=True)
+    configs.mkdir(parents=True, exist_ok=True)
+    source = generated / f"{scenario.strategy_id}.py"
+    config_path = configs / f"{scenario.strategy_id}.yaml"
+    config = yaml.safe_load(contract["example_yaml_config"])
+    config["strategy"].update(
+        id=scenario.strategy_id,
+        parameters=scenario.parameters,
+        source_path=str(source),
+    )
+    metadata = {
+        "strategy_id": scenario.strategy_id,
+        "class_name": config["strategy"]["class_name"],
+        "status": "runnable",
+        "source_path": str(source),
+        "config_path": str(config_path),
+        "validation": {"success": True},
+        "dry_run": {"success": True},
+    }
+    originals = {
+        source: contract["example_strategy_code"].encode("utf-8"),
+        config_path: yaml.safe_dump(config).encode("utf-8"),
+        generated / f"{scenario.strategy_id}.json": json.dumps(metadata).encode(
+            "utf-8"
+        ),
+    }
+    for path, content in originals.items():
+        path.write_bytes(content)
+    return originals
+
+
 def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     """Require actual successful tool results in order, not a model's summary."""
+    calls = effective_workflow_calls(calls)
     target = f"strategy_id={scenario.strategy_id!r}"
 
     def require_index(description: str, indices: Iterator[int]) -> int:
@@ -72,6 +121,55 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         f"Invalid MCP step order for {target}: get_strategy_contract must precede "
         f"the first successful save_strategy (events {contract_index}, {save_index})"
     )
+    if scenario.legacy:
+        legacy_identity = {
+            "strategy_id": scenario.strategy_id,
+            "revision_id": None,
+            "kind": "legacy",
+            "status": "revision_required",
+            "code": "strategy_revision_required",
+        }
+        list_index = require_index(
+            f"list_strategies identifying {target} as legacy/revision_required",
+            (
+                index
+                for index, call in enumerate(calls)
+                if call.name == "list_strategies"
+                and isinstance(call.result, list)
+                and any(
+                    all(
+                        item.get(key) == value for key, value in legacy_identity.items()
+                    )
+                    for item in call.result
+                )
+            ),
+        )
+        read_index = require_index(
+            f"get_strategy({target}) returning legacy source/config before resaving",
+            (
+                index
+                for index, call in enumerate(calls)
+                if call.name == "get_strategy"
+                and call.arguments.get("strategy_id") == scenario.strategy_id
+                and call.result
+                and call.result.get("success") is True
+                and all(
+                    call.result.get(key) == value
+                    for key, value in legacy_identity.items()
+                )
+                and call.result.get("source_code")
+                and call.result.get("yaml_config")
+            ),
+        )
+        assert list_index < read_index < save_index, (
+            f"Invalid MCP legacy recovery order for {target}: "
+            "discovery and source/config "
+            "retrieval must precede successful save_strategy "
+            f"(events {list_index}, {read_index}, {save_index})"
+        )
+        assert calls[save_index].result.get("status") == "draft", (
+            "Resaving a legacy strategy must create a draft without inherited evidence"
+        )
     previous = save_index
     for name, status in (
         ("validate_strategy", "validated"),
@@ -91,34 +189,112 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 and call.arguments.get("strategy_id") == scenario.strategy_id
             ),
         )
-    start_index = require_index(
-        f"start_backtest for {target} returning a nonempty job_id "
+    revision_id = calls[previous].result.get("revision_id")
+    assert isinstance(revision_id, str) and revision_id, (
+        "Dry-run must identify revision_id"
+    )
+    require_index(
+        f"save_strategy returning revision_id={revision_id!r} before dry-run",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index < previous
+            and call.name == "save_strategy"
+            and call.result
+            and call.arguments.get("strategy_id") == scenario.strategy_id
+            and call.result.get("success")
+            and call.result.get("revision_id") == revision_id
+        ),
+    )
+    for name in ("validate_strategy", "dry_run_strategy"):
+        require_index(
+            f"{name} explicitly checking revision_id={revision_id!r}",
+            (
+                index
+                for index, call in enumerate(calls)
+                if save_index < index <= previous
+                and call.name == name
+                and call.result
+                and call.arguments.get("strategy_id") == scenario.strategy_id
+                and call.arguments.get("revision_id") == revision_id
+                and call.result.get("success")
+                and call.result.get("revision_id") == revision_id
+            ),
+        )
+    prepare_index = require_index(
+        f"prepare_backtest for {target} returning a ready plan_id "
         "after successful dry_run_strategy",
         (
             index
             for index, call in enumerate(calls)
             if index > previous
-            and call.name == "start_backtest"
+            and call.name == "prepare_backtest"
             and call.result
-            and call.result.get("job_id")
+            and call.result.get("success") is True
+            and call.result.get("status") == "ready"
+            and call.result.get("plan_id")
         ),
     )
-    started = calls[start_index]
-    expected_arguments = {
+    prepared = calls[prepare_index]
+    expected_arguments: dict[str, Any] = {
         "strategy_id": scenario.strategy_id,
+        "revision_id": revision_id,
         "symbol": "BTC/USDT",
         "timeframe": "1h",
         "start_date": "2024-01-01",
         "end_date": "2024-01-08",
     }
-    assert started.arguments == expected_arguments, (
-        f"start_backtest arguments differ for {target}: "
-        f"expected {expected_arguments!r}; got {started.arguments!r}"
+    if scenario.experiment:
+        expected_arguments["parameters"] = scenario.overrides
+        assert not any(
+            call.name == "save_strategy" for call in calls[previous + 1 :]
+        ), "Parameter experiments must reuse the runnable revision"
+    actual_arguments = dict(prepared.arguments)
+    presentation = actual_arguments.pop("presentation", None)
+    assert isinstance(presentation, dict), "Prepared plan requires presentation"
+    assert presentation.get("title") and presentation.get("summary")
+    assert set(presentation.get("parameter_descriptions", {})) == {
+        f"/{name}" for name in scenario.parameters
+    }, "Presentation must explain every captured parameter"
+    assert actual_arguments.pop("minimum_history_bars", None) == 20
+    assert actual_arguments.pop("sample_bars", None) == 128
+    for optional in ("parameters", "backtest_overrides"):
+        if actual_arguments.get(optional) is None:
+            actual_arguments.pop(optional, None)
+    assert actual_arguments == expected_arguments, (
+        f"prepare_backtest arguments differ for {target}: "
+        f"expected {expected_arguments!r}; got {prepared.arguments!r}"
     )
+    manifest_hash = prepared.result.get("manifest_hash")
+    assert isinstance(manifest_hash, str) and len(manifest_hash) == 64
+    plan_id = prepared.result["plan_id"]
+    assert prepared.result.get("confirmation_text")
+    assert prepared.result.get("html_path") and prepared.result.get("artifact_id")
+    assert prepared.result.get("preflight"), (
+        "Preparation must retain preflight evidence"
+    )
+    assert not prepared.result.get("job_id"), "Preparing must not launch a formal job"
+    start_index = require_index(
+        f"request_execution_confirmation(plan_id={plan_id!r}) returning a nonempty "
+        "job_id after prepare_backtest",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index > prepare_index
+            and call.name == "request_execution_confirmation"
+            and call.arguments == {"plan_id": plan_id}
+            and call.result
+            and call.result.get("success") is True
+            and call.result.get("plan_id") == plan_id
+            and call.result.get("job_id")
+        ),
+    )
+    started = calls[start_index]
+    assert started.result["manifest_hash"] == manifest_hash
     job_id = started.result["job_id"]
     done_index = require_index(
         f"get_job_status(job_id={job_id!r}) returning status='done' "
-        f"after start_backtest for {target}",
+        f"after request_execution_confirmation for {target}",
         (
             index
             for index, call in enumerate(calls)
@@ -130,6 +306,8 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         ),
     )
     done = calls[done_index]
+    assert done.result["revision_id"] == revision_id
+    assert done.result["manifest_hash"] == manifest_hash
     run_id = done.result["run_id"]
     queried_index = require_index(
         f"get_run(run_id={run_id!r}) returning a result after "
@@ -144,6 +322,8 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         ),
     )
     queried = calls[queried_index]
+    assert queried.result["run"]["revision_id"] == revision_id
+    assert queried.result["run"]["manifest_hash"] == manifest_hash
     assert queried.result["success"], (
         f"get_run(run_id={run_id!r}) did not return success=True: {queried.result!r}"
     )
@@ -167,6 +347,92 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             and call.arguments.get("run_id") == run_id
         ),
     )
+    catalog_index = require_index(
+        "get_metric_catalog returning the additional metrics",
+        (
+            index
+            for index, call in enumerate(calls)
+            if call.name == "get_metric_catalog"
+            and call.result
+            and call.result.get("success") is True
+            and {definition["id"] for definition in call.result["definitions"]}
+            >= DETAIL_METRIC_IDS
+        ),
+    )
+    detail_index = require_index(
+        f"get_run_metrics(run_id={run_id!r}) returning the requested extra metrics",
+        (
+            index
+            for index, call in enumerate(calls)
+            if index > max(queried_index, catalog_index)
+            and call.name == "get_run_metrics"
+            and call.arguments.get("run_id") == run_id
+            and call.result
+            and call.result.get("success") is True
+            and set(call.result.get("metrics", {})) >= DETAIL_METRIC_IDS
+        ),
+    )
+    assert calls[detail_index].result["scope"] == "full"
+    summary = queried.result["run"]
+    assert set(summary["available_metric_ids"]) >= DETAIL_METRIC_IDS
+    assert DETAIL_METRIC_IDS.isdisjoint(summary["metrics"])
+    if scenario.history:
+        for tool in (
+            "find_runs",
+            "get_run_trades",
+            "get_run_equity",
+            "get_run_executions",
+            "get_run_account_history",
+            "get_report_sections",
+            "generate_report",
+        ):
+            require_index(
+                f"{tool} returning saved history/report after completion",
+                (
+                    index
+                    for index, call in enumerate(calls)
+                    if index > done_index
+                    and call.name == tool
+                    and call.result
+                    and call.result.get("success") is True
+                    and (
+                        tool in {"find_runs", "get_report_sections"}
+                        or call.arguments.get("run_id") == run_id
+                        or call.arguments.get("run_ids") == [run_id]
+                    )
+                ),
+            )
+        trade_calls = [
+            call
+            for call in calls
+            if call.name == "get_run_trades" and call.result.get("success")
+        ]
+        assert trade_calls[0].arguments.get("limit") == 1
+        assert trade_calls[0].result["next_offset"] == 1
+        assert any(call.arguments.get("offset") == 1 for call in trade_calls[1:])
+        found = next(call for call in calls if call.name == "find_runs")
+        assert found.arguments.get("strategy_id") == scenario.strategy_id
+        assert found.arguments.get("parameters") == scenario.parameters
+        assert any(
+            row["run_id"] == run_id and row["scope"] == "full"
+            for row in found.result["runs"]
+        )
+        report = next(call for call in calls if call.name == "generate_report")
+        assert report.arguments.get("sections") == [
+            "metrics",
+            "trades",
+            "executions",
+            "account_history",
+        ]
+        for name, count in (("get_run_executions", 1), ("get_run_account_history", 2)):
+            queried_history = next(call for call in calls if call.name == name)
+            assert queried_history.arguments.get("limit") == count
+            assert queried_history.result["availability"] == "available"
+        assert report.arguments.get("commentary") == [
+            {"title": "研究評語", "text": "本次結果僅為歷史模擬。"}
+        ]
+        assert sum(call.name == "prepare_backtest" for call in calls) == 1
+        assert sum(call.name == "request_execution_confirmation" for call in calls) == 1
     if scenario.repair:
         read_index = require_index(
             f"get_strategy({target}) returning success=True before repairing the draft",
@@ -209,12 +475,18 @@ def test_llm_authors_backtests_and_queries_results(
 ) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
-    with temporary_mcp_workspace() as workspace:
+    with (
+        temporary_mcp_workspace() as workspace,
+        workflow_diagnostics(workspace, scenario),
+    ):
         workspace.seed_market(market_frame())
+        legacy_files: dict[Path, bytes] = {}
 
         async def run() -> list[ToolCall]:
             if scenario.repair:
                 await seed_broken_draft(workspace, scenario)
+            if scenario.legacy:
+                legacy_files.update(await seed_legacy_strategy(workspace, scenario))
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
@@ -223,8 +495,9 @@ def test_llm_authors_backtests_and_queries_results(
                 return codex_calls(
                     await run_codex(workspace.root, scenario.prompt, **options)
                 )
-            async with workspace.connect() as client:
-                return await run_local_model(
+            approval = SimulatedUserApproval()
+            async with workspace.connect(elicitation_callback=approval) as client:
+                calls = await run_local_model(
                     client,
                     scenario.prompt,
                     base_url=pytestconfig.getoption("llm_base_url"),
@@ -232,10 +505,67 @@ def test_llm_authors_backtests_and_queries_results(
                     reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
+            assert len(approval.requests) == 1, "Expected one simulated user approval"
+            return calls
 
         calls = asyncio.run(run())
         try:
             assert_workflow(calls, scenario)
+            detail = next(
+                call for call in reversed(calls) if call.name == "get_run_metrics"
+            )
+            saved = json.loads(
+                (
+                    workspace.workspace
+                    / "runs"
+                    / detail.arguments["run_id"]
+                    / "performance.json"
+                ).read_text(encoding="utf-8")
+            )
+            persisted = saved["scopes"][detail.result["scope"]]["values"]
+            for metric_id in DETAIL_METRIC_IDS:
+                assert detail.result["metrics"][metric_id] == persisted[metric_id]
+            if scenario.history:
+                report_call = next(
+                    call for call in reversed(calls) if call.name == "generate_report"
+                )
+                report_path = Path(report_call.result["path"])
+                assert report_path.is_relative_to(workspace.workspace / "reports")
+                assert report_path.is_file()
+                report_html = report_path.read_text(encoding="utf-8")
+                assert detail.arguments["run_id"] in report_html
+                assert "<table" in report_html
+                assert "本次結果僅為歷史模擬。" in report_html
+                observations = json.loads(
+                    (
+                        workspace.workspace
+                        / "runs"
+                        / detail.arguments["run_id"]
+                        / "observations.json"
+                    ).read_text(encoding="utf-8")
+                )["scopes"]["full"]
+                for call in calls:
+                    if call.name == "get_run_executions" and call.result.get("success"):
+                        assert (
+                            call.result["records"]
+                            == observations["execution_records"][:1]
+                        )
+                    if call.name == "get_run_account_history" and call.result.get(
+                        "success"
+                    ):
+                        assert (
+                            call.result["states"] == observations["account_history"][:2]
+                        )
+                    if call.name == "get_run_trades" and call.result.get("success"):
+                        for trade in call.result["trades"]:
+                            assert (
+                                trade["record"]
+                                == observations["trades"][trade["trade_id"]]
+                            )
+            for path, original in legacy_files.items():
+                assert path.read_bytes() == original, (
+                    f"Legacy recovery modified the original file: {path.name}"
+                )
         except (AssertionError, StopIteration, ValueError) as exc:
             pytest.fail(
                 f"Incomplete {provider}/{scenario.name} workflow: {exc}\n{calls!r}"

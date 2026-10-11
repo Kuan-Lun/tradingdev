@@ -40,9 +40,8 @@ def test_03_excluded():
 """
 
 
-def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
-    tmp_path: Path,
-) -> None:
+def _script_environment(tmp_path: Path) -> dict[str, str]:
+    """Install model-test paths as isolated, entirely offline fixtures."""
     (tmp_path / "scripts").mkdir()
     (tmp_path / "tests/e2e").mkdir(parents=True)
     shutil.copy2(
@@ -54,6 +53,22 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
         encoding="utf-8",
     )
     (tmp_path / "tests/e2e/test_llm_workflows.py").write_text(_SUITE, encoding="utf-8")
+    (tmp_path / "tests/e2e/test_llm_cleanup.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_cleanup_only():\n"
+        "    Path('cleanup.ran').write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests/e2e/test_llm_execution_plans.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_execution_plan_only():\n"
+        "    Path('execution_plan.ran').write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
     environment = {
         **os.environ,
         "TRADINGDEV_CHECK_PYTHON": sys.executable,
@@ -68,6 +83,13 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
     # The launcher itself must disable buffering; an inherited setting must not
     # conceal a regression when stdout is piped by an IDE or another process.
     environment.pop("PYTHONUNBUFFERED", None)
+    return environment
+
+
+def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
+    tmp_path: Path,
+) -> None:
+    environment = _script_environment(tmp_path)
     output: list[str] = []
     progress = Event()
     with subprocess.Popen(
@@ -125,3 +147,36 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
     assert "1 failed, 1 deselected" in transcript
     assert (tmp_path / "completed.ran").exists()
     assert not (tmp_path / "second.ran").exists()
+
+
+@pytest.mark.parametrize("scenario", ["cleanup", "execution_plan"])
+def test_script_selects_scenario_without_running_authoring_suite(
+    tmp_path: Path,
+    scenario: str,
+) -> None:
+    environment = _script_environment(tmp_path)
+    result = subprocess.run(
+        [
+            "bash",
+            "scripts/check-llm.sh",
+            "local",
+            "--llm-model",
+            "offline-fixture",
+            "-k",
+            f"{scenario}_only",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == pytest.ExitCode.OK, result.stdout
+    assert "1 passed, 4 deselected" in result.stdout
+    assert (tmp_path / f"{scenario}.ran").read_text() == "done"
+    assert not (tmp_path / "completed.ran").exists()

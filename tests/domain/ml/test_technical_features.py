@@ -2,8 +2,8 @@
 
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
 import pytest
+import talib
 
 from tradingdev.domain.ml.features.direction_features import DirectionFeatureEngineer
 from tradingdev.domain.ml.features.features import FeatureEngineer
@@ -15,18 +15,13 @@ from tradingdev.domain.ml.features.technical_features import (
 )
 
 
-def _named(frame: pd.DataFrame, prefix: str) -> pd.Series:
-    """Select a pandas-ta column by prefix, independently of the code under test."""
-    names = [str(column) for column in frame.columns if str(column).startswith(prefix)]
-    assert len(names) == 1, names
-    return frame[names[0]]
-
-
 def _expected_indicators(close: pd.Series) -> tuple[pd.Series, pd.Series]:
     """Independent oracle: %B with population std and the MACD histogram."""
-    bands = ta.bbands(close, length=20, ddof=0, talib=False)
-    macd = ta.macd(close, talib=False)
-    return _named(bands, "BBP_"), _named(macd, "MACDh_")
+    middle = close.rolling(20).mean()
+    std = close.rolling(20).std(ddof=0)
+    pctb = (close - (middle - 2 * std)) / (4 * std).replace(0, np.nan)
+    _, _, histogram = talib.MACD(close.to_numpy(dtype=np.float64))
+    return pctb, pd.Series(histogram, index=close.index)
 
 
 class TestRatioFeatures:
@@ -80,8 +75,20 @@ class TestComputeTaIndicators:
         pd.testing.assert_series_equal(
             features["macd_hist"], expected_hist, check_names=False
         )
-        signal = _named(ta.macd(close, talib=False), "MACDs_")
-        assert not np.allclose(features["macd_hist"].dropna(), signal.dropna())
+        _, signal, _ = talib.MACD(np.asarray(close, dtype=np.float64))
+        valid = features["macd_hist"].notna()
+        assert not np.allclose(features["macd_hist"][valid], signal[valid])
+
+    def test_warmup_preserves_index_without_filling_values(
+        self, sample_ohlcv_df: pd.DataFrame
+    ) -> None:
+        close = sample_ohlcv_df.set_index("timestamp")["close"].astype(float)
+        features = compute_ta_indicators(close)
+        for name, warmup in {"rsi_14": 14, "bb_pctb": 19, "macd_hist": 33}.items():
+            series = features[name]
+            pd.testing.assert_index_equal(series.index, close.index)
+            assert series.iloc[:warmup].isna().all()
+            assert series.iloc[warmup:].notna().all()
 
     def test_short_series_keeps_keys_with_nan_values(self) -> None:
         close = pd.Series(np.linspace(100.0, 110.0, 10))
@@ -104,7 +111,7 @@ def _expected_by_timestamp(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-class TestFeatureEngineersUseNamedColumns:
+class TestFeatureEngineersUseIndicatorSemantics:
     @pytest.mark.parametrize(
         "engineer",
         [
@@ -134,3 +141,42 @@ class TestFeatureEngineersUseNamedColumns:
             large_ohlcv_df, include_target=False
         )
         assert (result["bb_width_20"] > 0).all()
+        close = large_ohlcv_df["close"].astype(float)
+        expected = large_ohlcv_df[["timestamp"]].assign(
+            expected_width=4 * close.rolling(20).std(ddof=0) / close
+        )
+        joined = result[["timestamp", "bb_width_20"]].merge(expected, on="timestamp")
+        assert len(joined) == len(result)
+        np.testing.assert_allclose(joined["bb_width_20"], joined["expected_width"])
+
+    @pytest.mark.parametrize(
+        ("engineer", "warmup"),
+        [
+            (FeatureEngineer(lookback=24), 33),
+            (DirectionFeatureEngineer(lookback=60, prediction_horizon=5), 74),
+            (RiskFeatureEngineer(lookback=24), 60),
+        ],
+        ids=["FeatureEngineer", "DirectionFeatureEngineer", "RiskFeatureEngineer"],
+    )
+    def test_feature_rows_start_after_all_indicators_warm_up(
+        self,
+        engineer: FeatureEngineer | DirectionFeatureEngineer | RiskFeatureEngineer,
+        warmup: int,
+        sample_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        before = sample_ohlcv_df.copy(deep=True)
+        insufficient = engineer.transform(
+            sample_ohlcv_df.iloc[:warmup], include_target=False
+        )
+        assert insufficient.empty
+
+        first_ready = engineer.transform(
+            sample_ohlcv_df.iloc[: warmup + 1], include_target=False
+        )
+        assert len(first_ready) == 1
+        assert (
+            first_ready["timestamp"].iloc[0]
+            == sample_ohlcv_df["timestamp"].iloc[warmup]
+        )
+        assert first_ready.notna().all().all()
+        pd.testing.assert_frame_equal(sample_ohlcv_df, before)

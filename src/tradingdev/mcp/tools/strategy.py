@@ -2,10 +2,30 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from mcp.types import ToolAnnotations
+
+from tradingdev.app.contracts.common import ErrorResponse
+from tradingdev.app.contracts.strategy import (
+    BundledStrategyResponse,
+    BundledStrategySummary,
+    GeneratedStrategyResponse,
+    GeneratedStrategySummary,
+    LegacyStrategyResponse,
+    LegacyStrategySummary,
+    StrategyContractResponse,
+    StrategyDryRunFailure,
+    StrategyDryRunSuccess,
+    StrategyPromoteSuccess,
+    StrategySaveFailure,
+    StrategySaveSuccess,
+    StrategyStateError,
+    StrategyValidationFailure,
+    StrategyValidationSuccess,
+)
 from tradingdev.domain.strategies.templates import strategy_contract_payload
-from tradingdev.mcp.schemas import SaveStrategyInput, ToolResult
+from tradingdev.mcp.schemas import SaveStrategyInput
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,29 +38,92 @@ if TYPE_CHECKING:
 def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None:
     """Register strategy lifecycle tools."""
 
-    @mcp.tool()
-    def get_strategy_contract() -> dict[str, str]:
-        """Return reference code and YAML contract for generated strategies."""
-        return strategy_contract_payload(package_root)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
+    def get_strategy_contract() -> StrategyContractResponse:
+        """Read source and YAML requirements before drafting a new strategy."""
+        return StrategyContractResponse.model_validate(
+            strategy_contract_payload(package_root)
+        )
 
-    @mcp.tool()
-    def list_strategies() -> list[dict[str, Any]]:
-        """List bundled and generated strategies."""
-        return service.list_strategies()
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
+    def list_strategies() -> list[
+        BundledStrategySummary | GeneratedStrategySummary | LegacyStrategySummary
+    ]:
+        """List strategies; read and explicitly resave any legacy entries."""
+        return [
+            BundledStrategySummary.model_validate(item)
+            if item.get("kind") == "bundled"
+            else LegacyStrategySummary.model_validate(item)
+            if item.get("kind") == "legacy"
+            else GeneratedStrategySummary.model_validate(item)
+            for item in service.list_strategies()
+        ]
 
-    @mcp.tool()
-    def get_strategy(strategy_id: str) -> dict[str, Any]:
-        """Retrieve source, YAML config, and metadata for a strategy."""
-        return service.get_strategy(strategy_id)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
+    def get_strategy(
+        strategy_id: str,
+        revision_id: str | None = None,
+        legacy: bool = False,
+    ) -> (
+        BundledStrategyResponse
+        | GeneratedStrategyResponse
+        | LegacyStrategyResponse
+        | ErrorResponse
+    ):
+        """Read source/YAML; omitted revision_id selects current once.
 
-    @mcp.tool()
+        Legacy source is read-only recovery material: save it as a new draft,
+        then validate/dry-run the returned revision before execution.
+        Set legacy=true to read a legacy entry sharing a reserved bundled ID;
+        save that source under a different ID. Do not combine with revision_id.
+        """
+        response = service.get_strategy(
+            strategy_id, revision_id=revision_id, legacy=legacy
+        )
+        if not response["success"]:
+            return ErrorResponse.model_validate(response)
+        if response["kind"] == "bundled":
+            return BundledStrategyResponse.model_validate(response)
+        if response["kind"] == "legacy":
+            return LegacyStrategyResponse.model_validate(response)
+        return GeneratedStrategyResponse.model_validate(response)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=False,
+        )
+    )
     def save_strategy(
         strategy_id: str,
         code: str,
         yaml_config: str,
         request_summary: str = "",
-    ) -> dict[str, Any]:
-        """Save generated strategy code and YAML as a draft."""
+    ) -> StrategySaveSuccess | StrategySaveFailure:
+        """Save a draft revision; use its revision_id for checks and execution."""
         payload = SaveStrategyInput(
             strategy_id=strategy_id,
             code=code,
@@ -53,38 +136,99 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
             payload.yaml_config,
             request_summary=payload.request_summary,
         )
-        result = ToolResult(
-            success=saved.success,
-            message="Draft strategy saved." if saved.success else "",
-            error=saved.error,
-        )
-        return {
-            **result.model_dump(mode="json"),
+        response = {
+            "success": saved.success,
+            "message": "Draft strategy saved." if saved.success else "",
+            "error": saved.error,
             "strategy_id": saved.strategy_id,
+            "revision_id": saved.revision_id,
             "py_path": saved.source_path,
             "yaml_path": saved.config_path,
             "status": saved.status,
         }
+        if saved.success:
+            return StrategySaveSuccess.model_validate(response)
+        return StrategySaveFailure.model_validate({**response, "code": saved.code})
 
-    @mcp.tool()
-    def validate_strategy(strategy_id: str) -> dict[str, Any]:
-        """Validate a generated strategy draft.
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=True,
+        )
+    )
+    def validate_strategy(
+        strategy_id: str,
+        revision_id: str | None = None,
+    ) -> (
+        StrategyValidationSuccess
+        | StrategyValidationFailure
+        | StrategyStateError
+        | ErrorResponse
+    ):
+        """Check a draft or validated strategy; repair diagnostics or dry-run next.
 
-        This currently executes generated Python strategy code during the smoke
-        contract check. Sandboxed execution isolation is future work.
+        Pass the revision_id returned by save_strategy to bind the evidence.
+        The smoke check executes generated Python without a security sandbox.
         """
-        return service.validate(strategy_id)
+        response = service.validate(strategy_id, revision_id=revision_id)
+        if "error" in response:
+            if "status" in response:
+                return StrategyStateError.model_validate(response)
+            return ErrorResponse.model_validate(response)
+        if response["success"]:
+            return StrategyValidationSuccess.model_validate(response)
+        return StrategyValidationFailure.model_validate(response)
 
-    @mcp.tool()
-    def dry_run_strategy(strategy_id: str) -> dict[str, Any]:
-        """Run a signal-generation dry run for a validated strategy.
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=True,
+        )
+    )
+    def dry_run_strategy(
+        strategy_id: str,
+        revision_id: str | None = None,
+    ) -> (
+        StrategyDryRunSuccess
+        | StrategyDryRunFailure
+        | StrategyStateError
+        | ErrorResponse
+    ):
+        """Check a validated strategy on a longer fixture before backtesting.
 
-        This currently executes generated Python strategy code. Sandboxed
-        execution isolation is future work.
+        Use the revision_id that passed validation.
+        This executes generated Python without a security sandbox. Repair any
+        diagnostics through save_strategy and validation before trying again.
         """
-        return service.dry_run(strategy_id)
+        response = service.dry_run(strategy_id, revision_id=revision_id)
+        if "error" in response:
+            if "status" in response:
+                return StrategyStateError.model_validate(response)
+            return ErrorResponse.model_validate(response)
+        if response["success"]:
+            return StrategyDryRunSuccess.model_validate(response)
+        return StrategyDryRunFailure.model_validate(response)
 
-    @mcp.tool()
-    def promote_strategy(strategy_id: str) -> dict[str, Any]:
-        """Promote a runnable generated strategy."""
-        return service.promote(strategy_id)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
+    def promote_strategy(
+        strategy_id: str,
+        revision_id: str | None = None,
+    ) -> StrategyPromoteSuccess | StrategyStateError | ErrorResponse:
+        """Promote the selected revision only after dry-run marks it runnable."""
+        response = service.promote(strategy_id, revision_id=revision_id)
+        if not response["success"]:
+            if "status" in response:
+                return StrategyStateError.model_validate(response)
+            return ErrorResponse.model_validate(response)
+        return StrategyPromoteSuccess.model_validate(response)

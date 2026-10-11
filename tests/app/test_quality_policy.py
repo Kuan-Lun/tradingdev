@@ -59,7 +59,7 @@ def test_generated_strategy_keeps_strict_types_and_reports_unknown_imports(
     assert not root.exists()
 
 
-def test_quality_gates_accept_indicator_layer_and_pandas_ta_imports(
+def test_quality_gates_accept_indicator_layer_and_talib_imports(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with TemporaryDirectory(prefix="tradingdev-quality-test-") as directory:
@@ -70,14 +70,16 @@ def test_quality_gates_accept_indicator_layer_and_pandas_ta_imports(
         source = root / "strategy.py"
         source.write_text(
             "from __future__ import annotations\n\n"
-            "from typing import TYPE_CHECKING\n\n"
-            "import pandas_ta as ta\n\n"
+            "import pandas as pd\n"
+            "import talib\n\n"
             "from tradingdev.domain import indicators\n\n"
-            "if TYPE_CHECKING:\n"
-            "    import pandas as pd\n\n\n"
+            "\n"
             "def fair_value(close: pd.Series) -> pd.Series:\n"
             "    fast = indicators.ema(close, 5)\n"
-            "    slow: pd.Series = ta.sma(close, length=20, talib=False)\n"
+            "    _upper, middle, _lower = talib.BBANDS(\n"
+            "        close.to_numpy(dtype=float), timeperiod=20\n"
+            "    )\n"
+            "    slow = pd.Series(middle, index=close.index)\n"
             "    return fast - slow\n"
         )
 

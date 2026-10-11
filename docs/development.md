@@ -24,26 +24,148 @@ uv sync --locked --all-extras
 
 ## 選擇性 LLM 測試
 
-兩個入口共用均線、動量與錯誤草稿修復情境，要求模型完成策略生成、回測及
-結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
+兩個入口共用均線、動量、參數實驗、歷史查詢與報告、錯誤草稿修復與舊格式策略恢復情境，要求模型完成策略生成、
+計畫準備、確認請求、回測及結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
+證據檢查串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID，以及相同 manifest hash
+的工作與結果，不能用模型聲稱「完成」代替實際工具回覆。
+Local harness 使用真實模型、stdio MCP、受監督的試跑與正式 worker；確認由明確注入的
+測試使用者 callback 回應並記錄。這是模擬使用者批准，不是已驗證真人操作的客戶端 UI。
+另有內建 KD 最佳化與自建策略 walk-forward 的執行計畫情境，檢查巢狀參數說明、
+搜尋或折數覆蓋、確認及結果身分；這兩個情境目前明確要求 local provider。
+Codex runner 尚未接通表單 callback，這些證據不代表 Codex 表單整合已驗證。
+一般測試連線預設不支援 elicitation；成功案例須明確選擇 callback，拒絕、取消、
+不支援與無效回覆另有回歸測試。不得把模型輸入的 `approved` 當成確認。
+參數實驗情境要求沿用同一 runnable revision，以 `parameters` 提交不同於基礎 YAML
+的設定，並核對執行結果與基礎設定未被改寫。
+另有明確授權的草稿清理情境：先預覽再指定可刪版本，並逐檔確認 current、
+歷史可執行版本及回測產物仍保留；可用 `-k cleanup` 單獨執行。
 入口即時顯示進度與耗時，第一個失敗就停止並顯示原因；要跑完全部情境可加
 `--maxfail=0`。
 
+Codex 執行時須明確排除上述兩個 local-only 執行計畫情境：
+
 ```bash
-./scripts/check-llm.sh codex --llm-model gpt-5.6-luna
-./scripts/check-llm.sh local --llm-model qwen3.8:27b \
-  --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900
+./scripts/check-llm.sh codex --llm-model gpt-5.6-luna \
+  -k 'not test_llm_prepares_confirms_and_queries_execution_plan'
 ```
+
+未排除時，這兩個測試會直接拒絕非 local provider，與客戶端是否支援 elicitation
+無關；其餘 Codex 情境仍須具備各自要求的能力，能力不足會失敗，不會默默略過。
+不加篩選的完整入口目前須使用 local；下列 local 命令會涵蓋全部情境。
 
 本地測試已驗證支援 Ollama 的 Qwen3.8 27B。模型可用 `ollama pull qwen3.8:27b` 安裝。
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
 `http://localhost:11434/v1`；其他本機服務以 `--llm-base-url` 指定。
 其他支援工具呼叫的本地模型可用 `--llm-model` 指定，須另行執行測試驗證。
+
+完整流程會累積工具 schema、策略程式、確認單及結果，需要足夠的 context。
+建議為 Qwen3.8 27B 的長流程配置至少 64K；模型宣告的最大 context 不代表服務目前
+實際配置。32K 不足時，Ollama 可能回傳 HTTP 500 `no user query found in messages`；
+即使回測已完成，尚未完成結果查詢與報告的情境仍不算通過。先檢查服務的 context
+與硬體記憶體容量，調整後重新執行完整情境，不能只重試最後一輪。
+Ollama 的相容 API 不接受 context size 參數，可依
+[官方設定方式](https://docs.ollama.com/api/openai-compatibility#setting-the-local-context-size)
+用 Modelfile 建立專用別名，保留原模型設定：
+
+```bash
+task_modelfile=$(mktemp)
+cat > "$task_modelfile" <<'EOF'
+FROM qwen3.8:27b
+PARAMETER num_ctx 65536
+EOF
+ollama create tradingdev-qwen-test -f "$task_modelfile"
+rm -f "$task_modelfile"
+./scripts/check-llm.sh local --llm-model tradingdev-qwen-test \
+  --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 1800
+```
+
+不再使用測試別名時，可執行 `ollama rm tradingdev-qwen-test` 移除；原本的
+`qwen3.8:27b` 仍保留。較大的 context 會提高記憶體需求，執行時間也受硬體影響。
 未指定 temperature 時採服務 API 的預設值，不保證等於模型設定檔；需要覆寫時
 加 `--llm-temperature 1.0`（範圍 0–2）。
 推理強度以 `--llm-reasoning-effort` 指定，支援值依模型服務而定；省略時使用服務預設。
-快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；移除此選項才涵蓋全部三個情境。
-`--llm-timeout 900` 是每個模型情境的秒數上限，不是預期執行時間。
+Local 每輪固定傳送模型採樣 `seed=42`，與策略執行的 `random_seed` 分開；
+這不保證跨模型版本或硬體的結果完全相同。不支援此參數的服務會明確失敗。
+僅針對已確認的 Ollama `parameter`／`function` XML 工具解析 HTTP 500，
+測試 client 會把錯誤回饋模型，要求重新產生下一個工具呼叫，整段對話最多兩次。
+恢復時保留已完成工具的歷史，不重新派發、不切換 provider，也不重設時間或工具次數上限。
+其他 HTTP 錯誤及逾時仍會失敗。失敗輸出附保存的設定與執行規格，之後照常清理臨時工作區。
+快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；local 移除此選項才涵蓋全部情境。
+Codex 要檢查其餘完整情境時，則使用上述排除 local-only 測試的 `-k` 條件。
+`-k history` 驗證模型查回指定參數、翻頁交易、讀取權益與章節目錄，並請後端產生
+自選章節及 LLM 評語的 HTML；對照保存的原始交易，確認沒有再次啟動回測。
+同一情境也讀取原生成交與逐根帳戶頁，並選用這兩個報告章節；回覆逐欄對照
+保存的 observations，驗證模型沒有把配對交易當作逐次成交。
+`-k legacy` 驗證模型先探索及讀取舊格式策略，再另存、驗證新 revision 並執行回測，
+同時確認原有檔案未變。
+`--llm-timeout` 是每個模型情境的秒數上限，不是預期執行時間；簡例可用 900 秒，
+包含歷史查詢與報告的長流程建議預留 1800 秒，並依硬體調整。
+Codex 入口使用 CLI 的 MCP 客戶端能力；工具 approval 設定與 MCP 使用者表單是不同機制。
+若該客戶端無法完成 elicitation，執行情境會明確失敗，不能跳過確認或改用另一個 provider。
+
+## 開發階段的程式碼審查
+
+審查責任、時機與 findings 處理以
+[AGENTS.md](../AGENTS.md#開發階段的程式碼審查) 為準。代理開發時，由主代理
+主動安排獨立 reviewer 或另啟本機審查工作階段；使用者不必每次手動輸入命令。
+這個流程不會透過 `check-full.sh`、commit 或 push 自動呼叫模型，也沒有額外
+的 repository 審查腳本。
+
+代理有獨立 reviewer 可用時，提供任務目的、基準與受查版本、差異範圍，以及
+相關契約的位置。Reviewer 直接檢視差異及相關使用端，只回報 findings；主代理
+負責核實與修正。開始審查後暫停修改受查內容，修正 findings 後再複查受影響範圍。
+
+改用 Codex CLI，或由開發者手動審查時，在 repository 根目錄選擇符合範圍的
+一個入口即可。若修改已提交，要審查目前分支相對本機主線的完整差異，
+先確認工作樹乾淨，再執行：
+
+```bash
+codex review --base main
+```
+
+`main` 指本機主線，此命令不會自動更新它。分階段 commit 後，仍可用這個入口
+審查整個分支；不需要取消 commit。
+
+階段修改尚未提交時：
+
+```bash
+codex review --uncommitted
+```
+
+這只審查已暫存、未暫存及未追蹤的修改，需先確認範圍沒有混入其他任務。
+工作樹乾淨時會回報沒有差異，不代表已審查分支上的 commits。
+
+若只要審查最新一個 commit：
+
+```bash
+codex review --commit HEAD
+```
+
+可將 `HEAD` 換成指定 commit 的 SHA；此入口只涵蓋該次提交引入的修改。
+若要以最新遠端主線為基準審查完整分支，先確認工作樹乾淨，再執行：
+
+```bash
+git fetch origin main
+codex review --base origin/main
+```
+
+`main`、`origin/main` 是範例，使用實際的 remote 與主線。Fetch 更新遠端追蹤
+分支 `origin/main`，不更新本機 `main`。上述命令不推送或建立 PR；審查前記錄
+所選基準與受查版本，結束後確認版本及工作樹內容未變。未提交內容也要在交付時
+說明所涵蓋的範圍，不能把舊結果套用到後續修改。已由獨立 reviewer 涵蓋的相同
+內容不需要再跑一次 CLI review。
+
+例如 reviewer 指出某個預期的 service 拒絕會在 MCP 邊界變成未處理例外，
+先核對呼叫鏈與例外型別，再用能重現該失敗的測試驗證；修正後測試應通過。
+若原行為已符合契約，記錄不採納的程式／測試證據。最後回報受查範圍、findings
+處理與未涵蓋項目，不只列出命令的 exit code。
+
+Codex CLI 審查會呼叫模型，需可用的 CLI、登入與額度；用法可用
+`codex review --help` 核對，功能說明見
+[OpenAI 官方文件](https://learn.chatgpt.com/docs/codex/cli)。
+此審查用來找程式缺陷；`check-full.sh` 執行品質檢查與離線測試，
+`check-pr.sh` 另外檢查合併候選的文件一致性及遠端版本。Code review 不會取代
+這些檢查，也不代表真實模型策略流程已驗證。
 
 ## 從開發到合併
 
@@ -52,7 +174,9 @@ Local 使用支援工具呼叫的 Chat Completions 服務，預設
 
 ### 1. 分階段提交並推送
 
-在開發分支完成一個階段後，先 `git add` 要提交的檔案，再填寫提交訊息：
+在開發分支完成一個階段，依變更完成相關測試與
+[開發階段審查](#開發階段的程式碼審查) 後，先 `git add` 要提交的檔案，
+再填寫提交訊息：
 
 ```bash
 ./scripts/git-flow-commit.sh "feat: add strategy validation"
@@ -72,6 +196,30 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 
 審閱者可留在目前開發分支執行；腳本會自動檢查合併候選、執行 Codex 文件
 審查與完整離線 pytest，並清理臨時產物；真實模型策略測試由審閱者視變更另行執行。
+
+文件審查預設接受最多 600,000 bytes 的完整證據，超過時會在呼叫模型前失敗，
+不截斷檔案或差異。確認所用模型可容納完整內容後，可針對這次檢查明確提高上限：
+
+```bash
+./scripts/check-pr.sh 27 --max-evidence-bytes 1000000
+```
+
+參數必須是正整數，只調整原始完整證據的 UTF-8 byte 預算，不會提高 Codex 的
+單次輸入或模型 token 上限。腳本另限制每次完整 prompt 最多 1,024,000 字元，
+包含審查指示與批次資訊，低於已觀察到的 Codex `turn/start` 1,048,576 字元限制。
+
+放不進單次請求時，腳本按完整檔案分批。每批都包含全部 diff、Markdown 文件及
+候選檔案清單，其餘候選原始檔逐批完整涵蓋，不裁切或以摘要取代。所有批次先完成
+容量檢查；若共同證據或單一檔案連同共同證據仍放不下，會在呼叫模型前失敗，
+此時須拆分變更，提高 `--max-evidence-bytes` 無法解決單次輸入限制。
+
+最多八批並行，各自使用唯讀、無工具的 Codex 與獨立臨時目錄；所有批次共用
+原有 180 秒文件審查期限，排隊也計時，程序清理另計。分批會增加模型呼叫與重複
+context 的用量。每批必須完成且通過；任何 finding、缺少必要跨檔脈絡、容量不足、
+執行失敗或逾時都令整體失敗。全部 diff 提供跨檔變更脈絡，但分批不等於所有
+原始檔同時放在單一上下文，也不能保證模型不漏判。
+單獨執行 `review_docs.py` 不代表 PR 檢查通過，仍須使用上述入口完成離線測試
+及遠端版本核對。
 
 ### 3. 在 GitHub 審閱並合併
 
@@ -98,6 +246,7 @@ uv run --no-sync python scripts/git_gate.py full --base main
 ```
 
 此命令檢查指定本機主線與目前提交的合併候選。
+同樣可加 `--max-evidence-bytes 1000000`，只調整這次文件審查的證據上限。
 
 ## 注意事項
 

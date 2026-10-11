@@ -2,11 +2,44 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+
+
+def format_metric(value: object, spec: str, suffix: str = "") -> str:
+    """Format a finite numeric KPI, keeping unavailable values explicit."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+    ):
+        return "N/A"
+    return f"{value:{spec}}{suffix}"
+
+
+def metric_cards(metrics: dict[str, Any], *, mode: str) -> list[tuple[str, str]]:
+    """Select compact KPIs without changing a metric's unit by mode."""
+    volume_mode = mode == "volume"
+    definitions = [
+        ("Total P&L", "total_pnl", "+,.2f")
+        if volume_mode
+        else ("Total Return", "total_return", ".2%"),
+        ("Sharpe", "sharpe_ratio", ".3f"),
+        ("Max DD (amount)", "max_drawdown_amount", ",.2f")
+        if volume_mode
+        else ("Max DD", "max_drawdown", ".2%"),
+        ("Win Rate", "win_rate", ".1%"),
+        ("Closed Trades", "total_trades", ",.0f"),
+        ("Volume", "total_volume", ",.2f"),
+    ]
+    return [
+        (label, format_metric(metrics.get(key), spec))
+        for label, key, spec in definitions
+    ]
 
 
 def build_equity_series(
@@ -25,12 +58,7 @@ def build_trades_df(
     trades: list[dict[str, Any]],
     timestamps: npt.NDArray[Any] | None = None,
 ) -> pd.DataFrame:
-    """Convert trade list to DataFrame with an approximate timestamp.
-
-    The timestamp is approximated from the trade index; if bar-level
-    timestamps are not embedded in the trade records a simple integer
-    index is used.
-    """
+    """Map recorded entry/exit bar indices to exact execution timestamps."""
     if not trades:
         return pd.DataFrame(
             columns=[
@@ -41,15 +69,23 @@ def build_trades_df(
                 "gross_pnl",
                 "fee",
                 "net_pnl",
+                "status",
+                "entry_timestamp",
+                "exit_timestamp",
+                "timestamp",
+                "exit_notional",
             ]
         )
     df = pd.DataFrame(trades)
-    if "timestamp" not in df.columns and timestamps is not None:
-        # Spread trade indices evenly across the timestamp range
-        n_ts = len(timestamps)
-        n_trades = len(df)
-        indices = np.linspace(0, n_ts - 1, n_trades, dtype=int)
-        df["timestamp"] = timestamps[indices]
+    if "status" not in df:
+        df["status"] = None
+    for side in ("entry", "exit"):
+        time_key = f"{side}_timestamp"
+        if time_key not in df.columns:
+            recorded = dict(enumerate(timestamps)) if timestamps is not None else {}
+            indices = df.get(f"{side}_idx", pd.Series(index=df.index, dtype=float))
+            df[time_key] = pd.to_datetime(indices.map(recorded), errors="coerce")
+    df["timestamp"] = df["exit_timestamp"].where(df["status"] == "closed")
     return df
 
 
@@ -73,11 +109,10 @@ def cumulative_pnl_pct(
 ) -> pd.Series[float]:
     """Compute cumulative PnL as percentage.
 
-    Returns a zero series when ``init_cash`` is ``None`` (volume mode)
-    since percentage return is not meaningful without a capital base.
+    Values are unavailable without a positive capital base.
     """
-    if init_cash is None or init_cash == 0:
-        return pd.Series(0.0, index=equity.index)
+    if init_cash is None or init_cash <= 0:
+        return pd.Series(np.nan, index=equity.index, dtype=float)
     return (equity - init_cash) / init_cash * 100
 
 
@@ -92,7 +127,8 @@ def consecutive_loss_counts(
     if trades_df.empty or "net_pnl" not in trades_df.columns:
         return pd.Series(dtype=int)
 
-    is_loss = (trades_df["net_pnl"] <= 0).astype(int).values
+    closed = trades_df.loc[trades_df["status"] == "closed"]
+    is_loss = (closed["net_pnl"] < 0).astype(int).values
     streaks: list[int] = []
     current = 0
     for v in is_loss:
@@ -141,18 +177,32 @@ def monthly_volume(
 
     Returns DataFrame with columns ``month`` (str) and ``volume_quote``.
     """
-    if trades_df.empty or "timestamp" not in trades_df.columns:
+    if trades_df.empty:
         return pd.DataFrame(columns=["month", "volume_quote"])
 
-    df = trades_df.copy()
-    df["month"] = pd.to_datetime(df["timestamp"]).dt.to_period("M")
-    grouped = (
-        df.groupby("month")["size_quote"]
-        .sum()
-        .multiply(2)  # round-trip volume
-        .reset_index()
-    )
-    grouped.columns = pd.Index(["month", "volume_quote"])
+    fills = []
+    for side, amount_key in (("entry", "size_quote"), ("exit", "exit_notional")):
+        time_key = f"{side}_timestamp"
+        if time_key not in trades_df or amount_key not in trades_df:
+            continue
+        records = (
+            trades_df.loc[trades_df["status"] == "closed"]
+            if side == "exit"
+            else trades_df
+        )
+        fills.append(
+            pd.DataFrame(
+                {
+                    "timestamp": pd.to_datetime(records[time_key], errors="coerce"),
+                    "volume_quote": records[amount_key],
+                }
+            ).dropna()
+        )
+    if not fills:
+        return pd.DataFrame(columns=["month", "volume_quote"])
+    df = pd.concat(fills, ignore_index=True)
+    df["month"] = df["timestamp"].dt.to_period("M")
+    grouped = df.groupby("month")["volume_quote"].sum().reset_index()
     grouped["month"] = grouped["month"].astype(str)
     return pd.DataFrame(grouped)
 

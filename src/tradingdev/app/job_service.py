@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any, Literal
+
+import yaml
 
 from tradingdev.adapters.execution.process_runner import (
     ProcessIdentity,
@@ -14,15 +15,29 @@ from tradingdev.adapters.execution.process_runner import (
     WorkerHandle,
     request_worker_stop,
 )
+from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
-from tradingdev.app.job_config import apply_run_overrides, write_job_config
+from tradingdev.app.execution_submission import (
+    ExecutionSubmissionService,
+    PreparedExecution,
+)
+from tradingdev.app.job_config import (
+    apply_backtest_overrides,
+    apply_run_overrides,
+    bind_strategy_revision,
+)
 from tradingdev.app.job_store import JobStore, get_default_job_store
+from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
     StrategyService,
 )
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
+from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
+
+if TYPE_CHECKING:
+    from tradingdev.domain.strategies.schemas import StrategySpec
 
 
 class JobService:
@@ -33,7 +48,6 @@ class JobService:
         "downloading_data",
         "running_backtest",
         "estimating",
-        "pending_confirmation",
         "optimizing",
         "testing_oos",
     }
@@ -44,18 +58,28 @@ class JobService:
         *,
         strategy_service: StrategyService | None = None,
         data_service: DataService | None = None,
+        strategy_loader: StrategyLoader | None = None,
         job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
         project_root: Path | None = None,
     ) -> None:
         self._job_store = job_store or get_default_job_store()
+        self._runs = RunService(
+            workspace=self._job_store.workspace, store=self._job_store.store
+        )
         self._strategy_service = strategy_service or StrategyService(
             self._job_store.workspace
         )
         self._data_service = data_service or DataService(self._job_store.workspace)
+        self._strategy_loader = strategy_loader or StrategyLoader(
+            workspace_root=self._job_store.workspace.root
+        )
         self._project_root = (project_root or self._default_project_root()).resolve()
         self._process_runner = process_runner or ProcessRunner(
             self._project_root, workspace=self._job_store.workspace
+        )
+        self._submission = ExecutionSubmissionService(
+            self._job_store, self._process_runner
         )
 
     def start_backtest(
@@ -66,29 +90,73 @@ class JobService:
         timeframe: str,
         start_date: str,
         end_date: str,
+        revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Start a simple backtest job."""
-        config_path, error = self._resolve_strategy_run_config(strategy_id)
-        if config_path is None:
-            return {"job_id": "", "message": error, "data_available": False}
-        raw_config = load_config(config_path)
-        run_config = BacktestRunConfig.model_validate(raw_config)
-        if run_config.is_walk_forward:
-            return {
-                "job_id": "",
-                "message": (
-                    "Config contains validation settings; use start_walk_forward."
-                ),
-                "data_available": False,
-            }
-        return self._start_worker(
+        """Prepare and submit a simple backtest job."""
+        prepared = self.prepare_backtest(
             strategy_id=strategy_id,
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
+            revision_id=revision_id,
+            parameters=parameters,
+            backtest_overrides=backtest_overrides,
+        )
+        return self._submit_prepared(prepared)
+
+    def prepare_backtest(
+        self,
+        *,
+        strategy_id: str,
+        symbol: str,
+        timeframe: str,
+        start_date: str,
+        end_date: str,
+        revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
+    ) -> PreparedExecution | dict[str, Any]:
+        """Capture a simple backtest without creating a job or launching a worker."""
+        try:
+            spec, error = self._resolve_strategy_run_config(strategy_id, revision_id)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return self._invalid_execution_request(exc)
+        if spec is None:
+            return {
+                "job_id": "",
+                "message": error,
+                "data_available": False,
+                "code": "strategy_not_executable",
+            }
+        config_path = Path(spec.config_path)
+        try:
+            raw_config = load_config(config_path)
+            run_config = BacktestRunConfig.model_validate(raw_config)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return self._invalid_execution_request(exc)
+        if run_config.is_walk_forward:
+            return {
+                "job_id": "",
+                "message": (
+                    "Config contains validation settings; use prepare_walk_forward."
+                ),
+                "data_available": False,
+                "code": "invalid_run_mode",
+            }
+        return self._prepare_execution(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
             config_path=config_path,
+            raw_config=raw_config,
             walk_forward=False,
+            spec=spec,
+            parameters=parameters,
+            backtest_overrides=backtest_overrides,
         )
 
     def start_walk_forward(
@@ -99,36 +167,85 @@ class JobService:
         timeframe: str,
         start_date: str,
         end_date: str,
+        revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Start a walk-forward job."""
-        config_path, error = self._resolve_strategy_run_config(strategy_id)
-        if config_path is None:
-            return {"job_id": "", "message": error, "data_available": False}
-        config_path, error = self._resolve_walk_forward_config(
-            strategy_id=strategy_id,
-            config_path=config_path,
-        )
-        if config_path is None:
-            return {
-                "job_id": "",
-                "message": error,
-                "data_available": False,
-            }
-        return self._start_worker(
+        """Prepare and submit a walk-forward job."""
+        prepared = self.prepare_walk_forward(
             strategy_id=strategy_id,
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
+            revision_id=revision_id,
+            parameters=parameters,
+            backtest_overrides=backtest_overrides,
+        )
+        return self._submit_prepared(prepared)
+
+    def prepare_walk_forward(
+        self,
+        *,
+        strategy_id: str,
+        symbol: str,
+        timeframe: str,
+        start_date: str,
+        end_date: str,
+        revision_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
+    ) -> PreparedExecution | dict[str, Any]:
+        """Capture a walk-forward without creating a job or launching a worker."""
+        try:
+            spec, error = self._resolve_strategy_run_config(strategy_id, revision_id)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return self._invalid_execution_request(exc)
+        if spec is None:
+            return {
+                "job_id": "",
+                "message": error,
+                "data_available": False,
+                "code": "strategy_not_executable",
+            }
+        try:
+            resolved = self._resolve_walk_forward_config(
+                strategy_id=strategy_id,
+                config_path=Path(spec.config_path),
+                allow_fallback=spec.kind == "bundled",
+            )
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            return self._invalid_execution_request(exc)
+        if resolved is None:
+            return {
+                "job_id": "",
+                "message": "Config has no validation section for walk-forward.",
+                "data_available": False,
+                "code": "invalid_run_mode",
+            }
+        config_path, raw_config = resolved
+        return self._prepare_execution(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
             config_path=config_path,
+            raw_config=raw_config,
             walk_forward=True,
+            spec=spec,
+            parameters=parameters,
+            backtest_overrides=backtest_overrides,
         )
 
     def get_job_status(self, job_id: str) -> dict[str, Any]:
         """Return current job status and completed result payload."""
         job = self._job_store.get_job(job_id)
         if job is None:
-            return {"status": "not_found", "error": f"No job with ID: {job_id}"}
+            return {
+                "status": "not_found",
+                "error": f"No job with ID: {job_id}",
+                "code": "job_not_found",
+            }
 
         status = str(job["status"])
         if (
@@ -151,6 +268,8 @@ class JobService:
             "status": status,
             "job_type": job.get("job_type", "backtest"),
             "strategy_name": job.get("strategy_name"),
+            "revision_id": job.get("revision_id"),
+            "manifest_hash": job.get("manifest_hash"),
             "symbol": job.get("symbol"),
             "timeframe": job.get("timeframe"),
             "start_date": job.get("start_date"),
@@ -159,47 +278,68 @@ class JobService:
         }
 
         if status == "done":
-            result_path = str(job.get("result_path") or "")
-            result = self._job_store.load_result(result_path) if result_path else None
             response["ended_at"] = job.get("ended_at")
-            run = self._job_store.get_run(job_id)
+            run_response = self._runs.get_run(job_id)
+            run = run_response.get("run")
             if run is not None:
                 response["run_id"] = run["run_id"]
+                response["metrics"] = run["metrics"]
+                for key in (
+                    "details_available",
+                    "provenance",
+                    "available_metric_ids",
+                    "available_scopes",
+                    "default_scope",
+                    "selected_train_scope",
+                    "detail_error",
+                ):
+                    response[key] = run[key]
+            else:
+                response.update(
+                    metrics=None,
+                    details_available=False,
+                    provenance="legacy_metrics",
+                    available_metric_ids=[],
+                    available_scopes=[],
+                    default_scope=None,
+                    detail_error=run_response,
+                )
             if job.get("job_type") == "optimization":
+                # Non-metric search outcome fields retain their result contract.
+                stored_run = self._job_store.get_run(job_id)
+                result = stored_run.get("metrics", {}) if stored_run else {}
                 response.update(
                     {
-                        "best_params": (result or {}).get("best_params"),
-                        "train_metrics": (result or {}).get("train_metrics"),
-                        "test_metrics": (result or {}).get("test_metrics"),
-                        "optimization_metric": (result or {}).get(
-                            "optimization_metric"
-                        ),
-                        "total_combinations": (result or {}).get("total_combinations"),
+                        key: (result or {}).get(key)
+                        for key in (
+                            "best_params",
+                            "optimization_metric",
+                            "direction",
+                            "total_combinations",
+                        )
                     }
                 )
-            else:
-                response["metrics"] = result
+                if run is not None and run["details_available"]:
+                    response["test_metrics"] = run["metrics"]
+                    selected_train = run["selected_train_scope"]
+                    if selected_train is not None:
+                        detail = self._runs.get_run_metrics(
+                            job_id, scope=selected_train
+                        )
+                        if detail.get("success"):
+                            response["train_metrics"] = _saved_metric_summary(detail)
+                        else:
+                            response["detail_error"] = {
+                                key: detail[key] for key in ("success", "code", "error")
+                            }
+                elif run is not None and run["provenance"] == "legacy_metrics":
+                    response["train_metrics"] = run["metrics"].get("train_metrics")
+                    response["test_metrics"] = run["metrics"].get("test_metrics")
         elif status == "failed":
             response["error"] = job.get("error", "Unknown error")
         elif status == "estimating":
             response["total_combinations"] = job.get("total_combinations")
             response["message"] = "Running trial combination to estimate total time..."
-        elif status == "pending_confirmation":
-            response.update(
-                {
-                    "time_per_combo": job.get("time_per_combo"),
-                    "total_combinations": job.get("total_combinations"),
-                    "estimated_total_seconds": job.get("estimated_total_seconds"),
-                    "n_parallel_workers": job.get("n_parallel_workers"),
-                    "message": (
-                        f"Trial run took {job.get('time_per_combo')}s per combo. "
-                        f"Estimated total: {job.get('estimated_total_seconds')}s for "
-                        f"{job.get('total_combinations')} combinations using "
-                        f"{job.get('n_parallel_workers')} workers. "
-                        "Call confirm_optimization(job_id) to proceed."
-                    ),
-                }
-            )
         elif status == "optimizing":
             response["completed"] = job.get("completed", 0)
             response["total_combinations"] = job.get("total_combinations")
@@ -222,6 +362,8 @@ class JobService:
                 "job_type": job.get("job_type", "backtest"),
                 "status": job["status"],
                 "strategy_name": job.get("strategy_name"),
+                "revision_id": job.get("revision_id"),
+                "manifest_hash": job.get("manifest_hash"),
                 "symbol": job.get("symbol"),
                 "timeframe": job.get("timeframe"),
                 "start_date": job.get("start_date"),
@@ -235,45 +377,29 @@ class JobService:
             summaries.append(summary)
         return summaries
 
-    def confirm_optimization(self, job_id: str) -> dict[str, Any]:
-        """Mark an optimization job as confirmed."""
-        job = self._job_store.get_job(job_id)
-        if job is None:
-            return {"success": False, "error": f"No job with ID: {job_id}"}
-        status = str(job["status"])
-        if status == "estimation_timeout":
-            return {"success": False, "error": "Trial run timed out."}
-        if status != "pending_confirmation":
-            return {
-                "success": False,
-                "error": f"Job status is '{status}', expected 'pending_confirmation'.",
-            }
-        self._job_store.update_job(job_id, confirmed=True)
-        return {
-            "success": True,
-            "message": (
-                f"Optimization confirmed. Running {job.get('total_combinations', '?')} "
-                f"combinations with {job.get('n_parallel_workers', '?')} workers."
-            ),
-        }
-
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued or running background job."""
         job = self._job_store.get_job(job_id)
         if job is None:
-            return {"success": False, "error": f"No job with ID: {job_id}"}
+            return {
+                "success": False,
+                "error": f"No job with ID: {job_id}",
+                "code": "job_not_found",
+            }
 
         status = str(job["status"])
         if status in self._TERMINAL_STATUSES:
             return {
                 "success": False,
                 "error": f"Job is already terminal: {status}",
+                "code": "invalid_job_state",
                 "status": status,
             }
         if status not in self._ACTIVE_STATUSES:
             return {
                 "success": False,
                 "error": f"Job status is not cancellable: {status}",
+                "code": "invalid_job_state",
                 "status": status,
             }
 
@@ -287,6 +413,7 @@ class JobService:
                         "Worker control identity is unavailable; "
                         "cannot confirm process cleanup."
                     ),
+                    "code": "worker_identity_unavailable",
                     "status": status,
                     "pid": job.get("pid"),
                 }
@@ -299,6 +426,7 @@ class JobService:
                 return {
                     "success": False,
                     "error": f"Worker cleanup could not be confirmed: {exc}",
+                    "code": "worker_cleanup_failed",
                     "status": status,
                     "pid": handle.pid,
                 }
@@ -316,76 +444,70 @@ class JobService:
             "process_terminated": process_terminated,
         }
 
-    def _start_worker(
+    def _prepare_execution(
         self,
         *,
-        strategy_id: str,
         symbol: str,
         timeframe: str,
         start_date: str,
         end_date: str,
         config_path: Path,
+        raw_config: dict[str, Any],
         walk_forward: bool,
-    ) -> dict[str, Any]:
-        raw_config = load_config(config_path)
-        effective_config = apply_run_overrides(
-            raw_config,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
+        spec: StrategySpec,
+        parameters: dict[str, Any] | None = None,
+        backtest_overrides: dict[str, Any] | None = None,
+    ) -> PreparedExecution | dict[str, Any]:
+        kind: Literal["backtest", "walk_forward"] = (
+            "walk_forward" if walk_forward else "backtest"
         )
-        BacktestRunConfig.model_validate(effective_config)
-
-        data_available = self._data_service.data_available(
-            symbol,
-            timeframe,
-            start_date,
-            end_date,
-        )
-        job_id = uuid4().hex[:12]
-        effective_config_path = write_job_config(
-            self._job_store.workspace.runs / job_id, effective_config
-        )
-        self._job_store.create_job(
-            job_id=job_id,
-            strategy_name=strategy_id,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-            config_path=str(effective_config_path),
-        )
-        self._job_store.update_job(
-            job_id,
-            job_type="walk_forward" if walk_forward else "backtest",
-            original_config_path=str(config_path),
-        )
-        args = [job_id, str(effective_config_path)]
-        if walk_forward:
-            args.append("--walk-forward")
         try:
-            identity = self._process_runner.spawn_module(
-                "tradingdev.mcp.workers.backtest",
-                *args,
+            bind_strategy_revision(raw_config, spec)
+            effective_config = apply_run_overrides(
+                raw_config,
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
             )
-        except BaseException as exc:
-            # Interruptions must not leave a job queued after startup cleanup.
-            self._job_store.update_job(
-                job_id,
-                status="failed",
-                error=f"Worker failed to start: {type(exc).__name__}: {exc}",
-            )
-            raise
-        self._job_store.update_job(job_id, **identity.job_fields())
+            apply_backtest_overrides(effective_config, backtest_overrides)
+            manifest = BacktestService(
+                data_service=self._data_service,
+                strategy_gate=self._strategy_service,
+                strategy_loader=self._strategy_loader,
+            ).prepare_execution(effective_config, kind=kind, parameters=parameters)
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+            yaml.YAMLError,
+            StrategyNotExecutableError,
+        ) as exc:
+            return self._invalid_execution_request(exc)
+
+        return PreparedExecution(manifest, config_path)
+
+    def _submit_prepared(
+        self, prepared: PreparedExecution | dict[str, Any]
+    ) -> dict[str, Any]:
+        if isinstance(prepared, dict):
+            return prepared
+        backtest = prepared.manifest.config_copy()["backtest"]
+        data_available = self._data_service.data_available(
+            backtest["symbol"],
+            backtest["timeframe"],
+            backtest["start_date"],
+            backtest["end_date"],
+        )
+        submitted = self._submission.submit(prepared)
         data_msg = (
             "Data already cached locally."
             if data_available
             else "Data not fully cached; worker will download it automatically."
         )
         return {
-            "job_id": job_id,
-            "message": f"Job started. Job ID: {job_id}. {data_msg}",
+            **submitted,
+            "message": f"Job started. Job ID: {submitted['job_id']}. {data_msg}",
             "data_available": data_available,
         }
 
@@ -394,14 +516,15 @@ class JobService:
         *,
         strategy_id: str,
         config_path: Path,
-    ) -> tuple[Path | None, str]:
+        allow_fallback: bool,
+    ) -> tuple[Path, dict[str, Any]] | None:
         raw_config = load_config(config_path)
         run_config = BacktestRunConfig.model_validate(raw_config)
         if run_config.is_walk_forward:
-            return config_path, ""
+            return config_path, raw_config
 
         fallback = config_path.with_name("walkforward_config.yaml")
-        if fallback.exists():
+        if allow_fallback and fallback.exists():
             fallback_raw = load_config(fallback)
             fallback_run_config = BacktestRunConfig.model_validate(fallback_raw)
             fallback_strategy = fallback_raw.get("strategy", {})
@@ -411,16 +534,28 @@ class JobService:
                 else None
             )
             if fallback_id == strategy_id and fallback_run_config.is_walk_forward:
-                return fallback, ""
-        return None, "Config has no validation section for walk-forward."
+                return fallback, fallback_raw
+        return None
 
-    def _resolve_strategy_run_config(self, strategy_id: str) -> tuple[Path | None, str]:
+    @staticmethod
+    def _invalid_execution_request(exc: Exception) -> dict[str, Any]:
+        """Reject preparation errors before creating a job or starting a worker."""
+        return {
+            "job_id": "",
+            "message": str(exc),
+            "data_available": False,
+            "code": "invalid_execution_request",
+        }
+
+    def _resolve_strategy_run_config(
+        self, strategy_id: str, revision_id: str | None
+    ) -> tuple[StrategySpec | None, str]:
         try:
-            spec = self._strategy_service.resolve_executable(strategy_id)
+            spec = self._strategy_service.resolve_executable(strategy_id, revision_id)
         except StrategyNotExecutableError as exc:
             return None, str(exc)
         path = Path(spec.config_path)
-        return (path, "") if path.exists() else (None, f"Config not found: {path}")
+        return (spec, "") if path.exists() else (None, f"Config not found: {path}")
 
     @staticmethod
     def _process_identity(job: dict[str, Any]) -> ProcessIdentity | None:
@@ -437,3 +572,13 @@ class JobService:
         if configured:
             return Path(configured).expanduser().resolve()
         return Path.cwd().resolve()
+
+
+def _saved_metric_summary(detail: dict[str, Any]) -> dict[str, Any]:
+    """Select the original snapshot's summary flags, never today's catalog."""
+    return {
+        key: value
+        for key, value in detail["metrics"].items()
+        if detail["definitions"][key]["summary"]
+        and detail["mode"] in detail["definitions"][key]["modes"]
+    }

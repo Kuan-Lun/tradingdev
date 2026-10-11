@@ -12,6 +12,11 @@ import httpx
 import pandas as pd
 
 from tradingdev.domain.data.crawlers.base import BaseCrawler
+from tradingdev.domain.data.crawlers.binance_vision_archive import (
+    SampleDownloadBudget,
+    normalize_vision_rows,
+    read_sample_archive,
+)
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -47,21 +52,7 @@ def _parse_zip_csv(content: bytes) -> pd.DataFrame:
         csv_name = zf.namelist()[0]
         with zf.open(csv_name) as f:
             raw = pd.read_csv(f, header=None, usecols=range(6))
-    # Newer Binance Vision CSV files include a header row; skip it if present
-    if isinstance(raw.iloc[0, 0], str):
-        raw = raw.iloc[1:].reset_index(drop=True)
-    raw.columns = pd.Index(range(6))
-    result = pd.DataFrame(
-        {
-            "timestamp": pd.to_datetime(pd.to_numeric(raw[0]), unit="ms", utc=True),
-            "open": raw[1].astype(float),
-            "high": raw[2].astype(float),
-            "low": raw[3].astype(float),
-            "close": raw[4].astype(float),
-            "volume": raw[5].astype(float),
-        }
-    )
-    return result
+    return normalize_vision_rows(raw)
 
 
 class BinanceVisionCrawler(BaseCrawler):
@@ -144,6 +135,91 @@ class BinanceVisionCrawler(BaseCrawler):
 
         logger.info("Total candles fetched: %d", len(combined))
         return combined.reset_index(drop=True)
+
+    def fetch_sample(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        *,
+        max_rows: int,
+    ) -> pd.DataFrame:
+        """Read capped daily archives, falling back once per month on a 404."""
+        if max_rows <= 0:
+            raise ValueError("Sample max_rows must be positive")
+        start = (
+            start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
+        )
+        end = end.replace(tzinfo=UTC) if end.tzinfo is None else end.astimezone(UTC)
+        last_day = min(end.date(), datetime.now(UTC).date() - timedelta(days=1))
+        current = start.date()
+        vision_symbol = _to_vision_symbol(symbol)
+        selected = pd.DataFrame(columns=_OHLCV_COLUMNS)
+        budget = SampleDownloadBudget()
+        fallback_months: set[tuple[int, int]] = set()
+
+        while current <= last_day and start <= end:
+            next_day = current + timedelta(days=1)
+            day_start = datetime.combine(current, datetime.min.time(), UTC)
+            day_end = datetime.combine(next_day, datetime.min.time(), UTC) - timedelta(
+                microseconds=1
+            )
+            suffix = f"{current.year}-{current.month:02d}-{current.day:02d}"
+            root = f"{_BASE_URL}/{self._market_type}"
+            filename = f"{vision_symbol}-{timeframe}"
+            daily_url = (
+                f"{root}/daily/klines/{vision_symbol}/{timeframe}/"
+                f"{filename}-{suffix}.zip"
+            )
+            remaining = max_rows - len(selected)
+            frame = read_sample_archive(
+                self._client,
+                daily_url,
+                start=max(start, day_start),
+                end=min(end, day_end),
+                max_rows=remaining,
+                budget=budget,
+            )
+            month = (current.year, current.month)
+            if frame is None and month not in fallback_months:
+                fallback_months.add(month)
+                monthly_url = (
+                    f"{root}/monthly/klines/{vision_symbol}/{timeframe}/"
+                    f"{filename}-{current.year}-{current.month:02d}.zip"
+                )
+                month_end = current.replace(
+                    day=calendar.monthrange(current.year, current.month)[1]
+                )
+                next_month = month_end + timedelta(days=1)
+                month_end_time = datetime.combine(
+                    next_month, datetime.min.time(), UTC
+                ) - timedelta(microseconds=1)
+                frame = read_sample_archive(
+                    self._client,
+                    monthly_url,
+                    start=max(start, day_start),
+                    end=min(end, month_end_time),
+                    max_rows=remaining,
+                    budget=budget,
+                )
+                if frame is not None:
+                    next_day = next_month
+            if frame is not None and not frame.empty:
+                selected = (
+                    (
+                        frame
+                        if selected.empty
+                        else pd.concat([selected, frame], ignore_index=True)
+                    )
+                    .drop_duplicates("timestamp")
+                    .sort_values("timestamp")
+                    .head(max_rows)
+                )
+                if len(selected) >= max_rows:
+                    break
+            current = next_day
+        return selected.reset_index(drop=True)
 
     def save_raw(self, df: pd.DataFrame, output_path: Path) -> None:
         """Save raw OHLCV data as CSV.

@@ -16,7 +16,7 @@ import pytest
 from scripts.process_guard import run_checked
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 _PROJECT = Path(__file__).resolve().parents[2]
 _PYPROJECT = """\
@@ -44,7 +44,7 @@ class RebuildProject:
 
 
 @contextmanager
-def _project() -> Iterator[RebuildProject]:
+def _project() -> Generator[RebuildProject, None, None]:
     with TemporaryDirectory(prefix="tradingdev-rebuild-test-") as temporary:
         directory = Path(temporary)
         root = directory / "project"

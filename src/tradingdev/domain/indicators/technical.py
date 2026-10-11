@@ -1,24 +1,24 @@
-"""Named technical indicators backed by pandas-ta.
+"""Named technical indicators backed by TA-Lib.
 
-This module is the only place under ``src/`` that calls pandas-ta. Every
-function selects pandas-ta output by column name, never by position, and pins
-``talib=False`` so results do not depend on whether TA-Lib happens to be
-installed. Inputs shorter than an indicator's window return NaN-filled series
-of the same length, matching pandas rolling semantics, instead of pandas-ta's
-``None``.
-
-Where pandas-ta offers a choice, conventions follow TA-Lib: EMA is seeded with
-the SMA of the first ``length`` bars, RSI, ATR and ADX use Wilder smoothing,
-and Bollinger Bands use the population standard deviation (``ddof=0``).
+Outputs preserve the input index and use float64. Warm-up, initialization and
+missing-value handling follow TA-Lib: leading NaNs delay the first observation,
+and an interior NaN may propagate through the remainder of an indicator. Values
+are never filled or computed using future observations. Infinite inputs are
+rejected. OHLC inputs must share the same index because TA-Lib works by position.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
+import talib
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ class BollingerBands:
 
 @dataclass(frozen=True)
 class ADXResult:
-    """Average Directional Index with its directional components."""
+    """Average Directional Index with its directional indicators."""
 
     adx: pd.Series
     plus_di: pd.Series
@@ -50,53 +50,37 @@ class ADXResult:
 
 @dataclass(frozen=True)
 class StochasticResult:
-    """Stochastic oscillator ``%K`` and ``%D`` lines, both in ``[0, 100]``."""
+    """Stochastic oscillator slow ``%K`` and ``%D`` lines."""
 
     k: pd.Series
     d: pd.Series
 
 
-def indicator_column(frame: pd.DataFrame, prefix: str) -> pd.Series:
-    """Select the single pandas-ta output column whose name starts with *prefix*.
-
-    pandas-ta encodes parameters in its column names (``BBL_20_2.0_2.0``,
-    ``MACDh_12_26_9``) and the exact suffix changes between releases, so
-    columns are selected by their stable prefix rather than by position.
-    """
-    matches = [
-        str(column) for column in frame.columns if str(column).startswith(prefix)
-    ]
-    if len(matches) != 1:
-        msg = (
-            f"expected exactly one column starting with {prefix!r}, "
-            f"found {matches!r} in {list(frame.columns)!r}"
-        )
-        raise KeyError(msg)
-    return frame[matches[0]]
-
-
 def sma(close: pd.Series, length: int) -> pd.Series:
-    """Simple moving average of *close* over *length* bars."""
-    close = _as_float(close, length)
-    return _series_or_nan(ta.sma(close, length=length, talib=False), close)
+    """Simple moving average; the first ``length - 1`` values are NaN."""
+    _validate_period("length", length)
+    values = _as_float(close)
+    if close.empty:
+        return _empty_like(close)
+    return _series(talib.SMA(values, timeperiod=length), close)
 
 
 def ema(close: pd.Series, length: int) -> pd.Series:
-    """Exponential moving average seeded with the SMA of the first *length* bars.
-
-    The first ``length - 1`` values are NaN, as in TA-Lib.
-    """
-    close = _as_float(close, length)
-    return _series_or_nan(
-        ta.ema(close, length=length, talib=False, presma=True),
-        close,
-    )
+    """EMA seeded with the first ``length`` observations' simple average."""
+    _validate_period("length", length)
+    values = _as_float(close)
+    if close.empty:
+        return _empty_like(close)
+    return _series(talib.EMA(values, timeperiod=length), close)
 
 
 def rsi(close: pd.Series, length: int = 14) -> pd.Series:
-    """Relative Strength Index with Wilder smoothing, in ``[0, 100]``."""
-    close = _as_float(close, length)
-    return _series_or_nan(ta.rsi(close, length=length, talib=False), close)
+    """Wilder RSI, first defined after ``length`` price changes."""
+    _validate_period("length", length)
+    values = _as_float(close)
+    if close.empty:
+        return _empty_like(close)
+    return _series(talib.RSI(values, timeperiod=length), close)
 
 
 def macd(
@@ -105,19 +89,27 @@ def macd(
     slow: int = 26,
     signal: int = 9,
 ) -> MACDResult:
-    """MACD of *close* with EMA periods *fast*, *slow* and *signal*."""
-    close = _as_float(close, fast, slow, signal)
+    """TA-Lib MACD with all outputs warming up for ``slow + signal - 2`` bars.
+
+    TA-Lib seeds the fast EMA from the tail of the slow EMA's initial window.
+    Its MACD line therefore differs from subtracting two standalone EMAs.
+    """
+    _validate_period("fast", fast)
+    _validate_period("slow", slow)
+    _validate_period("signal", signal, minimum=1)
     if fast >= slow:
         msg = f"fast period must be shorter than slow period, got {fast} >= {slow}"
         raise ValueError(msg)
-    frame = ta.macd(close, fast=fast, slow=slow, signal=signal, talib=False)
-    if frame is None:
-        nan = _nan_like(close)
-        return MACDResult(macd=nan, signal=nan, histogram=nan)
+    values = _as_float(close)
+    if close.empty:
+        return MACDResult(*(_empty_like(close) for _ in range(3)))
+    line, signal_line, histogram = talib.MACD(
+        values, fastperiod=fast, slowperiod=slow, signalperiod=signal
+    )
     return MACDResult(
-        macd=indicator_column(frame, "MACD_"),
-        signal=indicator_column(frame, "MACDs_"),
-        histogram=indicator_column(frame, "MACDh_"),
+        macd=_series(line, close),
+        signal=_series(signal_line, close),
+        histogram=_series(histogram, close),
     )
 
 
@@ -125,32 +117,25 @@ def bollinger_bands(
     close: pd.Series,
     length: int = 20,
     std: float = 2.0,
-    ddof: int = 0,
 ) -> BollingerBands:
-    """Bollinger Bands: SMA(*length*) plus and minus *std* standard deviations.
-
-    ``ddof=0`` (population standard deviation) matches TA-Lib and John
-    Bollinger's definition; pandas-ta defaults to the sample deviation.
-    """
-    close = _as_float(close, length)
-    if not 0 <= ddof < length:
-        msg = f"ddof must satisfy 0 <= ddof < length, got ddof={ddof}, length={length}"
+    """SMA bands using population standard deviation (``ddof=0``)."""
+    _validate_period("length", length)
+    if not np.isfinite(std) or not 0 <= std <= 3e37:
+        msg = f"std must be finite and between 0 and 3e37, got {std}"
         raise ValueError(msg)
-    frame = ta.bbands(
-        close,
-        length=length,
-        lower_std=std,
-        upper_std=std,
-        ddof=ddof,
-        talib=False,
+    values = _as_float(close)
+    if close.empty:
+        return BollingerBands(*(_empty_like(close) for _ in range(3)))
+    upper, middle, lower = talib.BBANDS(
+        values,
+        timeperiod=length,
+        nbdevup=std,
+        nbdevdn=std,
     )
-    if frame is None:
-        nan = _nan_like(close)
-        return BollingerBands(lower=nan, middle=nan, upper=nan)
     return BollingerBands(
-        lower=indicator_column(frame, "BBL_"),
-        middle=indicator_column(frame, "BBM_"),
-        upper=indicator_column(frame, "BBU_"),
+        lower=_series(lower, close),
+        middle=_series(middle, close),
+        upper=_series(upper, close),
     )
 
 
@@ -160,10 +145,14 @@ def atr(
     close: pd.Series,
     length: int = 14,
 ) -> pd.Series:
-    """Average True Range with Wilder smoothing, in price units."""
-    high, low, close = _as_float_ohlc(high, low, close, length)
-    result = ta.atr(high, low, close, length=length, talib=False)
-    return _series_or_nan(result, close)
+    """Wilder ATR; the first ``length`` values are NaN, including the first bar."""
+    _validate_period("length", length, minimum=1)
+    high_values, low_values, close_values = _as_float_ohlc(high, low, close)
+    if close.empty:
+        return _empty_like(close)
+    return _series(
+        talib.ATR(high_values, low_values, close_values, timeperiod=length), close
+    )
 
 
 def adx(
@@ -172,16 +161,27 @@ def adx(
     close: pd.Series,
     length: int = 14,
 ) -> ADXResult:
-    """Average Directional Index with ``+DI`` and ``-DI``, each in ``[0, 100]``."""
-    high, low, close = _as_float_ohlc(high, low, close, length)
-    frame = ta.adx(high, low, close, length=length, talib=False)
-    if frame is None:
-        nan = _nan_like(close)
-        return ADXResult(adx=nan, plus_di=nan, minus_di=nan)
+    """Wilder ADX and ``+DI``/``-DI`` with their respective TA-Lib warm-ups.
+
+    ADX starts at position ``2 * length - 1``; DI starts at ``length``.
+    """
+    _validate_period("length", length)
+    high_values, low_values, close_values = _as_float_ohlc(high, low, close)
+    if close.empty:
+        return ADXResult(*(_empty_like(close) for _ in range(3)))
     return ADXResult(
-        adx=indicator_column(frame, "ADX_"),
-        plus_di=indicator_column(frame, "DMP_"),
-        minus_di=indicator_column(frame, "DMN_"),
+        adx=_series(
+            talib.ADX(high_values, low_values, close_values, timeperiod=length),
+            close,
+        ),
+        plus_di=_series(
+            talib.PLUS_DI(high_values, low_values, close_values, timeperiod=length),
+            close,
+        ),
+        minus_di=_series(
+            talib.MINUS_DI(high_values, low_values, close_values, timeperiod=length),
+            close,
+        ),
     )
 
 
@@ -193,40 +193,60 @@ def stochastic(
     d: int = 3,
     smooth_k: int = 3,
 ) -> StochasticResult:
-    """Stochastic oscillator: ``%K`` over *k* bars smoothed by *smooth_k*, ``%D``."""
-    high, low, close = _as_float_ohlc(high, low, close, k, d, smooth_k)
-    frame = ta.stoch(high, low, close, k=k, d=d, smooth_k=smooth_k, talib=False)
-    if frame is None:
-        nan = _nan_like(close)
-        return StochasticResult(k=nan, d=nan)
-    return StochasticResult(
-        k=indicator_column(frame, "STOCHk_"),
-        d=indicator_column(frame, "STOCHd_"),
+    """SMA-smoothed stochastic with a shared ``k + smooth_k + d - 3`` warm-up.
+
+    ``smooth_k=1`` leaves fast %K unsmoothed; ``d=1`` makes %D equal %K.
+    Both lines are exposed only once %D is available.
+    """
+    _validate_period("k", k, minimum=1)
+    _validate_period("d", d, minimum=1)
+    _validate_period("smooth_k", smooth_k, minimum=1)
+    high_values, low_values, close_values = _as_float_ohlc(high, low, close)
+    if close.empty:
+        return StochasticResult(_empty_like(close), _empty_like(close))
+    slow_k, slow_d = talib.STOCH(
+        high_values,
+        low_values,
+        close_values,
+        fastk_period=k,
+        slowk_period=smooth_k,
+        slowd_period=d,
     )
+    return StochasticResult(k=_series(slow_k, close), d=_series(slow_d, close))
 
 
-def _as_float(series: pd.Series, *lengths: int) -> pd.Series:
-    for length in lengths:
-        if length < 1:
-            msg = f"indicator length must be a positive integer, got {length}"
-            raise ValueError(msg)
-    return series.astype("float64")
+def _validate_period(name: str, value: int, *, minimum: int = 2) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Integral)
+        or not minimum <= value <= 100000
+    ):
+        msg = f"{name} must be an integer between {minimum} and 100000, got {value}"
+        raise ValueError(msg)
+
+
+def _as_float(series: pd.Series) -> NDArray[np.float64]:
+    values = series.to_numpy(dtype=np.float64, copy=True)
+    if np.isinf(values).any():
+        msg = "indicator inputs must not contain infinity"
+        raise ValueError(msg)
+    return values
 
 
 def _as_float_ohlc(
     high: pd.Series,
     low: pd.Series,
     close: pd.Series,
-    *lengths: int,
-) -> tuple[pd.Series, pd.Series, pd.Series]:
-    return _as_float(high, *lengths), _as_float(low), _as_float(close)
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    if not high.index.equals(close.index) or not low.index.equals(close.index):
+        msg = "high, low and close must have identical indexes"
+        raise ValueError(msg)
+    return _as_float(high), _as_float(low), _as_float(close)
 
 
-def _nan_like(series: pd.Series) -> pd.Series:
-    return pd.Series(np.nan, index=series.index, dtype="float64")
+def _series(values: NDArray[np.float64], reference: pd.Series) -> pd.Series:
+    return pd.Series(values, index=reference.index, dtype="float64")
 
 
-def _series_or_nan(result: pd.Series | None, reference: pd.Series) -> pd.Series:
-    if result is None:
-        return _nan_like(reference)
-    return result.astype("float64")
+def _empty_like(series: pd.Series) -> pd.Series:
+    return pd.Series(index=series.index, dtype="float64")

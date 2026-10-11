@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tradingdev.domain.backtest.result import BacktestResult
+    from tradingdev.domain.execution import ExecutionManifest
     from tradingdev.domain.validation.walk_forward import (
         WalkForwardResult,
     )
@@ -28,11 +29,13 @@ class PipelineResult:
         fold_results: Per-fold :class:`WalkForwardResult` list
             (walk-forward mode).  Each entry carries full
             ``train_backtest`` / ``test_backtest`` objects.
-        config_snapshot: Copy of the raw YAML config dict so the
+        config_snapshot: Copy of the resolved execution config so the
             dashboard can access strategy name, timeframe, etc.
+        execution_manifest: Verified specification used for this execution.
     """
 
     mode: str  # "simple" | "walk_forward"
     backtest_result: BacktestResult | None = None
     fold_results: list[WalkForwardResult] = field(default_factory=list)
     config_snapshot: dict[str, Any] = field(default_factory=dict)
+    execution_manifest: ExecutionManifest | None = None

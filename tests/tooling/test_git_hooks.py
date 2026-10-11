@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 _PROJECT = Path(__file__).resolve().parents[2]
 _CHECKER = """import json
@@ -105,7 +105,7 @@ class GitRepository:
 
 
 @contextmanager
-def _repository(primary: str = "main") -> Iterator[GitRepository]:
+def _repository(primary: str = "main") -> Generator[GitRepository, None, None]:
     with TemporaryDirectory(prefix="tradingdev-git-hook-test-") as temporary:
         root = Path(temporary) / "repository"
         root.mkdir()

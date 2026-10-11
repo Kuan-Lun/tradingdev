@@ -12,6 +12,7 @@ from sklearn.metrics import roc_auc_score
 from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.optimization.grid_search import finite_metric_value
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -247,7 +248,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         directions = self._compute_directions(feat_val)
 
         best_threshold = self._config.risk_threshold
-        best_return = -np.inf
+        best_pnl: float | None = None
 
         for thr in candidates:
             signals_for_thr = self._run_state_machine_with_threshold(
@@ -261,24 +262,24 @@ class SafetyVolumeStrategy(BaseStrategy):
             sim_df["signal"] = signals_for_thr
             result = self._backtest_engine.run(sim_df)
 
-            total_ret = result.metrics.get("total_return", -np.inf)
+            total_pnl = finite_metric_value(result.metrics.get("total_pnl"))
             volume = result.metrics.get("total_volume", 0.0)
 
             logger.info(
-                "Threshold %.2f: return=%.4f, volume=%.0f",
+                "Threshold %.2f: net_pnl=%s, volume=%s",
                 thr,
-                total_ret,
+                total_pnl,
                 volume,
             )
 
-            if total_ret > best_return:
-                best_return = total_ret
+            if total_pnl is not None and (best_pnl is None or total_pnl > best_pnl):
+                best_pnl = total_pnl
                 best_threshold = thr
 
         logger.info(
-            "Best threshold: %.2f (return=%.4f)",
+            "Best threshold: %.2f (net_pnl=%s)",
             best_threshold,
-            best_return,
+            best_pnl,
         )
         return best_threshold
 

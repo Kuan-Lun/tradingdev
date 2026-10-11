@@ -3,22 +3,86 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import re
 import sys
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from tests.e2e.strategy_scenarios import SCENARIOS, expected_signals, market_frame
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
+
+_REPORT_FILES = {
+    "research_report_html": ("html", "report.html"),
+    "research_report_manifest": ("manifest", "manifest.json"),
+}
+
+
+def _report_path(workspace: WorkspacePaths, artifact: dict[str, Any]) -> str:
+    """Require the two fixed content-addressed report paths."""
+    report_id = artifact["metadata"].get("report_id")
+    assert isinstance(report_id, str) and re.fullmatch(r"[0-9a-f]{64}", report_id), (
+        "Report ID must be a SHA-256 digest"
+    )
+    suffix, filename = _REPORT_FILES[artifact["artifact_type"]]
+    assert artifact["artifact_id"] == f"report:{report_id}:{suffix}", (
+        "Report artifact ID differs"
+    )
+    expected = workspace.root
+    for part in ("reports", report_id, filename):
+        expected /= part
+        assert not expected.is_symlink(), "Report path cannot contain symlinks"
+    assert Path(artifact["path"]) == expected, "Report path differs from fixed location"
+    assert expected.resolve().is_relative_to(workspace.root), (
+        "Report path leaves workspace"
+    )
+    return report_id
+
+
+def _verify_reports(
+    workspace: WorkspacePaths, run: dict[str, Any], artifacts: list[dict[str, Any]]
+) -> None:
+    """Independently verify report scope/run linkage and saved hashes."""
+    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    for artifact in artifacts:
+        if artifact["artifact_type"] not in _REPORT_FILES:
+            continue
+        report_id = _report_path(workspace, artifact)
+        grouped.setdefault(report_id, {})[artifact["artifact_type"]] = artifact
+    run_id = run["run_id"]
+    for report_id, pair in grouped.items():
+        assert pair.keys() == _REPORT_FILES.keys(), (
+            "Report must retain HTML and manifest"
+        )
+        html_artifact = pair["research_report_html"]
+        manifest = json.loads(
+            Path(pair["research_report_manifest"]["path"]).read_bytes()
+        )
+        assert manifest["schema_version"] == 1, "Report manifest schema differs"
+        assert manifest["report_id"] == manifest["content_sha256"] == report_id, (
+            "Report digest differs"
+        )
+        assert manifest["run_ids"] == [run_id], "Report run IDs differ"
+        assert manifest["available_scopes"] == {run_id: run["available_scopes"]}, (
+            "Report scopes differ"
+        )
+        content = Path(html_artifact["path"]).read_bytes()
+        assert hashlib.sha256(content).hexdigest() == manifest["html_sha256"], (
+            "Report HTML digest differs"
+        )
 
 
 def verify(root: Path) -> None:
@@ -28,7 +92,8 @@ def verify(root: Path) -> None:
     spec = service.resolve_executable("codex_sma_integration")
     assert spec.status.value == "runnable"
     assert Path(spec.source_path).is_relative_to(workspace.generated_strategies)
-    assert Path(spec.config_path).is_relative_to(workspace.configs)
+    assert Path(spec.config_path).parent == Path(spec.source_path).parent
+    assert spec.revision_id
     raw_config = load_config(Path(spec.config_path))
     parameters = raw_config["strategy"]["parameters"]
     assert parameters["fast_period"] == 5
@@ -51,17 +116,20 @@ def verify(root: Path) -> None:
         config["strategy"]["parameters"].update(
             fast_period=fast_period, slow_period=slow_period
         )
-        strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
-            config, engine=None
-        )
-        result = strategy.generate_signals(frame)
-        fast = close.rolling(fast_period).mean()
-        slow = close.rolling(slow_period).mean()
-        expected = pd.Series(0, index=frame.index, name="signal")
-        expected.loc[fast > slow] = 1
-        expected.loc[fast < slow] = -1
-        pd.testing.assert_series_equal(result["signal"], expected, check_dtype=False)
-        pd.testing.assert_frame_equal(frame, before)
+        with execution_randomness(config.get("random_seed")):
+            strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
+                config, engine=None
+            )
+            result = strategy.generate_signals(frame)
+            fast = close.rolling(fast_period).mean()
+            slow = close.rolling(slow_period).mean()
+            expected = pd.Series(0, index=frame.index, name="signal")
+            expected.loc[fast > slow] = 1
+            expected.loc[fast < slow] = -1
+            pd.testing.assert_series_equal(
+                result["signal"], expected, check_dtype=False
+            )
+            pd.testing.assert_frame_equal(frame, before)
 
 
 def verify_workflow(root: Path, scenario_name: str) -> None:
@@ -77,44 +145,66 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     assert str(bt.start_date.date()) == "2024-01-01"
     assert str(bt.end_date.date()) == "2024-01-08"
     assert bt.init_cash == 10000 and bt.fees == 0 and bt.slippage == 0
-    assert bt.random_seed == 42
+    assert config.get("random_seed") == 42, (
+        "Expected top-level random_seed=42; "
+        f"saved value={config.get('random_seed')!r}, "
+        f"saved backtest={config['backtest']!r}"
+    )
+    assert bt.periods_per_year == 365
     frame = market_frame()
     original = frame.copy(deep=True)
     for parameters in (scenario.parameters, scenario.overrides):
         overridden = deepcopy(config)
         overridden["strategy"]["parameters"] = parameters
-        strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
-            overridden, engine=None
-        )
-        actual = strategy.generate_signals(frame)
-        expected = expected_signals(frame, scenario, parameters)
-        pd.testing.assert_series_equal(actual["signal"], expected, check_dtype=False)
-        pd.testing.assert_frame_equal(frame, original)
-        # Prefixes include warmup, a reversal, and a flat interval. A strategy
-        # cannot use future rows to rewrite the earlier signal history.
-        for length in (4, 24, 55, 92):
-            prefix = frame.iloc[:length].copy()
-            result = strategy.generate_signals(prefix)
-            pd.testing.assert_series_equal(
-                result["signal"], expected.iloc[:length], check_dtype=False
+        with execution_randomness(config.get("random_seed")):
+            strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
+                overridden, engine=None
             )
-            pd.testing.assert_frame_equal(prefix, original.iloc[:length])
+            actual = strategy.generate_signals(frame)
+            expected = expected_signals(frame, scenario, parameters)
+            pd.testing.assert_series_equal(
+                actual["signal"], expected, check_dtype=False
+            )
+            pd.testing.assert_frame_equal(frame, original)
+            # Prefixes include warmup, a reversal, and a flat interval. A strategy
+            # cannot use future rows to rewrite the earlier signal history.
+            for length in (4, 24, 55, 92):
+                prefix = frame.iloc[:length].copy()
+                result = strategy.generate_signals(prefix)
+                pd.testing.assert_series_equal(
+                    result["signal"], expected.iloc[:length], check_dtype=False
+                )
+                pd.testing.assert_frame_equal(prefix, original.iloc[:length])
 
-    runs = RunService(workspace=workspace).list_runs()
+    run_service = RunService(workspace=workspace)
+    runs = run_service.list_runs()
     assert len(runs) == 1, runs
     run = runs[0]
     assert run["strategy_id"] == scenario.strategy_id
+    assert run["revision_id"] == spec.revision_id
     # Ordinary backtests treat end_date as a timestamp (midnight here).
     selected = frame.loc[
         frame["timestamp"] <= pd.Timestamp("2024-01-08", tz="UTC")
     ].copy()
-    selected["signal"] = expected_signals(selected, scenario, scenario.parameters)
+    run_parameters = scenario.overrides if scenario.experiment else scenario.parameters
+    selected["signal"] = expected_signals(selected, scenario, run_parameters)
     reference = BacktestService().create_engine(bt).run(selected).metrics
     assert reference["total_trades"] > 0
     for metric in ("total_return", "total_trades", "max_drawdown"):
         assert math.isclose(
             run["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
         ), (metric, run["metrics"][metric], reference[metric])
+    detailed = run_service.get_run_metrics(run["run_id"])
+    assert detailed["success"] and detailed["scope"] == "full", detailed
+    stored = SQLiteStore(workspace).get_run(run["run_id"])
+    assert stored is not None
+    for metric, value in detailed["metrics"].items():
+        assert stored["metrics"][metric] == value, (metric, "SQLite/artifact mismatch")
+    for metric in ("daily_pnl_mean", "total_volume", "n_days"):
+        assert metric not in run["metrics"]
+        assert math.isclose(
+            detailed["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
+        ), (metric, detailed["metrics"][metric], reference[metric])
     artifacts = ArtifactService(workspace=workspace).list_artifacts(run["run_id"])
     by_type = {artifact["artifact_type"]: artifact for artifact in artifacts}
     assert {
@@ -122,17 +212,26 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
         "config_snapshot",
         "result_json",
         "dataset_fingerprint",
+        "performance_json",
+        "observations_json",
     } <= by_type.keys()
     for artifact in artifacts:
         path = Path(artifact["path"])
-        assert path.is_relative_to(workspace.runs)
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"]
+        if artifact["artifact_type"] in _REPORT_FILES:
+            _report_path(workspace, artifact)
+        else:
+            assert path.is_relative_to(workspace.runs)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"], (
+            f"Artifact SHA differs: {artifact['artifact_id']}"
+        )
+    _verify_reports(workspace, run, artifacts)
     assert (
         Path(by_type["strategy_source"]["path"]).read_bytes()
         == Path(spec.source_path).read_bytes()
     )
     snapshot = load_config(Path(by_type["config_snapshot"]["path"]))
-    assert snapshot["strategy"]["parameters"] == scenario.parameters
+    assert snapshot["strategy"]["parameters"] == run_parameters
+    assert snapshot["strategy"]["revision_id"] == spec.revision_id
 
 
 if __name__ == "__main__":

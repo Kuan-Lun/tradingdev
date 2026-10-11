@@ -7,6 +7,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, now_iso
+from tradingdev.shared.utils.json_values import normalize_json_object
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -90,6 +91,8 @@ class SQLiteStore:
                     run_id text primary key,
                     job_id text not null,
                     strategy_id text not null,
+                    revision_id text,
+                    manifest_hash text,
                     config_hash text,
                     source_hash text,
                     random_seed integer,
@@ -127,6 +130,8 @@ class SQLiteStore:
             self._ensure_column(conn, "jobs", "started_at", "text")
             self._ensure_column(conn, "jobs", "ended_at", "text")
             self._ensure_column(conn, "runs", "source_hash", "text")
+            self._ensure_column(conn, "runs", "revision_id", "text")
+            self._ensure_column(conn, "runs", "manifest_hash", "text")
             self._ensure_column(conn, "runs", "random_seed", "integer")
 
     def upsert_job(self, record: dict[str, Any]) -> None:
@@ -209,22 +214,33 @@ class SQLiteStore:
         strategy_id: str,
         artifact_dir: Path,
         metrics: dict[str, Any],
+        revision_id: str | None = None,
+        manifest_hash: str | None = None,
         config_hash: str | None = None,
         source_hash: str | None = None,
         random_seed: int | None = None,
         dataset_id: str | None = None,
     ) -> None:
         """Insert or replace a completed run."""
+        serialized_metrics = json.dumps(
+            normalize_json_object(metrics),
+            ensure_ascii=False,
+            sort_keys=True,
+            allow_nan=False,
+        )
         with self.connect() as conn:
             conn.execute(
                 """
                 insert into runs (
-                    run_id, job_id, strategy_id, config_hash, source_hash,
+                    run_id, job_id, strategy_id, revision_id, manifest_hash,
+                    config_hash, source_hash,
                     random_seed, dataset_id, metrics, artifact_dir, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(run_id) do update set
                     job_id=excluded.job_id,
                     strategy_id=excluded.strategy_id,
+                    revision_id=excluded.revision_id,
+                    manifest_hash=excluded.manifest_hash,
                     config_hash=excluded.config_hash,
                     source_hash=excluded.source_hash,
                     random_seed=excluded.random_seed,
@@ -236,11 +252,13 @@ class SQLiteStore:
                     run_id,
                     job_id,
                     strategy_id,
+                    revision_id,
+                    manifest_hash,
                     config_hash,
                     source_hash,
                     random_seed,
                     dataset_id,
-                    json.dumps(metrics, ensure_ascii=False, sort_keys=True),
+                    serialized_metrics,
                     str(artifact_dir),
                     now_iso(),
                 ),
@@ -359,6 +377,8 @@ class SQLiteStore:
             value = result.get(key)
             if isinstance(value, str):
                 result[key] = json.loads(value)
+                if key == "metrics" and isinstance(result[key], dict):
+                    result[key] = normalize_json_object(result[key])
         return result
 
     def _ensure_column(

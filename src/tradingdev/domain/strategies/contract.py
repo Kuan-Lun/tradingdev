@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import yaml
+from pydantic import ValidationError
 
+from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
+from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.validator import diagnostic
 
 if TYPE_CHECKING:
+    from tradingdev.domain.strategies.execution import StrategyExecution
     from tradingdev.domain.strategies.schemas import (
         StrategyDiagnostic,
         StrategyMetadata,
@@ -40,10 +46,13 @@ class SignalContractChecker:
         fixture_rows: int,
     ) -> dict[str, Any]:
         """Return contract diagnostics and signal analysis for a strategy."""
-        diagnostics: list[StrategyDiagnostic] = []
         try:
             config_path = Path(metadata.config_path)
-            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            config_bytes = config_path.read_bytes()
+            if hashlib.sha256(config_bytes).hexdigest() != metadata.config_hash:
+                msg = "Strategy revision configuration has changed"
+                raise ValueError(msg)
+            raw = yaml.safe_load(config_bytes)
             if not isinstance(raw, dict):
                 msg = "YAML config must be a mapping"
                 raise ValueError(msg)
@@ -53,25 +62,97 @@ class SignalContractChecker:
                 raise ValueError(msg)
             for field, expected in (
                 ("id", metadata.strategy_id),
+                ("revision_id", metadata.revision_id),
                 ("class_name", metadata.class_name),
                 ("source_path", metadata.source_path),
             ):
                 if strategy_cfg.get(field) != expected:
                     msg = f"strategy.{field} does not match saved strategy metadata"
                     raise ValueError(msg)
-            strategy = self._loader.create_from_config(raw, engine=None)
-            if not isinstance(strategy, BaseStrategy):
-                diagnostics.append(
+            strategy_cfg["source_hash"] = metadata.source_hash
+            return self.check_config(raw, fixture_rows=fixture_rows)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "diagnostics": [
                     _contract_diagnostic(
-                        code="base_strategy_inheritance",
-                        message="strategy must inherit BaseStrategy",
-                        fix="Make the generated class inherit from BaseStrategy.",
+                        code="contract_execution_error",
+                        message=str(exc),
+                        fix="Fix the saved strategy identity or configuration.",
+                    )
+                ],
+                "effective_config": None,
+            }
+
+    def check_config(
+        self,
+        raw_config: dict[str, Any],
+        *,
+        fixture_rows: int,
+        execution: StrategyExecution | None = None,
+        parameter_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Check effective execution settings without altering revision evidence.
+
+        A captured execution uses exactly its frozen constructor settings. Search
+        candidates apply the same overrides used by the real strategy loader.
+        """
+        diagnostics: list[StrategyDiagnostic] = []
+        effective_config: dict[str, Any] | None = None
+        try:
+            raw = deepcopy(raw_config)
+            try:
+                run_config = BacktestRunConfig.model_validate(raw)
+            except ValidationError as exc:
+                diagnostics.append(
+                    diagnostic(
+                        code="invalid_execution_config",
+                        phase="config",
+                        message=str(exc),
+                        fix=(
+                            "Follow get_strategy_contract.config_schema. Use finite "
+                            "JSON values, string object keys, and no cycles. Put the "
+                            "run random_seed at the YAML root and correct unknown "
+                            "fields; backtest.random_seed is not supported."
+                        ),
                     )
                 )
-                return {"diagnostics": diagnostics}
-            df = _fixture_df(fixture_rows)
-            before = df.copy(deep=True)
-            result = strategy.generate_signals(df)
+                return {"diagnostics": diagnostics, "effective_config": None}
+            effective_config = run_config.model_dump(mode="json")
+            effective_config["parallel"] = (
+                run_config.parallel or ParallelConfig()
+            ).model_dump(mode="json")
+            with execution_randomness(run_config.random_seed):
+                if execution is None:
+                    strategy = self._loader.create_from_config(
+                        effective_config, engine=None
+                    )
+                else:
+                    selected = execution
+                    if parameter_overrides:
+                        selected = self._loader.override_execution(
+                            effective_config["strategy"], execution, parameter_overrides
+                        )
+                    strategy = self._loader.create_from_execution(
+                        effective_config["strategy"],
+                        selected,
+                        None,
+                        run_config.parallel or ParallelConfig(),
+                    )
+                if not isinstance(strategy, BaseStrategy):
+                    diagnostics.append(
+                        _contract_diagnostic(
+                            code="base_strategy_inheritance",
+                            message="strategy must inherit BaseStrategy",
+                            fix="Make the generated class inherit from BaseStrategy.",
+                        )
+                    )
+                    return {
+                        "diagnostics": diagnostics,
+                        "effective_config": effective_config,
+                    }
+                df = _fixture_df(fixture_rows)
+                before = df.copy(deep=True)
+                result = strategy.generate_signals(df)
             if not isinstance(result, pd.DataFrame):
                 diagnostics.append(
                     _contract_diagnostic(
@@ -80,7 +161,10 @@ class SignalContractChecker:
                         fix="Return the copied DataFrame with a signal column.",
                     )
                 )
-                return {"diagnostics": diagnostics}
+                return {
+                    "diagnostics": diagnostics,
+                    "effective_config": effective_config,
+                }
             if not df.equals(before):
                 diagnostics.append(
                     _contract_diagnostic(
@@ -97,7 +181,10 @@ class SignalContractChecker:
                         fix="Add result['signal'] with values -1, 0, or 1.",
                     )
                 )
-                return {"diagnostics": diagnostics}
+                return {
+                    "diagnostics": diagnostics,
+                    "effective_config": effective_config,
+                }
             signals = result["signal"]
             values = set(signals.dropna().unique())
             if not values.issubset({-1, 0, 1}):
@@ -114,6 +201,7 @@ class SignalContractChecker:
             return {
                 "diagnostics": diagnostics,
                 "signal_analysis": _signal_analysis(result),
+                "effective_config": effective_config,
             }
         except Exception as exc:  # noqa: BLE001
             diagnostics.append(
@@ -123,7 +211,7 @@ class SignalContractChecker:
                     fix="Fix the class name, constructor, imports, or signal logic.",
                 )
             )
-            return {"diagnostics": diagnostics}
+            return {"diagnostics": diagnostics, "effective_config": effective_config}
 
 
 def _contract_diagnostic(*, code: str, message: str, fix: str) -> StrategyDiagnostic:

@@ -19,7 +19,12 @@ import pandas as pd
 from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.direction_features import DirectionFeatureEngineer
 from tradingdev.domain.ml.models.autogluon_model import AutoGluonDirectionModel
-from tradingdev.domain.optimization.grid_search import tuple_grid
+from tradingdev.domain.optimization.grid_search import (
+    finite_metric_value,
+    is_better_metric,
+    metric_direction,
+    tuple_grid,
+)
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -242,6 +247,7 @@ class GLFTMLStrategy(BaseStrategy):
 
         cfg = self._config
         target = cfg.target_metric
+        direction = metric_direction(target)
         min_mp = cfg.min_monthly_pnl
 
         close = np.asarray(feat_df["close"].astype(float).values)
@@ -267,7 +273,7 @@ class GLFTMLStrategy(BaseStrategy):
         # Also search confidence threshold
         conf_candidates = cfg.confidence_threshold_candidates
 
-        best_value = -math.inf
+        best_value: float | None = None
         best_gamma = cfg.gamma
         best_kappa = cfg.kappa
         best_ema = cfg.ema_window
@@ -321,17 +327,15 @@ class GLFTMLStrategy(BaseStrategy):
                 metrics = result.metrics
 
                 if min_mp is not None:
-                    dpm = metrics.get("daily_pnl_mean", -math.inf)
-                    monthly_pnl = (
-                        dpm * 30 if isinstance(dpm, (int, float)) else -math.inf
-                    )
+                    dpm = finite_metric_value(metrics.get("daily_pnl_mean"))
+                    monthly_pnl = dpm * 30 if dpm is not None else -math.inf
                     if monthly_pnl < min_mp:
                         n_filtered += 1
                         continue
 
-                value = metrics.get(target, -math.inf)
-                if isinstance(value, (int, float)) and value > best_value:
-                    best_value = float(value)
+                value = finite_metric_value(metrics.get(target))
+                if is_better_metric(value, best_value, direction):
+                    best_value = value
                     best_gamma = gamma
                     best_kappa = kappa
                     best_ema = ema_w
@@ -346,6 +350,11 @@ class GLFTMLStrategy(BaseStrategy):
                 n_filtered,
                 total_combos,
                 min_mp if min_mp is not None else 0.0,
+            )
+
+        if best_value is None:
+            raise ValueError(
+                "No GLFT-ML parameter combination has a finite eligible objective"
             )
 
         self._best_gamma = best_gamma

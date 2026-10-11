@@ -1,11 +1,8 @@
 """Technical indicators.
 
-``tradingdev.domain.indicators`` is the only module under ``src/`` that calls
-pandas-ta; feature engineering and bundled strategies use these functions
-instead of calling the library directly. Generated strategies in a user
-workspace may import ``pandas_ta`` themselves; the strategy contract asks
-them to follow the same rules (column-name selection, ``talib=False``), but
-validation does not enforce those rules.
+Feature engineering and bundled strategies use this module as their TA-Lib
+interface. Functions preserve pandas indexes and follow TA-Lib's initialization,
+warm-up and NaN handling. Generated strategies may also import ``talib`` directly.
 """
 
 from tradingdev.domain.indicators.technical import (
@@ -17,7 +14,6 @@ from tradingdev.domain.indicators.technical import (
     atr,
     bollinger_bands,
     ema,
-    indicator_column,
     macd,
     rsi,
     sma,
@@ -33,7 +29,6 @@ __all__ = [
     "atr",
     "bollinger_bands",
     "ema",
-    "indicator_column",
     "macd",
     "rsi",
     "sma",

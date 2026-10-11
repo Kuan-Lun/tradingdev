@@ -2,13 +2,98 @@
 
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from tradingdev.app.strategy_service import StrategyNotExecutableError
+from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.strategies.schemas import StrategyMetadata
+
 if TYPE_CHECKING:
-    from pathlib import Path
+    from tradingdev.domain.strategies.schemas import StrategySpec
+
+
+def _read_revision_file(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        msg = f"Cannot read strategy revision file {path}: {exc}"
+        raise StrategyNotExecutableError(msg) from exc
+
+
+def bind_strategy_revision(
+    config: dict[str, Any],
+    spec: StrategySpec,
+) -> None:
+    """Check execution identity and bind its trusted source digest in place."""
+    strategy = config.get("strategy")
+    if not isinstance(strategy, dict) or strategy.get("id") != spec.strategy_id:
+        msg = "Config strategy.id does not match the selected strategy"
+        raise StrategyNotExecutableError(msg)
+    if strategy.get("revision_id") != spec.revision_id:
+        msg = "Config revision_id does not match the selected strategy revision"
+        raise StrategyNotExecutableError(msg)
+    source = strategy.get("source_path")
+    declared_source = (
+        spec.metadata.get("declared_source_path")
+        if spec.kind == "bundled" and isinstance(spec.metadata, dict)
+        else None
+    )
+    # Bundled YAML may name its package-relative source. Its catalog owns the
+    # mapping to the installed module; a caller's working directory does not.
+    matches_declared_source = (
+        isinstance(declared_source, str) and source == declared_source
+    )
+    if spec.kind == "generated" and not source:
+        msg = "Generated strategy config requires its revision source_path"
+        raise StrategyNotExecutableError(msg)
+    if (
+        source
+        and not matches_declared_source
+        and Path(str(source)).expanduser().resolve()
+        != Path(spec.source_path).expanduser().resolve()
+    ):
+        msg = "Config source_path does not match the selected strategy revision"
+        raise StrategyNotExecutableError(msg)
+    class_name = strategy.get("class_name")
+    if class_name is not None and class_name != spec.class_name:
+        msg = "Config class_name does not match the selected strategy revision"
+        raise StrategyNotExecutableError(msg)
+    if spec.kind == "generated":
+        if not spec.revision_id or not isinstance(spec.metadata, StrategyMetadata):
+            msg = "Generated strategy requires a verified revision"
+            raise StrategyNotExecutableError(msg)
+        if class_name != spec.class_name:
+            msg = "Generated strategy config requires its revision class_name"
+            raise StrategyNotExecutableError(msg)
+        base_content = _read_revision_file(Path(spec.config_path))
+        if hashlib.sha256(base_content).hexdigest() != spec.metadata.config_hash:
+            msg = "Strategy revision config hash changed before execution"
+            raise StrategyNotExecutableError(msg)
+        base_strategy = yaml.safe_load(base_content)["strategy"]
+        ignored = {"source_hash", "source_path", "parameters"}
+        actual = {key: value for key, value in strategy.items() if key not in ignored}
+        expected = {
+            key: value for key, value in base_strategy.items() if key not in ignored
+        }
+        if actual != expected:
+            msg = "Strategy settings do not match the validated revision config"
+            raise StrategyNotExecutableError(msg)
+        expected_hash = spec.metadata.source_hash
+    else:
+        source_path = Path(spec.source_path).expanduser().resolve()
+        expected_hash = hashlib.sha256(_read_revision_file(source_path)).hexdigest()
+        strategy["source_path"] = str(source_path)
+        strategy["class_name"] = spec.class_name
+    supplied_hash = strategy.get("source_hash")
+    if supplied_hash is not None and supplied_hash != expected_hash:
+        msg = "Strategy source hash does not match the execution specification"
+        raise StrategyNotExecutableError(msg)
+    strategy["source_hash"] = expected_hash
 
 
 def apply_run_overrides(
@@ -41,11 +126,20 @@ def apply_run_overrides(
     return effective_config
 
 
-def write_job_config(run_dir: Path, config: dict[str, Any]) -> Path:
-    """Save the execution snapshot in the job's own artifact directory."""
-    run_dir.mkdir(parents=True, exist_ok=True)
-    path = run_dir / "config.yaml"
-    path.write_text(
-        yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
-    return path
+def apply_backtest_overrides(
+    config: dict[str, Any], overrides: dict[str, Any] | None
+) -> None:
+    """Apply explicit execution settings without changing revision declarations."""
+    if overrides is None:
+        return
+    allowed = BacktestConfig.model_fields.keys() - {
+        "symbol",
+        "timeframe",
+        "start_date",
+        "end_date",
+    }
+    unknown = overrides.keys() - allowed
+    if unknown:
+        raise ValueError(f"Unknown backtest overrides: {', '.join(sorted(unknown))}")
+    config["backtest"].update(deepcopy(overrides))
+    BacktestConfig.model_validate(config["backtest"])

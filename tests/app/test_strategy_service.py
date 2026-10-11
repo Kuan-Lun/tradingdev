@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
-from tradingdev.app.strategy_service import StrategyService
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    import pytest
+from tradingdev.app.contracts.strategy import (
+    StrategyDryRunFailure,
+    StrategyValidationFailure,
+)
+from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
+from tradingdev.domain.strategies.schemas import StrategyMetadata
 
 _STRATEGY_CODE = """\
 from __future__ import annotations
@@ -82,17 +86,174 @@ def test_strategy_service_lifecycle(tmp_path: Path) -> None:
     assert validated["success"] is True
     assert validated["status"] == "validated"
     assert validated["signal_analysis"]["rows"] == 80
+    assert validated["effective_config"]["backtest"]["fees"] == 0.0006
+    assert validated["effective_config"]["random_seed"] is None
     dry_run = service.dry_run("fixture_strategy")
     assert dry_run["success"] is True
     assert dry_run["status"] == "runnable"
     assert dry_run["signal_analysis"]["rows"] == 240
     assert dry_run["signal_analysis"]["transition_count"] >= 1
+    assert dry_run["effective_config"] == validated["effective_config"]
     promoted = service.promote("fixture_strategy")
     assert promoted == {
         "success": True,
         "strategy_id": "fixture_strategy",
+        "revision_id": saved.revision_id,
         "status": "promoted",
     }
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("field", ["random_seed", "random_sead"])
+def test_config_errors_are_reported_before_constructing_strategy(
+    tmp_path: Path, dry_run: bool, field: str
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+    config = yaml.safe_load(_YAML)
+    config["backtest"][field] = 42
+    code = _STRATEGY_CODE.replace(
+        "self._engine = backtest_engine",
+        'raise RuntimeError("Constructor must not run for an invalid config")',
+    )
+    saved = service.save_draft("invalid_config", code, yaml.safe_dump(config))
+    assert saved.success
+    if dry_run:
+        # Simulate older validation evidence; dry-run must independently check config.
+        recorded = service.record_validation_status(
+            "invalid_config",
+            {
+                "revision_id": saved.revision_id,
+                "checked_at": "2024-01-01T00:00:00+00:00",
+                "success": True,
+                "diagnostics": [],
+            },
+        )
+        assert recorded["success"]
+    checked = (
+        service.dry_run("invalid_config")
+        if dry_run
+        else service.validate("invalid_config")
+    )
+    assert checked["success"] is False
+    assert checked["effective_config"] is None
+    assert checked["diagnostics"][0]["code"] == "invalid_execution_config"
+    assert checked["diagnostics"][0]["phase"] == "config"
+    assert f"backtest.{field}" in checked["diagnostics"][0]["message"]
+    assert "YAML root" in checked["diagnostics"][0]["fix"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "invalid_case",
+    [
+        "nan_fees",
+        "nan_string_fees",
+        "overflow_string_fees",
+        "nan_parameter",
+        "infinite_parameter",
+        "integer_key",
+        "cycle",
+    ],
+)
+def test_lossy_yaml_values_cannot_execute_or_advance_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+    invalid_case: str,
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+    config = yaml.safe_load(_YAML)
+    if invalid_case == "nan_fees":
+        config["backtest"]["fees"] = float("nan")
+    elif invalid_case == "nan_string_fees":
+        config["backtest"]["fees"] = "NaN"
+    elif invalid_case == "overflow_string_fees":
+        config["backtest"]["fees"] = "1e999"
+    elif invalid_case == "nan_parameter":
+        config["strategy"]["parameters"]["threshold"] = float("nan")
+    elif invalid_case == "infinite_parameter":
+        config["strategy"]["parameters"]["threshold"] = {"nested": [float("inf")]}
+    elif invalid_case == "integer_key":
+        config["strategy"]["parameters"]["threshold"] = {1: "number", "1": "text"}
+    else:
+        circular: list[Any] = []
+        circular.append(circular)
+        config["strategy"]["parameters"]["threshold"] = circular
+    saved = service.save_draft("invalid_json", _STRATEGY_CODE, yaml.safe_dump(config))
+    assert saved.success
+    if dry_run:
+        assert service.record_validation_status(
+            "invalid_json",
+            {
+                "revision_id": saved.revision_id,
+                "checked_at": "2024-01-01T00:00:00+00:00",
+                "success": True,
+                "diagnostics": [],
+            },
+        )["success"]
+    called = False
+
+    def unexpected_constructor(*args: object, **kwargs: object) -> None:
+        nonlocal called
+        called = True
+        raise AssertionError("Invalid raw configuration reached the constructor")
+
+    monkeypatch.setattr(service._loader, "create_from_config", unexpected_constructor)
+    checked = (
+        service.dry_run("invalid_json") if dry_run else service.validate("invalid_json")
+    )
+    assert not called
+    assert checked["success"] is False
+    assert checked["effective_config"] is None
+    assert checked["diagnostics"][0]["code"] == "invalid_execution_config"
+    assert checked["status"] == ("validated" if dry_run else "draft")
+    response_model = StrategyDryRunFailure if dry_run else StrategyValidationFailure
+    response_model.model_validate(checked).model_dump_json()
+    metadata = service.get_strategy("invalid_json")["metadata"]
+    assert metadata["status"] == checked["status"]
+    evidence = metadata["dry_run" if dry_run else "validation"]
+    assert not evidence["success"]
+    assert evidence["effective_config"] is None
+
+
+def test_validation_and_dry_run_seed_constructor_and_signals(tmp_path: Path) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
+    code = (
+        _STRATEGY_CODE.replace(
+            "from tradingdev.domain.strategies.base import BaseStrategy",
+            "from tradingdev.domain.randomness import (\n"
+            "    get_numpy_rng, get_random, get_seed,\n)\n"
+            "from tradingdev.domain.strategies.base import BaseStrategy",
+        )
+        .replace(
+            "self._engine = backtest_engine",
+            "self._engine = backtest_engine\n"
+            "        assert get_seed() == 42\n"
+            "        assert get_random().random() == 0.6394267984578837\n"
+            "        assert get_numpy_rng().integers(100) == 8",
+        )
+        .replace(
+            'result.loc[moves > self._threshold, "signal"] = 1',
+            'result["signal"] = get_numpy_rng().integers(-1, 2, len(result))',
+        )
+    )
+    saved = service.save_draft("random_fixture", code, "random_seed: 42\n" + _YAML)
+    assert saved.success
+    first = service.validate("random_fixture")
+    second = service.validate("random_fixture")
+    assert first["success"] and second["success"]
+    assert first["signal_analysis"] == second["signal_analysis"]
+    assert first["effective_config"]["random_seed"] == 42
+    assert "random_seed" not in first["effective_config"]["backtest"]
+    checked = service.dry_run("random_fixture")
+    assert checked["success"]
+    assert checked["effective_config"] == first["effective_config"]
+    retrieved = service.get_strategy("random_fixture")
+    assert retrieved["metadata"]["validation"]["effective_config"]["random_seed"] == 42
+    assert retrieved["metadata"]["dry_run"]["effective_config"]["random_seed"] == 42
 
 
 def test_strategy_service_loads_generated_and_bundled_specs(tmp_path: Path) -> None:
@@ -117,11 +278,13 @@ def test_record_validation_status_updates_draft_metadata(tmp_path: Path) -> None
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
 
-    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+    saved = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    assert saved.success
 
     response = service.record_validation_status(
         "fixture_strategy",
         {
+            "revision_id": saved.revision_id,
             "checked_at": "2024-01-01T00:00:00+00:00",
             "success": True,
             "diagnostics": [],
@@ -254,28 +417,36 @@ def test_dry_run_only_accepts_validated_strategy(tmp_path: Path) -> None:
     assert "requires validated" in promoted_dry_run["error"]
 
 
-def test_strategy_service_validate_reports_syntax_errors(tmp_path: Path) -> None:
+def test_strategy_service_rejects_modified_snapshot_before_validation(
+    tmp_path: Path,
+) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
     saved = service.save_draft("syntax_strategy", _STRATEGY_CODE, _YAML)
     assert saved.success is True
-    source_path = workspace.generated_strategies / "syntax_strategy.py"
+    source_path = Path(saved.source_path)
     source_path.write_text("def broken(:\n", encoding="utf-8")
 
     validated = service.validate("syntax_strategy")
 
     assert validated["success"] is False
-    assert [item["code"] for item in validated["diagnostics"]] == ["syntax_error"]
+    assert validated["code"] == "strategy_revision_invalid"
 
 
-def test_strategy_service_rejects_non_allowlisted_import(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "import_source",
+    ["import pandas_ta as ta", "from pandas_ta import sma"],
+)
+def test_strategy_service_rejects_removed_pandas_ta_import(
+    tmp_path: Path, import_source: str
+) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
     service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
 
     code = _STRATEGY_CODE.replace(
         "import pandas as pd",
-        "import talib\n\nimport pandas as pd",
+        f"{import_source}\n\nimport pandas as pd",
     )
     assert service.save_draft(
         "bad_import_strategy",
@@ -293,7 +464,9 @@ def test_strategy_service_rejects_non_allowlisted_import(tmp_path: Path) -> None
         for item in validated["diagnostics"]
         if item["code"] == "import_not_allowed"
     )
-    assert "pandas_ta" in rejected["fix"]
+    assert rejected["message"] == "import not allowed: pandas_ta"
+    assert "talib" in rejected["fix"]
+    assert "tradingdev.domain.indicators" in rejected["fix"]
 
 
 def test_strategy_service_rejects_invalid_signal_values(tmp_path: Path) -> None:
@@ -338,20 +511,18 @@ def test_strategy_service_rejects_input_mutation(tmp_path: Path) -> None:
     assert "input_mutated" in codes
 
 
-_PANDAS_TA_CODE = """\
+_TALIB_CODE = """\
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import pandas_ta as ta
+import pandas as pd
+import talib
 
 from tradingdev.domain.strategies.base import BaseStrategy
 
-if TYPE_CHECKING:
-    import pandas as pd
 
-
-class PandasTaStrategy(BaseStrategy):
+class TalibStrategy(BaseStrategy):
     def __init__(
         self,
         backtest_engine: object | None = None,
@@ -362,7 +533,9 @@ class PandasTaStrategy(BaseStrategy):
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
-        sma = ta.sma(result["close"], length=self._length, talib=False)
+        close = result["close"].to_numpy(dtype=float)
+        _upper, middle, _lower = talib.BBANDS(close, timeperiod=self._length)
+        sma = pd.Series(middle, index=result.index)
         result["signal"] = 0
         result.loc[result["close"] > sma, "signal"] = 1
         return result
@@ -371,24 +544,184 @@ class PandasTaStrategy(BaseStrategy):
         return {"length": self._length}
 """
 
-_PANDAS_TA_YAML = (
-    _YAML.replace("fixture_strategy", "pandas_ta_strategy")
-    .replace("FixtureStrategy", "PandasTaStrategy")
+_TALIB_YAML = (
+    _YAML.replace("fixture_strategy", "talib_strategy")
+    .replace("FixtureStrategy", "TalibStrategy")
     .replace("threshold: 0.0", "length: 3")
 )
 
 
-def test_strategy_service_accepts_pandas_ta_import(tmp_path: Path) -> None:
+def test_strategy_service_validates_and_dry_runs_direct_talib_strategy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MYPY_CACHE_DIR", str(tmp_path / "mypy-cache"))
+    monkeypatch.setenv("RUFF_CACHE_DIR", str(tmp_path / "ruff-cache"))
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
-    service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
 
-    assert service.save_draft(
-        "pandas_ta_strategy", _PANDAS_TA_CODE, _PANDAS_TA_YAML
-    ).success
+    assert service.save_draft("talib_strategy", _TALIB_CODE, _TALIB_YAML).success
 
-    validated = service.validate("pandas_ta_strategy")
+    validated = service.validate("talib_strategy")
 
     assert validated["success"] is True, validated["diagnostics"]
     assert validated["status"] == "validated"
     assert validated["signal_analysis"]["rows"] == 80
+    assert validated["signal_analysis"]["signal_distribution"] == {"1": 78, "0": 2}
+
+    dry_run = service.dry_run("talib_strategy")
+
+    assert dry_run["success"] is True, dry_run["diagnostics"]
+    assert dry_run["status"] == "runnable"
+    assert dry_run["signal_analysis"]["rows"] == 240
+    assert dry_run["signal_analysis"]["nan_count"] == 0
+    assert dry_run["signal_analysis"]["transition_count"] > 0
+
+
+def test_validation_finishes_on_captured_revision_after_new_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    first = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    assert first.revision_id is not None
+    saved_revisions: list[str | None] = []
+
+    def save_during_check(_path: Path) -> list[Any]:
+        second = service.save_draft(
+            "fixture_strategy",
+            _STRATEGY_CODE,
+            _YAML.replace("threshold: 0.0", "threshold: 0.5"),
+        )
+        saved_revisions.append(second.revision_id)
+        return []
+
+    monkeypatch.setattr(service, "_quality_gate_diagnostics", save_during_check)
+    checked = service.validate("fixture_strategy")
+
+    assert checked["success"] is True
+    assert checked["revision_id"] == first.revision_id
+    current = service.load("fixture_strategy")
+    assert current is not None
+    assert current.revision_id == saved_revisions[0] != first.revision_id
+    assert current.status == "draft"
+    assert isinstance(current.metadata, StrategyMetadata)
+    assert current.metadata.validation is None
+    with pytest.raises(StrategyNotExecutableError, match="runnable or promoted"):
+        service.resolve_executable("fixture_strategy")
+
+    dry_run = service.dry_run("fixture_strategy", first.revision_id)
+    assert dry_run["success"] is True
+    assert dry_run["revision_id"] == first.revision_id
+    assert service.promote("fixture_strategy", first.revision_id)["success"] is True
+    assert (
+        service.resolve_executable("fixture_strategy", first.revision_id).revision_id
+        == first.revision_id
+    )
+    assert service.load("fixture_strategy") == current
+
+
+def test_external_validation_result_cannot_validate_the_new_current_revision(
+    tmp_path: Path,
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    first = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    second = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+
+    checked = service.record_validation_status(
+        "fixture_strategy",
+        {
+            "revision_id": first.revision_id,
+            "checked_at": "2024-01-01T00:00:00Z",
+            "success": True,
+        },
+    )
+
+    assert checked["revision_id"] == first.revision_id
+    assert checked["status"] == "validated"
+    current = service.load("fixture_strategy")
+    assert current is not None
+    assert current.revision_id == second.revision_id
+    assert current.status == "draft"
+
+
+def test_source_changed_during_check_does_not_gain_validation_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    saved = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+
+    def modify_source(path: Path) -> list[Any]:
+        path.write_text(_STRATEGY_CODE + "\n# modified during validation\n")
+        return []
+
+    monkeypatch.setattr(service, "_quality_gate_diagnostics", modify_source)
+    checked = service.validate("fixture_strategy", saved.revision_id)
+
+    assert checked["success"] is False
+    assert checked["code"] == "strategy_revision_invalid"
+    # Restore only the test's bytes to inspect the persisted state.
+    Path(saved.source_path).write_text(_STRATEGY_CODE)
+    spec = service.load("fixture_strategy", saved.revision_id)
+    assert spec is not None
+    assert isinstance(spec.metadata, StrategyMetadata)
+    assert spec.status == "draft"
+    assert spec.metadata.validation is None
+
+
+def test_generated_save_cannot_shadow_bundled_strategy(tmp_path: Path) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    saved = service.save_draft("kd_crossover", _STRATEGY_CODE, _YAML)
+    assert not saved.success
+    assert saved.code == "reserved_strategy_id"
+
+
+def test_legacy_id_collision_does_not_shadow_bundled_execution(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    bundled = service.resolve_executable("kd_crossover")
+    legacy = workspace.generated_strategies / "kd_crossover.json"
+    legacy.write_text('{"status": "runnable"}', encoding="utf-8")
+    assert service.resolve_executable("kd_crossover") == bundled
+    assert service.get_strategy("kd_crossover")["kind"] == "bundled"
+    with pytest.raises(StrategyNotExecutableError, match="not found"):
+        service.resolve_executable(
+            "kd_crossover", revision_id="0123456789ab4def8123456789abcdef"
+        )
+
+
+def test_dry_run_cannot_replace_newer_validation_in_the_same_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    monkeypatch.setattr(service, "_quality_gate_diagnostics", lambda _path: [])
+    saved = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    assert service.validate("fixture_strategy")["success"]
+    original_check = service._contract_checker.check
+
+    def revalidate_during_dry_run(
+        metadata: StrategyMetadata, *, fixture_rows: int
+    ) -> dict[str, Any]:
+        response = service.record_validation_status(
+            metadata.strategy_id,
+            {
+                "revision_id": metadata.revision_id,
+                "checked_at": "2030-01-01T00:00:00Z",
+                "success": True,
+                "signal_analysis": {"newer_evidence": True},
+            },
+        )
+        assert response["success"]
+        return original_check(metadata, fixture_rows=fixture_rows)
+
+    monkeypatch.setattr(service._contract_checker, "check", revalidate_during_dry_run)
+    checked = service.dry_run("fixture_strategy", saved.revision_id)
+
+    assert checked["success"] is False
+    assert checked["code"] == "strategy_revision_invalid"
+    current = service.load("fixture_strategy")
+    assert current is not None
+    assert current.status == "validated"
+    assert isinstance(current.metadata, StrategyMetadata)
+    assert current.metadata.dry_run is None
+    assert current.metadata.validation is not None
+    assert current.metadata.validation.signal_analysis == {"newer_evidence": True}

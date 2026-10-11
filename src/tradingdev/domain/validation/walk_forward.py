@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -69,12 +70,12 @@ class WalkForwardValidator:
         results: list[WalkForwardResult] = []
 
         for i, (train_df, test_df) in enumerate(splits):
-            result = self._run_fold(i, strategy, train_df, test_df)
+            result = self.run_fold(i, strategy, train_df, test_df)
             results.append(result)
 
         return results
 
-    def _run_fold(
+    def run_fold(
         self,
         fold_idx: int,
         strategy: BaseStrategy,
@@ -107,12 +108,12 @@ class WalkForwardValidator:
         test_metrics = test_result.metrics
 
         logger.info(
-            "Fold %d: train %s=%.4f, test %s=%.4f",
+            "Fold %d: train %s=%s, test %s=%s",
             fold_idx,
             self._config.target_metric,
-            train_metrics.get(self._config.target_metric, float("nan")),
+            train_metrics.get(self._config.target_metric),
             self._config.target_metric,
-            test_metrics.get(self._config.target_metric, float("nan")),
+            test_metrics.get(self._config.target_metric),
         )
 
         return WalkForwardResult(
@@ -123,7 +124,7 @@ class WalkForwardValidator:
             test_end=test_end.to_pydatetime(),
             train_metrics=train_metrics,
             test_metrics=test_metrics,
-            strategy_params=strategy.get_parameters(),
+            strategy_params=deepcopy(strategy.get_parameters()),
             train_backtest=train_result,
             test_backtest=test_result,
         )

@@ -14,7 +14,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -152,7 +152,7 @@ class MergeCandidate:
 @contextmanager
 def merge_candidate(
     source: str, base_ref: str, head_ref: str
-) -> Iterator[MergeCandidate]:
+) -> Generator[MergeCandidate, None, None]:
     """Fetch and merge in a disposable repository, leaving the caller untouched."""
     with TemporaryDirectory(prefix="tradingdev-pr-candidate-") as temporary:
         repository = Path(temporary)
@@ -209,32 +209,44 @@ def merge_candidate(
         yield MergeCandidate(repository, base, head, tree)
 
 
-def verify_candidate(candidate: MergeCandidate) -> None:
+def validate_evidence_budget(max_evidence_bytes: int | None) -> None:
+    if max_evidence_bytes is not None and max_evidence_bytes <= 0:
+        raise RuntimeError("Documentation evidence budget must be positive.")
+
+
+def verify_candidate(
+    candidate: MergeCandidate, *, max_evidence_bytes: int | None = None
+) -> None:
     """Always run a fresh review and full suite for an explicit candidate."""
+    validate_evidence_budget(max_evidence_bytes)
     print("Reviewing code/documentation consistency with Codex...", flush=True)
-    run(
-        [
-            sys.executable,
-            str(Path(__file__).with_name("review_docs.py")),
-            "--repo",
-            str(candidate.repository),
-            "--base",
-            candidate.base,
-            "--tree",
-            candidate.tree,
-        ],
-        cwd=Path(__file__).resolve().parents[1],
-    )
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("review_docs.py")),
+        "--repo",
+        str(candidate.repository),
+        "--base",
+        candidate.base,
+        "--tree",
+        candidate.tree,
+    ]
+    if max_evidence_bytes is not None:
+        print(f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True)
+        command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
+    run(command, cwd=Path(__file__).resolve().parents[1])
     check_snapshot(candidate.tree, "full", repo=candidate.repository)
 
 
-def check_full(base_ref: str, head_ref: str) -> None:
+def check_full(
+    base_ref: str, head_ref: str, *, max_evidence_bytes: int | None = None
+) -> None:
+    validate_evidence_budget(max_evidence_bytes)
     if git("status", "--porcelain", "--untracked-files=all"):
         raise RuntimeError("Commit the task stages before running full checks.")
     base = git("rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}")
     head = git("rev-parse", "--verify", "--end-of-options", f"{head_ref}^{{commit}}")
     with merge_candidate(str(Path.cwd()), base, head) as candidate:
-        verify_candidate(candidate)
+        verify_candidate(candidate, max_evidence_bytes=max_evidence_bytes)
         if (
             git("status", "--porcelain", "--untracked-files=all")
             or git(
@@ -267,17 +279,25 @@ def main() -> None:
     parser.add_argument("action", choices=["commit", "full", "push"])
     parser.add_argument("--base", help="Explicit local comparison base for full checks")
     parser.add_argument("--head", default="HEAD")
+    parser.add_argument(
+        "--max-evidence-bytes",
+        type=int,
+        help="Override the documentation reviewer byte limit for this full check",
+    )
     args = parser.parse_args()
     action = args.action
     if action == "full" and not args.base:
         parser.error("full requires --base; use scripts/check-pr.sh for a remote PR")
+    if args.max_evidence_bytes is not None and action != "full":
+        parser.error("--max-evidence-bytes is only valid for full checks")
+    validate_evidence_budget(args.max_evidence_bytes)
     os.chdir(git("rev-parse", "--show-toplevel"))
     if action == "commit":
         check_commit()
     elif action == "push":
         check_push()
     else:
-        check_full(args.base, args.head)
+        check_full(args.base, args.head, max_evidence_bytes=args.max_evidence_bytes)
 
 
 if __name__ == "__main__":

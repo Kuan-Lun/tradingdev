@@ -1,6 +1,6 @@
 """MCP DTO tests."""
 
-from tradingdev.mcp.schemas import SaveStrategyInput, ToolResult
+from tradingdev.mcp.schemas import SaveStrategyInput
 
 
 def test_save_strategy_input_defaults() -> None:
@@ -11,10 +11,3 @@ def test_save_strategy_input_defaults() -> None:
     )
 
     assert dto.request_summary == ""
-
-
-def test_tool_result_defaults() -> None:
-    result = ToolResult(success=False, error="bad request")
-
-    assert result.message == ""
-    assert result.error == "bad request"

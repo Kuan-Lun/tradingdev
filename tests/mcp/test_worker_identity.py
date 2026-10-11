@@ -41,10 +41,10 @@ def test_worker_keeps_supervisor_identity_when_starting(
     monkeypatch.setenv("TRADINGDEV_WORKSPACE", str(workspace.root))
     monkeypatch.setenv("TRADINGDEV_WORKER_IDENTITY", json.dumps(handle.job_fields()))
 
-    # A missing config stops execution after the worker's startup write. This
+    # An unversioned legacy job stops after the worker's startup write. This
     # exercises real persisted metadata without running a backtest or child.
     if job_type == "backtest":
-        backtest._run_backtest("worker", config_path)
+        backtest._run_backtest("worker")
     else:
         optimization._run_optimization("worker")
 

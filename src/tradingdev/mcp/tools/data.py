@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from mcp.types import ToolAnnotations
+
+from tradingdev.app.contracts.data import (
+    CachedDataset,
+    DatasetInspection,
+    EnsureDataResponse,
+)
 from tradingdev.domain.data.crawlers.registry import available_sources
 
 if TYPE_CHECKING:
@@ -16,33 +23,67 @@ if TYPE_CHECKING:
 def register(mcp: FastMCP, service: DataService) -> None:
     """Register data tools."""
 
-    @mcp.tool()
-    def list_available_data() -> list[dict[str, Any]]:
-        """List cached OHLCV datasets."""
-        return service.list_available_data()
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
+    def list_available_data() -> list[CachedDataset]:
+        """List cached OHLCV datasets; use inspect_dataset to inspect file contents."""
+        return [
+            CachedDataset.model_validate(row) for row in service.list_available_data()
+        ]
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     def list_data_sources() -> list[str]:
-        """List registered market data source names."""
+        """List registered source names before selecting a source for ensure_data."""
         return available_sources()
 
-    @mcp.tool()
-    def inspect_dataset(config_path: str | None = None) -> dict[str, Any]:
-        """Inspect the workspace data cache."""
-        path = Path(config_path) if config_path else None
-        return service.inspect_dataset(path)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
+    def inspect_dataset(config_path: str | None = None) -> DatasetInspection:
+        """Inspect local caches, optionally against an existing run config.
 
-    @mcp.tool()
+        This does not fetch data. Use ensure_data to acquire missing market data.
+        """
+        path = Path(config_path) if config_path else None
+        return DatasetInspection.model_validate(service.inspect_dataset(path))
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=True,
+        )
+    )
     def ensure_data(
         symbol: str,
         timeframe: str,
         start_date: str,
         end_date: str,
         source: str = "binance_vision",
-    ) -> dict[str, Any]:
-        """Ensure OHLCV data for the requested range is cached.
+    ) -> EnsureDataResponse:
+        """Fetch and cache OHLCV data for the requested range when needed.
 
-        ``source`` selects the market data crawler (see list_data_sources).
+        Select a source from list_data_sources. Completed-year downloads may
+        replace partial caches. Inspect the cache before starting a backtest.
         """
         dataset = service.ensure(
             symbol=symbol,
@@ -51,9 +92,9 @@ def register(mcp: FastMCP, service: DataService) -> None:
             end_date=end_date,
             source=source,
         )
-        return {
-            "success": True,
-            "rows": len(dataset.frame),
-            "processed_path": str(dataset.processed_path),
-            "dataset_id": dataset.dataset_id,
-        }
+        return EnsureDataResponse(
+            success=True,
+            rows=len(dataset.frame),
+            processed_path=str(dataset.processed_path),
+            dataset_id=dataset.dataset_id,
+        )

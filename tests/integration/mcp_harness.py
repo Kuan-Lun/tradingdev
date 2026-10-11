@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import sys
 from contextlib import asynccontextmanager, closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from tempfile import mkdtemp
@@ -16,8 +16,10 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import psutil
+from jsonschema import validate
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import ElicitResult, PaginatedRequestParams
 
 from tradingdev.adapters.execution.process_runner import (
     WorkerHandle,
@@ -25,21 +27,48 @@ from tradingdev.adapters.execution.process_runner import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncGenerator, Generator
+    from typing import Literal
 
     import pandas as pd
+    from mcp.client.session import ElicitationFnT
+    from mcp.shared.context import RequestContext
+    from mcp.types import ElicitRequestParams
+
+
+@dataclass
+class SimulatedUserApproval:
+    """An explicit test user callback, never evidence of a real human UI action."""
+
+    action: Literal["accept", "decline", "cancel"] = "accept"
+    approved: bool = True
+    requests: list[ElicitRequestParams] = field(default_factory=list)
+
+    async def __call__(
+        self,
+        context: RequestContext[ClientSession, Any],
+        params: ElicitRequestParams,
+    ) -> ElicitResult:
+        self.requests.append(params)
+        return ElicitResult(
+            action=self.action,
+            content={"approved": self.approved} if self.action == "accept" else None,
+        )
 
 
 @dataclass
 class MCPClient:
     session: ClientSession
     instructions: str = ""
+    output_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     async def call(self, name: str, **arguments: Any) -> Any:
         result = await self.session.call_tool(name, arguments)
         assert not result.isError, result.model_dump(mode="json")
         assert result.structuredContent is not None, result
         payload = result.structuredContent
+        assert name in self.output_schemas, f"No advertised outputSchema for {name}"
+        validate(instance=payload, schema=self.output_schemas[name])
         return payload["result"] if set(payload) == {"result"} else payload
 
     async def wait_for_job(self, job_id: str, timeout: float = 120) -> dict[str, Any]:
@@ -101,7 +130,9 @@ class MCPWorkspace:
         return env
 
     @asynccontextmanager
-    async def connect(self) -> AsyncIterator[MCPClient]:
+    async def connect(
+        self, *, elicitation_callback: ElicitationFnT | None = None
+    ) -> AsyncGenerator[MCPClient, None]:
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "tradingdev.mcp.server"],
@@ -113,13 +144,32 @@ class MCPWorkspace:
             with log_path.open("a", encoding="utf-8") as errlog:
                 async with stdio_client(params, errlog=errlog) as (read, write):
                     async with ClientSession(
-                        read, write, read_timeout_seconds=timedelta(seconds=100)
+                        read,
+                        write,
+                        read_timeout_seconds=timedelta(seconds=100),
+                        elicitation_callback=elicitation_callback,
                     ) as session:
                         initialized = await session.initialize()
                         assert initialized.serverInfo.name == "tradingdev"
                         assert "save_strategy" in (initialized.instructions or "")
                         try:
-                            yield MCPClient(session, initialized.instructions or "")
+                            output_schemas: dict[str, dict[str, Any]] = {}
+                            cursor = None
+                            while True:
+                                listed = await session.list_tools(
+                                    params=PaginatedRequestParams(cursor=cursor)
+                                )
+                                for tool in listed.tools:
+                                    assert tool.outputSchema is not None, tool.name
+                                    output_schemas[tool.name] = tool.outputSchema
+                                cursor = listed.nextCursor
+                                if cursor is None:
+                                    break
+                            yield MCPClient(
+                                session,
+                                initialized.instructions or "",
+                                output_schemas,
+                            )
                         finally:
                             self.stop_workers()
         except BaseException:
@@ -202,7 +252,7 @@ def worker_is_alive(process: psutil.Process) -> bool:
 
 
 @contextmanager
-def temporary_mcp_workspace() -> Iterator[MCPWorkspace]:
+def temporary_mcp_workspace() -> Generator[MCPWorkspace, None, None]:
     # Also used outside pytest; stop detached workers before removing files.
     directory = Path(mkdtemp(prefix="tradingdev-mcp-test-")).resolve()
     workspace = MCPWorkspace(directory)

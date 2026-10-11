@@ -17,6 +17,7 @@ from scripts.git_gate import (  # noqa: E402
     execution_environment,
     git,
     merge_candidate,
+    validate_evidence_budget,
     verify_candidate,
 )
 from scripts.pr_context import get_pull_request, remote_url  # noqa: E402
@@ -58,7 +59,10 @@ def _remote_refs(source: str, base_ref: str, head_ref: str) -> tuple[str, str]:
     return refs[base_ref], refs[head_ref]
 
 
-def check_pr(number: int, remote: str = "origin") -> None:
+def check_pr(
+    number: int, remote: str = "origin", *, max_evidence_bytes: int | None = None
+) -> None:
+    validate_evidence_budget(max_evidence_bytes)
     request = get_pull_request(number, remote)
     primary = subprocess.check_output(
         ["bash", str(Path(__file__).with_name("detect-primary-branch.sh"))], text=True
@@ -83,7 +87,7 @@ def check_pr(number: int, remote: str = "origin") -> None:
             f"Head: {candidate.head}\nTree: {candidate.tree}",
             flush=True,
         )
-        verify_candidate(candidate)
+        verify_candidate(candidate, max_evidence_bytes=max_evidence_bytes)
         current = get_pull_request(number, remote)
         # API base metadata can lag the advertised main ref, and GitHub computes
         # provisional merge SHAs asynchronously. Validate actual Git tips below.
@@ -120,9 +124,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("number", type=int)
     parser.add_argument("--remote", default="origin")
+    parser.add_argument(
+        "--max-evidence-bytes",
+        type=int,
+        help="Override the documentation reviewer byte limit for this PR check",
+    )
     args = parser.parse_args()
+    validate_evidence_budget(args.max_evidence_bytes)
     os.chdir(git("rev-parse", "--show-toplevel"))
-    check_pr(args.number, args.remote)
+    check_pr(args.number, args.remote, max_evidence_bytes=args.max_evidence_bytes)
 
 
 if __name__ == "__main__":

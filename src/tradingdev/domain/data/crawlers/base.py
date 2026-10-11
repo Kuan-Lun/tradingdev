@@ -37,6 +37,25 @@ class BaseCrawler(ABC):
         ...
 
     @abstractmethod
+    def fetch_sample(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        *,
+        max_rows: int,
+    ) -> pd.DataFrame:
+        """Fetch at most max_rows earliest distinct bars in the inclusive interval.
+
+        Implementations must bound provider requests and parsing before building
+        result frames; fetching an entire history and truncating it is not a
+        sample implementation. A single timestamp (start == end) is supported.
+        Naive bounds are interpreted as UTC. Do not populate ordinary caches.
+        """
+        ...
+
+    @abstractmethod
     def save_raw(self, df: pd.DataFrame, output_path: Path) -> None:
         """Save raw fetched data to disk.
 

@@ -1,54 +1,45 @@
-"""Feature request MCP tool tests."""
+"""Feature request MCP tool tests using in-process FastMCP dispatch."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+import asyncio
+from typing import TYPE_CHECKING
+
+from mcp.server.fastmcp import FastMCP
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.contracts.research import RecordFeatureRequestResponse
 from tradingdev.app.feature_request_service import FeatureRequestService
 from tradingdev.mcp.tools import feature_requests
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
-
-
-class _FakeMCP:
-    def __init__(self) -> None:
-        self.tools: dict[str, Callable[..., object]] = {}
-
-    def tool(self) -> Callable[[Callable[..., object]], Callable[..., object]]:
-        def decorator(fn: Callable[..., object]) -> Callable[..., object]:
-            self.tools[fn.__name__] = fn
-            return fn
-
-        return decorator
 
 
 def test_record_feature_request_returns_success(tmp_path: Path) -> None:
     service = FeatureRequestService(
         workspace=WorkspacePaths(tmp_path / "workspace"),
     )
-    mcp = _FakeMCP()
+    mcp = FastMCP("feature-request-test")
+    feature_requests.register(mcp, service)
 
-    feature_requests.register(
-        cast("Any", mcp),
-        service,
-    )
+    async def check() -> None:
+        result = await mcp.call_tool(
+            "record_feature_request",
+            {
+                "title": "Need live trading",
+                "description": "Support live order execution.",
+                "source_tool": "start_live_trading",
+            },
+        )
+        assert isinstance(result, tuple)
+        response = RecordFeatureRequestResponse.model_validate(result[1])
+        assert response.success is True
+        assert response.feature_request.success is True
+        assert response.feature_request.request_id
+        assert "unsupported" not in result[1]
 
-    result = cast(
-        "dict[str, object]",
-        mcp.tools["record_feature_request"](
-            "Need live trading",
-            "Support live order execution.",
-            "start_live_trading",
-        ),
-    )
-
-    assert result["success"] is True
-    assert "unsupported" not in result
-    feature_request = cast("dict[str, object]", result["feature_request"])
-    assert feature_request["success"] is True
-    assert feature_request["request_id"]
-    metadata = cast("dict[str, object]", service.list_requests()[0]["metadata"])
+    asyncio.run(check())
+    metadata = service.list_requests()[0]["metadata"]
+    assert isinstance(metadata, dict)
     assert metadata["source_tool"] == "start_live_trading"

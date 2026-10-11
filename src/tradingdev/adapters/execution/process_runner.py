@@ -101,6 +101,15 @@ class WorkerHandle(ProcessIdentity):
         return handle
 
 
+class BoundedWorkerError(RuntimeError):
+    """A bounded worker failed, with explicit evidence about process cleanup."""
+
+    def __init__(self, code: str, message: str, *, cleanup_verified: bool) -> None:
+        super().__init__(message)
+        self.code = code
+        self.cleanup_verified = cleanup_verified
+
+
 def _read_control(path: Path) -> dict[str, Any] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -168,6 +177,7 @@ class ProcessRunner:
         project_root: Path | None = None,
         *,
         workspace: WorkspacePaths | None = None,
+        env_overrides: Mapping[str, str] | None = None,
     ) -> None:
         configured_root = os.environ.get("TRADINGDEV_PROJECT_ROOT")
         self._project_root = (
@@ -176,6 +186,8 @@ class ProcessRunner:
             .resolve()
         )
         self._env = os.environ.copy()
+        if env_overrides is not None:
+            self._env.update(env_overrides)
         self._workspace = workspace or WorkspacePaths()
         self._env["TRADINGDEV_WORKSPACE"] = str(self._workspace.root)
         if data_root := self._env.get("TRADINGDEV_DATA_ROOT"):
@@ -209,6 +221,7 @@ class ProcessRunner:
         except BaseException:
             shutil.rmtree(directory)
             raise
+
         try:
             identity = ProcessIdentity.capture(proc.pid)
             handle = WorkerHandle(identity.pid, identity.create_time, control_id)
@@ -235,3 +248,56 @@ class ProcessRunner:
                     [startup_error, cleanup_error],
                 ) from None
             raise
+
+    def run_module(self, module: str, *args: str, timeout_seconds: float) -> None:
+        """Wait for one supervised module and verify cleanup on every outcome."""
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("Worker timeout must be finite and positive")
+        deadline = time.monotonic() + timeout_seconds
+        try:
+            handle = self.spawn_module(module, *args)
+        except BaseException as error:
+            raise BoundedWorkerError(
+                "preflight_start_failed",
+                f"Preflight worker could not start: {error}",
+                cleanup_verified=not isinstance(error, BaseExceptionGroup),
+            ) from error
+        directory = self._workspace.root / ".workers" / handle.control_id
+        failure: BaseException | None = None
+        completion: dict[str, Any] | None = None
+        try:
+            while True:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Preflight exceeded its total time budget")
+                completion = _read_control(directory / "finished.json")
+                if completion is not None:
+                    break
+                time.sleep(0.02)
+        except BaseException as error:
+            failure = error
+        try:
+            request_worker_stop(self._workspace.root, handle, timeout=15)
+        except BaseException as error:
+            raise BoundedWorkerError(
+                "preflight_cleanup_failed",
+                f"Preflight cleanup could not be verified: {error}",
+                cleanup_verified=False,
+            ) from error
+        if failure is not None:
+            raise BoundedWorkerError(
+                "preflight_timeout"
+                if isinstance(failure, TimeoutError)
+                else "preflight_failed",
+                str(failure),
+                cleanup_verified=True,
+            ) from failure
+        if (
+            completion is None
+            or completion.get("returncode") != 0
+            or completion.get("error")
+        ):
+            raise BoundedWorkerError(
+                "preflight_failed",
+                f"Preflight worker failed: {completion}",
+                cleanup_verified=True,
+            )

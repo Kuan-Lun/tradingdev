@@ -16,6 +16,9 @@ def create_backtest_engine(config: BacktestConfig) -> BaseBacktestEngine:
     """Create the concrete backtest engine requested by config."""
     if config.mode == "volume":
         return VolumeBacktestEngine(
+            periods_per_year=config.periods_per_year,
+            risk_free_rate=config.risk_free_rate,
+            required_return=config.required_return,
             fees=config.fees,
             slippage=config.slippage,
             freq=config.timeframe,
@@ -28,6 +31,9 @@ def create_backtest_engine(config: BacktestConfig) -> BaseBacktestEngine:
         )
     return SignalBacktestEngine(
         init_cash=config.init_cash,
+        periods_per_year=config.periods_per_year,
+        risk_free_rate=config.risk_free_rate,
+        required_return=config.required_return,
         fees=config.fees,
         slippage=config.slippage,
         freq=config.timeframe,

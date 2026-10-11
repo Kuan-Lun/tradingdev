@@ -107,7 +107,7 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 |------|--------|------|
 | `gamma` | 500.0 | 風險厭惡係數 (γ)，越大 spread 越寬 |
 | `kappa` | 1000.0 | 訂單到達強度 (κ)，越大 spread 越窄 |
-| `ema_window` | 21 | EMA 計算窗口，用於估計公允價格 |
+| `ema_window` | 21 | EMA 計算窗口，用於估計公允價格；整數 2～100000 |
 
 ### Volatility
 
@@ -150,7 +150,7 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 |------|--------|------|
 | `min_entry_edge` | 0.0015 | 最低進場偏離閾值（須 >= `fee_rate × 2`） |
 | `momentum_guard` | false | 動量防護：只在 deviation 收斂時進場 |
-| `trend_ema_window` | 0 | 趨勢過濾慢 EMA；0=停用 |
+| `trend_ema_window` | 0 | 趨勢過濾慢 EMA；0=停用，啟用時為整數 2～100000 |
 
 ### Exit
 
@@ -193,22 +193,23 @@ actual_size = position_size × weight
 |------|--------|------|
 | `gamma_candidates` | [0, 0.1, 1] | 搜尋最佳 γ |
 | `kappa_candidates` | [250, 500, 750] | 搜尋最佳 κ |
-| `ema_window_candidates` | [5, 15, 30] | 搜尋最佳 EMA 窗口 |
+| `ema_window_candidates` | [5, 15, 30] | 搜尋最佳 EMA 窗口；各值為整數 2～100000 |
 | `max_holding_bars_candidates` | [6, 8, 13] | 搜尋最佳持倉上限 |
 | `min_entry_edge_candidates` | [0.0012, 0.0015, 0.002, 0.003] | 搜尋最佳進場門檻 |
-| `trend_ema_candidates` | [0, 200] | 搜尋趨勢過濾窗口 |
+| `trend_ema_candidates` | [0, 200] | 搜尋趨勢過濾窗口；各值為 0 或整數 2～100000 |
 | `profit_target_ratio_candidates` | [0.5, 0.75, 1.0] | 搜尋最佳利潤目標 |
 | `target_metric` | "total_volume" | 優化目標指標 |
 | `min_monthly_pnl` | -1500 | 月均 PnL 約束門檻（USDT） |
 
 #### 約束優化
 
-fit() 使用**約束優化**策略：
+`fit()` 依指標目錄宣告的方向選擇參數：例如 `total_volume` 取最大值，
+`max_drawdown_amount` 取最小值。目標值不可用或非有限數值的組合不參與比較。
 
-1. 過濾掉估計月均 PnL（`daily_pnl_mean * 30`）低於 `min_monthly_pnl` 的參數組合
-2. 在通過約束的組合中，最大化 `target_metric`（交易量）
-
-這確保策略在控制虧損的前提下，盡可能多地產生交易量。
+若 `min_monthly_pnl` 不是 `null`，先排除 `daily_pnl_mean` 不可用、非有限，
+或估計月均 PnL（`daily_pnl_mean * 30`）低於門檻的組合；通過約束後才比較目標。
+沒有有效且符合約束的組合時，搜尋以 `ValueError` 失敗。
+目前 bundled YAML 的目標為 `total_volume`，因此在符合損益約束下最大化交易量。
 
 ### Position & Volume
 
@@ -228,7 +229,17 @@ fit() 使用**約束優化**策略：
 - 狀態機強制執行：持倉期間內不可提前退出
 - 較大的 position_size (10,000 USDT) 減少所需交易次數
 
-## Walk-Forward 驗證結果
+## 歷史 Walk-Forward 驗證結果
+
+本節保留既有文件中的設定、最佳參數、績效表與分析結論，尚未依現行引擎及
+指標口徑重新回測、核對；不可視為新版輸出或目前策略效能的驗證。
+
+目前 volume 模式沒有初始資金基準，`total_return`、`annual_return`、
+`sharpe_ratio` 與百分比 `max_drawdown` 均不適用，應以 `total_pnl` 與
+`max_drawdown_amount` 等金額指標評估。下方初始資金與報酬百分比僅為歷史紀錄。
+新版 `total_volume` 是實際進場與出場名目成交額的合計，不能直接與單邊月目標比較。
+本節「單邊」沿用既有文字，未核實其與新版成交量的對應；交易量達標、虧損控制
+及泛化判斷都須以新回測重新評估。
 
 ### 設定
 
@@ -286,8 +297,8 @@ fit() 使用**約束優化**策略：
 
 **交易量達標**：
 
-- 訓練期月均交易量：29,992,151 / 12 ≈ **2,499,346 USDT/月**（單邊）
-- 測試期月均交易量：21,799,951 / 12 ≈ **1,816,663 USDT/月**（單邊）
+- 訓練期月均交易量：29,992,151 / 12 ≈ **2,499,346 USDT/月**（舊文標示：單邊）
+- 測試期月均交易量：21,799,951 / 12 ≈ **1,816,663 USDT/月**（舊文標示：單邊）
 - 距離 12.5M USDT/月目標仍有差距，需要更低的進場門檻或更大倉位
 
 **虧損控制**：

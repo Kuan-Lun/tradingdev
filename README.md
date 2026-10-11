@@ -1,144 +1,400 @@
-# TradingDev MCP Server
+# TradingDev
 
-TradingDev 讓 LLM 透過標準 MCP 工具協助你撰寫、驗證與研究交易策略。
-支援歷史回測、參數最佳化與執行結果查詢，目前不提供真實下單功能。
+用對話把交易想法變成可驗證的策略。TradingDev 讓你的 AI 助手撰寫策略、
+檢查程式、執行歷史回測、比較參數，並保存每次研究的設定與結果。
+目前提供歷史研究功能，不提供真實下單。
 
-## 快速開始
+你可以從內建策略開始，也可以直接描述自己的規則。助手透過 MCP
+（讓 AI 呼叫外部工具的標準協定）操作 TradingDev；回測在執行 server 的主機上進行。
+TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 客戶端。
 
-準備 uv 與 Python 3.12 或 3.13。背景回測與最佳化需要支援 POSIX 程序群組及
-`waitid(WNOWAIT)` 的系統
-（macOS／Linux）；目前不支援原生 Windows 背景 worker。
+你提供交易規則與研究目標，客戶端助手負責撰寫策略、呼叫工具及解讀結果。
+TradingDev 提供操作指引、檢查與執行工具；讀取契約、驗證、試跑及版本管理
+屬於助手與工具的工作，不需要在每次需求中重述。
 
-在下載的專案根目錄安裝鎖定版本的依賴：
+- [安裝與連接助手](#安裝與連接助手)
+- [完成第一次回測](#完成第一次回測)
+- [建立與研究自己的策略](#建立與研究自己的策略)
+- [查看結果與圖表](#查看結果與圖表)
+- [資料與工作區](#資料與工作區)
+- [終端機與 HTTP 用法](#終端機與-http-用法)
+- [常見問題](#常見問題)
+- [相關文件](#相關文件)
+
+## 安裝與連接助手
+
+### 1. 準備環境並安裝
+
+你需要 macOS 或 Linux、Git、[uv](https://docs.astral.sh/uv/getting-started/installation/)，
+以及支援本機 MCP（stdio）的 AI 客戶端。專案使用 Python 3.12 或 3.13；
+原生 Windows 目前不支援背景回測與最佳化。
+
+首次下載與安裝：
 
 ```bash
+git clone https://github.com/Kuan-Lun/tradingdev.git
+cd tradingdev
 uv sync --locked
 ```
 
-接著依下一節啟動 MCP server，並將它加入你使用的 MCP 客戶端。
+已有專案時，直接在現有專案根目錄執行 `uv sync --locked` 即可。
+這會建立 `.venv` 並安裝鎖定版本的套件，包含內建策略需要的機器學習依賴；
+首次安裝可能需要較長時間。若要指定 Python 版本，使用
+`uv sync --locked --python 3.13`。
 
-## 啟動 MCP
+以下終端機命令皆在專案根目錄執行。
 
-本機 stdio：
+### 2. 將 TradingDev 加入 AI 客戶端
 
-```bash
-uv run tradingdev-mcp
-```
-
-可用 `--workspace /absolute/path/to/workspace` 或 `TRADINGDEV_WORKSPACE`
-指定存放生成策略、資料及執行結果的工作區。
-
-HTTP / streamable-http：
-
-```bash
-uv run tradingdev-mcp --web --transport streamable-http --port 8000
-```
-
-Claude Desktop 範例：
+在客戶端的 MCP 設定中新增一個本機 stdio server，名稱填 `tradingdev`，
+啟動命令填 `uv`。支援 `mcpServers` JSON 格式的客戶端可使用：
 
 ```json
 {
   "mcpServers": {
     "tradingdev": {
       "command": "uv",
-      "args": ["run", "tradingdev-mcp"],
-      "cwd": "/absolute/path/to/tradingdev.clone"
+      "args": [
+        "--directory",
+        "/absolute/path/to/tradingdev",
+        "run",
+        "--locked",
+        "tradingdev-mcp",
+        "--workspace",
+        "/absolute/path/to/tradingdev-workspace"
+      ]
     }
   }
 }
 ```
 
-## 策略開發流程
+請替換兩個絕對路徑：
 
-1. `list_strategies`：先檢查 bundled/generated strategy。
-2. `get_strategy_contract`：取得 LLM 產生策略必須遵守的 Python/YAML 契約。
-3. `save_strategy`：只把 generated strategy 存成 draft。
-4. `validate_strategy`：跑 syntax、static policy、ruff、mypy、繼承與 signal
-   contract 檢查。
-5. `dry_run_strategy`：只接受 validated strategy，通過後升為 runnable。
-6. `start_backtest` 或 `start_walk_forward`：只接受 runnable/promoted strategy。
-7. `get_job_status`、`list_runs`、`compare_runs`、`list_artifacts` 查詢結果。
+- `/absolute/path/to/tradingdev`：剛下載的專案目錄；現有 checkout 名稱不同也可以。
+- `/absolute/path/to/tradingdev-workspace`：你選擇存放策略、行情與回測結果的資料夾，
+  TradingDev 會建立所需目錄。之後查詢結果與開啟圖表都使用同一工作區。
 
-`inspect_dataset(config_path)` 可在執行前檢查策略需要的行情、特徵資料、
-檔案位置與缺值狀態。
+若客戶端以表單設定，將 `command` 與 `args` 分別填入命令與參數欄位；
+設定檔位置與格式依客戶端而定。若它找不到 `uv`，在終端機執行
+`command -v uv`，將輸出的完整路徑填入 `command`。
 
-## MCP 工具
+儲存後重新載入 MCP 設定或重啟客戶端，並啟用 TradingDev 工具。
+客戶端會自行啟動 server，不需要另外開終端機常駐執行。
 
-| 類別 | Tools |
-| ---- | ----- |
-| Strategy | `get_strategy_contract`, `list_strategies`, `get_strategy`, `save_strategy`, `validate_strategy`, `dry_run_strategy` |
-| Data | `list_available_data`, `inspect_dataset`, `ensure_data` |
-| Backtest | `start_backtest`, `start_walk_forward` |
-| Optimization | `start_optimization`, `confirm_optimization` |
-| Jobs/Runs | `get_job_status`, `list_jobs`, `cancel_job`, `list_runs`, `get_run`, `compare_runs` |
-| Artifacts | `list_artifacts`, `get_artifact`, `promote_strategy` |
-| Requests | `record_feature_request`, `list_feature_requests` |
+### 3. 確認助手能使用工具
 
-最佳化先以 `start_optimization` 試跑並估時，等使用者同意後才呼叫
-`confirm_optimization` 執行完整搜尋；以 `get_job_status`／`get_run` 查詢結果。
-進入 `pending_confirmation` 後最多等待 30 分鐘；逾時工作會標示為 `failed`，
-不會執行剩餘搜尋。
-訓練與測試日期都包含終日，須符合 `train_start < train_end < test_start < test_end`。
-呼叫指定的交易對與時間框架會覆寫 YAML；搜尋參數以外的 YAML 固定參數仍會保留。
+在對話中輸入：
 
-## 工作區與檔案
+> 請使用 TradingDev 列出可用策略與行情資料來源，並說明哪個內建策略適合用來確認回測流程。
 
-- 內建策略：
-  `src/tradingdev/domain/strategies/bundled/<strategy>/strategy.py`
-- 內建策略設定：
-  `src/tradingdev/domain/strategies/bundled/<strategy>/config.yaml`
-- 透過 MCP 產生的策略：
-  `workspace/generated_strategies/<strategy_id>.py`
-- 生成策略的設定：
-  `workspace/configs/<strategy_id>.yaml`
-- 行情資料快取：
-  `workspace/data/raw/` 與 `workspace/data/processed/`
-- 工作狀態與執行結果索引：
-  `workspace/tradingdev.sqlite`
-- 每次執行的結果檔案：
-  `workspace/runs/<run_id>/`，包含結果、使用的設定與策略副本、資料集識別資訊
-  及 dashboard 所需檔案。
+助手應實際呼叫工具，取得策略清單與資料來源。
+清單會區分隨專案提供的內建策略，以及保存在工作區的自建策略。
+若助手只提供一般建議，請先確認客戶端已連接 `tradingdev` 並允許工具呼叫。
 
-`workspace/` 是預設工作區；指定其他 `--workspace` 路徑時，生成策略、
-資料與執行結果會存到該路徑。內建策略與設定隨專案提供，透過 MCP 撰寫的
-策略另存於工作區。
+## 完成第一次回測
 
-## CLI
+先用內建 KD 交叉策略確認整個流程，不必先撰寫 Python：
 
-也可以在終端機直接執行策略設定檔：
+> 請用 TradingDev 的內建 KD 交叉策略 `kd_crossover`，以 BTC/USDT、1 小時 K 線，回測 UTC
+> 2024-01-01 00:00:00 到 2024-02-01 00:00:00。
+> 資金、手續費與滑價沿用內建設定，完成後說明交易規則、實際設定、總損益、
+> 最大回撤與已平倉交易數。
+
+助手會先準備執行計畫，做有時間與資料量上限的行情試跑，然後提供白話確認文字與
+HTML 確認單。確認單列出交易規則與參數、資料期間、資金、成本、執行假設和試跑限制。
+你不需要填寫 Python 參數名稱或 YAML；若想調整，直接用自然語言說明，助手會重新準備與試跑。
+試跑只保留需要的行情與特徵資料。資料來源回覆或壓縮檔超過試跑限制時，會在確認前
+回報失敗，不會自動改成無限制下載；壓縮檔仍可能需要完整下載後才能取樣。
+
+請在客戶端顯示的確認表單中親自同意，後端才會啟動正式回測。
+拒絕、取消、逾時或客戶端不支援確認表單，都不會啟動正式工作；助手不能代填同意。
+計畫有效期為一小時，過期後需重新準備。確認單上的試跑通過只代表取樣範圍通過，
+零交易、未涵蓋的區間或其他限制會明列，不能解讀為完整回測已完成。
+
+正式執行可能需要下載行情；之後可使用本機快取。
+正式回測資料按年度取得，即使只回測一個月，也可能需要下載該年度的行情。
+預設來源是 Binance Vision 的 USDT-M 期貨資料，範例中的 `BTC/USDT` 使用期貨行情。
+資料是否可取得取決於來源、交易對與期間；下載失敗時可依[常見問題](#常見問題)檢查。
+
+提交成功會取得 **job ID**，用來查進度或取消工作；完成並保存結果後，
+以 **run ID** 查詢結果。助手負責追蹤工作並讀取結果；若對話只回報工作已啟動，
+就還不能視為回測完成。之後可用 run ID 指定要查看或比較哪次回測。
+
+接著可以追問：
+
+> 請解讀剛才的結果，列出回測設定、成本與資料期間。哪些指標無法計算？
+> 請說明原因，並找出值得進一步驗證的地方。
+
+## 建立與研究自己的策略
+
+### 把交易規則交給助手
+
+描述交易標的、K 線頻率、進出場規則、期間、資金與成本即可開始。例如：
+
+> 請建立名為 `btc_sma_cross` 的均線策略，使用 Binance Vision 的 BTC/USDT 期貨行情、1 小時 K 線。
+> 10 期均線向上穿越 30 期均線時做多，向下穿越時平倉，不做空。
+> 初始資金 10,000 USDT、單邊手續費 0.06%、滑價 0.05%，
+> 回測期間為 UTC 2024-01-01 00:00:00 到 2024-07-01 00:00:00，報酬率以全年 365 日年化。
+> 請完成回測，說明績效、風險與結果限制。
+
+助手依 TradingDev 提供的指引呼叫保存、驗證、試跑與計畫準備工具；檢查失敗時，
+工具提供診斷，由助手修改策略。Server 本身不會呼叫模型自動改寫程式。
+後端要求同一個自建策略版本通過驗證與試跑，否則拒絕回測。
+策略版本的驗證與試跑使用固定測試資料；確認前的試跑另以本次有效設定和有限的行情樣本
+檢查訊號、回測引擎與結果保存。這些檢查不保證已完整實現你的交易想法或具有獲利能力。
+
+每次保存自建策略都會產生新版本。修正後的新版本需要重新檢查，
+舊版本與歷史結果仍保留；助手可從工具回覆取得版本資訊，用於執行與查詢。
+自行撰寫 Python 或 YAML 時，請參考[策略契約](docs/strategy_contract.md)。
+
+驗證、試跑與提交回測都可能執行生成的 Python。這些步驟不是完整的安全沙箱，
+工作區路徑也不限制程式能存取的範圍；詳見[策略安全模型](docs/strategy_contract.md#security-model)。
+
+### 比較參數
+
+內建策略可以直接做參數實驗；自建策略則沿用已通過試跑的版本，不必複製程式：
+
+> 請沿用內建 KD 交叉策略，把隨機指標的回顧週期分別設為 9、14、21 根 K 線，執行三次回測。
+> 交易對、期間、其他參數與成本都沿用第一次回測，完成後比較損益、回撤與交易數。
+> 請說明參數改變後的差異，以及各次結果是否適合直接比較。
+
+每次執行會固定當次設定並保存獨立結果，不會改寫策略的基礎設定或先前的回測。
+每組執行設定都需要自己的確認計畫。要修改已提交工作的設定，請另開一次回測。
+
+### 使用樣本外驗證與最佳化
+
+**Walk-forward** 依策略設定將資料分成一組或多組訓練與測試區間，
+在訓練區間呼叫策略的訓練方法，再評估訓練與測試表現。
+是否真的訓練模型或調整參數取決於策略；沒有實作訓練方法的策略只會分段回測。
+你可以描述希望的切分方式，由助手準備相應設定。
+自建策略修改切分設定時會另存新版本；含 `validation` 設定的策略必須使用此流程。
+
+**參數最佳化** 在訓練期間逐組回測指定的候選值，依目標指標選出參數，
+再以獨立的測試期間回測。搜尋會呼叫策略產生訊號，不會額外執行策略的
+`fit()` 訓練步驟。例如：
+
+> 請對內建 KD 交叉策略，搜尋回顧週期為 9、14、21 根 K 線、D 值平滑週期為 3、5 根 K 線的組合，
+> 以 BTC/USDT、1 小時 K 線、總損益為目標。
+> 訓練期間為 2024-01-01 至 2024-03-31，測試期間為 2024-04-01 至 2024-06-30。
+> 請找出訓練期間總損益最高的組合，並說明它在測試期間的表現。
+
+最佳化使用同一個準備與確認流程：先在有限樣本上試跑一個候選值，確認單列出完整候選範圍、
+組合數、目標指標與選擇方向，以及實際試跑的範圍。你同意後才啟動整個搜尋；
+正式工作不再於第一組運算後重複等待確認。試跑耗時不代表完整搜尋的精確耗時。
+訓練與測試日期按 UTC 日曆日計算，包含終日且不得重疊；最佳化使用自己的日期切分，不能同時套用
+walk-forward 的 `validation` 設定。結果應同時查看訓練表現與樣本外表現。
+
+## 查看結果與圖表
+
+### 在對話中查詢
+
+不需要記住所有工具名稱，可以直接請助手處理：
+
+| 想做的事 | 可以這樣說 |
+| --- | --- |
+| 找回之前的結果 | 「列出最近的回測，顯示策略、期間與 run ID。」 |
+| 追蹤或停止工作 | 「查詢這個 job ID 的進度。」或「取消這個 job ID 的工作。」 |
+| 查摘要以外的指標 | 「查詢這個 run 的所有可用指標，說明定義、單位與無法計算的原因。」 |
+| 比較兩次實驗 | 「比較這兩次回測的損益與回撤，說明差異與比較限制。」 |
+| 檢查實際設定 | 「這次回測用了哪個策略版本、參數與成本？」 |
+| 找指定參數的交易 | 「找出 fast_period=12、slow_period=29 的歷史結果，分頁查看每筆進出場、數量、費用。」 |
+| 開啟完整報告 | 「使用內建範本生成這兩個 run 的離線 HTML，保留完整交易表並加入你的研究評語。」 |
+
+解讀結果時請留意：
+
+- `N/A` 或 `null` 代表無法計算或不適用，不是零；可請助手查詢原因。
+- 年化報酬、Sharpe 等指標需要明確設定 `backtest.periods_per_year`，
+  例如全年交易市場可用 365。它表示每年日數，與 1 小時或 5 分鐘 K 線分開。
+  週線、月線等粗於日頻的資料不提供年化及日／月損益統計。
+- Volume 模式沒有初始資金基準，應查看金額損益、成交量與回撤金額。
+  交易數、勝率等交易統計只計算已平倉交易。
+- Walk-forward 摘要是各測試區間的統計分布，不能當成整段期間的單一績效；
+  比較時可要求逐區間查看。最佳化則應確認查看的是訓練或樣本外測試結果。
+
+執行時的設定與結果會保留，但行情、套件及環境未完整封存，
+日後重跑不保證得到完全相同的數字。詳細定義見[執行結果與產物](docs/run_artifacts.md)。
+
+### 交易紀錄與 HTML 報告
+
+`find_runs` 可依策略、參數子集、標的與週期找出已保存的 run／scope。
+同參數可能對應不同期間、成本與版本，須先選定結果；最佳化的每個 trial 也可單獨查閱。
+`get_run_trades` 與 `get_run_equity` 分頁讀取原始紀錄，每頁最多 500 筆，無須重跑。
+交易包含進出場時間、成交價格、數量、費用及損益；未平倉的期末估值會分開標示。
+新 signal 回測也保存逐次委託／成交與每根 K 線帳戶狀態：
+`get_run_executions` 可查市場 OHLC、委託／成交價格、數量、手續費，
+以及前後現金、持倉、可用現金、債務與權益；`get_run_account_history`
+可查看逐根收盤時的資金與持倉變化。這些是 VectorBT 模擬帳戶記帳，
+不是交易所永續合約的保證金或資金費率帳本；時間為 K 線時間，非盤中逐筆成交時間。
+舊回測未保存的帳本會回傳 `not_recorded`，volume 模式回傳
+`unsupported_volume_accounting`；不會由配對交易猜出缺失的帳戶資料。
+資料缺失或損毀會回報原因，查找結果若不完整也會列出問題，不能視為沒有交易。
+
+Server 提供 HTML 範本與圖表。助手先以 `get_report_sections` 查詢章節及
+`standard`、`comparison`、`trades` 常用組合，再用 `generate_report` 指定最多 8 個 run。
+省略 `sections` 使用標準範本；明確提供清單可決定順序，`[]` 不顯示可選章節，
+仍顯示報告與來源身分資訊，以及有提供的評語。
+這些組合是建議，助手可以依情境決定採用哪些章節。
+章節選擇決定可見內容；所選 run 全部已載入 scope 的資料仍完整內嵌於 HTML，
+包括保存的指標、交易、權益與執行設定。即使 `sections=[]`，這些資料仍在檔案中，
+省略章節不會從分享的 HTML 移除資料。
+`commentary` 接受純文字 `title`／`text`，報告標示為 LLM 評語，與後端計算分開；
+助手不需要撰寫 HTML。可選章節包括設定、完整指標、權益／回撤、配對交易、
+逐次成交 `executions`、逐根帳戶 `account_history` 與限制。
+選取交易章節時，交易表可展開、搜尋、排序、下載 CSV；
+HTML 不需連線或安裝圖表套件即可閱讀。
+
+CLI 使用相同服務：
 
 ```bash
-uv run python -m tradingdev --config \
+uv run tradingdev-report --workspace /absolute/path/to/tradingdev-workspace \
+  --run-id YOUR_RUN_ID --sections overview metrics equity trades provenance
+```
+
+CLI 可用 `--commentary-json notes.json` 加入評語陣列。
+工具回傳本機 HTML 路徑及 artifact ID；遠端 MCP 的檔案須由客戶端透過
+`get_artifact` 取得，不把 server 本機路徑當成公開網址。報告保存於 `workspace/reports/`，
+同來源、章節與評語重用同一報告；來源、內容或範本版本改變會產生新的報告。
+
+### 開啟 Dashboard
+
+Dashboard 可顯示具有可載入圖表產物的一般回測與 walk-forward 結果。先安裝圖表依賴，
+並將工作區設為 MCP 設定使用的同一路徑：
+
+```bash
+uv sync --locked --extra dashboard
+export TRADINGDEV_WORKSPACE="/absolute/path/to/tradingdev-workspace"
+uv run --locked --extra dashboard streamlit run src/tradingdev/adapters/dashboard/app.py
+```
+
+開啟終端機顯示的本機網址，從側邊欄選擇結果。也可以直接指定 run ID：
+
+```bash
+uv run --locked --extra dashboard streamlit run src/tradingdev/adapters/dashboard/app.py \
+  -- --run-id "YOUR_RUN_ID"
+```
+
+側邊欄也可生成並下載同一份標準 HTML 報告。
+請將 `YOUR_RUN_ID` 換成助手查到的實際值。最佳化結果請透過對話查詢或生成 HTML 報告，
+目前不產生 Dashboard 所需的圖表產物。結束圖表服務時，在終端機按 `Ctrl+C`。
+
+## 資料與工作區
+
+行情依策略設定從資料來源取得。除預設的 Binance Vision，專案也提供
+Binance API 與 Yahoo Finance 資料來源；可請助手列出來源，選擇適合的市場與代號。
+外部來源能提供的交易對、頻率與歷史期間各有不同，專案不保證任意區間都有資料。
+
+回測或預先取得行情時，會優先重用年度快取，沒有可用快取時才下載。
+當年度快取不會自動追加最新行情；年度結束後，才會將當年的暫存檔替換為完整年度資料。
+資料檢查工具不下載行情，其市場內容檢查目前只讀預設資料目錄中的完整年度檔，
+不涵蓋所有自訂目錄與當年度快取。檢查回覆不能視為行情已完整覆蓋回測期間的保證。
+
+額外特徵的取得方式依類型而定：DVOL 缺少快取時會嘗試從 Deribit 下載；
+資金費率與自訂特徵則需要設定指定的本機 Parquet 檔案。
+目前行情快取名稱不區分來源或現貨／期貨市場。若要切換來源或市場，
+請使用分開的資料目錄；另開工作區時，也須確認沒有共用外部資料目錄。
+
+工作區保存你的研究內容，與隨專案提供的內建策略分開：
+
+| 預設位置（相對於工作區） | 內容 |
+| --- | --- |
+| `generated_strategies/` | 自建策略的各版本、設定與驗證紀錄 |
+| `data/` | 行情與處理後資料快取，也包含 CLI 圖表結果快取 |
+| `runs/` | 每次執行的設定、結果與相關產物 |
+| `tradingdev.sqlite` | 工作、結果與產物的查詢索引 |
+
+MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
+`TRADINGDEV_WORKSPACE`；兩者都未設定時，使用啟動目錄下的 `workspace/`。
+回測 CLI 與 Dashboard 使用同一環境變數及預設目錄，但沒有 `--workspace` 參數。
+每次開新終端機時，請重新設定環境變數，或在自己的 shell 設定中保存它。
+
+升級至先確認再執行的流程時，舊版「等待確認」的最佳化工作不會自動遷移。
+若工作區仍有這種紀錄，新版的工作清單、該工作的查詢與取消會回傳錯誤；
+在同一工作區建立新計畫也無法修復舊紀錄。請先用建立工作的舊版停止其工作與服務，
+確認程序已結束，再保留原工作區於原位置，將客戶端 MCP 設定的 `--workspace`
+改成新的空白資料夾絕對路徑，重新載入客戶端。
+不要把舊資料庫或 worker 控制檔複製進新工作區；新工作區不會自動帶入原有策略與歷史，
+舊結果檔案仍保留在原工作區。這是另建工作區的復原方式，不是原地遷移。
+
+若需要另外存放行情，可設定 `TRADINGDEV_DATA_ROOT`，預設使用其下的 `raw/` 與
+`processed/`；CLI 的圖表快取也會跟隨這個環境變數。
+策略 YAML 若明確設定 `data.raw_dir`、`data.processed_dir`，則優先使用那些行情路徑。
+自訂相對資料路徑以程序啟動目錄解析，建議使用絕對路徑。
+
+保留研究結果時，請保留工作區的資料庫與檔案，不要只留下 run ID 或單一結果檔。
+若另外指定外部資料或快取目錄，也需保留那些路徑下的檔案。
+現有紀錄包含絕對路徑，還原時應保持原位置；搬移工作區不會自動更新這些紀錄。
+清理舊草稿時，工具預設先預覽可刪版本，由你確認清單並授權刪除。
+目前版本、非草稿版本、被歷史工作或結果引用，以及無法確認完整性的版本都會保留。
+
+## 終端機與 HTTP 用法
+
+### 直接執行設定檔
+
+不透過 AI 也可以執行回測。先設定與 MCP 相同的工作區，再使用內建 KD 範例：
+
+```bash
+export TRADINGDEV_WORKSPACE="/absolute/path/to/tradingdev-workspace"
+uv run --locked python -m tradingdev --config \
   src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml
 ```
 
-報表以 `N/A` 表示缺少或沒有有限數值的指標，不代表零。
-
-含 `validation:` 的 config 需明確執行 walk-forward：
+這會依檔案中的期間與成本執行，並在終端機顯示結果。每次執行都保存獨立 run，
+之後可由助手查詢，或在 Dashboard 選取。
+若要調整內建範例，先複製 YAML 作為自己的執行設定，再修改交易對、日期與參數。
+行情的 `backtest` 與 `data.requirements.market` 設定請保持一致；
+一般回測的日期欄位是時間邊界，僅填日期會解析為當日 00:00:00，不會自動包含終日。
+含 `validation` 的設定必須加上 `--walk-forward`，例如：
 
 ```bash
-uv run python -m tradingdev --config \
+uv run --locked python -m tradingdev --config \
   src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml \
   --walk-forward
 ```
 
-## Dashboard
+自建策略須使用已通過試跑的版本。可複製該版本的 YAML 調整
+`strategy.parameters`，但保留其餘策略宣告與指向原版本的 `source_path`；
+交易對、日期與成本則在 `strategy` 區段以外調整。
+修改策略程式或其他策略宣告時，請讓助手另存版本並重新驗證，
+完整規則見[策略生命週期](docs/strategy_contract.md#lifecycle)。
 
-Dashboard 可查看已完成的執行結果。使用前需安裝 `dashboard` 額外依賴：
+### 使用 HTTP 連接
+
+若客戶端使用本機 Streamable HTTP 連線，可手動啟動：
 
 ```bash
-uv sync --locked --extra dashboard
-uv run streamlit run src/tradingdev/adapters/dashboard/app.py -- --run-id <run_id>
+uv run --locked tradingdev-mcp \
+  --workspace /absolute/path/to/tradingdev-workspace \
+  --web --transport streamable-http --port 8000
 ```
 
-`<run_id>` 是要查看的執行結果識別碼，可透過 MCP 的 `list_runs` 取得。
-省略 `--run-id` 時，可從側邊欄選擇工作區中已儲存的執行結果。
+將客戶端的 MCP URL 設為 `http://127.0.0.1:8000/mcp`，並保持此終端機執行。
+這是本機工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
+只支援雲端 URL 的客戶端無法透過這個本機位址連接。
+
+## 常見問題
+
+| 情況 | 處理方式 |
+| --- | --- |
+| 客戶端找不到 `uv` 或 server 無法啟動 | 用 `command -v uv` 取得完整路徑；確認 `--directory` 指向專案根目錄，並已成功執行 `uv sync --locked`。 |
+| 客戶端只有一般建議，沒有 TradingDev 工具結果 | 確認已連接並啟用工具；若仍無法執行，查看客戶端的 MCP 錯誤紀錄。只產生程式草稿或收到工作啟動訊息，都不代表回測已完成。 |
+| 有確認單，但無法開始正式回測 | 客戶端必須支援 MCP 表單確認（form elicitation）並把內容交給你親自決定；只允許工具呼叫不等於這項支援。不支援時後端會拒絕執行，請換用支援此能力的客戶端。 |
+| 手動執行 `uv run tradingdev-mcp` 後沒有畫面 | 預設為 stdio，正在等待 MCP 客戶端通訊，不會顯示對話視窗；一般由客戶端自動啟動即可。 |
+| 行情下載失敗或資料不足 | 依工作錯誤確認來源、交易對、頻率與期間，並檢查來源能否連線；資金費率／自訂特徵需有本機檔案，DVOL 則也可能在下載時失敗。已有快取不代表已更新到最新日期。 |
+| 助手回報策略檢查失敗 | 工具會提供診斷供助手修正；若需改變你的交易規則或補充資料，再確認需求。未通過檢查的自建版本不會取得回測資格。 |
+| 回測完成，Dashboard 卻找不到結果 | 確認 `TRADINGDEV_WORKSPACE` 與 MCP 的 `--workspace` 相同，且結果有可載入的 `pipeline_result`；最佳化結果改在對話中查詢。 |
+| 舊策略顯示 `revision_required` | 可請助手將舊策略更新成可執行版本；工具提供舊內容的讀取與另存流程，原有檔案不會自動遷移。 |
+| 升級後舊策略或圖表無法使用 | 舊 `pandas_ta`／`indicator_column` 用法須依策略契約更新；舊 `backtest.random_seed` 改放 YAML 頂層，策略自己的模型種子仍依其參數定義設定。舊結果可讀範圍取決於保存的產物，完整新版圖表可能需要重新回測。 |
+| macOS 出現 `libomp.dylib` 載入錯誤 | XGBoost／LightGBM 需要 OpenMP runtime；使用 Homebrew 的 macOS 可執行 `brew install libomp`，再重新啟動客戶端或命令。 |
+
+技術指標套件 TA-Lib 隨安裝命令一併安裝。若平台有相容 wheel，不需另外安裝 C 函式庫；
+只有必須從原始碼編譯時，才需依[TA-Lib 安裝說明](https://github.com/TA-Lib/ta-lib-python#installation-)
+準備底層依賴。
 
 ## 相關文件
 
-- [策略撰寫契約](docs/strategy_contract.md)
-- [執行結果與產物](docs/run_artifacts.md)
-- [內建策略說明](docs/strategies/)
-- [開發指南](docs/development.md)：開發環境重建、品質檢查、測試、Git／PR 流程與分支清理。
-- [專案架構](ARCHITECTURE.md)
-- [代理開發政策](AGENTS.md)
+- [內建策略說明](docs/strategies/README.md)：各策略的規則、參數與資料需求。
+- [策略契約](docs/strategy_contract.md)：自行撰寫 Python／YAML、版本與驗證規則。
+- [執行結果與產物](docs/run_artifacts.md)：完整指標、執行設定與保存格式。
+- [開發指南](docs/development.md)：修改 TradingDev 本身時的環境、品質檢查、測試與 Git／PR 流程。
+- [專案架構](ARCHITECTURE.md)：服務分工、MCP 回覆契約與執行流程。
+- [代理開發政策](AGENTS.md)：協助開發此專案的代理須遵守的規則。

@@ -18,6 +18,12 @@ import httpx
 import pandas as pd
 
 from tradingdev.domain.data.crawlers.base import BaseCrawler
+from tradingdev.domain.data.crawlers.sampling import (
+    SAMPLE_BATCH_ROWS,
+    sample_frame,
+    sample_range,
+    stream_sample_json,
+)
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -42,6 +48,22 @@ _INTERVALS = {
     "1w": "1wk",
     "1wk": "1wk",
     "1mo": "1mo",
+}
+
+# Calendar candles follow the exchange timezone. Use the shortest calendar
+# period, allowing a one-hour DST change, rather than interpreting 1mo as 30d.
+# Half-open windows of these lengths cannot contain more than their row budget.
+_SAMPLE_INTERVAL_SECONDS = {
+    "1m": 60,
+    "2m": 120,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "60m": 3600,
+    "90m": 5400,
+    "1d": 23 * 3600,
+    "1wk": (7 * 24 - 1) * 3600,
+    "1mo": (28 * 24 - 1) * 3600,
 }
 
 
@@ -84,6 +106,36 @@ def _parse_chart_payload(payload: dict[str, Any]) -> pd.DataFrame:
         }
     )
     return df.dropna(subset=["close"]).reset_index(drop=True)
+
+
+def _sample_chart_rows(payload: dict[str, Any], row_limit: int) -> list[list[Any]]:
+    """Validate bounded arrays and project OHLCV before frame construction."""
+    chart = payload.get("chart", {})
+    if chart.get("error"):
+        raise ValueError(f"Yahoo Finance chart error: {chart['error']}")
+    results = chart.get("result") or []
+    if not results:
+        return []
+    if len(results) != 1:
+        raise ValueError("Expected one Yahoo Finance sample result")
+    result = results[0]
+    timestamps = result.get("timestamp") or []
+    if not isinstance(timestamps, list) or len(timestamps) > row_limit:
+        raise ValueError("Yahoo sample response exceeds the requested row limit")
+    if not timestamps:
+        return []
+    quote = result["indicators"]["quote"][0]
+    projected: dict[str, Any] = {}
+    for name in _OHLCV_COLUMNS[1:]:
+        values = quote[name]
+        if not isinstance(values, list) or len(values) != len(timestamps):
+            raise ValueError(f"Invalid Yahoo sample {name} array length")
+        projected[name] = pd.to_numeric(values, errors="coerce")
+    return [
+        [timestamp, *(projected[name][index] for name in _OHLCV_COLUMNS[1:])]
+        for index, timestamp in enumerate(timestamps)
+        if not pd.isna(projected["close"][index])
+    ]
 
 
 class YahooFinanceCrawler(BaseCrawler):
@@ -148,6 +200,44 @@ class YahooFinanceCrawler(BaseCrawler):
         df = df.sort_values("timestamp").drop_duplicates("timestamp")
         logger.info("Total candles fetched: %d", len(df))
         return df.reset_index(drop=True)
+
+    def fetch_sample(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        *,
+        max_rows: int,
+    ) -> pd.DataFrame:
+        """Fetch earliest candles through bounded, half-open chart windows."""
+        start_utc, end_utc = sample_range(start, end, max_rows)
+        interval = _to_yahoo_interval(timeframe)
+        end_utc = min(end_utc, datetime.now(UTC))
+        cursor = -(-pd.Timestamp(start_utc).value // 1_000_000_000)
+        # Yahoo period2 is exclusive; adding one second includes an end candle
+        # and also makes a start == end request nonempty.
+        stop = pd.Timestamp(end_utc).value // 1_000_000_000 + 1
+        selected: dict[int, list[Any]] = {}
+        while cursor < stop and len(selected) < max_rows:
+            limit = min(max_rows - len(selected), SAMPLE_BATCH_ROWS)
+            window_stop = min(stop, cursor + limit * _SAMPLE_INTERVAL_SECONDS[interval])
+            payload = stream_sample_json(
+                self._client,
+                f"{_BASE_URL}/{symbol}",
+                {
+                    "period1": cursor,
+                    "period2": window_stop,
+                    "interval": interval,
+                    "events": "history",
+                },
+            )
+            for row in _sample_chart_rows(payload, limit):
+                timestamp = int(row[0])
+                if cursor <= timestamp < window_stop:
+                    selected.setdefault(timestamp, row)
+            cursor = window_stop
+        return sample_frame(list(selected.values()), _OHLCV_COLUMNS, unit="s")
 
     def save_raw(self, df: pd.DataFrame, output_path: Path) -> None:
         """Save raw OHLCV data as CSV.

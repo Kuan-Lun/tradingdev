@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 
 class SaveStrategyInput(BaseModel):
@@ -14,33 +14,31 @@ class SaveStrategyInput(BaseModel):
     request_summary: str = ""
 
 
-class ToolResult(BaseModel):
-    """Generic MCP-friendly result."""
-
-    success: bool
-    message: str = ""
-    error: str | None = None
-
-
 class BacktestInput(BaseModel):
-    """Input contract for starting a backtest-like job."""
+    """Input contract for preparing a backtest-like execution."""
 
     strategy_id: str
+    revision_id: str | None = None
     symbol: str
     timeframe: str
     start_date: str
     end_date: str
+    parameters: dict[str, JsonValue] | None = None
+    backtest_overrides: dict[str, JsonValue] | None = None
 
 
 class OptimizationInput(BaseModel):
-    """Input contract for starting parameter optimization."""
+    """Input contract for preparing parameter optimization."""
 
     strategy_id: str
+    revision_id: str | None = None
     symbol: str
     timeframe: str
-    param_ranges: dict[str, list[object]]
+    param_ranges: dict[str, list[JsonValue]]
     optimization_metric: str
     train_start: str
     train_end: str
     test_start: str
     test_end: str
+    parameters: dict[str, JsonValue] | None = None
+    backtest_overrides: dict[str, JsonValue] | None = None

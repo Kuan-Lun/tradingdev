@@ -62,13 +62,13 @@ def test_start_walk_forward_uses_bundled_walkforward_config(
     assert runner.calls == [
         (
             "tradingdev.mcp.workers.backtest",
-            (
-                response["job_id"],
-                str(workspace.runs / response["job_id"] / "config.yaml"),
-                "--walk-forward",
-            ),
+            (response["job_id"],),
         )
     ]
+    manifest = job_store.load_manifest(response["job_id"])
+    assert manifest.kind == "walk_forward"
+    assert manifest.manifest_hash == response["manifest_hash"]
+    assert manifest.manifest_hash == job["manifest_hash"]
 
 
 @pytest.mark.parametrize("walk_forward", [False, True])
@@ -218,9 +218,10 @@ def test_get_job_status_returns_run_id_for_completed_optimization(
         "job_optimization",
         {
             "best_params": {"window": 10},
-            "train_metrics": {"sharpe_ratio": 1.0},
-            "test_metrics": {"sharpe_ratio": 0.8},
-            "optimization_metric": "sharpe_ratio",
+            "train_metrics": {"max_drawdown": 0.1},
+            "test_metrics": {"max_drawdown": 0.08},
+            "optimization_metric": "max_drawdown",
+            "direction": "minimize",
             "total_combinations": 3,
         },
     )
@@ -236,6 +237,7 @@ def test_get_job_status_returns_run_id_for_completed_optimization(
     assert response["job_type"] == "optimization"
     assert response["run_id"] == "job_optimization"
     assert response["best_params"] == {"window": 10}
+    assert response["direction"] == "minimize"
 
 
 @pytest.mark.parametrize("created_at", [None, 100.0])
@@ -273,9 +275,7 @@ def test_cancel_rejects_worker_without_control_identity(
     assert job["status"] == "running_backtest"
 
 
-@pytest.mark.parametrize(
-    "status", ["queued", "running_backtest", "pending_confirmation"]
-)
+@pytest.mark.parametrize("status", ["queued", "running_backtest", "optimizing"])
 def test_job_status_detects_reused_pid_as_terminated_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
@@ -373,7 +373,7 @@ def test_running_job_without_any_worker_identity_cannot_claim_cancellation(
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
     store.create_job(job_id="worker")
-    store.update_job("worker", status="pending_confirmation")
+    store.update_job("worker", status="optimizing")
 
     response = JobService(job_store=store).cancel_job("worker")
 
