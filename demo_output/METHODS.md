@@ -7,7 +7,7 @@
 內容全部取自以下來源的實際讀取或執行結果，沒有依描述推測：
 
 - `scripts/demo_plateau.py`（commit `fcebb68`）
-- `scripts/demo_statistics.py`（**未納入 git**，行號以目前工作樹為準）
+- `scripts/demo_statistics.py`（commit `7bbcdce` 納入 git，之後隨分支更新）
 - `src/tradingdev/domain/statistics/{periods,performance,sharpe,breakeven,plateau,comparison}.py`
 - `workspace/data/processed/cache/cd03bf19459b48af.pkl`（以 `pickle.load` 實際讀取）
 - `src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml`
@@ -73,7 +73,7 @@ $\varepsilon^{B}_{1,3}$ 仍然會被抽出，只是被 2.0 覆蓋，所以不影
 
 > 注意：`scripts/demo_statistics.py:89-100, 107-210` 有另一份平原繪圖程式，亂數順序與公式相同，
 > 但 `Trial.params` 直接使用網格索引 `{"x": i, "y": j}`，色階為 `Blues`。它的 `main()`
-> 也會寫入 `plateau_demo.png` 與 `plateau_table.md`，會覆蓋 `demo_plateau.py` 的輸出（見第五節）。
+> 寫入另外的 `plateau_gridindex.png` 與 `plateau_gridindex_table.md`，不會覆蓋 `demo_plateau.py` 的輸出。
 > 由於鄰域只看排名（見 2.9），兩份程式算出的統計數字相同，只有軸標籤與配色不同。
 
 ### 2. `kd_equity.png`：真實回測（讀取快取 pickle）
@@ -342,10 +342,10 @@ $$
 K 棒的時間戳，因此 years $=365/365.25$。capital 是 `init_cash = 10000`。
 實測 notional = 5,014,735.72，換手率 501.8 倍。
 
-### 2.7 成本拆解（`scripts/demo_statistics.py:291-294, 345-358`）
+### 2.7 成本拆解（`write_kd_inference`，`scripts/demo_statistics.py`）
 
 $$
-\widehat{\text{cost}} = V \times 2 \times (\text{fees} + \text{slippage}) = V \times 2 \times (0.0006 + 0.0005)
+\widehat{\text{cost}} = V \times (\text{fees} + \text{slippage}) = V \times (0.0006 + 0.0005)
 $$
 
 $$
@@ -353,21 +353,23 @@ $$
 \widehat{\text{Gross}} = \text{Net} + \widehat{\text{cost}}
 $$
 
-- $V$ 是 `backtest_result.metrics["total_volume"]`。在這份 pickle 中，它是**只計進場**的名目金額 2,507,242.31。
+- $V$ 是 `summarize_breakeven` 回傳的 `traded_notional`，由交易紀錄計算的進場加出場名目金額（見 2.6），
+  實測 5,014,735.72。不使用 `metrics["total_volume"]`，因為該欄位的單腿／雙腿慣例在上游改過（見第 4 點）。
 - `fees`、`slippage` 是腳本中寫死的常數 `FEES`、`SLIPPAGE`（`scripts/demo_statistics.py:71-72`），
   不是從 pickle 讀出（數值剛好與 config 相同）。
 - 報表中的其他比率：$\widehat{\text{cost}}/|\text{Net}|$、$\widehat{\text{cost}}/\text{init\_cash}$。
-- 實測：cost = 5,515.93，Gross = −872.40，Net = −6,388.34，cost/|Net| = 86.3%，cost/init_cash = 55.2%。
+- 實測：cost = 5,516.21，Gross = −872.13，Net = −6,388.34，cost/|Net| = 86.3%，cost/init_cash = 55.2%。
 
 ⚠ **差異與注意事項**：
 
 1. 這是**估計值**，不是 `breakeven.py` 的 `total_cost`。後者是交易紀錄 `fee` 欄位的加總，
    而這份 pickle 的 `fee` 全為 0。
-2. 「× 2」把出場名目金額近似為等於進場名目金額。實際出場名目是 $\text{size}\times\text{exit\_price}$。
+2. 出場名目以 $\text{size\_quote}\times\text{exit}/\text{entry}$ 推算（見 2.6），不是假設等於進場名目。
 3. vectorbt 的 slippage 是把成交價往不利方向調整，不是另外收取的費用。這裡把它當作按名目金額收取的費率。
 4. **合併後 `total_volume` 的語意改變**：`src/tradingdev/domain/performance/catalog.py:213-217`
    定義為「Sum of actual entry and exit notional」。用目前引擎重跑 KD(14, 3, 3)，
-   實測 `total_volume` = 5,014,735.72（已含出場），套用同一公式會**重複計算出場一側**。
+   實測 `total_volume` = 5,014,735.72（已含出場）。舊版腳本用 `total_volume × 2` 估計，對新引擎的結果會
+   **重複計算出場一側**，所以腳本已改用 `traded_notional`。
    目前引擎會把 `entry_fees + exit_fees` 寫入 `fee`（`src/tradingdev/domain/backtest/metrics.py:49`），
    實測 `fee` 加總為 3,008.84，約等於 $5{,}014{,}735.72 \times 0.0006$；slippage 仍然內含於成交價，
    不會出現在 `fee` 中（`catalog.py:233-234`）。
@@ -386,44 +388,44 @@ $$
 
 ### 2.9 平原分數（`src/tradingdev/domain/statistics/plateau.py`）
 
-**格點索引**（`_build_grid`，`plateau.py:393-434`）：把每個參數軸上不重複的值排序，以排名
-$r_k \in \{0,\dots,4\}$ 取代原值（`:422-427`）。之後所有距離都在排名空間中計算，不使用原始參數值。
+**格點索引**（`plateau.py` 的 `_build_grid`）：把每個參數軸上不重複的值排序，以排名
+$r_k \in \{0,\dots,4\}$ 取代原值。之後所有距離都在排名空間中計算，不使用原始參數值。
 
-**鄰域**（`_Grid.neighbours`，`plateau.py:197-201`；docstring `:22-29`）：
+**鄰域**（`plateau.py` 的 `_Grid.neighbours`；模組 docstring 的 First-version design decisions）：
 
 $$
 \mathcal N(\theta) = \Big\{\theta' \ne \theta \;:\; \max_k |r_k(\theta') - r_k(\theta)| \le R \Big\},\qquad R = 1
 $$
 
 - 距離使用 **Chebyshev 距離**，所以對角格也算鄰居。
-- 半徑使用 `DEFAULT_RADIUS = 1`（`plateau.py:74`），腳本沒有另外指定。
-- **排除自身**：`mask[index] = False`（`:200`）。docstring `:30-31` 說明這是為了讓孤立尖峰不能靠自己的值得分。
+- 半徑使用 `plateau.py` 的常數 `DEFAULT_RADIUS = 1`，腳本沒有另外指定。
+- **排除自身**：`_Grid.neighbours` 中的 `mask[index] = False`。模組 docstring 說明這是為了讓孤立尖峰不能靠自己的值得分。
 - **邊界與角落**：只納入實際存在的試驗點，不補值、不鏡射、不循環，平均的分母就是實際鄰居數
-  （docstring `:44-45`）。在完整的 $5\times5$ 網格中，內部格有 8 個鄰居，邊上非角落的格子有 5 個，角落格有 3 個。
+  （模組 docstring 的 Conventions）。在完整的 $5\times5$ 網格中，內部格有 8 個鄰居，邊上非角落的格子有 5 個，角落格有 3 個。
 
-**平原分數**（`_scores`，`plateau.py:367-381`）是鄰居 metric 的等權重算術平均：
+**平原分數**（`plateau.py` 的 `_scores`）是鄰居 metric 的等權重算術平均：
 
 $$
 S(\theta) = \frac{1}{|\mathcal N(\theta)|}\sum_{\theta'\in\mathcal N(\theta)} m(\theta')
 $$
 
-**best 與 plateau_best**（`plateau.py:252-254`、`_argmax_score`，`:384-390`）：
+**best 與 plateau_best**（`plateau_summary`、`_argmax_score`）：
 
 - best $= \arg\max_\theta m(\theta)$（`np.argmax`，平手時取輸入順序中最早的一個）
 - plateau_best $= \arg\max_\theta S(\theta)$，沒有鄰居的點不參與比較；平手時同樣取最早的一個
 
-### 2.10 metric_gap 與 grid_distance（`plateau.py:263-287`）
+### 2.10 metric_gap 與 grid_distance（`plateau_summary`）
 
 $$
 \text{metric\_gap} = m(\text{best}) - m(\text{plateau\_best})
 $$
 
-**使用的是 plateau_best 自身的 metric（`plateau_best_metric`，`:263-265`），不是它的平原分數 $S$。**
+**使用的是 plateau_best 自身的 metric（`plateau_best_metric`），不是它的平原分數 $S$。**
 表格中的 `plateau_best_score` 才是 $S(\text{plateau\_best})$。
 
 $$
 \text{grid\_distance} = \max_k |r_k(\text{best}) - r_k(\text{plateau\_best})|
-\quad(\texttt{\_Grid.distance},\ \texttt{plateau.py:203-204})
+\quad(\texttt{\_Grid.distance})
 $$
 
 **實測**：
@@ -435,16 +437,16 @@ $$
   所以它的平原分數被拉高到 0.642。這說明了排除自身並不能排除「鄰居是尖峰」的情況，
   尤其角落格的分母很小，更容易受影響。
 
-### 2.11 spikiness（`plateau.py:255-262`）
+### 2.11 spikiness（`plateau_summary`）
 
 $$
 \text{spikiness} = \frac{m(\text{best}) - \bar m_{\mathcal N(\text{best})}}{s_{\mathcal N(\text{best})}}
 $$
 
-- 分子：best 的 metric 減去其鄰居的平均（`best_neighborhood_mean`，`:256`）。
-- 分母：鄰居 metric 的**樣本標準差，`ddof=1`**（`:257`），不包含 best 本身。
+- 分子：best 的 metric 減去其鄰居的平均（`best_neighborhood_mean`）。
+- 分母：鄰居 metric 的**樣本標準差，`ddof=1`**（`best_neighborhood_std`），不包含 best 本身。
 - 鄰居少於 2 個或標準差為 0 時，回傳 `None`。
-- docstring（`plateau.py:35-40`）把它定位為**次要指標**，因為分母只由少數鄰居估計，數值不穩定。
+- 模組 docstring 把它定位為**次要指標**，因為分母只由少數鄰居估計，數值不穩定。
 - 實測：A = (1.384 − 1.056)/0.164 = 1.997；B = (2.000 − 0.039)/0.224 = 8.752。
 
 ### 2.12 forest 上排：各組參數的 Sharpe 區間（`interval_table`，`comparison.py:266-330`）
@@ -557,9 +559,9 @@ $$
    所以這份 pickle 的 `total_cost` 與 `cost_per_turnover` 都是 0，完全看不到成本；
    `kd_inference.md` 因此改用 2.7 的外部估計。合併後的引擎會寫入手續費，但 signal 模式的 slippage
    仍內含於成交價（`catalog.py:233-234`），所以 `cost_per_turnover` 仍會少算 slippage 那一部分。
-5. **平原分析不能取代樣本外驗證**：`plateau.py:53-56` 指出，當整個參數區域都對同一種市場型態過度擬合時，
+5. **平原分析不能取代樣本外驗證**：`plateau.py` 模組 docstring 的 Limitation 指出，當整個參數區域都對同一種市場型態過度擬合時，
    所有鄰居會因為相同的原因看起來都很好，形成假平原。
-6. **平原分析的設計取捨**（`plateau.py:22-40`）：網格不均勻時，半徑 1 對應的實際參數變化量並不固定；
+6. **平原分析的設計取捨**（`plateau.py` 模組 docstring 的 First-version design decisions）：網格不均勻時，半徑 1 對應的實際參數變化量並不固定；
    參數超過 3 個時，鄰域最多有 $3^d-1$ 個點，已不算局部，會以 `dimension_warning` 標示；
    spikiness 的分母是少數鄰居的樣本標準差，數值不穩定。
 7. **統計顯著不等於經濟顯著**：`comparison.py:27-29` 指出，估計很精確但很小的優勢，可能撐不過成本或容量限制。
@@ -570,8 +572,8 @@ $$
 11. **資料來源與 market_type 是推定的**：pickle 沒有記錄這兩項（見第一節）。
 12. **`latest_cache()` 不檢查內容**：它只挑 mtime 最新的 pickle。之後只要產生任何較新的 pickle，
     `kd_equity.png` 與 `kd_inference.md` 就會改用那份資料，而圖的標題文字仍然寫著 KD／BTC/USDT 1h。
-13. **`total_volume` 在合併前後的定義不同**：見 2.7 第 4 點。若對新引擎產生的 pickle 套用同一個估計式，
-    出場名目會被重複計算。
+13. **`total_volume` 在合併前後的定義不同**：見 2.7 第 4 點。腳本因此改從交易紀錄推導成本，
+    不依賴該欄位。
 
 ---
 
@@ -587,7 +589,7 @@ $$
 | forest 下排 `difference_interval` | 每一對都使用 `seed=0`、`reps=2000` | `scripts/demo_statistics.py:434-439` |
 | 年化期數 | 365.0 | `scripts/demo_statistics.py:68` |
 | 成本估計費率 | fees 0.0006、slippage 0.0005 | `scripts/demo_statistics.py:71-72` |
-| 平原半徑 | 1 | `plateau.py:74` |
+| 平原半徑 | 1 | `plateau.py` 的 `DEFAULT_RADIUS` |
 | bootstrap 最少觀測數 | 20 | `sharpe.py:42` |
 | 函式庫版本 | `arch` 8.0.0、`vectorbt` 1.0.0（`uv.lock` 鎖定） | `.venv` |
 
@@ -595,13 +597,14 @@ $$
 
 所有指令都在 repository 根目錄執行，並先完成 `uv sync --locked --all-extras`。
 
-**`kd_equity.png`、`comparison_forest.png`（以及 `kd_inference.md`）**
+**`kd_equity.png`、`comparison_forest.png`、`plateau_gridindex.png`（以及 `kd_inference.md`、
+`plateau_gridindex_table.md`）**
 
 ```bash
 uv run python scripts/demo_statistics.py
 ```
 
-**`plateau_demo.png`（以及 `plateau_table.md`）**：必須在上一步**之後**執行
+**`plateau_demo.png`（以及 `plateau_table.md`）**
 
 ```bash
 uv run python scripts/demo_plateau.py
@@ -609,16 +612,15 @@ uv run python scripts/demo_plateau.py
 
 注意事項：
 
-1. **執行順序很重要**：`demo_statistics.py` 的 `main()` 也會寫入 `plateau_demo.png` 與 `plateau_table.md`
-   （`scripts/demo_statistics.py:527-528`），用的是軸標籤為網格索引、配色為 `Blues` 的版本。
-   要得到目前這張 lookback／threshold 版的圖，必須最後執行 `demo_plateau.py`。
-2. `scripts/demo_statistics.py` **目前沒有納入 git**，檔案遺失就無法重現。
-3. `kd_equity.png` 與 `kd_inference.md` 讀取的是 mtime 最新的 pickle。重現前請確認
+1. 兩支腳本的輸出檔名不重疊，執行順序不影響結果。`demo_statistics.py` 的網格索引版（軸標籤為網格索引、
+   配色為 `Blues`）寫入 `plateau_gridindex.png` 與 `plateau_gridindex_table.md`；lookback／threshold 版的
+   `plateau_demo.png` 與 `plateau_table.md` 只由 `demo_plateau.py` 產生。
+2. `kd_equity.png` 與 `kd_inference.md` 讀取的是 mtime 最新的 pickle。重現前請確認
    `workspace/data/processed/cache/` 中最新的仍是 `cd03bf19459b48af.pkl`（或與它相同內容的
    `e9d1e13c2eb25909.pkl`）。依目前程式碼，`BacktestService.run_raw_config` 不會寫入這個目錄：
    本次重跑三組回測前後，目錄內容都沒有改變。
-4. `comparison_forest.png` 會用目前的程式碼重新執行三次回測，需要能取得 BTC/USDT 1h 的 2024 資料
+3. `comparison_forest.png` 會用目前的程式碼重新執行三次回測，需要能取得 BTC/USDT 1h 的 2024 資料
    （本機已有 `workspace/data/processed/btcusdt_1h_2024.parquet`）。本次用合併後的程式碼重跑，
    圖上所有標註數字都與現有圖檔一致（見 2.12、2.13）。但本次沒有實際重新產生 PNG 檔，
    也沒有比對影像位元組。
-5. 平原圖完全使用合成資料，不需要網路或快取；在固定 seed 下結果是確定的。
+4. 平原圖完全使用合成資料，不需要網路或快取；在固定 seed 下結果是確定的。

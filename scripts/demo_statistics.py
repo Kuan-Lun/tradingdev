@@ -3,7 +3,8 @@
 Outputs (in demo_output/):
   plateau_gridindex.png
                     true plateau vs. false spike heatmaps
-  plateau_table.md  plateau statistics of both cases
+  plateau_gridindex_table.md
+                    plateau statistics of both cases
   kd_inference.md   inference statistics of the latest cached KD backtest
   kd_equity.png     equity curve and drawdown of that backtest
   comparison_forest.png
@@ -522,7 +523,7 @@ def main() -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
     outputs = {
         "plateau_png": OUTPUT_DIR / "plateau_gridindex.png",
-        "plateau_md": OUTPUT_DIR / "plateau_table.md",
+        "plateau_md": OUTPUT_DIR / "plateau_gridindex_table.md",
         "kd_md": OUTPUT_DIR / "kd_inference.md",
         "kd_png": OUTPUT_DIR / "kd_equity.png",
         "comparison_png": OUTPUT_DIR / "comparison_forest.png",
