@@ -26,7 +26,7 @@
 （viridis 色階、軸標籤為 lookback／threshold；檔案 mtime 2026-10-11 14:51:40 UTC，
 與 commit `fcebb68` 同時）。資料完全不經過回測。
 
-**產生函式**：`build_cases()`，`scripts/demo_plateau.py:51-66`。
+**產生函式**：`build_cases()`，`scripts/demo_plateau.py:52-67`。
 
 **參數軸的實際值**（`scripts/demo_plateau.py:36-37`）：
 
@@ -37,7 +37,7 @@
 
 這兩個參數軸是虛構的，不對應任何實際策略。
 
-**亂數種子與分布**（`scripts/demo_plateau.py:35, 53-56`）：
+**亂數種子與分布**（`scripts/demo_plateau.py:35, 54-57`）：
 `rng = np.random.default_rng(SEED)`，`SEED = 0`。依下列固定順序抽兩個 $5\times5$ 矩陣：
 
 1. $\varepsilon^{A}_{ij} \sim \mathcal N(0,\,0.05^2)$：`rng.normal(0.0, 0.05, (5, 5))`
@@ -45,13 +45,13 @@
 
 `numpy` 的 `normal(loc, scale, size)` 中，`scale` 是標準差。
 
-**案例 A（真平原，`scripts/demo_plateau.py:58-62`）**：
+**案例 A（真平原，`scripts/demo_plateau.py:59-63`）**：
 
 $$
 m^{A}_{ij} = 1.5 - 0.3\,|i-2| - 0.3\,|j-2| + \varepsilon^{A}_{ij}
 $$
 
-**案例 B（假尖峰，`scripts/demo_plateau.py:63-65`）**：
+**案例 B（假尖峰，`scripts/demo_plateau.py:64-66`）**：
 
 $$
 m^{B}_{ij} =
@@ -63,22 +63,22 @@ $$
 
 $\varepsilon^{B}_{1,3}$ 仍然會被抽出，只是被 2.0 覆蓋，所以不影響其他格子的亂數。
 
-**繪圖細節**（`scripts/demo_plateau.py:75-183`）：
+**繪圖細節**（`scripts/demo_plateau.py:76-186`）：
 
 - 兩張熱圖使用**共同色階**：$v_{\min}$、$v_{\max}$ 是兩個案例所有格子的最小值與最大值
-  （`:86-87`）。實際值為 $-0.38$ 與 $2.00$。
-- 格內數字是 `plateau_grid(...).metric` 的值，取小數點後 2 位（`:94-104`）。
-- 白色圓圈標示 `best_params`，黑色方框標示 `plateau_best_params`（`:105-125`）。
-- 子圖標題的 `metric_gap`、`grid_distance` 來自 `plateau_summary`（`:126-131`）。
+  （`:89-90`）。實際值為 $-0.38$ 與 $2.00$。
+- 格內數字是 `plateau_grid(...).metric` 的值，取小數點後 2 位（`:97-107`）。
+- 白色圓圈標示 `best_params`，黑色方框標示 `plateau_best_params`（`:108-128`）。
+- 子圖標題的 `metric_gap`、`grid_distance` 來自 `plateau_summary`（`:129-134`）。
 
-> 注意：`scripts/demo_statistics.py:89-100, 107-210` 有另一份平原繪圖程式，亂數順序與公式相同，
+> 注意：`scripts/demo_statistics.py` 的 `plateau_cases()` 與 `plot_plateau()` 有另一份平原繪圖程式，亂數順序與公式相同，
 > 但 `Trial.params` 直接使用網格索引 `{"x": i, "y": j}`，色階為 `Blues`。它的 `main()`
 > 寫入另外的 `plateau_gridindex.png` 與 `plateau_gridindex_table.md`，不會覆蓋 `demo_plateau.py` 的輸出。
 > 由於鄰域只看排名（見 2.9），兩份程式算出的統計數字相同，只有軸標籤與配色不同。
 
 ### 2. `kd_equity.png`：真實回測（讀取快取 pickle）
 
-`latest_cache()`（`scripts/demo_statistics.py:259-263`）依**檔案修改時間**挑選
+`latest_cache()`（`scripts/demo_statistics.py`）依**檔案修改時間**挑選
 `workspace/data/processed/cache/*.pkl` 中最新的一個；它不檢查 pickle 的內容是不是 KD 策略。
 
 快取目錄目前有兩個檔案：`cd03bf19459b48af.pkl`（mtime 2026-10-05 06:33:29 UTC）與
@@ -128,7 +128,7 @@ signal engine 一致：
 
 ### 3. `comparison_forest.png`：真實回測（重新執行，不讀 pickle）
 
-`run_kd_variants()`（`scripts/demo_statistics.py:411-420`）用 `load_config` 讀入
+`run_kd_variants()`（`scripts/demo_statistics.py`）用 `load_config` 讀入
 `src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml`，深拷貝後只覆蓋三組參數，
 再呼叫 `BacktestService().run_raw_config(config)` 重新回測。
 
@@ -199,10 +199,10 @@ $$
 **只有 1 根 K 棒**，這一天的「日報酬」其實只是 1 小時的權益變化。
 
 `kd_inference.md` 的「Share of months with negative P&L」
-$=\frac{1}{M}\sum_m \mathbf 1[\text{PnL}_m<0]$（`scripts/demo_statistics.py:272, 319-320`），
+$=\frac{1}{M}\sum_m \mathbf 1[\text{PnL}_m<0]$（`scripts/demo_statistics.py` 的 `write_kd_inference()`），
 實測為 12/12。
 
-### 2.2 年化 Sharpe（`sharpe.py:69-81`、`_period_sharpe`，`sharpe.py:189-194`）
+### 2.2 年化 Sharpe（`sharpe.py:95-107`、`_period_sharpe`，`sharpe.py:335-340`）
 
 $$
 \widehat{SR}_{\text{day}} = \frac{\bar r}{s},\quad
@@ -211,7 +211,8 @@ s = \sqrt{\frac{1}{n-1}\sum_{d=1}^{n}(r_d-\bar r)^2},\qquad
 $$
 
 - `periods_per_year` $P$ 的實際值是 **365.0**，來自 `DAILY_PERIODS_PER_YEAR`
-  （`scripts/demo_statistics.py:68`），在 `:275-276, 430` 傳入。
+  （`scripts/demo_statistics.py` 的常數 `DAILY_PERIODS_PER_YEAR`），在 `write_kd_inference()` 與
+  `plot_comparison_forest()` 傳入。
 - 標準差使用 `ddof=1`，無風險利率為 0（docstring `sharpe.py:17-19`）。
 - $n<2$，或 `np.ptp(values) == 0`（所有報酬完全相等）時回傳 `None`。
 
@@ -223,22 +224,22 @@ $$
    用小時報酬年化會有系統性偏差（同一個 KD 策略：小時 −8.70、日 −7.57），所以一律用日報酬。
 
 `kd_inference.md` 的「Engine-reported Sharpe (hourly)」是 pickle 中的 `metrics["sharpe_ratio"]`
-（−8.70，`scripts/demo_statistics.py:298`）。它是合併前引擎呼叫 vectorbt 的 `pf.sharpe_ratio()` 得出的值
+（−8.70，`scripts/demo_statistics.py` 的 `write_kd_inference()`）。它是合併前引擎呼叫 vectorbt 的 `pf.sharpe_ratio()` 得出的值
 （`6826e41:metrics.py:51`），使用逐根 K 棒報酬，`freq="1h"`，vectorbt 的 `year_freq` 為 365 天，
 所以年化因子是 $\sqrt{8760}$。本文件只把它當作對照，圖中沒有使用。
 
-### 2.3 Stationary bootstrap 信賴區間（`sharpe_confidence_interval`，`sharpe.py:84-146`）
+### 2.3 Stationary bootstrap 信賴區間（`sharpe_confidence_interval`，`sharpe.py:110-172`）
 
 - **方法**：Politis 與 Romano（1994）的 stationary bootstrap，用
   `arch.bootstrap.StationaryBootstrap(block_size, values, seed=np.random.default_rng(seed))` 實作
-  （`sharpe.py:129-131`）。
+  （`sharpe.py:155-157`）。
   每個位置以機率 $1/b$ 開始新區塊（起點均勻抽取），否則延續前一個索引 +1，
   所以區塊長度服從平均 $b$ 的幾何分配。
   ⚠ arch 的實作會**循環接回**：索引超過 $n-1$ 時回到 0（`arch/bootstrap/_samplers_python.py:29-33`）。
-- **block length 的估計**（`sharpe.py:127-128`）：
+- **block length 的估計**（`sharpe.py:153-154`）：
   呼叫 `arch.bootstrap.optimal_block_length(values)`，取回傳表格 `stationary` 欄的第一列。
   它採用 Politis 與 White（2004）〈Automatic Block-Length Selection for the Dependent Bootstrap〉，
-  並加上 Patton、Politis 與 White（2009）的更正（docstring `sharpe.py:100-107`；
+  並加上 Patton、Politis 與 White（2009）的更正（docstring `sharpe.py:126-133`；
   arch 文獻引用見 `arch/bootstrap/base.py:185-190`）。
 
 $$
@@ -249,11 +250,11 @@ $$
 
 - **樣本數門檻**：$n < 20$（`MIN_BOOTSTRAP_OBSERVATIONS`，`sharpe.py:42`）時回傳 `None`。
 - **reps 與 seed**：`kd_inference.md` 使用 `reps = 1000`（`BOOTSTRAP_REPS`）、`seed = 0`（`SEED`），
-  見 `scripts/demo_statistics.py:69-70, 276-281`。
-- **每次重抽樣的統計量**（`sharpe.py:132-133`）：
+  見 `scripts/demo_statistics.py` 的常數 `SEED`、`BOOTSTRAP_REPS` 與 `write_kd_inference()`。
+- **每次重抽樣的統計量**（`sharpe.py:158-159`）：
   $\widehat{SR}^{*}_{\text{ann}} = \widehat{SR}^{*}_{\text{day}}\cdot\sqrt{365}$。
   未定義的重抽樣（全部報酬相等）會變成 NaN 並被丟棄，剩下的數量記在 `valid_reps`。
-- **區間方法：百分位數法**（`sharpe.py:136-137`），信賴水準為預設的 0.95：
+- **區間方法：百分位數法**（`sharpe.py:162-163`），信賴水準為預設的 0.95：
 
 $$
 \Big[\ Q_{0.025}\big(\{\widehat{SR}^{*}_{\text{ann}}\}\big),\ \ Q_{0.975}\big(\{\widehat{SR}^{*}_{\text{ann}}\}\big)\ \Big]
@@ -264,7 +265,7 @@ $$
 
 **本資料實測**：$b = 2$ 天，CI 為 $[-9.18, -5.87]$，`valid_reps = 1000`。
 
-### 2.4 PSR（`probabilistic_sharpe_ratio`，`sharpe.py:149-186`）
+### 2.4 PSR（`probabilistic_sharpe_ratio`，`sharpe.py:175-212`）
 
 Bailey 與 López de Prado（2012）：
 
@@ -276,8 +277,8 @@ $$
 $$
 
 - $\widehat{SR}$ 是**每期（日）、未年化**的 Sharpe，由 `_period_sharpe` 計算，分母是 `ddof=1` 的標準差。
-- $SR^{*}$ 是 `benchmark_sr`，腳本使用預設值 0（`scripts/demo_statistics.py:282`）。
-- **偏態與峰態使用母體動差（除以 $n$）**（`sharpe.py:178-182`）：
+- $SR^{*}$ 是 `benchmark_sr`，腳本使用預設值 0（`scripts/demo_statistics.py` 的 `write_kd_inference()`）。
+- **偏態與峰態使用母體動差（除以 $n$）**（`sharpe.py:204-208`）：
 
 $$
 m_k = \frac{1}{n}\sum_{d}(r_d-\bar r)^k,\qquad
@@ -285,12 +286,12 @@ m_k = \frac{1}{n}\sum_{d}(r_d-\bar r)^k,\qquad
 \hat\gamma_4 = \frac{m_4}{m_2^{2}}\ \ \text{（非超額峰態，常態分配為 3）}
 $$
 
-- 根號內的值 $\le 0$ 時回傳 `None`（`sharpe.py:183-184`）。$\Phi$ 是 `statistics.NormalDist().cdf`。
+- 根號內的值 $\le 0$ 時回傳 `None`（`sharpe.py:209-210`）。$\Phi$ 是 `statistics.NormalDist().cdf`。
 
 ⚠ **差異**：同一個式子裡，Sharpe 的標準差用樣本估計（`ddof=1`），偏態與峰態卻用母體動差，
 也沒有做小樣本偏誤校正。本資料 PSR = 0.0000。
 
-### 2.5 日 P&L 的 t 統計量（`scripts/demo_statistics.py:283-285`）
+### 2.5 日 P&L 的 t 統計量（`scripts/demo_statistics.py` 的 `write_kd_inference()`）
 
 $$
 t = \frac{\overline{\text{PnL}}_{\text{day}}}{s_{\text{PnL}}/\sqrt{n}}
@@ -302,7 +303,7 @@ $s_{\text{PnL}}$ 是 `pandas.Series.std(ddof=1)`。這裡使用絕對金額 P&L 
 ### 2.6 損益兩平勝率（`summarize_breakeven`，`breakeven.py:91-181`）
 
 腳本呼叫方式：`summarize_breakeven(result.trades, start=stamps[0], end=stamps[-1], capital=result.init_cash)`
-（`scripts/demo_statistics.py:287-289`）。
+（`scripts/demo_statistics.py` 的 `write_kd_inference()`）。
 
 **勝敗定義**（`breakeven.py:140-141`）：$\mathcal W = \{k : \text{net\_pnl}_k > 0\}$，
 $\mathcal L = \{k : \text{net\_pnl}_k < 0\}$。`net_pnl == 0` 的交易兩邊都不算。
@@ -355,7 +356,7 @@ $$
 
 - $V$ 是 `summarize_breakeven` 回傳的 `traded_notional`，由交易紀錄計算的進場加出場名目金額（見 2.6），
   實測 5,014,735.72。不使用 `metrics["total_volume"]`，因為該欄位的單腿／雙腿慣例在上游改過（見第 4 點）。
-- `fees`、`slippage` 是腳本中寫死的常數 `FEES`、`SLIPPAGE`（`scripts/demo_statistics.py:71-72`），
+- `fees`、`slippage` 是腳本中寫死的常數 `FEES`、`SLIPPAGE`（`scripts/demo_statistics.py`），
   不是從 pickle 讀出（數值剛好與 config 相同）。
 - 報表中的其他比率：$\widehat{\text{cost}}/|\text{Net}|$、$\widehat{\text{cost}}/\text{init\_cash}$。
 - 實測：cost = 5,516.21，Gross = −872.13，Net = −6,388.34，cost/|Net| = 86.3%，cost/init_cash = 55.2%。
@@ -374,22 +375,23 @@ $$
    實測 `fee` 加總為 3,008.84，約等於 $5{,}014{,}735.72 \times 0.0006$；slippage 仍然內含於成交價，
    不會出現在 `fee` 中（`catalog.py:233-234`）。
 
-### 2.8 權益曲線與最大回撤（`plot_kd_equity`，`scripts/demo_statistics.py:363-405`）
+### 2.8 權益曲線與最大回撤（`plot_kd_equity`，`scripts/demo_statistics.py`）
 
 $$
 DD_t = \frac{E_t}{\max_{s\le t} E_s} - 1,\qquad \text{Max DD} = \min_t DD_t
 $$
 
-- 回撤在**逐小時**的完整權益曲線上計算（`:366`），不是日頻。圖中以百分比呈現。
+- 回撤在**逐小時**的完整權益曲線上計算，不是日頻。圖中以百分比呈現。
 - 實測 Max DD = −64.4%，與 pickle 中引擎的 `max_drawdown` = −0.6438 一致。
-- 上圖虛線為 $E_0$（`:377`）；標題中的「10,000 -> 3,612」是 $E_0$ 與 $E_{\text{last}}$（`:380`）。
+- 上圖虛線為 $E_0$；標題中的「10,000 -> 3,612」是 $E_0$ 與 $E_{\text{last}}$。
 - 標題文字「KD crossover, BTC/USDT 1h」是**寫死在程式中**的字串，不是從 pickle 讀出；
   它剛好與這份 pickle 的內容相符。
 
 ### 2.9 平原分數（`src/tradingdev/domain/statistics/plateau.py`）
 
-**格點索引**（`plateau.py` 的 `_build_grid`）：把每個參數軸上不重複的值排序，以排名
-$r_k \in \{0,\dots,4\}$ 取代原值。之後所有距離都在排名空間中計算，不使用原始參數值。
+**格點索引**（`plateau.py` 的 `_build_grid`）：把呼叫端傳入的 `axes`（每個參數「搜尋過」的值，
+包含整排失敗的值）排序，以排名 $r_k \in \{0,\dots,4\}$ 取代原值。之後所有距離都在排名空間中計算，
+不使用原始參數值。兩支 demo 的網格都是完整的，所以 `axes` 與 trial 實際用到的值相同。
 
 **鄰域**（`plateau.py` 的 `_Grid.neighbours`；模組 docstring 的 First-version design decisions）：
 
@@ -451,15 +453,15 @@ $$
 
 ### 2.12 forest 上排：各組參數的 Sharpe 區間（`interval_table`，`comparison.py:266-330`）
 
-1. 每組參數的日報酬：`period_returns(equity_curve, timestamps, "daily")`（`scripts/demo_statistics.py:424-429`）。
+1. 每組參數的日報酬：`period_returns(equity_curve, timestamps, "daily")`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
 2. `align_returns`（`comparison.py:145-182`）用 `pd.concat(..., join="inner")` 取三組都有的日期（`:174`）。
-   標題的「366 common days」是 `overlap`（`scripts/demo_statistics.py:499-504`）。
+   標題的「366 common days」是 `overlap`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
 3. **三組一起重抽樣**：用同一個 `StationaryBootstrap(block_size, *columns, ...)`（`comparison.py:307-309`），
    每次重抽樣對三組序列使用**相同的日期索引**。
 4. block size（`_block_size`，`comparison.py:340-349`）：對**每一組**分別算 Politis–White 估計值，取**最大值**後無條件進位，
    至少為 1。完全沒有變動的序列不參與估計；所有估計值都不是有限數時，$b = 1$。實測 $b = 2$。
 5. 統計量為 `partial(sharpe_ratio, periods_per_year=365.0)`，`reps = 2000`（`COMPARISON_REPS`）、
-   `seed = 0`（`scripts/demo_statistics.py:430-431`）。
+   `seed = 0`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
 6. 區間用百分位數法 $[Q_{0.025}, Q_{0.975}]$，每組各自丟棄 NaN 後計算（`comparison.py:315-319`）。
 
 | 標籤 | 點估計 | 95% CI | valid_reps |
@@ -478,7 +480,7 @@ KD(14, 3, 3) 的區間和 `kd_inference.md` 的 $[-9.18, -5.87]$ 不同，但點
 `StationaryBootstrap(block_size, values_a, values_b, seed=np.random.default_rng(seed))`（`:241-243`）。
 arch 對所有位置參數套用**同一組索引**，所以每次重抽樣中 $a$、$b$ 取到的是同一批日期，保留了兩者的相關性。
 block size 是兩序列 Politis–White 估計值中的較大者，再無條件進位（`_block_size`）。
-每一對都會重新以 `seed = 0` 建立亂數產生器（`scripts/demo_statistics.py:434-439`）。
+每一對都會重新以 `seed = 0` 建立亂數產生器（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
 
 $$
 \hat\Delta = \widehat{SR}_{\text{ann}}(a) - \widehat{SR}_{\text{ann}}(b),\qquad
@@ -515,7 +517,7 @@ $$
 | KD(9, 3, 3) − KD(21, 5, 5) | −0.67 | [−2.94, +1.70] | 0.542 | 0.34 |
 | KD(14, 3, 3) − KD(21, 5, 5) | −1.56 | [−3.57, +0.48] | 0.120 | 0.36 |
 
-**顏色**（`scripts/demo_statistics.py:467`）：區間不含 0 用黑色（`INK`），含 0 用灰色（`MUTED`）。
+**顏色**（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）：區間不含 0 用黑色（`INK`），含 0 用灰色（`MUTED`）。
 三個差異的區間都含 0，所以都是灰色。
 
 ---
@@ -531,11 +533,11 @@ $$
 | `plateau_table.md` | 全部 | **合成** | 同上 |
 | `kd_equity.png` | 權益曲線、標題起訖權益 | **真實回測** | `cd03bf19459b48af.pkl` |
 | `kd_equity.png` | 回撤面積、Max DD | **真實回測**（由權益推導） | 同上，見 2.8 |
-| `kd_equity.png` | 標題字串「KD crossover, BTC/USDT 1h」 | 寫死的文字 | `scripts/demo_statistics.py:380` |
+| `kd_equity.png` | 標題字串「KD crossover, BTC/USDT 1h」 | 寫死的文字 | `scripts/demo_statistics.py` 的 `plot_kd_equity()` |
 | `comparison_forest.png` | 上排三組點估計與 CI | **真實回測**（重新執行）＋ bootstrap | `run_kd_variants`，seed 0 |
 | `comparison_forest.png` | 下排差異、CI、p、rho | **真實回測**（重新執行）＋ bootstrap | 同上 |
 | `comparison_forest.png` | 「366 common days」 | **真實回測** | `align_returns` 的 overlap |
-| `comparison_forest.png` | 標題「BTC/USDT 1h」、註腳「2024」 | 寫死的文字 | `scripts/demo_statistics.py:502, 509` |
+| `comparison_forest.png` | 標題「BTC/USDT 1h」、註腳「2024」 | 寫死的文字 | `scripts/demo_statistics.py` 的 `plot_comparison_forest()` |
 | `kd_inference.md` | 日／月數、Sharpe、CI、PSR、t、勝率、換手率 | **真實回測** | `cd03bf19459b48af.pkl` |
 | `kd_inference.md` | 成本拆解 | 真實的 `total_volume` × **寫死的**費率 | 估計值，見 2.7 |
 
@@ -547,9 +549,9 @@ $$
 
 1. **樣本內與樣本外**：`comparison.py:21-23` 指出，比較時只能使用樣本外報酬（例如 walk-forward 測試區間）。
    用調校過參數的樣本內報酬比較，量到的是哪個策略「過度擬合得更徹底」，而不是哪個策略比較好。
-   三張 KD 相關結果都來自 2024 全年的**樣本內**報酬；forest 圖註腳也有標明（`scripts/demo_statistics.py:509-510`）。
+   三張 KD 相關結果都來自 2024 全年的**樣本內**報酬；forest 圖註腳也有標明（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
 2. **三組參數未經調校**：forest 圖註腳寫的是「untuned parameter sets」。
-   KD(9, 3, 3)、KD(14, 3, 3)、KD(21, 5, 5) 是程式中手動列出的常見組合（`scripts/demo_statistics.py:61-65`），
+   KD(9, 3, 3)、KD(14, 3, 3)、KD(21, 5, 5) 是程式中手動列出的常見組合（`scripts/demo_statistics.py` 的常數 `KD_VARIANTS`），
    沒有經過最佳化或搜尋，所以不能當作「最佳參數」的證據，也不代表 KD 策略的參數空間。
 3. **CI 重疊不代表不顯著**：`comparison.py:17-20` 與 `interval_table` docstring `:285-289` 指出，
    各自的區間忽略了策略之間的相關性，只能當作保守的初步篩選。區間不重疊可以推得差異顯著，
@@ -583,12 +585,12 @@ $$
 
 | 用途 | 值 | 位置 |
 | --- | --- | --- |
-| 平原合成資料 | `np.random.default_rng(0)`，先抽 $\mathcal N(0,0.05^2)$ 再抽 $\mathcal N(0,0.3^2)$ | `scripts/demo_plateau.py:35, 53-56`（`demo_statistics.py:69, 90-92` 相同） |
-| `kd_inference.md` 的 Sharpe CI | `seed=0`、`reps=1000`、confidence 0.95 | `scripts/demo_statistics.py:69-70, 276-281` |
-| forest 上排 `interval_table` | `seed=0`、`reps=2000`、confidence 0.95 | `scripts/demo_statistics.py:66, 69, 431` |
-| forest 下排 `difference_interval` | 每一對都使用 `seed=0`、`reps=2000` | `scripts/demo_statistics.py:434-439` |
-| 年化期數 | 365.0 | `scripts/demo_statistics.py:68` |
-| 成本估計費率 | fees 0.0006、slippage 0.0005 | `scripts/demo_statistics.py:71-72` |
+| 平原合成資料 | `np.random.default_rng(0)`，先抽 $\mathcal N(0,0.05^2)$ 再抽 $\mathcal N(0,0.3^2)$ | `scripts/demo_plateau.py:35, 54-57`（`demo_statistics.py` 的 `SEED` 與 `plateau_cases()` 相同） |
+| `kd_inference.md` 的 Sharpe CI | `seed=0`、`reps=1000`、confidence 0.95 | `scripts/demo_statistics.py` 的 `SEED`、`BOOTSTRAP_REPS`、`write_kd_inference()` |
+| forest 上排 `interval_table` | `seed=0`、`reps=2000`、confidence 0.95 | `scripts/demo_statistics.py` 的 `COMPARISON_REPS`、`SEED`、`plot_comparison_forest()` |
+| forest 下排 `difference_interval` | 每一對都使用 `seed=0`、`reps=2000` | `scripts/demo_statistics.py` 的 `plot_comparison_forest()` |
+| 年化期數 | 365.0 | `scripts/demo_statistics.py` 的 `DAILY_PERIODS_PER_YEAR` |
+| 成本估計費率 | fees 0.0006、slippage 0.0005 | `scripts/demo_statistics.py` 的 `FEES`、`SLIPPAGE` |
 | 平原半徑 | 1 | `plateau.py` 的 `DEFAULT_RADIUS` |
 | bootstrap 最少觀測數 | 20 | `sharpe.py:42` |
 | 函式庫版本 | `arch` 8.0.0、`vectorbt` 1.0.0（`uv.lock` 鎖定） | `.venv` |
