@@ -241,8 +241,15 @@ def deflated_sharpe_ratio(
     the same ``periods_per_year``; they are converted to per-period values
     here, so the hurdle is never inflated by ``sqrt(periods_per_year)``.
 
-    ``n_trials`` defaults to the number of trial Sharpes and may be raised
-    when more trials were run than kept. With ``N = 1`` there is no
+    ``n_trials`` must be the total number of trials searched, including
+    failed trials that were dropped because their metric was undefined. It
+    defaults to the number of trial Sharpes, which is correct only when no
+    trial was dropped. With plateau analysis, :func:`trials_from_metrics
+    <tradingdev.domain.statistics.plateau.trials_from_metrics>` returns
+    the dropped count for this purpose; pass
+    ``n_trials = len(result.trials) + result.dropped_count``. Passing only
+    the surviving count underestimates ``N`` and under-corrects the
+    selection bias, without any error. With ``N = 1`` there is no
     selection, and with equal trial Sharpes there is no dispersion; both
     give ``SR*_0 = 0``, so the DSR equals the PSR against zero.
 
@@ -262,9 +269,9 @@ def deflated_sharpe_ratio(
     Raises:
         ValueError: If ``periods_per_year`` is not positive and finite, a
             return or trial Sharpe is not a finite number, ``n_trials`` is
-            not a positive integer, ``n_trials`` is smaller than the number
-            of trial Sharpes, or no trial Sharpes are given without
-            ``n_trials``.
+            not a positive integer or too large for a float, ``n_trials``
+            is smaller than the number of trial Sharpes, or no trial
+            Sharpes are given without ``n_trials``.
     """
     scale = _annualisation(periods_per_year)
     trial_sharpes = np.array(
@@ -288,6 +295,10 @@ def deflated_sharpe_ratio(
         n = int(n_trials)
     if n < trial_sharpes.size:
         raise ValueError("n_trials must not be smaller than the trial Sharpes")
+    try:
+        tail = 1.0 / n
+    except OverflowError:
+        raise ValueError("n_trials is too large for a float") from None
     values = _returns(returns)
 
     std_annualised: float | None = None
@@ -300,11 +311,12 @@ def deflated_sharpe_ratio(
     elif std_annualised is None:
         return None
     else:
-        # Z^-1(1 - p) as -Z^-1(p) keeps precision when 1 - 1/N rounds to 1.
+        # Z^-1(1 - p) as -Z^-1(p) keeps precision when 1 - 1/N rounds to 1;
+        # dividing 1/N by e avoids N * e overflowing to infinity.
         normal = NormalDist()
         expected_max = -(1.0 - EULER_MASCHERONI) * normal.inv_cdf(
-            1.0 / n
-        ) - EULER_MASCHERONI * normal.inv_cdf(1.0 / (n * math.e))
+            tail
+        ) - EULER_MASCHERONI * normal.inv_cdf(tail / math.e)
         hurdle = std_annualised / scale * expected_max
 
     psr_vs_zero = probabilistic_sharpe_ratio(values)

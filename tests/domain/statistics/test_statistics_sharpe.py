@@ -349,6 +349,39 @@ class TestDeflatedSharpeRatio:
         assert math.isfinite(result.hurdle_annualised)
         assert result.hurdle_annualised > 0.0
 
+    def test_largest_float_trial_count_keeps_a_finite_hurdle(self) -> None:
+        # N * e would overflow to infinity here; 1/N divided by e does not.
+        result = deflated_sharpe_ratio(
+            _selected_returns(),
+            [0.5, 1.5],
+            periods_per_year=_DAILY,
+            n_trials=10**308,
+        )
+
+        assert result is not None
+        assert math.isfinite(result.hurdle_annualised)
+
+    def test_trial_count_beyond_float_range_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="n_trials is too large"):
+            deflated_sharpe_ratio(
+                _selected_returns(),
+                [0.5, 1.5],
+                periods_per_year=_DAILY,
+                n_trials=10**400,
+            )
+
+    def test_trial_count_beyond_float_range_raises_before_returning_none(
+        self,
+    ) -> None:
+        # One trial Sharpe with N >= 2 would otherwise return None first.
+        with pytest.raises(ValueError, match="n_trials is too large"):
+            deflated_sharpe_ratio(
+                _selected_returns(),
+                [0.5],
+                periods_per_year=_DAILY,
+                n_trials=10**400,
+            )
+
     def test_single_trial_count_without_trial_sharpes(self) -> None:
         returns = _selected_returns()
 
