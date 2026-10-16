@@ -80,6 +80,10 @@ MUTED = "#6e7781"
 # ---------------------------------------------------------------- plateau
 
 
+GRID_AXIS = [float(i) for i in range(GRID_SIZE)]
+PLATEAU_AXES = {"x": GRID_AXIS, "y": GRID_AXIS}
+
+
 def _trials(metric: Callable[[int, int], float]) -> list[Trial]:
     return [
         Trial(params={"x": float(i), "y": float(j)}, metric=metric(i, j))
@@ -109,8 +113,14 @@ def _cell(params: Any) -> tuple[float, float]:
 def plot_plateau(
     cases: dict[str, list[Trial]], path: Path
 ) -> dict[str, PlateauSummary]:
-    summaries = {name: plateau_summary(trials) for name, trials in cases.items()}
-    grids = {name: plateau_grid(trials, x="x", y="y") for name, trials in cases.items()}
+    summaries = {
+        name: plateau_summary(trials, axes=PLATEAU_AXES)
+        for name, trials in cases.items()
+    }
+    grids = {
+        name: plateau_grid(trials, axes=PLATEAU_AXES, x="x", y="y")
+        for name, trials in cases.items()
+    }
     matrices = {
         name: np.array(
             [[np.nan if v is None else v for v in row] for row in grid.metric]

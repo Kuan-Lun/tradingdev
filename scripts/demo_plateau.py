@@ -36,6 +36,7 @@ SEED = 0
 LOOKBACKS = (10, 20, 30, 40, 50)
 THRESHOLDS = (0.01, 0.02, 0.03, 0.04, 0.05)
 X, Y = "lookback", "threshold"
+AXES = {X: [float(lookback) for lookback in LOOKBACKS], Y: list(THRESHOLDS)}
 INK = "#1f2933"
 MUTED = "#52606d"
 
@@ -73,12 +74,14 @@ def _cell(params: Mapping[str, float] | None) -> tuple[int, int]:
 
 
 def plot(cases: dict[str, list[Trial]], path: Path) -> dict[str, PlateauSummary]:
-    summaries = {name: plateau_summary(trials) for name, trials in cases.items()}
+    summaries = {
+        name: plateau_summary(trials, axes=AXES) for name, trials in cases.items()
+    }
     matrices = {
         name: np.array(
             [
                 [np.nan if value is None else value for value in row]
-                for row in plateau_grid(trials, x=X, y=Y).metric
+                for row in plateau_grid(trials, axes=AXES, x=X, y=Y).metric
             ]
         )
         for name, trials in cases.items()
