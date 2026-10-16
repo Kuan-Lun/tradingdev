@@ -34,13 +34,13 @@ Source: `workspace/data/processed/cache/cd03bf19459b48af.pkl` — strategy `kd_c
 
 ## Cost breakdown
 
-Estimated cost = total_volume x 2 legs x (fees 0.0006 + slippage 0.0005). Trade records carry `fee = 0` because the engine folds costs into fill prices, so this is an estimate.
+Estimated cost = traded notional (entry + exit) x (fees 0.0006 + slippage 0.0005). Trade records carry `fee = 0` because the engine folds costs into fill prices, so this is an estimate. The engine's `total_volume` metric changed upstream from entry-only to entry plus exit notional, so the cost is always derived from the trade records, never from that metric.
 
 | Statistic | Value |
 | --- | ---: |
-| total_volume (entry notional) | 2,507,242 |
-| Estimated cost | 5,515.93 |
-| Gross P&L (net + cost) | -872.40 |
+| Traded notional (entry + exit) | 5,014,736 |
+| Estimated cost | 5,516.21 |
+| Gross P&L (net + cost) | -872.13 |
 | Net P&L | -6,388.34 |
 | Cost / abs(net P&L) | 86.3% |
 | Cost / initial capital | 55.2% |

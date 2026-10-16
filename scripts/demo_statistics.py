@@ -289,8 +289,7 @@ def write_kd_inference(
         result.trades, start=stamps[0], end=stamps[-1], capital=result.init_cash
     )
 
-    volume = float(result.metrics["total_volume"])
-    cost = volume * 2 * (FEES + SLIPPAGE)
+    cost = breakeven.traded_notional * (FEES + SLIPPAGE)
     net = float(equity[-1] - equity[0])
     gross = net + cost
 
@@ -345,13 +344,16 @@ def write_kd_inference(
         "",
         "## Cost breakdown",
         "",
-        f"Estimated cost = total_volume x 2 legs x (fees {FEES} + slippage "
-        f"{SLIPPAGE}). Trade records carry `fee = 0` because the engine folds "
-        "costs into fill prices, so this is an estimate.",
+        f"Estimated cost = traded notional (entry + exit) x (fees {FEES} + "
+        f"slippage {SLIPPAGE}). Trade records carry `fee = 0` because the engine "
+        "folds costs into fill prices, so this is an estimate. The engine's "
+        "`total_volume` metric changed upstream from entry-only to entry plus "
+        "exit notional, so the cost is always derived from the trade records, "
+        "never from that metric.",
         "",
         "| Statistic | Value |",
         "| --- | ---: |",
-        f"| total_volume (entry notional) | {volume:,.0f} |",
+        f"| Traded notional (entry + exit) | {breakeven.traded_notional:,.0f} |",
         f"| Estimated cost | {cost:,.2f} |",
         f"| Gross P&L (net + cost) | {gross:,.2f} |",
         f"| Net P&L | {net:,.2f} |",
