@@ -54,20 +54,40 @@ Limitation: a broad plateau is not evidence against overfitting when the
 whole parameter region is fitted to the same market regime. Every
 neighbour then looks good for the same reason and the analysis shows a
 false plateau, so plateau analysis cannot replace out-of-sample validation.
+
+Integration contract:
+
+* Build trials with :func:`trials_from_metrics` rather than constructing
+  :class:`Trial` by hand, so the metric direction is applied explicitly,
+  and report its ``dropped_count`` alongside the plateau results.
+* Each trial's ``params`` contain every searched parameter, with finite
+  numeric values, and each parameter set is unique.
+* Each metric value is passed together with its ``optimization_direction``
+  as the ``direction`` argument (``"maximize"`` or ``"minimize"``); the
+  direction is never inferred. A failed trial carries ``None``, NaN, or an
+  infinite metric and is dropped as a missing grid point.
+* All trials come from the same evaluation window, dataset, and cost model.
+* Upstream currently persists only ``trial/{index}/train``, so the
+  resulting plateau is in-sample. Label it as in-sample; it is not
+  out-of-sample evidence.
+* Plateau scores depend on the radius and on the grid density, so they are
+  comparable only within one run, never across runs or radii.
 """
 
 from __future__ import annotations
 
 import math
 import numbers
+import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Sequence
 
     import numpy.typing as npt
 
@@ -81,6 +101,91 @@ class Trial:
 
     params: Mapping[str, float]
     metric: float
+
+
+@dataclass(frozen=True)
+class MetricTrials:
+    """Trials built by :func:`trials_from_metrics`.
+
+    Attributes:
+        trials: Higher-is-better trials, in input order.
+        dropped_count: Number of failed rows dropped because their metric
+            was ``None``, NaN, or infinite.
+    """
+
+    trials: tuple[Trial, ...]
+    dropped_count: int
+
+
+class DroppedTrialsWarning(UserWarning):
+    """Rows with a non-finite metric were dropped as failed trials."""
+
+    def __init__(self, dropped_count: int) -> None:
+        super().__init__(f"dropped {dropped_count} trial(s) with a non-finite metric")
+        self.dropped_count = dropped_count
+
+
+def trials_from_metrics(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    params_key: str,
+    metric_key: str,
+    direction: Literal["maximize", "minimize"],
+) -> MetricTrials:
+    """Build higher-is-better trials from raw metric rows.
+
+    ``direction`` is the metric's optimization direction and has no default;
+    ``"minimize"`` metrics are negated. Rows whose metric is ``None``, NaN,
+    or infinite are failed trials and are dropped, which makes them missing
+    grid points. A dropped row still occupies its parameter set, so a later
+    row repeating it is rejected rather than treated as a retry.
+
+    The number of dropped rows is returned as
+    :attr:`MetricTrials.dropped_count`; callers must surface it, because
+    dropped rows shrink the grid. A :class:`DroppedTrialsWarning` is also
+    issued as a secondary signal for interactive use; under an ``"error"``
+    warnings filter it is raised instead of returning.
+
+    Raises:
+        ValueError: If ``direction`` is unknown, a row lacks ``params_key``
+            or ``metric_key``, ``params`` is not a non-empty mapping, a
+            parameter is not a finite number, a metric is neither ``None``
+            nor a number, or a parameter set repeats.
+    """
+    if direction not in ("maximize", "minimize"):
+        raise ValueError("direction must be 'maximize' or 'minimize'")
+    sign = -1.0 if direction == "minimize" else 1.0
+    trials: list[Trial] = []
+    seen: set[tuple[tuple[str, float], ...]] = set()
+    dropped_count = 0
+    for position, row in enumerate(rows):
+        for key in (params_key, metric_key):
+            if key not in row:
+                raise ValueError(f"row {position} has no {key!r}")
+        raw_params = row[params_key]
+        if not isinstance(raw_params, Mapping) or not raw_params:
+            raise ValueError(f"row {position} params must be a non-empty mapping")
+        params = {
+            name: _finite(value, f"row {position} parameter {name!r}")
+            for name, value in raw_params.items()
+        }
+        identity = tuple(sorted(params.items()))
+        if identity in seen:
+            raise ValueError(f"row {position} repeats an earlier parameter set")
+        seen.add(identity)
+        raw_metric = row[metric_key]
+        metric = (
+            math.nan
+            if raw_metric is None
+            else _numeric(raw_metric, f"row {position} metric")
+        )
+        if not math.isfinite(metric):
+            dropped_count += 1
+            continue
+        trials.append(Trial(params=MappingProxyType(params), metric=sign * metric))
+    if dropped_count:
+        warnings.warn(DroppedTrialsWarning(dropped_count), stacklevel=2)
+    return MetricTrials(trials=tuple(trials), dropped_count=dropped_count)
 
 
 @dataclass(frozen=True)
@@ -106,16 +211,27 @@ class PlateauScore:
 class PlateauSummary:
     """Comparison of the best trial with the best plateau.
 
+    Plateau scores, and so ``plateau_best_score``, change with ``radius``
+    and with the grid density in ``axis_sizes``. They are meaningful only
+    within one run and must not be compared across runs or radii.
+
     Attributes:
         n_trials: Number of trials.
         n_dimensions: Number of searched parameters.
+        axis_sizes: Number of distinct grid values per searched parameter.
         radius: Grid-index radius used for neighbourhoods.
+        min_neighborhood: Minimum neighbourhood size a trial needs to
+            compete for the plateau best; ``None`` applies no threshold.
+        n_below_min_neighborhood: Number of trials excluded from the
+            plateau best by ``min_neighborhood``, including trials without
+            neighbours; ``0`` without a threshold.
         dimension_warning: ``True`` when there are more than three
             parameters, so the neighbourhood is too large to be local.
         best_params: Parameters of the trial with the highest metric.
         best_metric: Highest metric.
         plateau_best_params: Parameters of the trial with the highest
-            plateau score.
+            plateau score among the trials meeting ``min_neighborhood``;
+            ``None`` when no trial qualifies.
         plateau_best_metric: That trial's own metric.
         plateau_best_score: That trial's plateau score.
         metric_gap: ``best_metric - plateau_best_metric``, the primary
@@ -133,7 +249,10 @@ class PlateauSummary:
 
     n_trials: int
     n_dimensions: int
+    axis_sizes: Mapping[str, int]
     radius: int
+    min_neighborhood: int | None
+    n_below_min_neighborhood: int
     dimension_warning: bool
     best_params: Mapping[str, float] | None
     best_metric: float | None
@@ -218,15 +337,24 @@ def plateau_scores(
 
 
 def plateau_summary(
-    trials: Sequence[Trial], *, radius: int = DEFAULT_RADIUS
+    trials: Sequence[Trial],
+    *,
+    radius: int = DEFAULT_RADIUS,
+    min_neighborhood: int | None = None,
 ) -> PlateauSummary:
     """Compare the best trial with the trial on the best plateau.
 
+    Trials with fewer than ``min_neighborhood`` neighbours keep their
+    plateau scores but cannot become the plateau best, because a mean of
+    few neighbours is noisy and favours false plateaus and spikes alike.
+
     Raises:
-        ValueError: If ``radius`` is not a positive integer or the trials
-            are inconsistent (see :class:`Trial`).
+        ValueError: If ``radius`` or ``min_neighborhood`` is not a positive
+            integer or the trials are inconsistent (see :class:`Trial`).
     """
     radius = _checked_radius(radius)
+    if min_neighborhood is not None:
+        min_neighborhood = _positive_int(min_neighborhood, "min_neighborhood")
     grid = _build_grid(trials)
     scores = _scores(grid, radius)
     n_trials = len(scores)
@@ -234,7 +362,10 @@ def plateau_summary(
         return PlateauSummary(
             n_trials=0,
             n_dimensions=0,
+            axis_sizes=MappingProxyType({}),
             radius=radius,
+            min_neighborhood=min_neighborhood,
+            n_below_min_neighborhood=0,
             dimension_warning=False,
             best_params=None,
             best_metric=None,
@@ -251,7 +382,11 @@ def plateau_summary(
 
     best = int(np.argmax(grid.metrics))
     best_metric = float(grid.metrics[best])
-    plateau_best = _argmax_score(scores)
+    eligible = [
+        min_neighborhood is None or entry.neighborhood_size >= min_neighborhood
+        for entry in scores
+    ]
+    plateau_best = _argmax_score(scores, eligible)
     neighbour_metrics = grid.metrics[grid.neighbours(best, radius)]
     mean = float(neighbour_metrics.mean()) if neighbour_metrics.size else None
     std = float(neighbour_metrics.std(ddof=1)) if neighbour_metrics.size > 1 else None
@@ -266,7 +401,12 @@ def plateau_summary(
     return PlateauSummary(
         n_trials=n_trials,
         n_dimensions=len(grid.names),
+        axis_sizes=MappingProxyType(
+            {name: len(axis) for name, axis in zip(grid.names, grid.axes, strict=True)}
+        ),
         radius=radius,
+        min_neighborhood=min_neighborhood,
+        n_below_min_neighborhood=eligible.count(False),
         dimension_warning=grid.dimension_warning,
         best_params=grid.params[best],
         best_metric=best_metric,
@@ -381,11 +521,15 @@ def _scores(grid: _Grid, radius: int) -> tuple[PlateauScore, ...]:
     return tuple(results)
 
 
-def _argmax_score(scores: Sequence[PlateauScore]) -> int | None:
+def _argmax_score(
+    scores: Sequence[PlateauScore], eligible: Sequence[bool]
+) -> int | None:
     best: int | None = None
     best_score = -math.inf
-    for index, entry in enumerate(scores):
-        if entry.score is not None and (best is None or entry.score > best_score):
+    for index, (entry, allowed) in enumerate(zip(scores, eligible, strict=True)):
+        if not allowed or entry.score is None:
+            continue
+        if best is None or entry.score > best_score:
             best, best_score = index, entry.score
     return best
 
@@ -434,15 +578,28 @@ def _build_grid(trials: Sequence[Trial]) -> _Grid:
     )
 
 
-def _finite(value: object, label: str) -> float:
+def _numeric(value: object, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise ValueError(f"{label} is not numeric")
-    if not math.isfinite(value):
+    try:
+        return float(value)
+    except OverflowError:
+        # Too large for a float; every caller treats any infinity alike.
+        return math.inf
+
+
+def _finite(value: object, label: str) -> float:
+    number = _numeric(value, label)
+    if not math.isfinite(number):
         raise ValueError(f"{label} is not finite")
-    return float(value)
+    return number
 
 
 def _checked_radius(radius: int) -> int:
-    if isinstance(radius, bool) or not isinstance(radius, int) or radius < 1:
-        raise ValueError("radius must be a positive integer")
-    return radius
+    return _positive_int(radius, "radius")
+
+
+def _positive_int(value: int, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value

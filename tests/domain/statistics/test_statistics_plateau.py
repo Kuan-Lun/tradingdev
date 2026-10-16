@@ -2,15 +2,19 @@
 
 import itertools
 import math
+import warnings
 
 import numpy as np
 import pytest
 
 from tradingdev.domain.statistics.plateau import (
+    DroppedTrialsWarning,
+    MetricTrials,
     Trial,
     plateau_grid,
     plateau_scores,
     plateau_summary,
+    trials_from_metrics,
 )
 
 _A_VALUES = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
@@ -312,3 +316,271 @@ class TestValidation:
     def test_rejects_inconsistent_trials(self, trials: list[Trial], match: str) -> None:
         with pytest.raises(ValueError, match=match):
             plateau_scores(trials)
+
+
+def _corner_grid() -> list[Trial]:
+    """5x5 grid whose metric falls with the grid index sum.
+
+    Without a threshold the corner (0, 0) has the best plateau score; its
+    three neighbours average -4/3, ahead of the edge (0, 1) at -1.6 and the
+    interior (1, 1) at -2.
+    """
+    return [
+        Trial(params={"x": float(i), "y": float(j)}, metric=-float(i + j))
+        for i, j in itertools.product(range(5), repeat=2)
+    ]
+
+
+def _metric_rows() -> list[dict[str, object]]:
+    return [
+        {"params": {"a": 1.0}, "max_drawdown": 0.30},
+        {"params": {"a": 2.0}, "max_drawdown": 0.05},
+        {"params": {"a": 3.0}, "max_drawdown": 0.20},
+        {"params": {"a": 4.0}, "max_drawdown": 0.40},
+    ]
+
+
+class TestTrialsFromMetrics:
+    def test_minimize_selects_the_smallest_raw_metric(self) -> None:
+        result = trials_from_metrics(
+            _metric_rows(),
+            params_key="params",
+            metric_key="max_drawdown",
+            direction="minimize",
+        )
+
+        metrics = [t.metric for t in result.trials]
+        assert metrics == pytest.approx([-0.30, -0.05, -0.20, -0.40])
+        assert result.dropped_count == 0
+        summary = plateau_summary(result.trials)
+        assert summary.best_params == {"a": 2.0}
+        assert summary.best_metric == pytest.approx(-0.05)
+
+    def test_direction_changes_the_best_params(self) -> None:
+        def best(direction: str) -> object:
+            result = trials_from_metrics(
+                _metric_rows(),
+                params_key="params",
+                metric_key="max_drawdown",
+                direction=direction,  # type: ignore[arg-type]
+            )
+            return plateau_summary(result.trials).best_params
+
+        assert best("maximize") == {"a": 4.0}
+        assert best("minimize") == {"a": 2.0}
+
+    def test_rejects_repeated_params(self) -> None:
+        rows = [
+            {"params": {"a": 1.0, "b": 2.0}, "m": 0.1},
+            {"params": {"b": 2.0, "a": 1}, "m": 0.2},
+        ]
+
+        with pytest.raises(ValueError, match="row 1 repeats"):
+            trials_from_metrics(
+                rows, params_key="params", metric_key="m", direction="maximize"
+            )
+
+    def test_drops_non_finite_metrics_and_reports_the_count(self) -> None:
+        rows = [
+            {"params": {"a": 1.0}, "m": 0.1},
+            {"params": {"a": 2.0}, "m": math.nan},
+            {"params": {"a": 3.0}, "m": math.inf},
+            {"params": {"a": 4.0}, "m": -math.inf},
+            {"params": {"a": 5.0}, "m": 0.5},
+        ]
+
+        with pytest.warns(DroppedTrialsWarning) as record:
+            result = trials_from_metrics(
+                rows, params_key="params", metric_key="m", direction="maximize"
+            )
+
+        assert [dict(t.params) for t in result.trials] == [{"a": 1.0}, {"a": 5.0}]
+        assert result.dropped_count == 3
+        assert len(record) == 1
+        warning = record[0].message
+        assert isinstance(warning, DroppedTrialsWarning)
+        assert warning.dropped_count == 3
+
+    def test_dropped_count_is_returned_when_warnings_are_ignored(self) -> None:
+        rows = [
+            {"params": {"a": 1.0}, "m": math.nan},
+            {"params": {"a": 2.0}, "m": 0.2},
+        ]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = trials_from_metrics(
+                rows, params_key="params", metric_key="m", direction="maximize"
+            )
+
+        assert result == MetricTrials(trials=(result.trials[0],), dropped_count=1)
+        assert dict(result.trials[0].params) == {"a": 2.0}
+
+    def test_none_and_overflowing_metrics_are_failed_trials(self) -> None:
+        rows: list[dict[str, object]] = [
+            {"params": {"a": 1.0}, "m": None},
+            {"params": {"a": 2.0}, "m": 10**400},
+            {"params": {"a": 3.0}, "m": 0.3},
+        ]
+
+        with pytest.warns(DroppedTrialsWarning):
+            result = trials_from_metrics(
+                rows, params_key="params", metric_key="m", direction="minimize"
+            )
+
+        assert [dict(t.params) for t in result.trials] == [{"a": 3.0}]
+        assert result.dropped_count == 2
+
+    def test_dropping_every_row_returns_no_trials(self) -> None:
+        rows = [{"params": {"a": 1.0}, "m": math.nan}]
+
+        with pytest.warns(DroppedTrialsWarning):
+            result = trials_from_metrics(
+                rows, params_key="params", metric_key="m", direction="maximize"
+            )
+
+        assert result.trials == ()
+        assert result.dropped_count == 1
+
+    def test_dropped_row_still_occupies_its_params(self) -> None:
+        rows = [
+            {"params": {"a": 1.0}, "m": math.nan},
+            {"params": {"a": 1.0}, "m": 0.2},
+        ]
+
+        with pytest.raises(ValueError, match="row 1 repeats"):
+            trials_from_metrics(
+                rows, params_key="params", metric_key="m", direction="maximize"
+            )
+
+    def test_no_warning_when_nothing_is_dropped(
+        self, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        result = trials_from_metrics(
+            _metric_rows(),
+            params_key="params",
+            metric_key="max_drawdown",
+            direction="maximize",
+        )
+
+        assert len(result.trials) == 4
+        assert result.dropped_count == 0
+        assert not [w for w in recwarn if w.category is DroppedTrialsWarning]
+
+    @pytest.mark.parametrize(
+        ("rows", "direction", "match"),
+        [
+            ([{"params": {"a": 1.0}, "m": 0.1}], "max", "direction"),
+            ([{"params": {"a": 1.0}}], "maximize", "no 'm'"),
+            ([{"m": 0.1}], "maximize", "no 'params'"),
+            ([{"params": {"a": 1.0}, "m": "0.1"}], "maximize", "metric is not numeric"),
+            ([{"params": {"a": math.nan}, "m": 0.1}], "maximize", "not finite"),
+            ([{"params": [("a", 1.0)], "m": 0.1}], "maximize", "non-empty mapping"),
+            ([{"params": {}, "m": 0.1}], "maximize", "non-empty mapping"),
+        ],
+        ids=[
+            "direction",
+            "no-metric",
+            "no-params",
+            "str-metric",
+            "nan-param",
+            "list-params",
+            "empty-params",
+        ],
+    )
+    def test_rejects_invalid_rows(
+        self, rows: list[dict[str, object]], direction: str, match: str
+    ) -> None:
+        with pytest.raises(ValueError, match=match):
+            trials_from_metrics(
+                rows,
+                params_key="params",
+                metric_key="m",
+                direction=direction,  # type: ignore[arg-type]
+            )
+
+
+class TestMinNeighborhood:
+    def test_default_keeps_existing_behaviour(self) -> None:
+        trials = _corner_grid()
+
+        default = plateau_summary(trials)
+        explicit = plateau_summary(trials, min_neighborhood=None)
+
+        assert explicit == default
+        assert default.min_neighborhood is None
+        assert default.n_below_min_neighborhood == 0
+        assert default.plateau_best_params == {"x": 0.0, "y": 0.0}
+        assert default.plateau_best_score == pytest.approx(-4 / 3)
+
+    def test_four_excludes_only_the_corners_of_a_5x5_grid(self) -> None:
+        summary = plateau_summary(_corner_grid(), min_neighborhood=4)
+
+        assert summary.min_neighborhood == 4
+        assert summary.n_below_min_neighborhood == 4
+        assert summary.plateau_best_params == {"x": 0.0, "y": 1.0}
+        assert summary.plateau_best_score == pytest.approx(-1.6)
+
+    def test_eight_leaves_only_the_interior_of_a_5x5_grid(self) -> None:
+        summary = plateau_summary(_corner_grid(), min_neighborhood=8)
+
+        assert summary.n_below_min_neighborhood == 16
+        assert summary.plateau_best_params == {"x": 1.0, "y": 1.0}
+        assert summary.plateau_best_score == pytest.approx(-2.0)
+        assert summary.grid_distance == 1
+
+    def test_excluded_trials_still_report_scores(self) -> None:
+        trials = _corner_grid()
+
+        scores = plateau_scores(trials)
+        corner = scores[_by_params(trials, x=0.0, y=0.0)]
+
+        assert corner.neighborhood_size == 3
+        assert corner.score == pytest.approx(-4 / 3)
+
+    def test_threshold_excluding_everything_returns_none(self) -> None:
+        summary = plateau_summary(_corner_grid(), min_neighborhood=9)
+
+        assert summary.n_below_min_neighborhood == 25
+        assert summary.plateau_best_params is None
+        assert summary.plateau_best_metric is None
+        assert summary.plateau_best_score is None
+        assert summary.metric_gap is None
+        assert summary.grid_distance is None
+        assert summary.best_params == {"x": 0.0, "y": 0.0}
+
+    def test_threshold_applies_to_wider_radius(self) -> None:
+        summary = plateau_summary(_corner_grid(), radius=2, min_neighborhood=24)
+
+        assert summary.n_below_min_neighborhood == 24
+        assert summary.plateau_best_params == {"x": 2.0, "y": 2.0}
+
+    def test_empty_trials_record_the_threshold(self) -> None:
+        summary = plateau_summary([], min_neighborhood=4)
+
+        assert summary.min_neighborhood == 4
+        assert summary.n_below_min_neighborhood == 0
+        assert summary.plateau_best_params is None
+
+    @pytest.mark.parametrize("min_neighborhood", [0, -1, True, 2.5])
+    def test_rejects_invalid_threshold(self, min_neighborhood: object) -> None:
+        with pytest.raises(ValueError, match="min_neighborhood"):
+            plateau_summary(
+                _corner_grid(),
+                min_neighborhood=min_neighborhood,  # type: ignore[arg-type]
+            )
+
+
+class TestAxisSizes:
+    def test_reports_grid_points_per_axis(self) -> None:
+        trials = [
+            Trial(params={"lookback": float(i), "threshold": float(j)}, metric=0.0)
+            for i, j in itertools.product(range(5), range(3))
+        ]
+
+        summary = plateau_summary(trials)
+
+        assert summary.axis_sizes == {"lookback": 5, "threshold": 3}
+
+    def test_empty_trials_have_no_axes(self) -> None:
+        assert plateau_summary([]).axis_sizes == {}
