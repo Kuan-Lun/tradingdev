@@ -1,5 +1,6 @@
-"""Tests for the Sharpe ratio, its bootstrap interval, and PSR."""
+"""Tests for the Sharpe ratio, its bootstrap interval, PSR, and DSR."""
 
+import itertools
 import math
 from statistics import NormalDist
 
@@ -10,6 +11,7 @@ from arch.bootstrap import IIDBootstrap
 
 from tradingdev.domain.statistics.sharpe import (
     MIN_BOOTSTRAP_OBSERVATIONS,
+    deflated_sharpe_ratio,
     probabilistic_sharpe_ratio,
     sharpe_confidence_interval,
     sharpe_ratio,
@@ -200,4 +202,217 @@ class TestValidation:
                 [0.01, 0.02],
                 periods_per_year=_DAILY,
                 **kwargs,  # type: ignore[arg-type]
+            )
+
+
+def _selected_returns() -> npt.NDArray[np.float64]:
+    return np.random.default_rng(7).normal(0.001, 0.01, 365)
+
+
+class TestDeflatedSharpeRatio:
+    def test_single_trial_equals_psr_against_zero(self) -> None:
+        returns = _selected_returns()
+
+        result = deflated_sharpe_ratio(returns, [1.8], periods_per_year=_DAILY)
+
+        assert result is not None
+        assert result.n_trials == 1
+        assert result.hurdle_annualised == 0.0
+        assert result.trial_sharpe_std_annualised is None
+        assert result.dsr == pytest.approx(probabilistic_sharpe_ratio(returns))
+        assert result.dsr == pytest.approx(result.psr_vs_zero)
+
+    def test_equal_trial_sharpes_equal_psr_against_zero(self) -> None:
+        returns = _selected_returns()
+
+        result = deflated_sharpe_ratio(returns, [1.2] * 5, periods_per_year=_DAILY)
+
+        assert result is not None
+        assert result.n_trials == 5
+        assert result.trial_sharpe_std_annualised == 0.0
+        assert result.hurdle_annualised == 0.0
+        assert result.dsr == pytest.approx(probabilistic_sharpe_ratio(returns))
+
+    def test_hurdle_grows_with_the_number_of_trials(self) -> None:
+        hurdles = []
+        for n_trials in (2, 5, 10, 50, 200):
+            result = deflated_sharpe_ratio(
+                _selected_returns(),
+                [0.5, 1.5],
+                periods_per_year=_DAILY,
+                n_trials=n_trials,
+            )
+            assert result is not None
+            assert result.n_trials == n_trials
+            hurdles.append(result.hurdle_annualised)
+
+        assert all(a < b for a, b in itertools.pairwise(hurdles))
+
+    def test_hurdle_grows_with_trial_sharpe_dispersion(self) -> None:
+        hurdles = []
+        for width in (0.25, 0.5, 1.0, 2.0):
+            result = deflated_sharpe_ratio(
+                _selected_returns(),
+                [1.0 - width, 1.0, 1.0 + width],
+                periods_per_year=_DAILY,
+            )
+            assert result is not None
+            hurdles.append(result.hurdle_annualised)
+
+        assert all(a < b for a, b in itertools.pairwise(hurdles))
+
+    @pytest.mark.parametrize(
+        ("trial_sharpes", "n_trials"),
+        [([1.0], None), ([0.5, 1.5], None), ([-1.0, 0.0, 2.0], 100), ([3.0, 3.0], 2)],
+    )
+    def test_dsr_never_exceeds_psr_against_zero(
+        self, trial_sharpes: list[float], n_trials: int | None
+    ) -> None:
+        result = deflated_sharpe_ratio(
+            _selected_returns(),
+            trial_sharpes,
+            periods_per_year=_DAILY,
+            n_trials=n_trials,
+        )
+
+        assert result is not None
+        assert result.hurdle_annualised >= 0.0
+        assert result.dsr <= result.psr_vs_zero
+
+    def test_annualised_trial_sharpes_are_converted_per_period(self) -> None:
+        """Regression test for feeding annualised Sharpes as per-period ones.
+
+        The same per-period trial Sharpes expressed at 365 and at 252
+        periods per year must give the same per-period hurdle, so the DSR
+        is unchanged and the annualised hurdles differ by sqrt(252 / 365).
+        """
+        returns = _selected_returns()
+        daily = [0.4, 1.1, 1.9, 2.6]
+        trading = [value * math.sqrt(252) / math.sqrt(365) for value in daily]
+
+        at_365 = deflated_sharpe_ratio(returns, daily, periods_per_year=365)
+        at_252 = deflated_sharpe_ratio(returns, trading, periods_per_year=252)
+
+        assert at_365 is not None
+        assert at_252 is not None
+        assert at_252.hurdle_annualised / at_365.hurdle_annualised == pytest.approx(
+            math.sqrt(252 / 365)
+        )
+        assert 0.01 < at_365.dsr < 0.99
+        assert at_252.dsr == pytest.approx(at_365.dsr)
+
+    def test_hurdle_matches_hand_calculation(self) -> None:
+        result = deflated_sharpe_ratio(
+            _selected_returns(),
+            [-6.00, -6.67, -7.57],
+            periods_per_year=365,
+            n_trials=3,
+        )
+
+        assert result is not None
+        assert 0.6 <= result.hurdle_annualised <= 0.75
+        normal = NormalDist()
+        gamma = 0.5772156649015329
+        expected_max = (1 - gamma) * normal.inv_cdf(2 / 3) + gamma * normal.inv_cdf(
+            1 - 1 / (3 * math.e)
+        )
+        std = float(np.std([-6.00, -6.67, -7.57], ddof=1))
+        assert result.trial_sharpe_std_annualised == pytest.approx(std)
+        assert result.hurdle_annualised == pytest.approx(std * expected_max)
+        per_period_hurdle = std * expected_max / math.sqrt(365)
+        assert result.dsr == pytest.approx(
+            probabilistic_sharpe_ratio(
+                _selected_returns(), benchmark_sr=per_period_hurdle
+            )
+        )
+
+    def test_accepts_numpy_integer_trial_count(self) -> None:
+        result = deflated_sharpe_ratio(
+            _selected_returns(),
+            [0.5, 1.5],
+            periods_per_year=_DAILY,
+            n_trials=np.int64(5),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        assert result.n_trials == 5
+
+    def test_huge_trial_count_keeps_a_finite_hurdle(self) -> None:
+        result = deflated_sharpe_ratio(
+            _selected_returns(),
+            [0.5, 1.5],
+            periods_per_year=_DAILY,
+            n_trials=10**18,
+        )
+
+        assert result is not None
+        assert math.isfinite(result.hurdle_annualised)
+        assert result.hurdle_annualised > 0.0
+
+    def test_single_trial_count_without_trial_sharpes(self) -> None:
+        returns = _selected_returns()
+
+        result = deflated_sharpe_ratio(returns, [], periods_per_year=_DAILY, n_trials=1)
+
+        assert result is not None
+        assert result.hurdle_annualised == 0.0
+        assert result.dsr == pytest.approx(probabilistic_sharpe_ratio(returns))
+
+    def test_too_few_trial_sharpes_for_several_trials(self) -> None:
+        assert (
+            deflated_sharpe_ratio(
+                _selected_returns(), [1.0], periods_per_year=_DAILY, n_trials=3
+            )
+            is None
+        )
+
+    def test_undefined_psr_returns_none(self) -> None:
+        assert (
+            deflated_sharpe_ratio([0.01] * 30, [0.5, 1.5], periods_per_year=_DAILY)
+            is None
+        )
+
+    @pytest.mark.parametrize(
+        ("returns", "trial_sharpes", "kwargs", "match"),
+        [
+            ([0.01, math.nan, 0.02], [1.0, 2.0], {}, "returns must be finite"),
+            ([0.01, 0.02], [1.0, math.inf], {}, "trial Sharpe 1 is not finite"),
+            ([0.01, 0.02], [1.0, None], {}, "trial Sharpe 1 is not numeric"),
+            ([0.01, 0.02], [], {}, "empty; give n_trials"),
+            ([0.01, 0.02], [1.0], {"n_trials": 0}, "n_trials"),
+            ([0.01, 0.02], [1.0], {"n_trials": True}, "n_trials"),
+            ([0.01, 0.02], [1.0], {"n_trials": 2.0}, "n_trials"),
+            ([0.01, 0.02], [1.0, 2.0, 3.0], {"n_trials": 2}, "smaller"),
+        ],
+        ids=[
+            "nan-return",
+            "inf-trial",
+            "none-trial",
+            "no-trials",
+            "zero-n",
+            "bool-n",
+            "float-n",
+            "n-below-trials",
+        ],
+    )
+    def test_rejects_invalid_inputs(
+        self,
+        returns: list[float],
+        trial_sharpes: list[object],
+        kwargs: dict[str, object],
+        match: str,
+    ) -> None:
+        with pytest.raises(ValueError, match=match):
+            deflated_sharpe_ratio(
+                returns,
+                trial_sharpes,  # type: ignore[arg-type]
+                periods_per_year=_DAILY,
+                **kwargs,  # type: ignore[arg-type]
+            )
+
+    @pytest.mark.parametrize("periods_per_year", [0.0, -1.0, math.inf, math.nan])
+    def test_rejects_invalid_periods_per_year(self, periods_per_year: float) -> None:
+        with pytest.raises(ValueError, match="periods_per_year"):
+            deflated_sharpe_ratio(
+                [0.01, 0.02], [1.0, 2.0], periods_per_year=periods_per_year
             )
