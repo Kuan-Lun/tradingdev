@@ -349,7 +349,7 @@ class TestDeflatedSharpeRatio:
         assert math.isfinite(result.hurdle_annualised)
         assert result.hurdle_annualised > 0.0
 
-    def test_largest_float_trial_count_keeps_a_finite_hurdle(self) -> None:
+    def test_trial_count_near_float_limit_keeps_a_finite_hurdle(self) -> None:
         # N * e would overflow to infinity here; 1/N divided by e does not.
         result = deflated_sharpe_ratio(
             _selected_returns(),
