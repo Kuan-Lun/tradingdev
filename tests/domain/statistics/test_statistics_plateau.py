@@ -669,7 +669,7 @@ class TestFailedSlice:
         expected = np.mean([0.1 + 1.0, 0.1 + 2.0, 0.1 + 3.0, 0.2 + 1.0, 0.2 + 3.0])
         assert below.score == pytest.approx(expected)
 
-    def test_summary_reports_the_full_axis_and_true_best_neighborhood(self) -> None:
+    def test_summary_reports_the_full_searched_axis(self) -> None:
         result = self._metric_trials()
 
         summary = plateau_summary(result.trials, axes=result.axes)
