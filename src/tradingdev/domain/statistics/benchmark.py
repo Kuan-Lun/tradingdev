@@ -191,6 +191,21 @@ def compare_to_benchmark(
     intercepts. See the module docstring for how to read beta and why the
     benchmark pays no costs.
 
+    Annualisation differs within this project on purpose. The catalog's
+    ``annual_return`` (``empyrical.annual_return``) compounds daily
+    returns, while the active-return figures here (``alpha_annualised``,
+    ``excess_return_annualised``, ``tracking_error_annualised``,
+    ``information_ratio``) scale arithmetically. Both are correct for what
+    they measure. A return figure answers how much capital grew, which is a
+    compounded quantity. The information ratio is defined on the arithmetic
+    mean active return over its standard deviation, so the excess return
+    and alpha must be arithmetic for ``information_ratio`` to equal
+    ``excess_return_annualised / tracking_error_annualised``. Side by side
+    in one report the two can differ substantially: in particular,
+    ``excess_return_annualised`` is not the difference of the two series'
+    ``annual_return``, and on daily data with a modest edge an arithmetic
+    0.168 corresponds to a compounded 0.183.
+
     Raises:
         ValueError: If ``periods_per_year`` is not positive and finite, the
             series share no period, an index has duplicate labels, or a
