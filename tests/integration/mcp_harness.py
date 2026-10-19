@@ -41,7 +41,6 @@ class SimulatedUserApproval:
     """An explicit test user callback, never evidence of a real human UI action."""
 
     action: Literal["accept", "decline", "cancel"] = "accept"
-    approved: bool = True
     requests: list[ElicitRequestParams] = field(default_factory=list)
 
     async def __call__(
@@ -52,7 +51,7 @@ class SimulatedUserApproval:
         self.requests.append(params)
         return ElicitResult(
             action=self.action,
-            content={"approved": self.approved} if self.action == "accept" else None,
+            content={} if self.action == "accept" else None,
         )
 
 

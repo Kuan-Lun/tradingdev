@@ -263,8 +263,9 @@ data:
    and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
 6. `request_execution_confirmation(plan_id)`: asks the MCP client to show a form
-   with an unchecked approval field. Only an accepted form with `approved: true`
-   submits the captured manifest. Decline, cancellation, timeout, malformed responses,
+   with no input fields; the client's accept action is the approval and submits
+   the captured manifest. Any submitted field, or an accept without content, is
+   rejected. Decline, cancellation, timeout, malformed responses,
    and clients without form elicitation do not launch a job. The server trusts the
    client to obtain the user's response; a model-supplied approval argument is not
    accepted. The CLI remains an explicit execution interface without this MCP form.

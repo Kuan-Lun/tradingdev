@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import anyio
 from mcp.server.fastmcp import Context  # noqa: TC002
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from tradingdev.app.contracts.plans import PlanRejected, PlanResponse, PlanStarted
 from tradingdev.app.execution_plan_service import (
@@ -26,10 +26,14 @@ if TYPE_CHECKING:
 
 
 class UserApproval(BaseModel):
-    """Only the client elicitation response can supply this model."""
+    """Field-less consent form: the client's accept action is the approval.
+
+    A separate checkbox duplicated the accept button, and clients that cannot
+    toggle booleans could never approve. Only an elicitation response can
+    supply this model; any submitted field is rejected.
+    """
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    approved: bool = Field(default=False, title="同意依上述設定開始正式執行")
 
 
 def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
@@ -263,7 +267,7 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
                 answer = await ctx.elicit(
                     message=challenge.message, schema=UserApproval
                 )
-            accepted = answer.action == "accept" and answer.data.approved
+            accepted = answer.action == "accept"
             return await anyio.to_thread.run_sync(
                 partial(service.finish_confirmation, challenge, accepted=accepted)
             )

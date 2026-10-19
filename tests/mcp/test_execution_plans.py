@@ -84,7 +84,8 @@ def test_prepare_read_and_user_confirmation_bind_one_manifest_and_one_job(
             assert prepared["confirmation_text"] in approval.requests[0].message
             form = approval.requests[0]
             assert form.mode == "form"
-            assert form.requestedSchema["properties"]["approved"]["default"] is False
+            assert form.requestedSchema["properties"] == {}
+            assert form.requestedSchema["additionalProperties"] is False
             assert (
                 context.service.jobs.load_manifest(started["job_id"]).manifest_hash
                 == prepared["manifest_hash"]
@@ -99,14 +100,12 @@ def test_prepare_read_and_user_confirmation_bind_one_manifest_and_one_job(
     asyncio.run(check())
 
 
-@pytest.mark.parametrize(
-    "action,approved", [("decline", True), ("cancel", True), ("accept", False)]
-)
+@pytest.mark.parametrize("action", ["decline", "cancel"])
 def test_unapproved_elicitation_cannot_create_a_job(
-    tmp_path: Path, action: Any, approved: bool
+    tmp_path: Path, action: Any
 ) -> None:
     context = plan_context(tmp_path)
-    approval = SimulatedUserApproval(action=action, approved=approved)
+    approval = SimulatedUserApproval(action=action)
 
     async def check() -> None:
         async with create_connected_server_and_client_session(
@@ -156,10 +155,10 @@ def test_unsupported_client_cannot_launch_or_consume_the_ready_plan(
 
 @pytest.mark.parametrize(
     "content",
-    [{}, {"approved": "true"}, {"approved": 1}, {"approved": True, "unexpected": True}],
+    [None, {"approved": True}, {"approved": False}, {"unexpected": "x"}],
 )
 def test_malformed_user_answer_never_authorizes_execution(
-    tmp_path: Path, content: dict[str, Any]
+    tmp_path: Path, content: dict[str, Any] | None
 ) -> None:
     context = plan_context(tmp_path)
 
@@ -177,7 +176,11 @@ def test_malformed_user_answer_never_authorizes_execution(
                 client, "request_execution_confirmation", plan_id=prepared["plan_id"]
             )
             assert result["success"] is False
-            assert result["code"] in {"confirmation_declined", "confirmation_failed"}
+            assert result["code"] == "confirmation_failed"
+            retained = await _call(
+                client, "get_execution_plan", plan_id=prepared["plan_id"]
+            )
+            assert retained["status"] == "ready"
 
     asyncio.run(check())
     assert context.runner.calls == []
@@ -262,7 +265,7 @@ def test_concurrent_confirmation_has_one_active_question_and_one_launch(
         ) -> ElicitResult:
             requested.set()
             await release.wait()
-            return ElicitResult(action="accept", content={"approved": True})
+            return ElicitResult(action="accept", content={})
 
         async with (
             create_connected_server_and_client_session(

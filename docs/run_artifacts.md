@@ -368,14 +368,15 @@ queued records lacking that identity remain inspectable through the returned job
 ID but are not reported as successfully started work.
 
 `request_execution_confirmation` requires advertised MCP form elicitation.
-Only an accepted response with the explicit approval field set to true submits
-the fixed manifest. Unsupported clients, declined/cancelled forms and malformed
-responses never launch work. Each form response has a separate 300-second
+The form has no input fields: the client's accept action is the approval and
+submits the fixed manifest. Unsupported clients, declined/cancelled forms and
+malformed responses (any submitted field, or an accept without content) never
+launch work. Each form response has a separate 300-second
 (five-minute) deadline, independent of the plan's one-hour lifetime. A form timeout
 returns `confirmation_failed`, launches no job and releases the active interaction
 back to `ready`; the user can request confirmation again while the plan remains
-valid. Protocol errors likewise release the interaction; a rejected form cancels
-the plan. The server relies on
+valid. Protocol errors and malformed responses likewise release the interaction; a
+declined or cancelled form cancels the plan. The server relies on
 the client to present the form to the user and cannot prove arbitrary clients
 obtained a human decision. Source or effective-setting changes require a new
 plan, fresh sample evidence and another confirmation. CLI commands are explicit
