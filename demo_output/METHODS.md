@@ -202,7 +202,7 @@ $$
 $=\frac{1}{M}\sum_m \mathbf 1[\text{PnL}_m<0]$（`scripts/demo_statistics.py` 的 `write_kd_inference()`），
 實測為 12/12。
 
-### 2.2 年化 Sharpe（`sharpe.py:95-107`、`_period_sharpe`，`sharpe.py:335-340`）
+### 2.2 年化 Sharpe（`sharpe.py:144-156`、`_period_sharpe`，`sharpe.py:448-453`）
 
 $$
 \widehat{SR}_{\text{day}} = \frac{\bar r}{s},\quad
@@ -228,18 +228,20 @@ $$
 （`6826e41:metrics.py:51`），使用逐根 K 棒報酬，`freq="1h"`，vectorbt 的 `year_freq` 為 365 天，
 所以年化因子是 $\sqrt{8760}$。本文件只把它當作對照，圖中沒有使用。
 
-### 2.3 Stationary bootstrap 信賴區間（`sharpe_confidence_interval`，`sharpe.py:110-172`）
+### 2.3 Stationary bootstrap 信賴區間（`sharpe_interval_outcome`，`sharpe.py:182-259`）
+
+`sharpe_confidence_interval`（`sharpe.py:159-179`）呼叫 `sharpe_interval_outcome`，並把所有 `IntervalUnavailable` 轉成 `None`。
 
 - **方法**：Politis 與 Romano（1994）的 stationary bootstrap，用
   `arch.bootstrap.StationaryBootstrap(block_size, values, seed=np.random.default_rng(seed))` 實作
-  （`sharpe.py:155-157`）。
+  （`sharpe.py:242-244`）。
   每個位置以機率 $1/b$ 開始新區塊（起點均勻抽取），否則延續前一個索引 +1，
   所以區塊長度服從平均 $b$ 的幾何分配。
   ⚠ arch 的實作會**循環接回**：索引超過 $n-1$ 時回到 0（`arch/bootstrap/_samplers_python.py:29-33`）。
-- **block length 的估計**（`sharpe.py:153-154`）：
+- **block length 的估計**（`sharpe.py:240-241`）：
   呼叫 `arch.bootstrap.optimal_block_length(values)`，取回傳表格 `stationary` 欄的第一列。
   它採用 Politis 與 White（2004）〈Automatic Block-Length Selection for the Dependent Bootstrap〉，
-  並加上 Patton、Politis 與 White（2009）的更正（docstring `sharpe.py:126-133`；
+  並加上 Patton、Politis 與 White（2009）的更正（docstring `sharpe.py:198-206`；
   arch 文獻引用見 `arch/bootstrap/base.py:185-190`）。
 
 $$
@@ -248,13 +250,17 @@ $$
 
 ⚠ **差異**：估計值被**無條件進位成整數**，而不是直接使用連續值。
 
-- **樣本數門檻**：$n < 20$（`MIN_BOOTSTRAP_OBSERVATIONS`，`sharpe.py:42`）時回傳 `None`。
+- **樣本數門檻**：$n < 20$（`MIN_BOOTSTRAP_OBSERVATIONS`，`sharpe.py:45`）時沒有區間。
+  `sharpe_interval_outcome` 回傳 `IntervalUnavailable`（`sharpe.py:53-92`），
+  `reason` 為 `"insufficient_observations"`，並附上實際樣本數、門檻與點估計。
+  門檻以期數計算，所以月報酬需要 20 個月，一年的月報酬永遠沒有區間。
+  Sharpe 本身未定義時 `reason` 為 `"undefined_statistic"`，沒有任何有效重抽樣時為 `"no_valid_resample"`。
 - **reps 與 seed**：`kd_inference.md` 使用 `reps = 1000`（`BOOTSTRAP_REPS`）、`seed = 0`（`SEED`），
   見 `scripts/demo_statistics.py` 的常數 `SEED`、`BOOTSTRAP_REPS` 與 `write_kd_inference()`。
-- **每次重抽樣的統計量**（`sharpe.py:158-159`）：
+- **每次重抽樣的統計量**（`sharpe.py:245-246`）：
   $\widehat{SR}^{*}_{\text{ann}} = \widehat{SR}^{*}_{\text{day}}\cdot\sqrt{365}$。
   未定義的重抽樣（全部報酬相等）會變成 NaN 並被丟棄，剩下的數量記在 `valid_reps`。
-- **區間方法：百分位數法**（`sharpe.py:162-163`），信賴水準為預設的 0.95：
+- **區間方法：百分位數法**（`sharpe.py:249-250`），信賴水準為預設的 0.95：
 
 $$
 \Big[\ Q_{0.025}\big(\{\widehat{SR}^{*}_{\text{ann}}\}\big),\ \ Q_{0.975}\big(\{\widehat{SR}^{*}_{\text{ann}}\}\big)\ \Big]
@@ -265,7 +271,7 @@ $$
 
 **本資料實測**：$b = 2$ 天，CI 為 $[-9.18, -5.87]$，`valid_reps = 1000`。
 
-### 2.4 PSR（`probabilistic_sharpe_ratio`，`sharpe.py:175-212`）
+### 2.4 PSR（`probabilistic_sharpe_ratio`，`sharpe.py:262-299`）
 
 Bailey 與 López de Prado（2012）：
 
@@ -278,7 +284,7 @@ $$
 
 - $\widehat{SR}$ 是**每期（日）、未年化**的 Sharpe，由 `_period_sharpe` 計算，分母是 `ddof=1` 的標準差。
 - $SR^{*}$ 是 `benchmark_sr`，腳本使用預設值 0（`scripts/demo_statistics.py` 的 `write_kd_inference()`）。
-- **偏態與峰態使用母體動差（除以 $n$）**（`sharpe.py:204-208`）：
+- **偏態與峰態使用母體動差（除以 $n$）**（`sharpe.py:291-295`）：
 
 $$
 m_k = \frac{1}{n}\sum_{d}(r_d-\bar r)^k,\qquad
@@ -286,7 +292,7 @@ m_k = \frac{1}{n}\sum_{d}(r_d-\bar r)^k,\qquad
 \hat\gamma_4 = \frac{m_4}{m_2^{2}}\ \ \text{（非超額峰態，常態分配為 3）}
 $$
 
-- 根號內的值 $\le 0$ 時回傳 `None`（`sharpe.py:209-210`）。$\Phi$ 是 `statistics.NormalDist().cdf`。
+- 根號內的值 $\le 0$ 時回傳 `None`（`sharpe.py:296-297`）。$\Phi$ 是 `statistics.NormalDist().cdf`。
 
 ⚠ **差異**：同一個式子裡，Sharpe 的標準差用樣本估計（`ddof=1`），偏態與峰態卻用母體動差，
 也沒有做小樣本偏誤校正。本資料 PSR = 0.0000。
@@ -451,18 +457,20 @@ $$
 - 模組 docstring 把它定位為**次要指標**，因為分母只由少數鄰居估計，數值不穩定。
 - 實測：A = (1.384 − 1.056)/0.164 = 1.997；B = (2.000 − 0.039)/0.224 = 8.752。
 
-### 2.12 forest 上排：各組參數的 Sharpe 區間（`interval_table`，`comparison.py:266-330`）
+### 2.12 forest 上排：各組參數的 Sharpe 區間（`interval_table_outcome`，`comparison.py:340-417`）
+
+`interval_table`（`comparison.py:311-337`）呼叫 `interval_table_outcome`：重疊期數不足時整張表回傳 `None`，其他無法計算的列轉成 `None`。
 
 1. 每組參數的日報酬：`period_returns(equity_curve, timestamps, "daily")`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
-2. `align_returns`（`comparison.py:145-182`）用 `pd.concat(..., join="inner")` 取三組都有的日期（`:174`）。
+2. `align_returns`（`comparison.py:153-191`）用 `pd.concat(..., join="inner")` 取三組都有的日期（`:183`）。
    標題的「366 common days」是 `overlap`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
-3. **三組一起重抽樣**：用同一個 `StationaryBootstrap(block_size, *columns, ...)`（`comparison.py:307-309`），
+3. **三組一起重抽樣**：用同一個 `StationaryBootstrap(block_size, *columns, ...)`（`comparison.py:391-393`），
    每次重抽樣對三組序列使用**相同的日期索引**。
-4. block size（`_block_size`，`comparison.py:340-349`）：對**每一組**分別算 Politis–White 估計值，取**最大值**後無條件進位，
+4. block size（`_block_size`，`comparison.py:450-459`）：對**每一組**分別算 Politis–White 估計值，取**最大值**後無條件進位，
    至少為 1。完全沒有變動的序列不參與估計；所有估計值都不是有限數時，$b = 1$。實測 $b = 2$。
 5. 統計量為 `partial(sharpe_ratio, periods_per_year=365.0)`，`reps = 2000`（`COMPARISON_REPS`）、
    `seed = 0`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
-6. 區間用百分位數法 $[Q_{0.025}, Q_{0.975}]$，每組各自丟棄 NaN 後計算（`comparison.py:315-319`）。
+6. 區間用百分位數法 $[Q_{0.025}, Q_{0.975}]$，每組各自丟棄 NaN 後計算（`comparison.py:399-406`）。
 
 | 標籤 | 點估計 | 95% CI | valid_reps |
 | --- | ---: | --- | ---: |
@@ -474,10 +482,12 @@ KD(14, 3, 3) 的區間和 `kd_inference.md` 的 $[-9.18, -5.87]$ 不同，但點
 原因是 reps（2000 對 1000）不同，而且這裡是三組共同重抽樣，亂數消耗方式也不同。
 兩邊的 block size 實測都是 2。
 
-### 2.13 forest 下排：配對差異（`difference_interval`，`comparison.py:185-263`）
+### 2.13 forest 下排：配對差異（`difference_interval_outcome`，`comparison.py:221-308`）
 
-**對同一組索引重抽樣**：先以 `align_returns({"a": a, "b": b})` 對齊日期（`:225`），再用
-`StationaryBootstrap(block_size, values_a, values_b, seed=np.random.default_rng(seed))`（`:241-243`）。
+`difference_interval`（`comparison.py:194-218`）呼叫 `difference_interval_outcome`，並把所有 `IntervalUnavailable` 轉成 `None`。
+
+**對同一組索引重抽樣**：先以 `align_returns({"a": a, "b": b})` 對齊日期（`:265`），再用
+`StationaryBootstrap(block_size, values_a, values_b, seed=np.random.default_rng(seed))`（`:286-288`）。
 arch 對所有位置參數套用**同一組索引**，所以每次重抽樣中 $a$、$b$ 取到的是同一批日期，保留了兩者的相關性。
 block size 是兩序列 Politis–White 估計值中的較大者，再無條件進位（`_block_size`）。
 每一對都會重新以 `seed = 0` 建立亂數產生器（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
@@ -487,10 +497,10 @@ $$
 \Delta^{*}_j = \widehat{SR}_{\text{ann}}(a^{*}_j) - \widehat{SR}_{\text{ann}}(b^{*}_j),\ \ j=1,\dots,B
 $$
 
-區間是 $[Q_{0.025}(\Delta^*), Q_{0.975}(\Delta^*)]$（百分位數法，`:248`），`reps = 2000`。
+區間是 $[Q_{0.025}(\Delta^*), Q_{0.975}(\Delta^*)]$（百分位數法，`:293`），`reps = 2000`。
 $B$ 是丟棄 NaN 後的有效重抽樣數。
 
-**p 值：雙尾**（`comparison.py:249, 254`；docstring `:199-202`）：
+**p 值：雙尾**（`comparison.py:294, 299`；docstring `:245-248`）：
 
 $$
 p = \min\!\Big(1,\ 2\cdot\min\Big\{\tfrac{1}{B}\textstyle\sum_j \mathbf 1[\Delta^*_j \le 0],\ \ \tfrac{1}{B}\sum_j \mathbf 1[\Delta^*_j \ge 0]\Big\}\Big)
@@ -502,7 +512,7 @@ docstring 說明，這個 p 值是讓百分位數區間剛好排除 0 的最小 
 再看 $\hat\Delta$ 的位置。這裡直接看**未平移**的 $\Delta^*$ 分配中 0 落在哪一側，屬於「反轉百分位數區間」的做法。
 此外，剛好等於 0 的抽樣兩側都會計入。
 
-**rho**（`_correlation`，`comparison.py:352-358`；欄位說明 `:114-115`）：
+**rho**（`_correlation`，`comparison.py:462-468`；欄位說明 `:132-133`）：
 
 $$
 \rho = \mathrm{corr}_{\text{Pearson}}\big(r^{a}_d,\ r^{b}_d\big),\qquad d \in \text{兩組共同日期}
@@ -553,7 +563,7 @@ $$
 2. **三組參數未經調校**：forest 圖註腳寫的是「untuned parameter sets」。
    KD(9, 3, 3)、KD(14, 3, 3)、KD(21, 5, 5) 是程式中手動列出的常見組合（`scripts/demo_statistics.py` 的常數 `KD_VARIANTS`），
    沒有經過最佳化或搜尋，所以不能當作「最佳參數」的證據，也不代表 KD 策略的參數空間。
-3. **CI 重疊不代表不顯著**：`comparison.py:17-20` 與 `interval_table` docstring `:285-289` 指出，
+3. **CI 重疊不代表不顯著**：`comparison.py:17-20` 與 `interval_table_outcome` docstring `:354-358` 指出，
    各自的區間忽略了策略之間的相關性，只能當作保守的初步篩選。區間不重疊可以推得差異顯著，
    但區間重疊**不能**推得不顯著，正式判斷要看配對差異。
 4. **`cost_per_turnover` 為何低估**：`breakeven.py:20-22` 指出，成本是交易紀錄 `fee` 欄位的加總。
@@ -592,7 +602,7 @@ $$
 | 年化期數 | 365.0 | `scripts/demo_statistics.py` 的 `DAILY_PERIODS_PER_YEAR` |
 | 成本估計費率 | fees 0.0006、slippage 0.0005 | `scripts/demo_statistics.py` 的 `FEES`、`SLIPPAGE` |
 | 平原半徑 | 1 | `plateau.py` 的 `DEFAULT_RADIUS` |
-| bootstrap 最少觀測數 | 20 | `sharpe.py:42` |
+| bootstrap 最少觀測數 | 20 | `sharpe.py:45` |
 | 函式庫版本 | `arch` 8.0.0、`vectorbt` 1.0.0（`uv.lock` 鎖定） | `.venv` |
 
 ### 重現指令

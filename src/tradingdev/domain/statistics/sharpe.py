@@ -19,6 +19,9 @@ Conventions:
   :mod:`tradingdev.domain.statistics.performance`.
 * Undefined figures (fewer than two returns, zero dispersion, too few
   returns to bootstrap) are ``None`` rather than infinities or zeros.
+  :func:`sharpe_interval_outcome` returns an :class:`IntervalUnavailable`
+  instead of ``None``, saying why the interval is missing; monthly returns
+  need ``MIN_BOOTSTRAP_OBSERVATIONS`` months, so one year never has one.
 * Non-finite returns raise ``ValueError``; the caller decides how to treat
   missing periods before calling.
 """
@@ -29,7 +32,7 @@ import math
 import numbers
 from dataclasses import dataclass
 from statistics import NormalDist
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
@@ -41,6 +44,52 @@ if TYPE_CHECKING:
 
 MIN_BOOTSTRAP_OBSERVATIONS = 20
 EULER_MASCHERONI = 0.5772156649015329
+
+UnavailableReason = Literal[
+    "insufficient_observations", "undefined_statistic", "no_valid_resample"
+]
+
+
+@dataclass(frozen=True)
+class IntervalUnavailable:
+    """Why a bootstrap interval is missing, with what could still be computed.
+
+    The reasons are checked in this order, so the first that applies wins:
+
+    * ``"insufficient_observations"``: fewer than ``min_observations``
+      returns (after alignment, for comparisons), so the block length
+      cannot be estimated. Monthly returns over one year always land here.
+    * ``"undefined_statistic"``: the statistic of the returns themselves
+      is undefined, such as the Sharpe ratio of constant returns.
+    * ``"no_valid_resample"``: no resample defines the statistic.
+
+    Attributes:
+        reason: Which of the cases above applies.
+        estimate: The statistic of the returns, or ``None`` when it is
+            undefined; it is reported even when the sample is too short to
+            bootstrap. For a paired comparison it is the difference.
+        observations: Number of returns, after alignment for comparisons.
+        min_observations: Number of returns the bootstrap requires.
+        reps: Resamples drawn; ``0`` when the bootstrap did not run.
+    """
+
+    reason: UnavailableReason
+    estimate: float | None
+    observations: int
+    min_observations: int
+    reps: int
+
+    @property
+    def message(self) -> str:
+        """One-sentence explanation for a report or tool response."""
+        if self.reason == "insufficient_observations":
+            return (
+                f"{self.observations} observations, fewer than the "
+                f"{self.min_observations} needed to bootstrap an interval"
+            )
+        if self.reason == "undefined_statistic":
+            return "the statistic is undefined on these returns"
+        return f"none of the {self.reps} resamples has a defined statistic"
 
 
 @dataclass(frozen=True)
@@ -117,6 +166,29 @@ def sharpe_confidence_interval(
 ) -> SharpeInterval | None:
     """Stationary-bootstrap percentile interval of the annualised Sharpe.
 
+    The same as :func:`sharpe_interval_outcome`, with every
+    :class:`IntervalUnavailable` collapsed to ``None``.
+    """
+    outcome = sharpe_interval_outcome(
+        returns,
+        periods_per_year=periods_per_year,
+        confidence=confidence,
+        reps=reps,
+        seed=seed,
+    )
+    return outcome if isinstance(outcome, SharpeInterval) else None
+
+
+def sharpe_interval_outcome(
+    returns: Iterable[float],
+    *,
+    periods_per_year: float,
+    confidence: float = 0.95,
+    reps: int = 1000,
+    seed: int | None = None,
+) -> SharpeInterval | IntervalUnavailable:
+    """Stationary-bootstrap percentile interval of the annualised Sharpe.
+
     Strategy returns are autocorrelated, and an iid bootstrap that shuffles
     single periods destroys that dependence and understates the sampling
     variability. The stationary bootstrap of Politis and Romano (1994)
@@ -130,10 +202,13 @@ def sharpe_confidence_interval(
     adapts to the measured autocorrelation: nearly independent returns get
     a block length near one, persistent returns get longer blocks. It needs
     a reasonable sample, so fewer than ``MIN_BOOTSTRAP_OBSERVATIONS``
-    returns give ``None``.
+    returns give no interval. That is 20 periods at any frequency: 20 days
+    of daily returns, but 20 months of monthly ones.
 
-    Returns ``None`` when the Sharpe ratio itself is undefined, the sample
-    is too short, or no resample has a defined Sharpe ratio.
+    Returns an :class:`IntervalUnavailable` when the sample is too short,
+    the Sharpe ratio itself is undefined, or no resample has a defined
+    Sharpe ratio; its ``estimate`` is the annualised Sharpe ratio whenever
+    that is defined.
 
     Raises:
         ValueError: If ``periods_per_year`` is not positive and finite,
@@ -147,8 +222,20 @@ def sharpe_confidence_interval(
         raise ValueError("reps must be a positive integer")
     values = _returns(returns)
     sharpe = _period_sharpe(values)
-    if sharpe is None or values.size < MIN_BOOTSTRAP_OBSERVATIONS:
-        return None
+
+    def unavailable(reason: UnavailableReason, drawn: int) -> IntervalUnavailable:
+        return IntervalUnavailable(
+            reason=reason,
+            estimate=sharpe * scale if sharpe is not None else None,
+            observations=int(values.size),
+            min_observations=MIN_BOOTSTRAP_OBSERVATIONS,
+            reps=drawn,
+        )
+
+    if values.size < MIN_BOOTSTRAP_OBSERVATIONS:
+        return unavailable("insufficient_observations", 0)
+    if sharpe is None:
+        return unavailable("undefined_statistic", 0)
 
     estimate = float(optimal_block_length(values)["stationary"].iloc[0])
     block_size = max(1, math.ceil(estimate)) if math.isfinite(estimate) else 1
@@ -158,7 +245,7 @@ def sharpe_confidence_interval(
     draws = bootstrap.apply(_resample_sharpe, reps)[:, 0] * scale
     draws = draws[np.isfinite(draws)]
     if draws.size == 0:
-        return None
+        return unavailable("no_valid_resample", reps)
     tail = (1.0 - confidence) / 2.0
     lower, upper = np.quantile(draws, [tail, 1.0 - tail])
     return SharpeInterval(
@@ -261,6 +348,32 @@ def deflated_sharpe_ratio(
     conservative side, preferring a missed edge to a false positive.
     Estimating the effective ``N`` requires clustering the trials by the
     correlation of their returns and is out of scope.
+
+    Two selection corrections: this project corrects for multiple
+    comparisons in two ways, one per metric family.
+
+    * This function corrects the Sharpe family: strategy return series of
+      backtest or optimisation trials. Its hurdle is the expected maximum
+      Sharpe of ``N`` skill-less trials, and the DSR is the probability
+      that the true Sharpe clears it.
+    * ``required_t_stat`` in the ML leaderboard
+      (``tradingdev.domain.ml.leaderboard``, from upstream ``main``)
+      corrects the IC family:
+      t-statistics of signal ICs. It is a two-sided Bonferroni threshold,
+      ``Phi^-1(1 - alpha / (2 N))``, controlling the family-wise error
+      rate, with a normal approximation the leaderboard itself flags as
+      optimistic below 30 effective periods.
+
+    They answer different questions: the DSR asks how likely the selected
+    strategy's Sharpe beats what luck alone would produce in ``N`` trials;
+    Bonferroni asks whether any of ``N`` IC tests would reject at
+    family-wise ``alpha``. They are not interchangeable, and never both
+    apply to the same number: each already accounts for the whole
+    selection, so stacking them corrects one selection twice. When reports
+    show both side by side, label each figure with the correction it
+    carries. Both share one weakness: they count ``N`` as
+    independent candidates, but neighbouring candidates are correlated, so
+    ``N`` overstates the effective number of trials and both over-correct.
 
     Returns ``None`` when :func:`probabilistic_sharpe_ratio` is undefined
     for ``returns``, or when ``N >= 2`` but fewer than two trial Sharpes

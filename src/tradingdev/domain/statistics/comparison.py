@@ -34,7 +34,11 @@ Conventions:
   ``None`` when undefined; for example
   ``functools.partial(sharpe_ratio, periods_per_year=365)``.
 * Undefined results (insufficient overlap, undefined statistic, no valid
-  resample) are ``None``.
+  resample) are ``None``. :func:`difference_interval_outcome` and
+  :func:`interval_table_outcome` return an
+  :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`
+  instead, with the reason and the point estimate. The overlap threshold
+  counts periods, so monthly returns need 20 common months.
 * Non-finite returns or duplicate index labels raise ``ValueError``; the
   caller decides how to treat missing periods before calling.
 """
@@ -50,7 +54,11 @@ import numpy as np
 import pandas as pd
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
 
-from tradingdev.domain.statistics.sharpe import MIN_BOOTSTRAP_OBSERVATIONS
+from tradingdev.domain.statistics.sharpe import (
+    MIN_BOOTSTRAP_OBSERVATIONS,
+    IntervalUnavailable,
+    UnavailableReason,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -152,8 +160,9 @@ def align_returns(
     The intersection is taken on index labels, so a period missing from any
     series is dropped from all of them. Nothing is truncated silently: the
     result carries each series' original length and whether the overlap
-    reaches ``min_overlap``; inference functions return ``None`` when it
-    does not.
+    reaches ``min_overlap``; when it does not, inference functions return
+    ``None`` or an
+    :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`.
 
     Raises:
         ValueError: If no series is given, ``min_overlap`` is not a
@@ -193,6 +202,33 @@ def difference_interval(
 ) -> DifferenceInterval | None:
     """Paired stationary-bootstrap interval of ``statistic(a) - statistic(b)``.
 
+    The same as :func:`difference_interval_outcome`, with every
+    :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`
+    collapsed to ``None``. A short overlap returns ``None`` before the
+    statistic is evaluated, so a statistic that rejects short arrays is
+    never called on one.
+    """
+    _positive_int(reps, "reps")
+    _tail(confidence)
+    if not align_returns({"a": a, "b": b}).sufficient:
+        return None
+    outcome = difference_interval_outcome(
+        a, b, statistic, reps=reps, confidence=confidence, seed=seed
+    )
+    return outcome if isinstance(outcome, DifferenceInterval) else None
+
+
+def difference_interval_outcome(
+    a: pd.Series,
+    b: pd.Series,
+    statistic: Statistic,
+    *,
+    reps: int = 2000,
+    confidence: float = 0.95,
+    seed: int | None = None,
+) -> DifferenceInterval | IntervalUnavailable:
+    """Paired stationary-bootstrap interval of ``statistic(a) - statistic(b)``.
+
     Both series are aligned with :func:`align_returns`, then resampled with
     one :class:`arch.bootstrap.StationaryBootstrap` so every resample draws
     the same period indices for ``a`` and ``b``. This keeps their
@@ -211,9 +247,13 @@ def difference_interval(
     confidence`` at which the percentile interval would exclude zero, so
     the interval and the p-value always agree.
 
-    Returns ``None`` when the overlap is below ``MIN_BOOTSTRAP_OBSERVATIONS``,
-    either statistic is undefined on the aligned returns, or no resample
-    defines both statistics.
+    Returns an :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`
+    when the overlap is below ``MIN_BOOTSTRAP_OBSERVATIONS``, either
+    statistic is undefined on the aligned returns, or no resample defines
+    both statistics. Its ``estimate`` is the difference whenever both
+    statistics are defined on the aligned returns, even a short overlap,
+    so the statistic is evaluated on short arrays too (never on an empty
+    one).
 
     Raises:
         ValueError: If ``reps`` is not a positive integer, ``confidence``
@@ -223,14 +263,19 @@ def difference_interval(
     _positive_int(reps, "reps")
     tail = _tail(confidence)
     aligned = align_returns({"a": a, "b": b})
-    if not aligned.sufficient:
-        return None
     values_a = aligned.frame["a"].to_numpy()
     values_b = aligned.frame["b"].to_numpy()
-    estimate_a = _evaluate(statistic, values_a)
-    estimate_b = _evaluate(statistic, values_b)
-    if not (math.isfinite(estimate_a) and math.isfinite(estimate_b)):
-        return None
+    estimate_a = _estimate(statistic, values_a)
+    estimate_b = _estimate(statistic, values_b)
+    difference = (
+        estimate_a - estimate_b
+        if estimate_a is not None and estimate_b is not None
+        else None
+    )
+    if not aligned.sufficient:
+        return _unavailable("insufficient_observations", difference, aligned, 0)
+    if estimate_a is None or estimate_b is None:
+        return _unavailable("undefined_statistic", None, aligned, 0)
 
     def resample(
         x: npt.NDArray[np.float64], y: npt.NDArray[np.float64]
@@ -244,7 +289,7 @@ def difference_interval(
     draws = bootstrap.apply(resample, reps)[:, 0]
     draws = draws[np.isfinite(draws)]
     if draws.size == 0:
-        return None
+        return _unavailable("no_valid_resample", difference, aligned, reps)
     lower, upper = np.quantile(draws, [tail, 1.0 - tail])
     smaller_tail = min(float(np.mean(draws <= 0.0)), float(np.mean(draws >= 0.0)))
     return DifferenceInterval(
@@ -273,6 +318,35 @@ def interval_table(
 ) -> dict[str, StatisticInterval | None] | None:
     """Individual stationary-bootstrap intervals for a forest plot.
 
+    The same as :func:`interval_table_outcome`, except that an insufficient
+    overlap gives ``None`` for the whole table and every other
+    :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable` row
+    is ``None``. A short overlap returns ``None`` before the statistic is
+    evaluated, as in :func:`difference_interval`.
+    """
+    _positive_int(reps, "reps")
+    _tail(confidence)
+    if not align_returns(series_by_name).sufficient:
+        return None
+    table = interval_table_outcome(
+        series_by_name, statistic, reps=reps, confidence=confidence, seed=seed
+    )
+    return {
+        name: row if isinstance(row, StatisticInterval) else None
+        for name, row in table.items()
+    }
+
+
+def interval_table_outcome(
+    series_by_name: Mapping[str, pd.Series],
+    statistic: Statistic,
+    *,
+    reps: int = 2000,
+    confidence: float = 0.95,
+    seed: int | None = None,
+) -> dict[str, StatisticInterval | IntervalUnavailable]:
+    """Individual stationary-bootstrap intervals for a forest plot.
+
     The series are aligned with :func:`align_returns` first, so every row
     covers the same periods, and resampled jointly with one block length
     (the largest per-series estimate, as in :func:`difference_interval`).
@@ -283,10 +357,12 @@ def interval_table(
     intervals ignore the correlation between strategies. Use
     :func:`difference_interval` for the comparison itself.
 
-    Returns ``None`` when the overlap is below ``MIN_BOOTSTRAP_OBSERVATIONS``.
-    Otherwise the result maps each name, in input order, to its interval or
-    to ``None`` when its statistic is undefined on the aligned returns or
-    on every resample.
+    The result maps each name, in input order, to its interval or to an
+    :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`. The
+    overlap is shared, so when it is below ``MIN_BOOTSTRAP_OBSERVATIONS``
+    every row is ``"insufficient_observations"``, still carrying its point
+    estimate; otherwise a row is unavailable when its statistic is
+    undefined on the aligned returns or on every resample.
 
     Raises:
         ValueError: If no series is given, ``reps`` is not a positive
@@ -296,9 +372,17 @@ def interval_table(
     _positive_int(reps, "reps")
     tail = _tail(confidence)
     aligned = align_returns(series_by_name)
-    if not aligned.sufficient:
-        return None
     columns = [aligned.frame[name].to_numpy() for name in aligned.frame.columns]
+    if not aligned.sufficient:
+        return {
+            name: _unavailable(
+                "insufficient_observations",
+                _estimate(statistic, columns[position]),
+                aligned,
+                0,
+            )
+            for position, name in enumerate(aligned.frame.columns)
+        }
 
     def resample(*values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return np.array([_evaluate(statistic, column) for column in values])
@@ -309,12 +393,15 @@ def interval_table(
     )
     draws = bootstrap.apply(resample, reps)
 
-    table: dict[str, StatisticInterval | None] = {}
+    table: dict[str, StatisticInterval | IntervalUnavailable] = {}
     for position, name in enumerate(aligned.frame.columns):
-        estimate = _evaluate(statistic, columns[position])
+        estimate = _estimate(statistic, columns[position])
         valid = draws[:, position][np.isfinite(draws[:, position])]
-        if not math.isfinite(estimate) or valid.size == 0:
-            table[name] = None
+        if estimate is None:
+            table[name] = _unavailable("undefined_statistic", None, aligned, 0)
+            continue
+        if valid.size == 0:
+            table[name] = _unavailable("no_valid_resample", estimate, aligned, reps)
             continue
         lower, upper = np.quantile(valid, [tail, 1.0 - tail])
         table[name] = StatisticInterval(
@@ -335,6 +422,29 @@ def _evaluate(statistic: Statistic, values: npt.NDArray[np.float64]) -> float:
     if result is None:
         return math.nan
     return float(result)
+
+
+def _estimate(statistic: Statistic, values: npt.NDArray[np.float64]) -> float | None:
+    # An empty overlap has no estimate; a statistic need not handle it.
+    if values.size == 0:
+        return None
+    value = _evaluate(statistic, values)
+    return value if math.isfinite(value) else None
+
+
+def _unavailable(
+    reason: UnavailableReason,
+    estimate: float | None,
+    aligned: AlignedReturns,
+    reps: int,
+) -> IntervalUnavailable:
+    return IntervalUnavailable(
+        reason=reason,
+        estimate=estimate,
+        observations=aligned.overlap,
+        min_observations=aligned.min_overlap,
+        reps=reps,
+    )
 
 
 def _block_size(frame: pd.DataFrame) -> int:

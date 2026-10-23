@@ -6,18 +6,24 @@ from statistics import NormalDist
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 import pytest
 from arch.bootstrap import IIDBootstrap
 
+from tradingdev.domain.statistics.periods import period_returns
 from tradingdev.domain.statistics.sharpe import (
     MIN_BOOTSTRAP_OBSERVATIONS,
+    IntervalUnavailable,
+    SharpeInterval,
     deflated_sharpe_ratio,
     probabilistic_sharpe_ratio,
     sharpe_confidence_interval,
+    sharpe_interval_outcome,
     sharpe_ratio,
 )
 
 _DAILY = 365.0
+_MONTHLY = 12.0
 
 
 def _ar1(n: int, phi: float, seed: int) -> npt.NDArray[np.float64]:
@@ -47,6 +53,42 @@ class TestSharpeRatio:
         assert sharpe_ratio(returns, periods_per_year=252.0) == pytest.approx(
             sharpe_ratio(list(returns), periods_per_year=252.0)
         )
+
+
+class TestFrequencyDependence:
+    def test_same_curve_gives_different_annualised_sharpe_per_frequency(
+        self,
+    ) -> None:
+        """Daily and monthly Sharpe of one equity curve differ, by design.
+
+        This is expected behaviour, not a bug. Annualising with
+        ``sqrt(periods_per_year)`` assumes independent periods, but these
+        daily returns are positively autocorrelated (AR(1), phi = 0.5), so a
+        month's return varies more than 30 independent days would and the
+        monthly figure comes out systematically lower, about
+        ``sqrt((1 - phi) / (1 + phi)) = 0.58`` times the daily one in theory.
+        Monthly returns are also compounded rather than summed. Thirty years
+        keep the 360 monthly returns from drowning the effect in sampling
+        noise: across 40 seeds the ratio stayed between 0.63 and 0.79, so
+        the assertion does not hinge on this seed. The test exists so that nobody
+        "fixes" the two numbers into agreement: report the frequency with
+        every Sharpe ratio and compare Sharpes only at the same frequency.
+        """
+        daily_returns = _ar1(30 * 365, 0.5, seed=3) + 0.0003
+        equity = 10_000.0 * np.cumprod(1.0 + daily_returns)
+        days = pd.date_range("1990-01-01", periods=len(equity), freq="D", tz="UTC")
+
+        daily = sharpe_ratio(
+            period_returns(equity, days, "daily"), periods_per_year=_DAILY
+        )
+        monthly = sharpe_ratio(
+            period_returns(equity, days, "monthly"), periods_per_year=_MONTHLY
+        )
+
+        assert daily is not None
+        assert monthly is not None
+        assert monthly != pytest.approx(daily, rel=0.1)
+        assert 0.0 < monthly < 0.85 * daily
 
 
 class TestProbabilisticSharpeRatio:
@@ -169,6 +211,76 @@ class TestDegenerateReturns:
         assert sharpe_ratio(returns, periods_per_year=_DAILY) is None
         assert probabilistic_sharpe_ratio(returns) is None
         assert sharpe_confidence_interval(returns, periods_per_year=_DAILY) is None
+
+
+class TestIntervalOutcome:
+    def test_short_monthly_sample_reports_counts_and_the_estimate(self) -> None:
+        returns = np.random.default_rng(12).normal(0.01, 0.03, 12)
+
+        outcome = sharpe_interval_outcome(returns, periods_per_year=_MONTHLY)
+
+        assert isinstance(outcome, IntervalUnavailable)
+        assert outcome.reason == "insufficient_observations"
+        assert outcome.observations == 12
+        assert outcome.min_observations == MIN_BOOTSTRAP_OBSERVATIONS
+        assert outcome.reps == 0
+        assert outcome.estimate == pytest.approx(
+            sharpe_ratio(returns, periods_per_year=_MONTHLY)
+        )
+        assert "12 observations" in outcome.message
+        assert f"{MIN_BOOTSTRAP_OBSERVATIONS} needed" in outcome.message
+        assert sharpe_confidence_interval(returns, periods_per_year=_MONTHLY) is None
+
+    def test_constant_returns_are_an_undefined_statistic(self) -> None:
+        outcome = sharpe_interval_outcome([0.01] * 100, periods_per_year=_DAILY)
+
+        assert isinstance(outcome, IntervalUnavailable)
+        assert outcome.reason == "undefined_statistic"
+        assert outcome.estimate is None
+        assert outcome.observations == 100
+
+    def test_short_sample_wins_over_an_undefined_statistic(self) -> None:
+        outcome = sharpe_interval_outcome([0.01], periods_per_year=_DAILY)
+
+        assert isinstance(outcome, IntervalUnavailable)
+        assert outcome.reason == "insufficient_observations"
+        assert outcome.estimate is None
+
+    def test_all_constant_resamples_are_no_valid_resample(self) -> None:
+        # One non-zero return among zeros: with this seed, all three
+        # resamples miss it, so every resampled Sharpe is undefined.
+        returns = [0.0] * (MIN_BOOTSTRAP_OBSERVATIONS - 1) + [0.01]
+
+        outcome = sharpe_interval_outcome(
+            returns, periods_per_year=_DAILY, reps=3, seed=24
+        )
+
+        assert isinstance(outcome, IntervalUnavailable)
+        assert outcome.reason == "no_valid_resample"
+        assert outcome.reps == 3
+        assert outcome.estimate == pytest.approx(
+            sharpe_ratio(returns, periods_per_year=_DAILY)
+        )
+        assert (
+            sharpe_confidence_interval(
+                returns, periods_per_year=_DAILY, reps=3, seed=24
+            )
+            is None
+        )
+
+    def test_twenty_months_give_an_interval(self) -> None:
+        returns = np.random.default_rng(13).normal(
+            0.01, 0.03, MIN_BOOTSTRAP_OBSERVATIONS
+        )
+
+        outcome = sharpe_interval_outcome(
+            returns, periods_per_year=_MONTHLY, reps=200, seed=0
+        )
+
+        assert isinstance(outcome, SharpeInterval)
+        assert outcome == sharpe_confidence_interval(
+            returns, periods_per_year=_MONTHLY, reps=200, seed=0
+        )
 
 
 class TestValidation:
