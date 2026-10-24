@@ -1,16 +1,28 @@
 """Shared test fixtures."""
 
 import os
-from collections.abc import Iterator
 from datetime import UTC
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import pytest
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 pytest_plugins = ["tests.llm_plugin"]
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Isolate plotting caches before QuantStats is imported during collection."""
+    directory = TemporaryDirectory(prefix="tradingdev-plot-cache-")
+    config.add_cleanup(directory.cleanup)
+    environment = pytest.MonkeyPatch()
+    config.add_cleanup(environment.undo)
+    environment.setenv("MPLCONFIGDIR", directory.name)
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from mcp.types import ToolAnnotations
+from mcp_types import ToolAnnotations
 
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.history import (
@@ -22,21 +22,21 @@ from tradingdev.app.contracts.reports import (
 )
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.report_service import ReportService
     from tradingdev.app.trade_history_service import TradeHistoryService
 
 
 def register(
-    mcp: FastMCP, history: TradeHistoryService, reports: ReportService
+    mcp: MCPServer, history: TradeHistoryService, reports: ReportService
 ) -> None:
     """Keep all clients on the same verified historical data services."""
     read_only = ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 
     @mcp.tool(annotations=read_only)
@@ -187,15 +187,18 @@ def register(
 
         The client chooses sections and writes interpretation; the server renders
         the HTML, tables, and charts. Recipes are optional, not enforced layouts.
+        ledger combines order attempts and bar-close balances; trades is the
+        supplementary paired-trade PnL view. Legacy section IDs executions and
+        account_history are no longer valid; the history query tools remain.
         """
         return ReportSectionCatalog.model_validate(reports.get_report_sections())
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def generate_report(
@@ -206,15 +209,24 @@ def register(
         """Compose an offline HTML report from 1..8 saved runs and client prose.
 
         Discover section IDs/recipes with get_report_sections. Omit sections for
-        the standard recipe, provide IDs in desired order, or [] to render no
+        the standard recipe, provide IDs in desired detail order, or [] to render no
         built-in sections while keeping source identity and supplied commentary.
+        overview always occupies the first navigation level when selected.
         Every report embeds the complete loaded data for all scopes of the runs,
         including saved trades, equity and execution configuration, even with [].
         Section selection does not remove underlying data from the HTML.
+        The overview compares all run/scopes. Detail links and result switching
+        require settings, metrics, equity, ledger or trades; without these,
+        selected provenance and limitations appear in the main view.
+        metrics includes native QuantStats
+        performance analysis. ledger combines order attempts and bar-close
+        valuations with Bokeh status filters and column checkboxes. Static tables
+        remain readable without JavaScript; CSV/JSON download buttons require it
+        and preserve full precision.
         Commentary contains plain-text title/text objects (at most 20, total
         20,000 characters); HTML is escaped and text is
         labelled client interpretation, distinct from recorded calculations.
-        Selected trade tables contain all records with local CSV download.
+        trades is supplementary paired-trade PnL, not the reconciliation ledger.
         Returns a registered artifact and local path. Existing backtests remain
         unchanged. No strategy, model, external website, or market download runs.
         """

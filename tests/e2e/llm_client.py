@@ -15,6 +15,7 @@ import httpx
 from tests.e2e.codex_harness import LIFECYCLE_TOOLS, successful_mcp_calls
 
 if TYPE_CHECKING:
+    from tests.e2e.conversation import UserReply
     from tests.integration.mcp_harness import MCPClient
 
 
@@ -26,14 +27,14 @@ class ToolCall:
 
 
 def tool_payload(result: dict[str, Any]) -> Any:
-    """Accept MCP wire format and Codex's snake_case JSON event representation."""
-    structured = result.get("structuredContent", result.get("structured_content"))
+    """Read MCP wire results shared by the SDK and Codex app-server."""
+    structured = result.get("structuredContent")
     if structured is None:
         for block in result.get("content", []):
             if block.get("type") == "text":
                 try:
                     structured = json.loads(block["text"])
-                except (ValueError, KeyError):
+                except ValueError, KeyError:
                     continue
                 break
     if isinstance(structured, dict) and set(structured) == {"result"}:
@@ -109,12 +110,13 @@ def compact_tool_result(payload: dict[str, Any]) -> dict[str, Any]:
             observed.append(_canonical_json(decoded[0]))
         if not expected.intersection(observed):
             return payload
-    except (TypeError, ValueError, RecursionError):
+    except TypeError, ValueError, RecursionError:
         return payload
     return {key: value for key, value in payload.items() if key != "content"}
 
 
 def codex_calls(events: list[dict[str, Any]]) -> list[ToolCall]:
+    """Read completed app-server calls, retaining failed application responses."""
     calls = []
     for item in successful_mcp_calls(events):
         arguments = item.get("arguments", {})
@@ -219,6 +221,9 @@ async def run_local_model(
     reasoning_effort: str | None = None,
     max_tool_calls: int = 64,
     transport: httpx.AsyncBaseTransport | None = None,
+    user_reply: UserReply | None = None,
+    max_turns: int = 8,
+    tool_names: list[str] | None = None,
 ) -> list[ToolCall]:
     """Bridge local Chat Completions tool calls to real stdio MCP, with bounds.
 
@@ -233,6 +238,8 @@ async def run_local_model(
     stage = "MCP tool discovery"
     round_number = 0
     provider_tool_repairs = 0
+    turn_number = 1
+    turn_start = 0
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": client.instructions},
         {"role": "user", "content": prompt},
@@ -251,11 +258,11 @@ async def run_local_model(
                     "function": {
                         "name": tool.name,
                         "description": tool.description or "",
-                        "parameters": tool.inputSchema,
+                        "parameters": tool.input_schema,
                     },
                 }
                 for tool in (await client.session.list_tools()).tools
-                if tool.name in LIFECYCLE_TOOLS
+                if tool.name in (LIFECYCLE_TOOLS if tool_names is None else tool_names)
             ]
             allowed = {tool["function"]["name"] for tool in tools}
             _progress(f"{stage}: {len(allowed)} tools available")
@@ -355,7 +362,28 @@ async def run_local_model(
                         f"provider_tool_repairs={provider_tool_repairs}; "
                         f"final text: {final_text or '(empty)'}"
                     )
-                    return calls
+                    messages.append(message)
+                    if user_reply is None:
+                        return calls
+                    from tests.e2e.conversation import ModelTurn
+
+                    reply = await user_reply(
+                        ModelTurn(
+                            turn_number,
+                            content if isinstance(content, str) else "",
+                            calls[turn_start:],
+                        )
+                    )
+                    if reply is None:
+                        return calls
+                    assert reply.strip(), "Test user reply must not be empty"
+                    assert turn_number < max_turns, (
+                        f"Model exceeded {max_turns} conversation turns"
+                    )
+                    messages.append({"role": "user", "content": reply})
+                    turn_number += 1
+                    turn_start = len(calls)
+                    continue
                 assert choice.get("finish_reason") in {"tool_calls", "stop"}, choice
                 assert len(calls) + len(requested) <= max_tool_calls, (
                     f"Model exceeded {max_tool_calls} MCP tool calls"
@@ -377,10 +405,10 @@ async def run_local_model(
                     _progress(f"{stage}: started")
                     started = time.monotonic()
                     result = await client.session.call_tool(name, arguments)
-                    payload = result.model_dump(mode="json")
+                    payload = result.model_dump(mode="json", by_alias=True)
                     call = ToolCall(name, arguments, tool_payload(payload))
                     calls.append(call)
-                    summary = f"{_tool_summary(call)}; mcp_error={result.isError}"
+                    summary = f"{_tool_summary(call)}; mcp_error={result.is_error}"
                     recent_results.append(summary)
                     _progress(
                         f"{stage}: finished in {time.monotonic() - started:.2f}s; "

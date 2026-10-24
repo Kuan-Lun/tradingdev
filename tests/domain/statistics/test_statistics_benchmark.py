@@ -2,11 +2,11 @@
 
 import math
 
-import empyrical as ep
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import pytest
+import quantstats as qs
 
 from tradingdev.domain.statistics.benchmark import (
     buy_and_hold_returns,
@@ -146,21 +146,26 @@ class TestRegression:
             sharpe_ratio(s - b, periods_per_year=_DAILY)
         )
 
-    def test_beta_and_alpha_agree_with_empyrical(self) -> None:
+    def test_beta_and_alpha_agree_with_quantstats(self) -> None:
         benchmark = _benchmark()
         strategy = _strategy_on(benchmark)
-        s, b = strategy.to_numpy(), benchmark.to_numpy()
 
         result = compare_to_benchmark(strategy, benchmark, periods_per_year=_DAILY)
+        # QuantStats strips the benchmark's timezone, so compare naive series.
+        # greeks has no annotations, unlike the QuantStats functions in src.
+        greeks = qs.stats.greeks(  # type: ignore[no-untyped-call]
+            strategy.tz_localize(None),
+            benchmark.tz_localize(None),
+            periods=_DAILY,
+            prepare_returns=False,
+        )
 
         assert result.beta is not None
         assert result.alpha_annualised is not None
-        assert result.beta == pytest.approx(ep.beta(s, b), abs=1e-6)
-        # empyrical compounds the intercept; annualization=1 gives it raw.
-        intercept = result.alpha_annualised / _DAILY
-        assert intercept == pytest.approx(ep.alpha(s, b, annualization=1), abs=1e-6)
-        assert (1.0 + intercept) ** _DAILY - 1.0 == pytest.approx(
-            ep.alpha(s, b, annualization=_DAILY), abs=1e-6
+        assert result.beta == pytest.approx(float(greeks["beta"]), abs=1e-9)
+        # QuantStats annualises the intercept arithmetically, as we do.
+        assert result.alpha_annualised == pytest.approx(
+            float(greeks["alpha"]), abs=1e-9
         )
 
     def test_uses_only_the_common_periods(self) -> None:

@@ -181,18 +181,18 @@ def compare_to_benchmark(
 
     ``up_capture = mean(s[b > 0]) / mean(b[b > 0])`` and likewise
     ``down_capture`` over ``b < 0``. These are ratios of per-period means,
-    not the ratios of annualised returns of ``empyrical.up_capture``.
+    not ratios of annualised returns.
 
-    ``beta`` is the ordinary least-squares slope and agrees with
-    ``empyrical.beta``. ``alpha_annualised`` annualises the per-period
-    intercept arithmetically, consistent with the excess return and the
-    information ratio; ``empyrical.alpha`` compounds it instead, as
-    ``(1 + intercept)**ppy - 1``, which differs noticeably for large
-    intercepts. See the module docstring for how to read beta and why the
+    ``beta`` is the ordinary least-squares slope. ``alpha_annualised``
+    annualises the per-period intercept arithmetically, as
+    ``intercept * ppy``, consistent with the excess return and the
+    information ratio; both agree with ``quantstats.stats.greeks``. A
+    compounded alpha, ``(1 + intercept)**ppy - 1``, differs noticeably for
+    large intercepts. See the module docstring for how to read beta and why the
     benchmark pays no costs.
 
     Annualisation differs within this project on purpose. The catalog's
-    ``annual_return`` (``empyrical.annual_return``) compounds daily
+    ``annual_return`` (provided by QuantStats) compounds daily
     returns, while the active-return figures here (``alpha_annualised``,
     ``excess_return_annualised``, ``tracking_error_annualised``,
     ``information_ratio``) scale arithmetically. Both are correct for what

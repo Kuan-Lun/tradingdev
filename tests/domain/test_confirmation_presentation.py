@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_html,
+    render_confirmation_summary,
     render_confirmation_text,
 )
 from tradingdev.domain.data.requirements import DataRequirement
@@ -113,9 +114,13 @@ def _receipt(manifest: ExecutionManifest, **changes: Any) -> PreflightReceipt:
     if manifest.kind == "optimization":
         checks.append("candidate_binding")
     validation = manifest.config_copy().get("validation")
-    explicit = validation is not None and all(
-        validation[key] is not None
-        for key in ("train_start", "train_end", "test_start", "test_end")
+    explicit = (
+        validation is not None
+        and not validation["purged_split"]
+        and all(
+            validation[key] is not None
+            for key in ("train_start", "train_end", "test_start", "test_end")
+        )
     )
     return PreflightReceipt.model_validate(
         {
@@ -180,6 +185,57 @@ def _document(manifest: ExecutionManifest) -> ConfirmationDocument:
     return build_confirmation_document(
         manifest, _presentation(manifest), _receipt(manifest), plan_id="plan-private"
     )
+
+
+@pytest.mark.parametrize("kind", ["backtest", "walk_forward", "optimization"])
+def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
+    document = _document(_manifest(kind))
+    summary = render_confirmation_summary(document, mode="signal")
+    html = unescape(render_confirmation_html(document))
+    assert len(summary.splitlines()) <= 7
+    assert len(summary) < 900
+    for expected in (
+        "BTC/USDT",
+        "每根 K 線 1 小時",
+        "2024-01-01",
+        "2024-12-31",
+        "10000",
+        "0.06%",
+        "0.05%",
+        "完整 HTML",
+        "於對話回覆",
+    ):
+        assert expected in summary
+    assert "試跑只涵蓋有限樣本" in summary
+    assert "閱讀本頁不會啟動回測" in html
+    for detail in ("最低歷史資料需求", "試跑沒有觀察到交易", "策略設定 1"):
+        assert detail not in summary and detail in html
+    if kind == "optimization":
+        assert "參數組合總數：3" in summary
+        assert "搜尋組 1／候選 3" not in summary
+        assert "搜尋組 1／候選 3" in html
+
+
+@pytest.mark.parametrize("position_size", [None, 0, 200, 450])
+def test_volume_summary_uses_actual_trade_notional_instead_of_unused_capital(
+    position_size: int | None,
+) -> None:
+    document = _document(
+        _manifest(
+            backtest={
+                "mode": "volume",
+                "init_cash": 10000,
+                "position_size": position_size,
+            }
+        )
+    )
+    summary = render_confirmation_summary(document, mode="volume")
+    assert "固定名目金額、逐筆累計損益" in summary
+    assert "單次投入金額：" in summary
+    assert str(position_size or 200) in summary
+    assert "初始資金" not in summary
+    assert "10000" not in summary
+    assert "此計算方式不使用初始資金" in render_confirmation_html(document)
 
 
 @pytest.mark.parametrize("kind", ["backtest", "walk_forward", "optimization"])
@@ -445,6 +501,140 @@ def test_explicit_validation_does_not_claim_automatic_controls_are_active() -> N
     assert "使用指定日期的一組" in text
     assert "指定日期模式固定為一組，此設定不使用" in text
     assert "訓練開始：2024-01-01" in text
+    assert "預定分段組數：1" in text
+    assert "已試跑的驗證分段：1 / 1" in text
+
+
+@pytest.mark.parametrize("offset", ["", "+08:00"])
+def test_explicit_validation_displays_effective_utc_bounds_in_text_and_html(
+    offset: str,
+) -> None:
+    first_day = 2 if offset else 1
+    validation = {
+        key: f"2024-01-{day:02d}T03:00:00{offset}"
+        for key, day in zip(
+            ("train_start", "train_end", "test_start", "test_end"),
+            range(first_day, first_day + 4),
+            strict=True,
+        )
+    }
+    document = _document(_manifest("walk_forward", validation=validation))
+    text = render_confirmation_text(document)
+    html = unescape(render_confirmation_html(document))
+    expected = {
+        "訓練開始": "2024-01-01 00:00:00 UTC（含）",
+        "訓練結束": "2024-01-03 00:00:00 UTC（不含）",
+        "測試開始": "2024-01-03 00:00:00 UTC（含）",
+        "測試結束": "2024-01-05 00:00:00 UTC（不含）",
+    }
+    section = next(
+        section for section in document.sections if section.id == "validation"
+    )
+    actual = {field.label: field.value_text for field in section.fields}
+    assert expected.items() <= actual.items()
+    for label, value in expected.items():
+        assert f"{label}：{value}" in text
+        assert value in html
+    for rendered in (text, html):
+        assert "日期先轉為 UTC（無時區視為 UTC），再忽略時分秒" in rendered
+        assert "包含起訖 UTC 整日" in rendered
+        assert f"原始設定：{validation['train_start']}" in rendered
+
+
+@pytest.mark.parametrize("expanding", [False, True])
+def test_plain_automatic_validation_keeps_active_ratio_and_expansion(
+    expanding: bool,
+) -> None:
+    text = render_confirmation_text(
+        _document(
+            _manifest(
+                "walk_forward",
+                validation={"n_splits": 2, "train_ratio": 0.6, "expanding": expanding},
+            )
+        )
+    )
+    assert "分段方式：依資料筆數自動分段" in text
+    assert "自動分段的訓練比例：60%" in text
+    assert f"訓練區間逐次擴大：{'是' if expanding else '否'}" in text
+    assert "已試跑的驗證分段：1 / 2" in text
+
+
+@pytest.mark.parametrize("dates", [False, True])
+def test_purged_validation_shows_effective_mode_and_ignored_controls(
+    dates: bool,
+) -> None:
+    validation: dict[str, Any] = {
+        "n_splits": 2,
+        "label_horizon": 5,
+        "embargo_bars": 2,
+        "purged_split": True,
+        "train_ratio": 0.6,
+        "expanding": False,
+    }
+    if dates:
+        validation.update(
+            train_start="2024-01-01",
+            train_end="2024-06-30",
+            test_start="2024-07-01",
+            test_end="2024-12-31",
+        )
+    manifest = _manifest("walk_forward", validation=validation)
+    text = render_confirmation_text(_document(manifest))
+    assert "分段方式：淨化分段：固定起點、逐次擴大訓練區間" in text
+    assert "淨化分段不使用指定日期" in text
+    assert "淨化分段不使用此比例" in text
+    assert "訓練區間逐次擴大：是" in text
+    assert "此欄設定值（否）不使用" in text
+    assert "預定分段組數：2" in text
+    assert "已試跑的驗證分段：1 / 2" in text
+    assert "未涵蓋所有驗證分段" in text
+    assert "使用指定日期的一組" not in text
+    if dates:
+        assert "訓練開始：2024-01-01" in text
+    with pytest.raises(ValueError, match="fold coverage"):
+        build_confirmation_document(
+            manifest, _presentation(manifest), _receipt(manifest, total_fold_count=1)
+        )
+
+
+def test_leakage_controls_are_rendered_instead_of_being_swallowed() -> None:
+    """Purge settings change what a fold may see, so they need a human view."""
+    enabled = render_confirmation_text(
+        _document(
+            _manifest(
+                "walk_forward",
+                validation={
+                    "label_horizon": 5,
+                    "embargo_bars": 2,
+                    "purged_split": True,
+                },
+            )
+        )
+    )
+    assert "標籤前視根數：5 根 K 線" in enabled
+    assert "淨化分段：是" in enabled
+    assert "額外隔離根數：2 根 K 線" in enabled
+
+    defaults = render_confirmation_text(_document(_manifest("walk_forward")))
+    assert "標籤前視根數：未啟用檢查" in defaults
+    assert "淨化分段：否" in defaults
+
+
+@pytest.mark.parametrize("horizon", [0, -1])
+def test_disabled_label_audit_is_not_presented_as_safe_labels(horizon: int) -> None:
+    text = render_confirmation_text(
+        _document(_manifest("walk_forward", validation={"label_horizon": horizon}))
+    )
+    assert f"未啟用檢查（設定值：{horizon}）" in text
+    assert "未啟用不代表標籤安全" in text
+    assert "標籤不取自未來資料" not in text
+    with pytest.raises(ValueError, match="positive label horizon"):
+        _document(
+            _manifest(
+                "walk_forward",
+                validation={"purged_split": True, "label_horizon": horizon},
+            )
+        )
 
 
 @pytest.mark.parametrize(

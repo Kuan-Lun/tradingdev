@@ -1,8 +1,8 @@
 """Tests for the paired bootstrap comparison of strategies."""
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
@@ -22,6 +22,9 @@ from tradingdev.domain.statistics.sharpe import (
     IntervalUnavailable,
     sharpe_ratio,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True)

@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, create_autospec, patch
 
 import httpx
 import pytest
 from mcp import ClientSession
-from mcp.types import CallToolResult, ListToolsResult, Tool
+from mcp_types import CallToolResult, ListToolsResult, TextContent, Tool
 
 from tests.e2e.codex_harness import LIFECYCLE_TOOLS
 from tests.e2e.llm_client import (
@@ -21,6 +21,9 @@ from tests.e2e.llm_client import (
     run_local_model,
 )
 from tests.integration.mcp_harness import MCPClient, temporary_mcp_workspace
+
+if TYPE_CHECKING:
+    from tests.e2e.conversation import ModelTurn
 
 
 def _call(
@@ -68,15 +71,163 @@ def _mock_client(
             Tool(
                 name="list_strategies",
                 description="List strategies.",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
             *(extra_tools or []),
         ]
     )
     session.call_tool.return_value = CallToolResult(
-        content=[], structuredContent={"result": []}
+        content=[], structured_content={"result": []}
     )
     return MCPClient(session, "Use MCP tools."), session.call_tool
+
+
+@pytest.mark.parametrize("is_error", [False, True])
+def test_local_model_receives_sdk_wire_aliases_and_compacted_structured_result(
+    is_error: bool,
+) -> None:
+    client, invoke = _mock_client()
+    structured = {"success": not is_error, "rows": 0}
+    invoke.return_value = CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(structured))],
+        structured_content=structured,
+        is_error=is_error,
+        meta={"fixture": "wire"},
+    )
+    requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return _reply([_call()])
+        message = json.loads(request.content)["messages"][-1]
+        assert message["role"] == "tool"
+        assert json.loads(message["content"]) == {
+            "structuredContent": structured,
+            "isError": is_error,
+            "resultType": "complete",
+            "_meta": {"fixture": "wire"},
+        }
+        return _reply()
+
+    calls = asyncio.run(
+        run_local_model(
+            client,
+            "Inspect the tool result",
+            model="fixture",
+            base_url="http://fixture/v1",
+            timeout_seconds=5,
+            transport=httpx.MockTransport(respond),
+        )
+    )
+    assert requests == 2
+    assert calls == [ToolCall("list_strategies", {}, structured)]
+    invoke.assert_awaited_once_with("list_strategies", {})
+
+
+def test_local_user_reply_keeps_prior_messages_and_observes_only_completed_turns() -> (
+    None
+):
+    async def run() -> None:
+        client, call_tool = _mock_client()
+        requests: list[dict[str, Any]] = []
+        turns: list[ModelTurn] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            requests.append(body)
+            if len(requests) in {1, 3}:
+                return _reply([_call(call_id=f"call-{len(requests)}")])
+            return _reply()
+
+        async def user_reply(turn: ModelTurn) -> str | None:
+            turns.append(turn)
+            assert turn.number == len(turns)
+            assert turn.text == "Complete."
+            assert len(turn.calls) == 1
+            assert call_tool.await_count == len(turns)
+            return "同意執行" if turn.number == 1 else None
+
+        calls = await run_local_model(
+            client,
+            "先準備",
+            model="fixture",
+            base_url="http://fixture/v1",
+            timeout_seconds=5,
+            transport=httpx.MockTransport(respond),
+            user_reply=user_reply,
+        )
+        assert len(calls) == len(turns) == 2
+        assert requests[2]["messages"][:-2] == requests[1]["messages"]
+        assert requests[2]["messages"][-2:] == [
+            {"role": "assistant", "content": "Complete."},
+            {"role": "user", "content": "同意執行"},
+        ]
+        assert (
+            requests[3]["messages"][: len(requests[2]["messages"])]
+            == requests[2]["messages"]
+        )
+
+    asyncio.run(run())
+
+
+def test_local_tool_budget_remains_shared_after_user_reply() -> None:
+    async def run() -> None:
+        client, call_tool = _mock_client()
+        count = 0
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            nonlocal count
+            count += 1
+            return _reply() if count == 2 else _reply([_call(call_id=f"call-{count}")])
+
+        async def user_reply(turn: ModelTurn) -> str:
+            return "同意執行"
+
+        with pytest.raises(AssertionError, match="exceeded 1 MCP tool calls"):
+            await run_local_model(
+                client,
+                "prepare",
+                model="fixture",
+                base_url="http://fixture/v1",
+                timeout_seconds=5,
+                transport=httpx.MockTransport(respond),
+                user_reply=user_reply,
+                max_tool_calls=1,
+            )
+        assert call_tool.await_count == 1
+
+    asyncio.run(run())
+
+
+def test_local_user_observer_error_does_not_request_another_model_turn() -> None:
+    async def run() -> None:
+        client, call_tool = _mock_client()
+        requests = 0
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            nonlocal requests
+            requests += 1
+            return _reply()
+
+        async def user_reply(turn: ModelTurn) -> str:
+            raise AssertionError("No reviewable plan")
+
+        with pytest.raises(AssertionError, match="No reviewable plan"):
+            await run_local_model(
+                client,
+                "prepare",
+                model="fixture",
+                base_url="http://fixture/v1",
+                timeout_seconds=5,
+                transport=httpx.MockTransport(respond),
+                user_reply=user_reply,
+            )
+        assert requests == 1
+        call_tool.assert_not_awaited()
+
+    asyncio.run(run())
 
 
 def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> None:
@@ -89,7 +240,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                 }
                 original_payloads = {
                     call_id: (await client.session.call_tool(name, {})).model_dump(
-                        mode="json"
+                        mode="json", by_alias=True
                     )
                     for call_id, name in (
                         ("list", "list_strategies"),
@@ -119,7 +270,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                     }
                     assert set(schemas) == set(LIFECYCLE_TOOLS) & advertised.keys()
                     for name, schema in schemas.items():
-                        assert schema["parameters"] == advertised[name].inputSchema
+                        assert schema["parameters"] == advertised[name].input_schema
                     if len(requests) == 1:
                         assert (
                             body["messages"][1]["content"] == "Find a valid strategy."
@@ -396,7 +547,7 @@ def test_progress_reports_usage_and_results_without_source_or_reasoning(
     client, invoke = _mock_client()
     invoke.return_value = CallToolResult(
         content=[],
-        structuredContent={"success": True, "source_code": "PRIVATE_SOURCE"},
+        structured_content={"success": True, "source_code": "PRIVATE_SOURCE"},
     )
     requests = 0
 
@@ -499,7 +650,7 @@ def test_provider_tool_error_receives_feedback_without_replaying_completed_calls
             Tool(
                 name="get_job_status",
                 description="Get job status.",
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {"job_id": {"type": "string"}},
                     "required": ["job_id"],
@@ -759,7 +910,7 @@ def test_model_timeout_includes_recent_tool_failure_and_preserves_cause() -> Non
     client, invoke = _mock_client()
     invoke.return_value = CallToolResult(
         content=[],
-        structuredContent={"success": False, "error": "Storage unavailable"},
+        structured_content={"success": False, "error": "Storage unavailable"},
     )
     requests = 0
     original_error: httpx.ReadTimeout | None = None
@@ -945,53 +1096,73 @@ def test_model_deadline_also_cancels_stalled_mcp_tool_discovery() -> None:
 
 def test_codex_events_normalize_arguments_and_both_mcp_result_encodings() -> None:
     completed: dict[str, Any] = {
-        "type": "item.completed",
-        "item": {
-            "type": "mcp_tool_call",
-            "status": "completed",
-            "tool": "get_strategy",
-            "arguments": '{"strategy_id": "example"}',
-            "result": {"structured_content": {"success": False, "error": "Repair"}},
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "mcpToolCall",
+                "status": "completed",
+                "tool": "get_strategy",
+                "arguments": '{"strategy_id": "example"}',
+                "result": {"structuredContent": {"success": False, "error": "Repair"}},
+            },
         },
     }
     wrapped = {
-        "type": "item.completed",
-        "item": {
-            "type": "mcp_tool_call",
-            "status": "completed",
-            "tool": "list_strategies",
-            "arguments": {},
-            "result": {"structuredContent": {"result": [{"strategy_id": "example"}]}},
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "mcpToolCall",
+                "status": "completed",
+                "tool": "list_strategies",
+                "arguments": {},
+                "result": {
+                    "structuredContent": {"result": [{"strategy_id": "example"}]}
+                },
+            },
         },
     }
     text_only = {
-        "type": "item.completed",
-        "item": {
-            "type": "mcp_tool_call",
-            "status": "completed",
-            "tool": "get_job_status",
-            "arguments": {"job_id": "job-1"},
-            "result": {
-                "content": [
-                    {"type": "text", "text": "Diagnostic before payload"},
-                    {"type": "text", "text": '{"status": "done"}'},
-                ]
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "mcpToolCall",
+                "status": "completed",
+                "tool": "get_job_status",
+                "arguments": {"job_id": "job-1"},
+                "result": {
+                    "content": [
+                        {"type": "text", "text": "Diagnostic before payload"},
+                        {"type": "text", "text": '{"status": "done"}'},
+                    ]
+                },
             },
         },
     }
-    calls = codex_calls(
-        [
-            {"type": "item.started", "item": completed["item"]},
-            {"type": "item.completed", "item": {"type": "agent_message"}},
-            {
-                "type": "item.completed",
-                "item": {**completed["item"], "status": "failed"},
+    events = [
+        {"method": "item/started", "params": completed["params"]},
+        {
+            "method": "item/completed",
+            "params": {"item": {"type": "agentMessage"}},
+        },
+        {
+            "method": "item/completed",
+            "params": {
+                **completed["params"],
+                "item": {**completed["params"]["item"], "status": "failed"},
             },
-            completed,
-            wrapped,
-            text_only,
-        ]
-    )
+        },
+        completed,
+        wrapped,
+        text_only,
+    ]
+    original = deepcopy(events)
+    calls = codex_calls(events)
     assert calls == [
         ToolCall(
             "get_strategy",
@@ -1001,3 +1172,4 @@ def test_codex_events_normalize_arguments_and_both_mcp_result_encodings() -> Non
         ToolCall("list_strategies", {}, [{"strategy_id": "example"}]),
         ToolCall("get_job_status", {"job_id": "job-1"}, {"status": "done"}),
     ]
+    assert events == original, "The adapter must retain raw app-server evidence"

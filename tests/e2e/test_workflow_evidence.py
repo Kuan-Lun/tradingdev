@@ -57,15 +57,15 @@ def _repair_evidence() -> list[ToolCall]:
                 "status": "ready",
                 "plan_id": "plan",
                 "manifest_hash": "a" * 64,
-                "confirmation_text": "確認本次參數與歷史模擬期間。",
+                "confirmation_summary": "確認本次參數與歷史模擬期間。",
                 "html_path": "/fixture/confirmation.html",
                 "artifact_id": "plan:confirmation",
                 "preflight": {"status": "passed"},
             },
         ),
         ToolCall(
-            "request_execution_confirmation",
-            {"plan_id": "plan"},
+            "submit_execution_decision",
+            {"plan_id": "plan", "decision": "approve"},
             {
                 "success": True,
                 "plan_id": "plan",
@@ -209,7 +209,7 @@ def test_failed_lookup_does_not_count_as_reading_the_draft() -> None:
         (6, ("prepare_backtest", "ready plan_id", "after successful dry_run_strategy")),
         (
             7,
-            ("request_execution_confirmation", "plan_id='plan'", "nonempty job_id"),
+            ("submit_execution_decision", "plan_id='plan'", "nonempty job_id"),
         ),
         (
             8,
@@ -217,7 +217,7 @@ def test_failed_lookup_does_not_count_as_reading_the_draft() -> None:
                 "get_job_status",
                 "job_id='job'",
                 "status='done'",
-                "after request_execution_confirmation",
+                "after submit_execution_decision",
             ),
         ),
         (9, ("get_run", "run_id='run'", "after get_job_status reported done")),
@@ -323,6 +323,67 @@ def test_parameter_experiment_requires_explicit_overrides_and_original_revision(
         assert_workflow(calls, scenario)
 
 
+@pytest.mark.parametrize(
+    "optional_arguments",
+    [
+        {},
+        {"parameters": None},
+        {"backtest_overrides": None},
+        {"parameters": None, "backtest_overrides": None},
+    ],
+    ids=["omitted", "null-parameters", "null-backtest", "both-null"],
+)
+def test_nonexperiment_preparation_accepts_omitted_or_null_overrides(
+    optional_arguments: dict[str, Any],
+) -> None:
+    calls = _repair_evidence()
+    calls[6].arguments.update(optional_arguments)
+    assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"parameters": SCENARIOS["repair"].parameters},
+        {"parameters": SCENARIOS["repair"].overrides},
+        {"parameters": {}},
+        {"backtest_overrides": {"fees": 0}},
+        {"backtest_overrides": {"fees": 0.01}},
+        {"backtest_overrides": {}},
+    ],
+    ids=[
+        "same-parameters",
+        "different-parameters",
+        "empty-parameters",
+        "same-backtest",
+        "different-backtest",
+        "empty-backtest",
+    ],
+)
+def test_nonexperiment_preparation_rejects_override_mappings(
+    overrides: dict[str, Any],
+) -> None:
+    calls = _repair_evidence()
+    calls[6].arguments.update(overrides)
+    with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [None, {}, SCENARIOS["repair"].parameters, {"fast_period": 3}],
+    ids=["null", "empty", "base-parameters", "partial-override"],
+)
+def test_parameter_experiment_requires_the_complete_requested_override(
+    parameters: dict[str, int] | None,
+) -> None:
+    scenario = replace(SCENARIOS["repair"], experiment=True)
+    calls = _repair_evidence()
+    calls[6].arguments["parameters"] = parameters
+    with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
+        assert_workflow(calls, scenario)
+
+
 def test_parameter_experiment_cannot_resave_after_base_is_runnable() -> None:
     scenario = replace(SCENARIOS["repair"], experiment=True)
     calls = _repair_evidence()
@@ -344,19 +405,19 @@ def test_confirmation_of_another_plan_cannot_supply_execution_evidence(
 ) -> None:
     calls = _repair_evidence()
     getattr(calls[7], location)["plan_id"] = "another_plan"
-    with pytest.raises(AssertionError, match="request_execution_confirmation"):
+    with pytest.raises(AssertionError, match="submit_execution_decision"):
         assert_workflow(calls, SCENARIOS["repair"])
 
 
-def test_model_supplied_approval_does_not_count_as_user_confirmation() -> None:
+def test_legacy_approval_field_does_not_match_the_decision_contract() -> None:
     calls = _repair_evidence()
     calls[7].arguments["approved"] = True
-    with pytest.raises(AssertionError, match="request_execution_confirmation"):
+    with pytest.raises(AssertionError, match="submit_execution_decision"):
         assert_workflow(calls, SCENARIOS["repair"])
 
 
 @pytest.mark.parametrize(
-    "field", ["confirmation_text", "html_path", "artifact_id", "preflight"]
+    "field", ["confirmation_summary", "html_path", "artifact_id", "preflight"]
 )
 def test_preparation_requires_reviewable_confirmation_evidence(field: str) -> None:
     calls = _repair_evidence()
@@ -455,7 +516,7 @@ def test_history_workflow_accepts_sdk_encoded_report_and_query_arguments() -> No
                 "generate_report",
                 {
                     "run_ids": '["run"]',
-                    "sections": '["metrics","trades","executions","account_history"]',
+                    "sections": '["overview","metrics","ledger","trades"]',
                     "commentary": json.dumps(
                         [{"title": "研究評語", "text": "本次結果僅為歷史模擬。"}]
                     ),

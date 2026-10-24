@@ -146,6 +146,23 @@ from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
 ```
 
+### Training Before Scoring
+
+Strategies whose signals require a fitted model must establish that model from
+training history before scoring evaluation data. An untrained strategy must not
+fit on the entire evaluation frame and then replay signals over that frame:
+earlier signals would use information from later rows. Strategies that do not
+require training need no additional `fit()` step.
+
+The bundled `QuantileStrategy.generate_signals()` raises `RuntimeError` when
+its regime model or feature engineer is absent. Its `fit(train_df)` requires an
+injected backtest engine; calling it without one skips training and does not
+satisfy model readiness. This guard checks readiness, not the correctness of all
+training windows or predictions. Use the walk-forward execution path for this
+strategy; the simple-backtest and optimization paths do not fit it before scoring.
+See the [Quantile guide](strategies/quantile_strategy.md#running) for commands,
+data prerequisites and execution-mode restrictions.
+
 ## YAML Contract
 
 ```yaml
@@ -190,7 +207,7 @@ data:
 by the service; callers need not supply them. `strategy.version` remains optional
 descriptive configuration, not the execution revision identifier.
 
-Performance analysis uses Empyrical for return/risk metrics and VectorBT for
+Performance analysis uses QuantStats for return/risk metrics and VectorBT for
 closed-trade statistics. `periods_per_year` is the explicit annualization factor
 for observed UTC **daily returns**, independent of the strategy's bar timeframe:
 365 for this continuously traded crypto example, or an appropriate trading-day
@@ -242,6 +259,280 @@ data:
         path: "workspace/data/processed/btc_funding_rate_2025.parquet"
 ```
 
+### Strategy Walk-Forward Settings
+
+The top-level YAML `validation` mapping configures strategy backtests through
+`WalkForwardConfig` and `WalkForwardValidator`. It is separate from the ML
+`train_model(validation=...)` tool described below: it does not select an ML
+scheme by name or infer a label horizon from an ML dataset.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `label_horizon` | `0` | A positive value declares how many source rows a training label looks ahead and enables the pre-fold label-overlap audit. Values below 1 leave that audit disabled with the plain splitter. |
+| `purged_split` | `false` | Selects the opt-in anchored purged splitter when true; it requires `label_horizon >= 1`. |
+| `embargo_bars` | `0` | Extra rows removed before each test window in addition to the label-horizon purge; used only when `purged_split` is true. |
+| `n_splits` | `1` | Number of automatic test folds; use a positive integer and enough data for nonempty windows. |
+
+With `purged_split: false`, all four `train_start`, `train_end`, `test_start`
+and `test_end` values select one explicit date split. Otherwise the plain
+splitter uses automatic windows with `train_ratio: 0.8` and `expanding: false`
+by default. Each boundary is an inclusive UTC calendar day, so the four dates
+are converted to UTC first (naive values are treated as UTC), then their time
+of day is discarded. Their UTC days must satisfy
+`train_start <= train_end < test_start <= test_end`: a train
+window ending on the day the test window starts would train on bars the test
+set also scores, so it is rejected. Supplying only some of the four fields is
+rejected as well, instead of silently falling back to automatic windows. The
+splitter re-checks the loaded frame, raising `WalkForwardSplitError` when the
+timestamps are not ascending, a window selects no rows, or the selected train
+and test rows share a bar.
+A positive `label_horizon` checks the selected windows before any fold's
+strategy fitting or backtest runs. If training labels reach the test window,
+the full validation raises `WalkForwardLeakageError`; this audit detects the
+problem without changing the windows. Thus setting only a positive horizon on
+adjacent plain train/test windows will block them rather than purge them.
+`embargo_bars` has no effect in this plain mode, including with explicit dates.
+
+To remove overlapping training labels automatically, add this mapping at the
+root of a strategy YAML whose loaded history is long enough for all folds:
+
+```yaml
+validation:
+  n_splits: 3
+  label_horizon: 5
+  embargo_bars: 2
+  purged_split: true
+  target_metric: "sharpe_ratio"
+```
+
+The purged splitter divides the loaded rows into `n_splits + 1` contiguous,
+near-equal blocks. The first is training-only; each later block is tested once,
+using all preceding blocks as anchored training history after removing the
+`label_horizon + embargo_bars` gap immediately before its test window. In this
+full-validation splitter, explicit train/test dates, `train_ratio` and `expanding` do not control
+folds, even if present in the YAML. The schema still parses supplied dates as
+datetimes, but does not require all four or validate their order in purged mode.
+Omit those inactive settings to keep the
+request clear. The backtest's data bounds still determine the history supplied
+to the splitter.
+
+`purged_split: true` with a missing, zero or negative horizon fails when the
+validator constructs its splitter. Purged splitting also rejects a nonpositive
+fold count, a negative embargo, a horizon at least as long as the input, too
+many blocks, or a gap that leaves no training rows. The YAML schema rejects
+unknown field names but does not enforce every numerical range or fold geometry;
+successful YAML parsing alone does not establish a usable validation run.
+The plain splitter's `label_horizon: 0` default is an audit opt-out, not evidence
+that a strategy's labels are safe. Declare the actual forward horizon when the
+strategy uses such labels. This gate audits row-window geometry, not arbitrary
+feature code or a strategy's independently constructed labels.
+
+The MCP confirmation preflight uses the selected splitter on a bounded sample
+and runs only its first fold through `run_fold`. Purged mode ignores explicit
+dates, `train_ratio` and `expanding` here as in formal execution; it reports
+one tested fold out of `n_splits`, with a `single_fold_only` warning when more
+than one is configured. Plain explicit-date mode samples one train/test pair;
+plain automatic mode retains its ratio and expanding-window settings.
+The confirmation shows the effective mode and identifies inactive settings.
+
+Sample boundaries depend on the sampled history and need not equal full-run
+boundaries. Preflight does not execute the complete validator's pre-fold audit
+or establish that every formal fold can run. The full strategy walk-forward
+execution applies that gate before running its folds. A nonpositive horizon
+means the audit is disabled, not that labels are safe. This differs from the
+ML tool's timestamp/label-interval validation described below.
+
+## ML Research Contract
+
+The ML MCP tools are a separate synchronous research interface. They select
+registered feature builders and estimators without generating a strategy,
+preparing an execution plan or starting a backtest worker. A saved model is not
+a runnable strategy revision and does not bypass the Python signal contract or
+strategy lifecycle. User workflow is documented in the
+[README](../README.md#研究機器學習訊號); file identities and persistence rules are in
+[ML Research Artifacts](run_artifacts.md#ml-research-artifacts).
+
+`get_ml_contract` returns schema version 1 discovery information: named feature
+sets with ordered columns, model kinds with default parameters, validation
+schemes, processor types, IC methods, quantile limits, calendar modes, missing
+policies and rankable metrics. Use these returned names rather than constructing
+arbitrary model classes. `processor_types` advertises domain building blocks
+only: `build_dataset`, `build_panel` and `train_model` do not accept or execute a
+processor pipeline. In particular, training does not implicitly fit a scaler
+because its name appears in discovery.
+
+### Dataset and Model Inputs
+
+`build_dataset` reads existing yearly OHLCV files for the requested symbol and
+timeframe, selecting available rows within the requested period. Missing yearly
+files or an empty selected period fail the request; success does not establish
+complete bar-by-bar coverage. Use `ensure_data` separately when a download is
+needed. Building a dataset does not download, refresh an old partial-year market
+cache or remove market files. The feature builder preserves rows and emits unavailable values
+during warm-up. The service computes `forward_return = close[t+horizon] /
+close[t] - 1` and `target = sign(forward_return)`, then drops incomplete feature
+or label rows and reports their count. `horizon` is a positive number of source
+bars, not elapsed calendar days. OHLCV and bookkeeping columns are not added to
+the model's declared feature list.
+
+Both `build_dataset` and `build_panel` pass their date bounds to
+`DataService.load_cached`. Bounds without a timezone are interpreted as UTC;
+bounds with an offset are converted to UTC. Rows are selected with
+`start_date <= timestamp <= end_date`, including both endpoints. A date-only
+`end_date: "2024-01-31"` therefore stops at `2024-01-31T00:00:00Z`, not at the
+end of January 31. For all hourly bars dated within January, use explicit bounds,
+for example these `build_dataset` arguments:
+
+```json
+{
+  "symbol": "BTC/USDT",
+  "timeframe": "1h",
+  "start_date": "2024-01-01T00:00:00Z",
+  "end_date": "2024-01-31T23:59:59.999999Z",
+  "feature_set": "returns",
+  "horizon": 1
+}
+```
+
+The selected end bounds the source bars, so trailing rows whose forward label
+needs later prices are still dropped. Reversed bounds fail; the loader does not
+extend them to obtain missing labels. This timestamp contract differs from a
+strategy walk-forward's explicit date split and optimization's inclusive UTC
+calendar-day bounds. Explicit walk-forward dates first convert offsets to UTC,
+then discard the time of day; the range is
+`UTC midnight of start day <= timestamp < UTC midnight after end day`.
+For example, `2024-01-02T03:00:00+08:00` names the entire January 1 UTC day.
+The confirmation document displays these effective UTC boundaries, including
+the exclusive upper bound, alongside the original settings.
+Do not copy the ML timestamp example into optimization, which accepts only
+`YYYY-MM-DD` boundaries.
+
+`build_panel` requires at least two distinct symbols. It sorts symbol identity,
+builds each symbol's features and labels independently, then aligns the labelled
+frames. `intersection` keeps common timestamps. `union` uses `missing_policy`:
+`drop` removes dates that any symbol cannot supply, `error` rejects gaps, and
+`forward_fill` carries prior observations up to `max_staleness` shared calendar
+positions (`null` leaves that carry unbounded). Leading gaps cannot be filled
+from future observations. Read the returned calendar coverage, dropped dates
+and filled-row counts; filled rows are carried observations, not new trades.
+`calendar.dropped_dates` and each `calendar.coverage[].missing` list contain at
+most the first 50 dates; `n_dropped_dates` and each `n_missing` remain exact.
+The saved manifest uses the same bounded calendar summary.
+
+`train_model(dataset_id, model_kind, parameters, validation, ...)` resolves
+effective model defaults plus declared parameter overrides; unknown parameter
+names are rejected. It trains only the dataset's ordered feature columns plus
+`target`. Standalone ML training uses the model's `random_state` parameter,
+independently of the top-level strategy YAML `random_seed`.
+Feature importance is sorted descending using each estimator's native
+`feature_importances_` values. It is not a common cross-framework scale or a
+universal gain measure.
+
+The final persisted artifact is fitted on every dataset row, and
+`in_sample_accuracy` evaluates those same training rows. Optional validation
+fits additional models for its folds; it does not replace the artifact with a
+fold model or persist an out-of-fold prediction stream. Preserve the returned
+validation evidence if it is needed later.
+
+`predict` verifies the saved dataset and model blob, requires an exact ordered
+feature-column match, then returns `signal` and `forward_returns` in dataset row
+order with their `model_id`, `dataset_id` and horizon. It does not establish
+whether the requested data or its label interval was used for fitting or
+parameter selection. Evaluating the final artifact on its training dataset is
+in-sample even when the training response includes validation scores. A separate
+test dataset must be reserved before selection, with training label intervals
+ending before that test period, to support a chronological out-of-sample claim.
+
+### Fold Validation and Signal Interpretation
+
+Omitting `validation` skips fold validation. A supplied scheme uses the saved
+label horizon for purging and an optional nonnegative `embargo` gap; callers
+cannot replace the dataset's horizon with a more convenient value.
+`n_folds` and `min_train_bars` must leave usable training and test data after
+exclusions; unsupported schemes or insufficient data fail the request.
+
+Folds are built on sorted distinct timestamps, not the panel's physical row
+order. Every symbol on one timestamp shares the same training/test role.
+`min_train_bars` counts distinct training timestamps, whereas returned
+`train_bars`, `test_bars`, `purged_bars` and `embargoed_bars` count dataset rows.
+The service retains each label's original `label_start` and `label_end` before
+feature-row removal or calendar alignment. In addition to the horizon-based
+gap, it excludes training dates whose label intervals touch the test interval;
+one symbol's overlap excludes that date for all symbols. This also checks test
+labels extending into the training window on the right in K-fold validation.
+Datasets without the label intervals must be rebuilt before validation.
+
+A panel containing forward-filled observations is rejected for fold validation:
+its carried label describes the original observation, not a new sample at the
+filled timestamp. Rebuild with `intersection` or `missing_policy="drop"` for
+validation. Such panels can still be fitted without validation and passed to
+`predict`; this is not evidence of an out-of-sample test.
+
+- `purged_walk_forward` expands training through dates before each test window.
+- `purged_kfold` trains on retained data outside each test window: later data for
+  the first fold, earlier data for the last, and available data on either side
+  for interior folds. This is retrospective cross-validation, not predictions
+  that could have been made at the test date.
+
+The response reports each fold's retained training/test rows, purged and
+embargoed rows, accuracy, IC, Rank IC and hit rate, plus the mean of available
+fold scores. Panel fold metrics are calculated separately in timestamp order
+for each symbol, then averaged across symbols with available values; rolling
+IC windows never cross from one symbol into another. Unavailable scores remain
+`null`. `artifact_trained_on: all_bars`
+distinguishes the final artifact from the fold models. `leakage_audit_clean`
+describes the implemented split and label-overlap checks only; it cannot prove
+that features, research choices or external inputs are free of future knowledge.
+
+`evaluate_signal` takes one asset's chronological sequence of consecutive bars,
+as equal-length, finite numeric arrays in the same row order, with enough
+observations for the chosen IC `window` and `n_quantiles`
+(2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
+prediction strata and simplified return summaries. These signal statistics are
+separate from backtest performance metrics and do not model transaction costs,
+slippage or order execution. Full-sample strata and their quantile means are
+descriptive comparisons, not fitted trading thresholds or out-of-sample evidence.
+Ties can reduce the actual number of strata; do not infer their count from the
+requested `n_bins` alone.
+
+The simplified long/short and long-only streams use thresholds computed only
+from earlier signals. The first `n_quantiles` observations are warm-up, and at
+least two distinct past signal values are needed. With few distinct signals,
+historical minimum/maximum select the tails; otherwise expanding quantiles do.
+Only original positions `0, horizon, 2*horizon, ...` can open a trade, so the
+holding intervals do not overlap. Other rows contribute zero. Cumulative values
+compound these holding-interval returns; means include the inactive rows.
+Returns are indexed by decision row, not realization time, and do not form a
+mark-to-market equity curve. A constant signal cannot form a long/short book and
+is rejected. With no dataset ID, the caller is responsible for chronological
+single-asset alignment and the correct horizon; omission defaults to one bar.
+
+Whenever `dataset_id` is supplied, evaluation requires a single-symbol dataset,
+all of its rows, exact saved forward returns in order, and a matching horizon
+(or omission to adopt the saved value), including when `record=False`.
+Dataset rows must be strictly chronological, and saved label end times must
+show non-overlapping holding intervals on the simulation grid. Datasets without
+label intervals must be rebuilt for evaluation.
+Panel evaluation is rejected; build a single-symbol dataset and call `predict`
+on it before evaluation. Do not concatenate different assets into one time
+series. `record=True` additionally requires the dataset ID.
+`model_id` is a caller-declared label, not proof of signal origin or a held-out
+evaluation. Recording and candidate-replacement semantics are defined in the
+[artifact contract](run_artifacts.md#recorded-signal-evaluations).
+`leaderboard` ranks only a metric with a declared direction and, by default,
+only matching measurement contexts. Its optional `dataset_id` filter selects a
+verified dataset version and checks that recorded data context matches its
+manifest; differences in evaluation settings still require compatible context.
+`allow_mixed=True` opts into incomparable
+contexts and must not be presented as a controlled comparison. Retain its
+`caveats`, skipped entries and candidate counts when interpreting the winner;
+trying more candidates increases selection bias.
+
+Model prediction unpickles trusted Python objects. Generated-strategy import
+checks do not apply to those objects, and a matching hash is not a sandbox or
+proof of a trustworthy publisher. Do not load model files from an untrusted
+workspace.
+
 ## Lifecycle
 
 1. `save_strategy`: writes a new draft source/config revision and metadata,
@@ -262,13 +553,23 @@ data:
    confirmation and HTML artifact. Only runnable or promoted generated strategies,
    and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
-6. `request_execution_confirmation(plan_id)`: asks the MCP client to show a form
-   with no input fields; the client's accept action is the approval and submits
-   the captured manifest. Any submitted field, or an accept without content, is
-   rejected. Decline, cancellation, timeout, malformed responses,
-   and clients without form elicitation do not launch a job. The server trusts the
-   client to obtain the user's response; a model-supplied approval argument is not
-   accepted. The CLI remains an explicit execution interface without this MCP form.
+6. Present `confirmation_summary` and a clickable link to the complete HTML,
+   then end the conversation turn. Wait for the user to read it and explicitly
+   approve, decline or request changes in a later turn. Do not paste the full
+   settings, search grid or trial evidence into the conversation.
+7. `submit_execution_decision(plan_id, decision)` relays that decision:
+   `approve` submits the captured manifest, `decline` cancels, and `revise` cancels
+   with `confirmation_adjustment_requested`. Edits require a new plan, a fresh
+   trial and another user confirmation. Initial task instructions, silence,
+   questions or ambiguous replies must not be treated as approval.
+
+The backend trusts the caller to relay the user's actual decision. It cannot
+independently prove that a human supplied it. Plan integrity, expiry, executable
+source checks and submission deduplication still apply. No native MCP elicitation
+capability is required; the former `request_execution_confirmation` tool is removed.
+The complete text and HTML remain saved plan artifacts; only the short summary
+and artifact location are returned by preparation and plan lookup. The CLI remains
+an explicit execution interface without this conversation workflow.
 
 The lifecycle gate is enforced again at execution time inside `BacktestService`,
 so the CLI and subprocess workers cannot bypass it, and the config's `source_path`

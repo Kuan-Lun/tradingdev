@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
-from scripts.process_guard import run_checked
+from tooling.process_guard import run_checked
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -23,7 +23,7 @@ _PYPROJECT = """\
 [project]
 name = "rebuild-fixture"
 version = "0.1.0"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = []
 
 [project.optional-dependencies]
@@ -44,7 +44,7 @@ class RebuildProject:
 
 
 @contextmanager
-def _project() -> Generator[RebuildProject, None, None]:
+def _project() -> Generator[RebuildProject]:
     with TemporaryDirectory(prefix="tradingdev-rebuild-test-") as temporary:
         directory = Path(temporary)
         root = directory / "project"

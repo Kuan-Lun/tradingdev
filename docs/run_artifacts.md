@@ -28,6 +28,22 @@ workspace/
   data/
     raw/
     processed/
+  ml_datasets/
+    .publish.lock
+    <dataset_id>/
+      dataset.parquet
+      manifest.json
+  ml_feature_cache/
+    .feature-cache.lock
+    <cache_key>.parquet
+    <cache_key>.json
+  models/
+    .<model_id>.lock
+    <model_id>.json
+    <model_id>.bin
+  ml_leaderboard/
+    .leaderboard.lock
+    leaderboard.jsonl
   runs/
     <run_id>/
       manifest.json
@@ -87,8 +103,9 @@ directories and are never unlinked while another process might use their inode.
 
 Successful MCP `prepare_backtest`, `prepare_walk_forward`, and
 `prepare_optimization` responses include the required `manifest_hash` and a
-`plan_id`; they do not create a job. `request_execution_confirmation` returns the
-job ID only after the client accepts the confirmation form. Job status, job lists, and run
+`plan_id`; they do not create a job. `submit_execution_decision` with `approve`
+returns the job ID after the caller relays the user's explicit consent.
+Job status, job lists, and run
 records carry the same digest; historical entries without an execution manifest
 return `null`. Historical results remain readable, but old jobs cannot resume
 through the new workers. Prepare a new plan to execute through MCP under a fixed
@@ -119,6 +136,200 @@ a process can be cancelled directly. Status checks mark a started job failed whe
 its supervisor identity is missing or no longer matches; the first response
 includes the same error persisted in the database. Spawn failures also persist
 `failed`, an explanatory error and `ended_at` before propagating the exception.
+
+## ML Research Artifacts
+
+ML datasets, feature matrices, trained models and signal evaluations use the
+workspace directories above. They do not create background jobs, backtest runs
+or SQLite artifact registrations. Dataset and model IDs refer to their own
+stores; they are not run IDs.
+
+### Immutable Datasets
+
+`MLDatasetStore` publishes schema version 2 datasets as a complete directory
+containing `dataset.parquet` and `manifest.json`. The manifest records:
+
+- The single symbol or ordered panel symbols, timeframe, requested date range,
+  source and dataset kind.
+- Feature-set name, ordered feature columns, build-time feature-code fingerprint,
+  label column, label horizon and dropped-row count.
+- For panels, the calendar settings, coverage summary and date count. As in the
+  tool response, dropped/missing date lists each contain at most 50 dates;
+  `n_dropped_dates` and each `n_missing` remain exact.
+- `schema_version`, `rows`, the SHA-256 `content_hash` of the exact Parquet bytes,
+  and `dataset_id`.
+
+The Parquet frame retains `label_start` and `label_end`: the original source-bar
+timestamps used to calculate each row's forward return, captured before feature
+rows are dropped or a panel calendar is aligned. Panel labels are computed on
+each symbol's own bars. Forward filling carries these timestamps together with
+the original label; it does not turn that label into a newly observed outcome
+at the filled calendar date. Fold validation refuses panels with carried
+observations and requires rebuilding with intersection or dropped missing dates.
+
+`dataset_id` is `ds_` followed by the first 16 hexadecimal characters of the
+SHA-256 of the sorted JSON manifest, excluding `dataset_id` itself. Thus metadata,
+feature code and the saved data bytes all participate in identity. Rebuilding
+after an input or feature-code change publishes a different version rather than
+replacing the previous dataset. Cache-hit status is response metadata only and
+does not change dataset identity.
+
+Publication holds `.publish.lock` across the existence check and same-directory
+rename of a completed temporary directory. An existing ID is reused only after
+its data and manifest pass verification and its manifest matches the proposed
+one; a collision or corrupt existing version fails without replacing it.
+Temporary publication directories are removed on success and failure. The lock
+file remains available to coordinate later writers.
+
+Every dataset load validates the ID syntax, schema, manifest identity, Parquet
+content hash and row count before exposing a frame. Hashing and parsing use the
+same bytes. Missing, incomplete or altered versions fail rather than rebuilding
+silently. Earlier dataset schemas are unsupported and must be rebuilt; reads do
+not migrate, delete or rewrite their files. These hashes detect inconsistent
+content, not a writer able to replace both the manifest and its data.
+
+Schema 2 alone does not establish that label intervals are present. Fold
+validation additionally requires both interval columns; single-symbol
+evaluation requires `label_end` and chronological `timestamp` rows to check its
+holding intervals. Earlier schema 2 datasets missing the required columns must
+also be rebuilt for those operations. The generic store does not infer missing
+intervals or modify an old version. Validation and evaluation semantics are
+defined in the [ML research contract](strategy_contract.md#fold-validation-and-signal-interpretation).
+
+### Feature Matrix Cache
+
+`ml_feature_cache/<cache_key>.parquet` stores a feature matrix, with a JSON
+sidecar describing the symbol, timeframe, input-data fingerprint, feature set,
+code fingerprint, feature and stored columns, row count, content hash and last
+use time. Labels are constructed after the cache lookup, so changing the label
+horizon can reuse the same feature computation.
+
+The cache key includes bar values, symbol, timeframe, feature set and feature
+code. The default code fingerprint hashes the feature package's relative source
+paths, source bytes and registered column declarations; it does not depend on
+the installation's absolute path or a Git checkout. An application caller may
+explicitly supply that fingerprint. Dataset manifests retain the fingerprint
+used at build time, so later evaluation does not substitute the currently
+installed feature code's identity.
+
+A cache hit requires matching computation metadata and feature columns, a
+matching Parquet hash, and matching stored columns and row count. Sidecars must
+contain a JSON object with string identity fields and SHA-256 hash, a nonnegative
+integer row count, and distinct string lists for stored and feature columns;
+feature columns must be present in the stored columns. A present last-use time
+must be finite and numeric. Malformed metadata, missing files, hash or shape
+mismatches and invalid Parquet content are cache misses, allowing the service
+to recompute and replace the disposable cache entry. The matrix is parsed from
+the same bytes whose hash was verified. Recomputing does not replace source
+market files or immutable dataset versions.
+
+Each cache directory has a persistent `.feature-cache.lock` shared by processes.
+It serializes complete writes and eviction, reads through their recency update,
+and key/statistics snapshots, so an in-progress publication cannot be swept as
+an orphan. The default lock wait is 30 seconds; expiration raises a timeout
+instead of reporting a cache miss. Matrix and sidecar publication use unique
+temporary files in the cache directory, with cleanup on success or failure;
+cleanup errors follow the I/O policy below. The lock file is retained and excluded from retention bytes,
+as are temporary files. This lock covers the disposable feature cache only.
+
+Verification reads and cache publication propagate permission and other storage
+I/O failures; these are not reported as misses. Updating recency is best effort
+and logs a warning if it fails, as does an unsuccessful eviction deletion.
+The default retention limits are 256 entries and 512 MiB, counting matrices and
+sidecars. Successful reads update recency; writes sweep incomplete pairs and evict least
+recently used entries. The just-written entry is protected, so a matrix larger
+than the byte budget remains stored and logs a warning. Failed deletions may
+also leave the cache above its limits. These are retention targets, not a hard
+disk quota; feature-cache eviction does not delete the immutable datasets that
+already contain the computed features.
+
+### Trained Models
+
+`models/<model_id>.json` holds schema 1 metadata; the matching `.bin` holds the
+pickled model wrapper. Metadata records model name, framework, kind, effective
+parameters, ordered features, training-row count, available feature importance
+and full blob SHA-256. At build time, the ID is computed as a 16-character
+SHA-256 prefix over name, parameters, ordered features and blob hash. It
+identifies model content, not a training execution or saved validation result.
+
+Save and load verify the blob hash and recompute the ID from its identity fields.
+Loading also checks that the metadata ID matches the requested filename. Framework,
+kind, training-row count and feature importance are not identity fields; changes
+to those fields may still go undetected. Metadata is not compared with the
+serialized estimator, and the ID neither authenticates publishers nor proves all
+metadata unchanged. Prediction checks exact ordered dataset features and unpickles
+the same bytes that passed hash verification.
+
+Writers for one model ID hold `.<model_id>.lock`. A new blob is staged beside its
+destination and atomically published; an existing blob must have the same hash and
+is never truncated or replaced. Metadata is published last by atomic replacement,
+so concurrent readers see complete records and can continue using an existing model
+during repeated training. Temporary files are removed on success and failure; the
+lock file is retained. A failed first publication removes its newly created blob
+if no metadata was published. This is not a crash or power-loss transaction:
+an interrupted, unpublished blob can be recovered by retrying the same content.
+
+The schema 1 filenames remain unchanged. `ModelArtifactStore.load_with_bytes`
+returns the verified metadata and bytes together; `load` returns only metadata.
+Saving no longer accepts an alternate `model_id`, and the unchecked
+`load_model_bytes` helper is removed.
+
+CatBoost removes random `model_guid` and wall-clock `train_finish_time` metadata
+before serialization, avoiding identities driven by those incidental values.
+This does not guarantee identical blobs across dependency versions or environments.
+Pickled wrappers are tied to the training environment, not a portable model
+exchange format. After a Python or ML dependency upgrade, retrain in the new
+environment and use the returned model ID. Schema 1 does not record dependency
+versions or enforce compatibility; a valid blob hash cannot establish that an
+older pickle is loadable in the current environment.
+
+Pickle requires trusted workspace files. Hashing is not authentication or a
+sandbox; a writer able to replace metadata and blob can supply executable code.
+The final artifact fits all dataset rows even when training returns fold scores;
+its ID or predictions on those rows do not establish out-of-sample evidence.
+
+### Recorded Signal Evaluations
+
+`evaluate_signal(record=True)` requires a verified saved single-symbol dataset.
+Whenever `dataset_id` is supplied, including without recording, the signal must
+cover all its rows, the supplied forward returns must exactly match the saved
+`forward_return` values in row order, and an explicit horizon must equal the
+saved horizon; omitting it adopts the saved value. The saved interval endpoints
+must support non-overlapping trades on the simulation grid. Panel datasets are
+refused for evaluation. Non-finite signal or return values are rejected, rather
+than dropped before recording. Without `record=True`, evaluation returns its
+result without a leaderboard write.
+
+`ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
+by ID. Each record preserves finite metrics, observation count, model and dataset
+IDs, a display label, and an evaluation context: symbol or panel symbols,
+timeframe, requested period, horizon, IC window, quantile count, feature set,
+build-time code fingerprint and dataset content hash. Comparison uses the saved
+context; changed data or feature code does not silently inherit an old context.
+
+`leaderboard(dataset_id=...)` verifies and selects one immutable dataset
+version, so models on it can be compared separately from rebuilt versions.
+Records must match its manifest's data context and row count; unknown or invalid
+IDs fail. Other filters combine with this selector. Different IC windows or
+quantile counts require `allow_mixed=True`, which never bypasses dataset
+verification.
+
+The entry ID includes the dataset, evaluation context and caller-supplied model
+ID. With no model ID, it also includes a signal fingerprint computed from a
+canonical JSON array of finite floating-point values; array boundaries and value
+boundaries are preserved. With a model ID, that ID is a caller-declared label:
+recording does not prove that this model produced the supplied signal or that
+the signal was generated out of sample. Repeating a model/dataset/context entry
+replaces its earlier metrics, including when the caller supplies different
+signal values. Distinct unlabelled signals remain separate candidates.
+
+`LeaderboardStore.record` holds `.leaderboard.lock` across its read, update and
+write. It flushes a unique temporary file beside the destination and atomically
+replaces the JSON-lines file. `entries` reads without locking and sees a complete
+old or new file. Temporary files are removed after successful and failed writes, and
+the lock file is retained. Re-recording an entry returns `replaced=True` rather
+than increasing the candidate count. Unreadable records fail the read instead
+of being skipped and silently reducing that count.
 
 ## Execution Manifest
 
@@ -353,10 +564,11 @@ resources; publication rolls back its new directory on handled failure.
 
 Plan states are `ready`, `awaiting_confirmation`, `submitting`, `submitted`,
 `cancelled`, or `failed`. A retained `.approval.lock` and state comparison
-serialize transitions; only one confirmation can be active. Confirmation checks
-expiry and current executable-source integrity before asking and again before
-submitting. A live server-owned challenge binds the response to the same plan
-content; a model-supplied boolean is not an approval credential. Repeating a
+serialize transitions; only one submission reservation can be active. The plan
+stays `ready` while the user reads it. On approval, the service checks expiry and
+current executable-source integrity before reserving and again before submitting.
+An internal server-owned challenge binds the submission to the same plan content;
+the client is responsible for truthfully relaying user consent. Repeating a
 successful submission returns its original job ID rather than launching twice.
 The deterministic job ID equals the plan ID. If worker launch succeeds but the
 final `submitted` state write fails, the response still identifies that job and
@@ -367,20 +579,26 @@ its manifest matches and it has a complete worker-control identity; it records
 queued records lacking that identity remain inspectable through the returned job
 ID but are not reported as successfully started work.
 
-`request_execution_confirmation` requires advertised MCP form elicitation.
-The form has no input fields: the client's accept action is the approval and
-submits the fixed manifest. Unsupported clients, declined/cancelled forms and
-malformed responses (any submitted field, or an accept without content) never
-launch work. Each form response has a separate 300-second
-(five-minute) deadline, independent of the plan's one-hour lifetime. A form timeout
-returns `confirmation_failed`, launches no job and releases the active interaction
-back to `ready`; the user can request confirmation again while the plan remains
-valid. Protocol errors and malformed responses likewise release the interaction; a
-declined or cancelled form cancels the plan. The server relies on
-the client to present the form to the user and cannot prove arbitrary clients
-obtained a human decision. Source or effective-setting changes require a new
-plan, fresh sample evidence and another confirmation. CLI commands are explicit
-execution requests and do not use this MCP interaction.
+Preparation and lookup return `confirmation_summary` and the complete HTML's
+`html_path`/`artifact_id`. Full confirmation text remains in the saved plan; it is
+not copied into ordinary tool responses. The assistant presents the short summary
+and HTML link, ends the turn and waits for the user to review it. Reading the
+artifact does not submit a job. A local path must be made available through the
+client's file/artifact interface when the user is not on the server's machine.
+
+`submit_execution_decision(plan_id, decision)` relays an explicit later user reply.
+`approve` submits the fixed manifest; `decline` cancels without running;
+`revise` cancels and returns `confirmation_adjustment_requested`, requiring a new
+plan and fresh confirmation after changes. Questions, ambiguous replies and the
+initial task request are not approval. Conversation waiting leaves the plan
+`ready`; there is no five-minute form deadline, but the one-hour plan lifetime
+still applies. A new plan must be prepared after expiry.
+
+The server trusts the assistant to convey the user's decision; it cannot prove
+human consent from a tool argument. Source and effective-setting checks, internal
+submission reservations and duplicate-job prevention remain enforced. The former
+native MCP form tool is removed. CLI commands remain explicit execution requests
+and do not use this conversation workflow.
 
 ## MCP Lookup
 
@@ -464,15 +682,18 @@ different results. Clearing the pickle cache leaves historical performance JSON
 readable; the cleared historical dashboard artifact is unavailable, while a new
 execution writes its own complete cache.
 
-The CLI cache fingerprint requires the executed manifest hash and combines it with
-processed-data file size/mtime and a Git source-code fingerprint. There is no
-YAML-based key fallback. New settings produce a different manifest and therefore
+The CLI cache fingerprint requires the executed manifest hash and combines it
+with the processed-data file's content hash and the executed strategy revision
+and source hash. It does not derive code identity from the current Git checkout
+or use file size/mtime as data identity. There is no YAML-based key fallback.
+New settings produce a different manifest and therefore
 a different cache key. Completed results are loaded by run ID through the
 registered artifact path, without recomputing a key from current YAML, data, or
 code. The unused YAML-based `load_cached_result` and `save_cached_result` helpers
 have been removed; this storage path does not automatically reuse prior backtests.
-These file-stat and code fingerprints describe the execution inputs; they are not
-immutable data or environment versions and do not guarantee full reproducibility.
+These fingerprints describe the execution inputs; they do not archive immutable
+copies of all data or environment dependencies and do not guarantee full
+reproducibility.
 
 Optimization `result.json` includes the best parameters, training metrics,
 out-of-sample metrics, objective and fixed direction. Its complete numerical
@@ -532,6 +753,20 @@ context, and unavailable-value reasons. Examples include `not_applicable`,
 `unbounded`, `unsupported_daily_sampling` (bars coarser than daily), and
 `unknown_bar_frequency`. Numeric JSON values remain finite; unavailable values
 use `null`.
+
+New runs use QuantStats for return/risk statistics and retain VectorBT's
+closed-trade statistics. Sharpe uses the configured risk-free rate and Sortino
+uses the separately configured required return, both converted to an observed-day
+rate before calling QuantStats. Negative rates retain the same interpretation.
+The `excess_return_adjustment` setting records this conversion. QuantStats's
+automatic price detection cannot accept some valid nonnegative returns above
+100%, and its drawdown interface requires timestamps. Narrow numerical fallbacks
+preserve the metric definitions in these cases; `metadata.calculation_fallbacks`
+records each affected metric's actual `provider` and `reason`, with its package
+version in `metadata.providers`. Missing dates are never fabricated for these
+calculations. No observed drawdown makes Calmar unavailable, and positive returns
+with no downside make Sortino unbounded, rather than a finite zero. Historical
+Empyrical results retain their original saved definitions, providers and values.
 
 Annualized metrics, `daily_max_drawdown`, and daily/monthly PnL statistics require
 a declared bar frequency of one day or finer. Coarser or unrecognized frequencies
@@ -644,12 +879,35 @@ aligned to their original bar indices after filtering and paging.
 `get_report_sections` returns built-in section IDs and optional `standard`,
 `comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
 accepts one to eight distinct runs. Omitted/null sections select standard;
-an explicit ordered list chooses visible sections. With `[]`, no optional sections
+an explicit ordered list chooses visible sections and their order within the detail
+view. When selected, `overview` always belongs to the first navigation level.
+With `[]`, no optional sections
 are rendered; fixed report/source identity metadata and any supplied commentary
 remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/text notes
 (20000 characters total) are escaped and labelled LLM commentary. They cannot
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
+
+Report schema 2 / template 17 uses two navigation levels within one offline HTML
+file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
+or `trades`) is selected. The overview compares every loaded run/scope, including
+effective parameters,
+date coverage, train/test role and principal saved metrics. A result link opens
+the matching detail view (`#result-<run-index>-<scope-index>`); a return link brings
+the reader back to the overview. This keeps all optimization training trials and
+the selected parameter's test result distinct. A report is generated explicitly
+after completed or historical result inspection, not automatically by execution.
+Without `overview`, a result chooser links to the selected detail sections.
+Without any detail sections, result links and result switching are absent;
+selected `provenance` and `limitations` sections appear directly in the main view.
+The overview, if selected, stays first; other sections keep their requested order.
+Unknown result hashes leave the main view visible rather than opening empty details.
+The standard recipe is `overview`, `settings`, `metrics`, `equity`, `ledger`,
+`trades`, `limitations`, `provenance`; comparison is `overview`, `metrics`, `equity`,
+`provenance`; trades is `overview`, `ledger`, `trades`, `provenance`.
+The old `executions` and `account_history` section IDs are invalid, with no alias
+or compatibility shim. Their MCP history query tools and saved observations are
+unchanged. Existing reports retain their original versions and remain untouched.
 
 Section selection determines the visible presentation without pruning the loaded
 or embedded data. Every HTML report embeds the complete loaded payload as JSON,
@@ -658,20 +916,140 @@ execution configuration, even for `sections=[]`.
 Omitting a section does not remove its underlying data from the HTML; recipients
 of the file can still read that embedded data.
 
-The `executions` and `account_history` sections, also in `standard`, display these
-two saved ledgers separately from paired trades. Each has independent search,
-sorting and full CSV export, with nested market/before/after fields flattened for
-execution CSV. Missing streams show their reason; `[]` shows a recorded empty
-stream. The manifest records each stream's original count, preserving null versus
-zero. Old report files retain their original template version.
+Selecting `metrics` also derives a native QuantStats HTML tear sheet for every
+eligible scalar scope. It uses saved bar returns grouped by observed UTC date,
+preserves the first return, does not fill missing dates and does not fetch market
+or benchmark data. Each scope remains independent. The adapter records its
+version, calculation/rendering package versions, saved settings, source artifact
+hashes, input/daily-return digests and native calculation conventions. The native
+HTML and metadata participate in report identity; `manifest.derived_analytics`
+contains the metadata and explicit unavailable reasons, without duplicating HTML.
+Original `performance.json` values and definitions are never replaced.
+
+Native performance tables are rendered directly in the main HTML for text readers
+without JavaScript, with percentage units written in headers instead of relying
+on native CSS pseudo-elements. All scopes are expanded when JavaScript is disabled.
+The full chart report is loaded from embedded JSON into a
+sandboxed iframe when its scope is selected. A local download preserves the native
+report together with a source banner and escaped JSON evidence. QuantStats' native
+metric/chart names remain English; the surrounding explanation and saved metrics
+are Traditional Chinese. Period win rates and profit factors are distinct from
+closed-trade statistics. Native table Sharpe/Sortino use the saved risk-free rate;
+native rolling Sharpe/Sortino charts use zero, while the saved Sortino metric uses
+the separate configured required return. The native EOY table's `Return` sums daily
+returns within each year; `Cumulative` compounds within each year, not across years.
+Both columns use percentage units. These differences are disclosed.
+
+Known unsupported data (including volume, fold summaries, missing dates/settings,
+nonpositive capital, ambiguous large daily returns and negative risk-free rates
+ignored by the native provider) produce explicit unavailable messages while saved
+metrics remain readable. Unknown provider exceptions become `QuantStatsReportError`
+and fail generation with `report_generation_failed`; process interrupts propagate.
+The renderer
+fixes SVG identifiers, removes generation dates and the external favicon, restores
+plot state, and removes temporary output/new figures on success or failure. It
+does not close pre-existing figures or silently substitute another HTML provider.
+
+The `ledger` section combines saved order attempts and end-of-bar account states
+into one chronological event table. Within a bar, original execution order comes
+before the closing valuation. Each row identifies its event type and original
+record; closing valuations never masquerade as orders or fills. Missing streams
+show their reason, while `[]` means a recorded empty stream. No missing ledger is
+reconstructed from paired trades. The manifest preserves each source stream's
+original count, including null versus zero.
+
+Bokeh widgets and tables provide filled/ignored/rejected/valuation filtering and
+column visibility checkboxes. The runtime is bundled in the HTML for offline use.
+The same ledger rows and column definitions produce the interactive view, a complete
+static HTML table and full-precision CSV/JSON downloads. Static content is readable
+without executing JavaScript; LLM consumers can instead use embedded JSON or the
+original MCP history queries. Filters, sorting and column visibility affect only
+the interactive presentation, never the exported records or columns.
+
+Ledger columns begin with time, event sequence, bar index, event type and execution
+status. They expose market OHLC, requested size and its unit/type, request reference
+price, filled asset quantity and price, requested fee/slippage rates, charged fees,
+and account before/change/after values. Cash flows and signed position changes are
+kept distinct from fees and notional size. A percentage or value request is not
+labelled as an asset quantity; an all-available request is not converted to an
+invented fixed size. Closing rows carry the saved close mark and account valuation,
+leaving unrecorded order/fill fields empty. Prices are saved bar references rather
+than bid/ask quotes or order-book data. Valuation basis remains explicit: execution
+snapshots use the request reference price, while closing states use the bar close.
+Before/change/after valuation rows identify whether their prior state is the last
+execution in the same bar or the preceding saved close. Without a prior state the
+change stays unavailable. Arithmetic checks use complete precision and documented
+tolerance to compare cash, position, fees, slippage and equity where the inputs are
+recorded. A matching check does not validate the strategy, market quotes or exchange
+accounting, and close records do not invent missing debt values.
+The `trades` section is supplementary paired-trade PnL rather than the reconciliation
+ledger; a reversal can close one paired trade and open another in a single fill.
 
 All saved scopes are validated, including sources of omitted sections. Scalar
 observations and aggregate fold statistics remain distinct. Missing or corrupt
 sources fail generation. The report names selected/omitted sections rather than
-claiming every suggested section is present. Included trade tables expose all
-records, sorting, text search and local CSV export; SVG equity and drawdown charts
+claiming every suggested section is present. Included record tables expose all
+records and local CSV export; SVG equity and drawdown charts
 and scripts are embedded for offline use. UTC times, units, unavailable reasons,
 provenance and known overlap/interpretation limits are supplied by the backend.
+Static record tables are embedded as semantic HTML inside `noscript` elements.
+With JavaScript enabled, their DOM is materialized only when expanded, printed or
+needed after a Bokeh loading failure. With JavaScript disabled they render directly.
+This retains complete source-readable tables without eagerly creating every scope's cells.
+Overview, settings, metrics, provenance and record tables use Traditional Chinese
+field names, known metric names, units and enum explanations. Saved metric definitions
+remain authoritative and are expandable in their original form; current display
+labels never replace saved units or descriptions. Unknown codes remain visible with
+an explicit fallback, and strategy-defined parameters retain their original names.
+Paired-trade tables keep distinct closing and end-of-period valuation fields.
+The unified ledger identifies before/change/after and closing balances explicitly.
+These remain generic engine accounting, not exchange margin wallets.
+Prices are quote currency
+per asset unit; quantities are asset units, and PnL/fees are quote currency amounts.
+Numeric displays default to two decimal places; each overview, ledger and paired-trade
+table has one full-precision checkbox shared by its interactive and static views.
+The renderer supplies source decimal strings before browser number parsing; percent
+text shifts decimal places exactly rather than multiplying a browser float. The switch
+retains filters, sorting and column visibility, including lazy loading and printing.
+Notional value is visible by default and included in the cash/position preset.
+Readers must enable full precision before recalculating from quantities and prices.
+Fractional rates and returns display as percentages; identifiers and integer counts
+retain exact integer form. Columns containing integers outside the JavaScript safe
+range disable sorting to avoid ordering rounded values. Nullable numeric parameters
+keep numeric formatting; truly mixed-type parameter columns use backend text for
+all non-null values, preserving exact values in both interactive and static views. Fold statistics show
+labelled mean/std/min/max and valid-fold counts instead of a raw JSON cell. Precision
+notes accompany the tables; supported numeric sorting uses original values even when
+displays are equal. Precision controls require JavaScript; static numeric cells also
+carry full-value attributes and tooltips, and downloads always preserve original values.
+CSV exports use Traditional Chinese headers with units and translated known enums.
+Record columns follow a defined reading order rather than code-name sorting or
+object insertion order: time/sequence, direction/status, prices/quantities, costs/PnL
+and account balances. Ledger HTML/CSV share the same column definitions and preserve
+before/change/after balance groups. Overview comparison, ledger and paired-trade
+tables each provide CSV and JSON downloads. JSON contains the full table specification:
+`columns`, `rows`, `full_precision_values` and applicable navigation, filtering and
+presentation metadata. It uses stable code keys and full numeric precision, rather
+than exporting only an array of raw ledger records; raw observations remain
+separately embedded.
+Paired-trade HTML and CSV begin with a display sequence and separate entry, closing
+and valuation timestamps. Both then show direction/status, prices/quantities and
+costs before PnL; source indices and original record JSON remain available later in
+the same column order. Consumers relying on positional CSV columns must adjust.
+All rows and columns remain present in export order, independent of screen filtering,
+sorting or visibility; numeric values retain full precision. Rates remain
+fractions (1 = 100%), timestamp displays/exports are normalized to UTC, and
+missing values are empty cells. Ledger nested source fields are flattened with
+distinct headers; original records retain source fields and timestamps. Paired-trade
+closing time/price are empty for open trades, whose final mark uses separate valuation
+columns; the source exit index still identifies that final valuation bar.
+The renderer prepares UTF-8 BOM CSV bytes with CRLF records and quoted fields;
+formula-leading text is prefixed with an apostrophe. Browsers download these embedded
+bytes directly without parsing or rounding numeric values. Programs consuming old
+code-based CSV headers must update their mappings for newly generated reports.
+Expandable raw records and embedded observations retain original field names and
+values. Presentation changes create a new template version and report
+identity without modifying earlier reports or backtest results.
 
 The content digest includes source snapshots, template version, section order and
 commentary. `reports/<report_id>/report.html` and `manifest.json` are registered as

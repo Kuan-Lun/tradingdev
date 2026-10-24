@@ -34,15 +34,20 @@ _RESAMPLE_RULES: dict[Frequency, str] = {"daily": "D", "monthly": "MS"}
 
 
 def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
-    """Return ``timestamps`` as a UTC ``DatetimeIndex`` (naive means UTC)."""
+    """Return ``timestamps`` as a UTC ``DatetimeIndex`` (naive means UTC).
+
+    The index is always in nanoseconds. pandas 3 keeps the resolution of its
+    input (``date_range`` yields microseconds, a ``datetime64[ns]`` array
+    nanoseconds), so without this the same timestamps would give period
+    series with different index dtypes depending on how they were passed.
+    """
     index = (
         timestamps
         if isinstance(timestamps, pd.DatetimeIndex)
         else pd.DatetimeIndex(np.asarray(timestamps))
     )
-    if index.tz is None:
-        return index.tz_localize("UTC")
-    return index.tz_convert("UTC")
+    utc = index.tz_localize("UTC") if index.tz is None else index.tz_convert("UTC")
+    return utc.as_unit("ns")
 
 
 def equity_series(

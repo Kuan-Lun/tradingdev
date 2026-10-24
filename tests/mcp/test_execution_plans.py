@@ -1,43 +1,35 @@
-"""Real MCP elicitation and plan storage, with sample/worker execution substituted."""
+"""Real MCP plan decisions and storage with substituted sample/worker execution."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
-from jsonschema import validate
-from mcp.server.fastmcp import Context
-from mcp.shared.memory import create_connected_server_and_client_session
-from mcp.types import ElicitResult, ErrorData
-from tests.integration.mcp_harness import SimulatedUserApproval
+from jsonschema import ValidationError, validate
+from mcp import Client
 from tests.mcp.execution_fixtures import plan_context
 
 from tradingdev.app.preflight_service import PreflightError
 
-if TYPE_CHECKING:
-    from mcp import ClientSession
-    from mcp.shared.context import RequestContext
-    from mcp.types import ElicitRequestParams
 
-
-async def _call(client: ClientSession, name: str, **arguments: Any) -> dict[str, Any]:
+async def _call(client: Client, name: str, **arguments: Any) -> dict[str, Any]:
     result = await client.call_tool(name, arguments)
-    assert not result.isError, result
-    assert result.structuredContent is not None
+    assert not result.is_error, result
+    assert result.structured_content is not None
     schema = next(
         tool for tool in (await client.list_tools()).tools if tool.name == name
-    ).outputSchema
+    ).output_schema
     assert schema is not None
-    validate(result.structuredContent, schema)
-    payload = result.structuredContent
+    validate(result.structured_content, schema)
+    payload = result.structured_content
     return dict(payload["result"] if set(payload) == {"result"} else payload)
 
 
 @pytest.mark.parametrize("json_arguments", [False, True])
-def test_prepare_read_and_user_confirmation_bind_one_manifest_and_one_job(
+def test_prepare_and_read_wait_for_a_separate_explicit_decision(
     tmp_path: Path,
     json_arguments: bool,
 ) -> None:
@@ -50,20 +42,16 @@ def test_prepare_read_and_user_confirmation_bind_one_manifest_and_one_job(
         context.arguments["sample_bars"] = "128"
         context.arguments["parameters"] = "null"
         context.arguments["backtest_overrides"] = "null"
-    approval = SimulatedUserApproval()
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(
-            context.server,
-            elicitation_callback=approval,
-        ) as client:
+        # Product decisions use ordinary tools, without an elicitation callback.
+        async with Client(context.server, mode="legacy") as client:
             prepared = await _call(client, "prepare_backtest", **context.arguments)
             assert prepared["success"] and prepared["status"] == "ready", prepared
-            assert context.runner.calls == []
-            assert context.service.jobs.list_all_jobs() == []
-            assert context.service.jobs.list_runs() == []
             assert prepared["preflight"]["manifest_hash"] == prepared["manifest_hash"]
-            assert Path(prepared["html_path"]).is_file()
+            assert prepared["confirmation_summary"]
+            assert "confirmation_text" not in prepared
+            assert "<html" in Path(prepared["html_path"]).read_text(encoding="utf-8")
             retained = await _call(
                 client, "get_execution_plan", plan_id=prepared["plan_id"]
             )
@@ -71,139 +59,107 @@ def test_prepare_read_and_user_confirmation_bind_one_manifest_and_one_job(
             assert len(context.preflight.requests) == 1
             assert context.preflight.requests[0].minimum_history_bars == 20
             assert context.preflight.requests[0].sample_bars == 128
+            assert context.runner.calls == []
+            assert context.service.jobs.list_all_jobs() == []
+            assert context.service.jobs.list_runs() == []
 
             started = await _call(
-                client, "request_execution_confirmation", plan_id=prepared["plan_id"]
+                client,
+                "submit_execution_decision",
+                plan_id=prepared["plan_id"],
+                decision="approve",
             )
-            assert (
-                started["success"]
-                and started["manifest_hash"] == prepared["manifest_hash"]
-            )
+            assert started["success"]
+            assert started["manifest_hash"] == prepared["manifest_hash"]
             assert started["plan_id"] == prepared["plan_id"]
-            assert len(approval.requests) == 1
-            assert prepared["confirmation_text"] in approval.requests[0].message
-            form = approval.requests[0]
-            assert form.mode == "form"
-            assert form.requestedSchema["properties"] == {}
-            assert form.requestedSchema["additionalProperties"] is False
             assert (
                 context.service.jobs.load_manifest(started["job_id"]).manifest_hash
                 == prepared["manifest_hash"]
             )
             repeated = await _call(
-                client, "request_execution_confirmation", plan_id=prepared["plan_id"]
+                client,
+                "submit_execution_decision",
+                plan_id=prepared["plan_id"],
+                decision="approve",
             )
             assert repeated == started
-            assert len(approval.requests) == 1
             assert len(context.runner.calls) == 1
 
     asyncio.run(check())
 
 
-@pytest.mark.parametrize("action", ["decline", "cancel"])
-def test_unapproved_elicitation_cannot_create_a_job(
-    tmp_path: Path, action: Any
+@pytest.mark.parametrize(
+    "decision,code",
+    [
+        ("decline", "confirmation_declined"),
+        ("revise", "confirmation_adjustment_requested"),
+    ],
+)
+def test_decline_or_revision_cancels_original_plan_without_a_job(
+    tmp_path: Path, decision: str, code: str
 ) -> None:
     context = plan_context(tmp_path)
-    approval = SimulatedUserApproval(action=action)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(
-            context.server, elicitation_callback=approval
-        ) as client:
+        async with Client(context.server, mode="legacy") as client:
             prepared = await _call(client, "prepare_backtest", **context.arguments)
             result = await _call(
-                client, "request_execution_confirmation", plan_id=prepared["plan_id"]
+                client,
+                "submit_execution_decision",
+                plan_id=prepared["plan_id"],
+                decision=decision,
             )
-            assert (
-                result["success"] is False and result["code"] == "confirmation_declined"
-            )
+            assert result["success"] is False and result["code"] == code
             retained = await _call(
                 client, "get_execution_plan", plan_id=prepared["plan_id"]
             )
             assert retained["status"] == "cancelled"
-            assert len(approval.requests) == 1
+            rejected = await _call(
+                client,
+                "submit_execution_decision",
+                plan_id=prepared["plan_id"],
+                decision="approve",
+            )
+            assert rejected["success"] is False
+            assert context.runner.calls == []
+            assert context.service.jobs.list_all_jobs() == []
+
+            # A replacement is a distinct, unsubmitted plan requiring a decision.
+            replacement = await _call(client, "prepare_backtest", **context.arguments)
+            assert replacement["plan_id"] != prepared["plan_id"]
+            assert replacement["status"] == "ready"
+            assert context.runner.calls == []
 
     asyncio.run(check())
-    assert context.service.jobs.list_all_jobs() == []
-    assert context.runner.calls == []
-
-
-def test_unsupported_client_cannot_launch_or_consume_the_ready_plan(
-    tmp_path: Path,
-) -> None:
-    context = plan_context(tmp_path)
-
-    async def check() -> None:
-        async with create_connected_server_and_client_session(context.server) as client:
-            prepared = await _call(client, "prepare_backtest", **context.arguments)
-            result = await _call(
-                client, "request_execution_confirmation", plan_id=prepared["plan_id"]
-            )
-            assert (
-                result["success"] is False
-                and result["code"] == "confirmation_unsupported"
-            )
-            assert (
-                await _call(client, "get_execution_plan", plan_id=prepared["plan_id"])
-            )["status"] == "ready"
-
-    asyncio.run(check())
-    assert context.runner.calls == []
-    assert context.service.jobs.list_all_jobs() == []
 
 
 @pytest.mark.parametrize(
     "content",
-    [None, {"approved": True}, {"approved": False}, {"unexpected": "x"}],
+    [
+        {},
+        {"approved": True},
+        {"decision": None},
+        {"decision": True},
+        {"decision": 1},
+        {"decision": ""},
+        {"decision": "accept"},
+        {"decision": "approve "},
+        {"decision": "同意執行"},
+        {"decision": "approve", "unexpected": True},
+    ],
 )
-def test_malformed_user_answer_never_authorizes_execution(
-    tmp_path: Path, content: dict[str, Any] | None
+def test_missing_or_invalid_decision_cannot_consume_or_launch_plan(
+    tmp_path: Path, content: dict[str, Any]
 ) -> None:
     context = plan_context(tmp_path)
 
-    async def answer(
-        context: RequestContext[ClientSession, Any], params: ElicitRequestParams
-    ) -> ElicitResult:
-        return ElicitResult(action="accept", content=content)
-
     async def check() -> None:
-        async with create_connected_server_and_client_session(
-            context.server, elicitation_callback=answer
-        ) as client:
+        async with Client(context.server, mode="legacy") as client:
             prepared = await _call(client, "prepare_backtest", **context.arguments)
-            result = await _call(
-                client, "request_execution_confirmation", plan_id=prepared["plan_id"]
+            result = await client.call_tool(
+                "submit_execution_decision", {"plan_id": prepared["plan_id"], **content}
             )
-            assert result["success"] is False
-            assert result["code"] == "confirmation_failed"
-            retained = await _call(
-                client, "get_execution_plan", plan_id=prepared["plan_id"]
-            )
-            assert retained["status"] == "ready"
-
-    asyncio.run(check())
-    assert context.runner.calls == []
-    assert context.service.jobs.list_all_jobs() == []
-
-
-def test_client_error_releases_confirmation_for_another_attempt(tmp_path: Path) -> None:
-    context = plan_context(tmp_path)
-
-    async def answer(
-        context: RequestContext[ClientSession, Any], params: ElicitRequestParams
-    ) -> ErrorData:
-        return ErrorData(code=-32603, message="Test UI failed before any user decision")
-
-    async def check() -> None:
-        async with create_connected_server_and_client_session(
-            context.server, elicitation_callback=answer
-        ) as client:
-            prepared = await _call(client, "prepare_backtest", **context.arguments)
-            result = await _call(
-                client, "request_execution_confirmation", plan_id=prepared["plan_id"]
-            )
-            assert result["code"] == "confirmation_failed"
+            assert result.is_error
             assert (
                 await _call(client, "get_execution_plan", plan_id=prepared["plan_id"])
             )["status"] == "ready"
@@ -213,94 +169,56 @@ def test_client_error_releases_confirmation_for_another_attempt(tmp_path: Path) 
     assert context.service.jobs.list_all_jobs() == []
 
 
-def test_elicitation_timeout_releases_plan_without_launching_a_worker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cancelled_plan_rejects_later_approval(tmp_path: Path) -> None:
     context = plan_context(tmp_path)
-    approval = SimulatedUserApproval()
-
-    async def timeout(self: Any, message: str, schema: type[Any]) -> Any:
-        # Substitute only the timed-out transport await; MCP dispatch, persisted
-        # plan state and the subsequent simulated user's response remain real.
-        raise TimeoutError("Test confirmation transport timed out")
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(
-            context.server, elicitation_callback=approval
-        ) as client:
+        async with Client(context.server, mode="legacy") as client:
             prepared = await _call(client, "prepare_backtest", **context.arguments)
-            with monkeypatch.context() as patch:
-                patch.setattr(Context, "elicit", timeout)
-                rejected = await _call(
-                    client,
-                    "request_execution_confirmation",
-                    plan_id=prepared["plan_id"],
-                )
-            assert rejected["code"] == "confirmation_failed"
-            assert context.runner.calls == []
-            assert context.service.jobs.list_all_jobs() == []
-            assert (
-                await _call(client, "get_execution_plan", plan_id=prepared["plan_id"])
-            )["status"] == "ready"
-            started = await _call(
-                client, "request_execution_confirmation", plan_id=prepared["plan_id"]
+            cancelled = await _call(
+                client, "cancel_execution_plan", plan_id=prepared["plan_id"]
             )
-            assert started["success"] is True
-            assert len(approval.requests) == 1
-            assert len(context.runner.calls) == 1
+            assert cancelled["status"] == "cancelled"
+            result = await _call(
+                client,
+                "submit_execution_decision",
+                plan_id=prepared["plan_id"],
+                decision="approve",
+            )
+            assert result["success"] is False and result["code"] == "plan_not_ready"
 
     asyncio.run(check())
+    assert context.runner.calls == []
+    assert context.service.jobs.list_all_jobs() == []
 
 
-def test_concurrent_confirmation_has_one_active_question_and_one_launch(
-    tmp_path: Path,
-) -> None:
+def test_concurrent_decisions_cannot_duplicate_a_launch(tmp_path: Path) -> None:
     context = plan_context(tmp_path)
 
     async def check() -> None:
-        requested, release = asyncio.Event(), asyncio.Event()
-
-        async def answer(
-            context: RequestContext[ClientSession, Any], params: ElicitRequestParams
-        ) -> ElicitResult:
-            requested.set()
-            await release.wait()
-            return ElicitResult(action="accept", content={})
-
         async with (
-            create_connected_server_and_client_session(
-                context.server, elicitation_callback=answer
-            ) as client,
-            create_connected_server_and_client_session(
-                context.server, elicitation_callback=SimulatedUserApproval()
-            ) as contender,
+            Client(context.server, mode="legacy") as client,
+            Client(context.server, mode="legacy") as contender,
         ):
             prepared = await _call(client, "prepare_backtest", **context.arguments)
-            first = asyncio.create_task(
-                _call(
-                    client,
-                    "request_execution_confirmation",
-                    plan_id=prepared["plan_id"],
+            results = await asyncio.gather(
+                *(
+                    _call(
+                        connection,
+                        "submit_execution_decision",
+                        plan_id=prepared["plan_id"],
+                        decision="approve",
+                    )
+                    for connection in (client, contender)
                 )
             )
-            try:
-                await asyncio.wait_for(requested.wait(), 5)
-                second = await asyncio.wait_for(
-                    _call(
-                        contender,
-                        "request_execution_confirmation",
-                        plan_id=prepared["plan_id"],
-                    ),
-                    timeout=5,
-                )
-                assert second["success"] is False and second["code"] == "plan_not_ready"
-                assert context.runner.calls == []
-            finally:
-                release.set()
-            assert (await first)["success"] is True
+            started = [result for result in results if result["success"]]
+            assert started
+            assert {result["job_id"] for result in started} == {prepared["plan_id"]}
+            assert len(context.runner.calls) == 1
+            assert len(context.service.jobs.list_all_jobs()) == 1
 
     asyncio.run(check())
-    assert len(context.runner.calls) == 1
 
 
 def test_prepare_failure_is_structured_through_real_mcp(
@@ -316,12 +234,10 @@ def test_prepare_failure_is_structured_through_real_mcp(
     monkeypatch.setattr(context.preflight, "prepare", failed_sample)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(context.server) as client:
+        async with Client(context.server, mode="legacy") as client:
             result = await _call(client, "prepare_backtest", **context.arguments)
-            assert (
-                result["success"] is False
-                and result["code"] == "invalid_execution_request"
-            )
+            assert result["success"] is False
+            assert result["code"] == "invalid_execution_request"
             assert "YAML" in result["error"]
 
     asyncio.run(check())
@@ -329,22 +245,22 @@ def test_prepare_failure_is_structured_through_real_mcp(
     assert context.service.jobs.list_all_jobs() == []
 
 
-def test_model_cannot_supply_approval_as_a_tool_argument(tmp_path: Path) -> None:
+def test_decision_tool_schema_requires_one_explicit_choice(tmp_path: Path) -> None:
     context = plan_context(tmp_path)
-    approval = SimulatedUserApproval()
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(
-            context.server, elicitation_callback=approval
-        ) as client:
-            prepared = await _call(client, "prepare_backtest", **context.arguments)
-            for argument in ("approved", "confirmed", "confirmation_token"):
-                result = await client.call_tool(
-                    "request_execution_confirmation",
-                    {"plan_id": prepared["plan_id"], argument: True},
-                )
-                assert result.isError
-            assert approval.requests == []
+        async with Client(context.server, mode="legacy") as client:
+            tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+            assert "request_execution_confirmation" not in tools
+            schema = tools["submit_execution_decision"].input_schema
+            assert set(schema["required"]) == {"plan_id", "decision"}
+            assert set(schema["properties"]) == {"plan_id", "decision"}
+            for decision in ("approve", "decline", "revise"):
+                validate({"plan_id": "plan", "decision": decision}, schema)
+            with pytest.raises(ValidationError):
+                validate({"plan_id": "plan", "decision": "unknown"}, schema)
+            with pytest.raises(ValidationError):
+                validate({"plan_id": "plan"}, schema)
+            assert "default" not in schema["properties"]["decision"]
 
     asyncio.run(check())
-    assert context.runner.calls == []

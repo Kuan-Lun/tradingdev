@@ -1,52 +1,62 @@
-"""Bounded preparation followed by client-mediated user confirmation."""
+"""Bounded preparation, HTML review and explicit conversational decisions."""
 
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import anyio
-from mcp.server.fastmcp import Context  # noqa: TC002
-from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, JsonValue
+from mcp_types import ToolAnnotations
+from pydantic import JsonValue, ValidationError  # noqa: TC002
 
-from tradingdev.app.contracts.plans import PlanRejected, PlanResponse, PlanStarted
-from tradingdev.app.execution_plan_service import (
-    ExecutionPlanService,
-    PlanOperationError,
+from tradingdev.app.contracts.plans import (
+    ExecutionDecision,  # noqa: TC001
+    PlanRejected,  # noqa: TC001
+    PlanResponse,  # noqa: TC001
+    PlanStarted,  # noqa: TC001
 )
-from tradingdev.domain.preflight import PreflightRequest
+from tradingdev.domain.preflight import (
+    MinimumHistoryBars,  # noqa: TC001 — SDK resolves tool annotations.
+    PreflightRequest,
+    SampleBars,  # noqa: TC001 — SDK resolves tool annotations.
+)
 from tradingdev.domain.presentation.confirmation import (
     ConfirmationPresentation,  # noqa: TC001
 )
 from tradingdev.mcp.schemas import BacktestInput, OptimizationInput
+from tradingdev.mcp.tools.input_errors import invalid_arguments
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
+
+    from tradingdev.app.execution_plan_service import ExecutionPlanService
+    from tradingdev.domain.execution import ExecutionKind
 
 
-class UserApproval(BaseModel):
-    """Field-less consent form: the client's accept action is the approval.
-
-    A separate checkbox duplicated the accept button, and clients that cannot
-    toggle booleans could never approve. Only an elicitation response can
-    supply this model; any submitted field is rejected.
-    """
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-
-def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
+def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     prepare_annotations = ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=True,
     )
 
     async def prepare(
-        request: PreflightRequest, presentation: ConfirmationPresentation
+        kind: ExecutionKind,
+        arguments: BacktestInput | OptimizationInput,
+        minimum_history_bars: int,
+        sample_bars: int,
+        presentation: ConfirmationPresentation,
     ) -> PlanResponse | PlanRejected:
+        try:
+            request = PreflightRequest(
+                kind=kind,
+                arguments=arguments.model_dump(mode="json"),
+                minimum_history_bars=minimum_history_bars,
+                sample_bars=sample_bars,
+            )
+        except ValidationError as exc:
+            raise invalid_arguments(exc) from exc
         return await anyio.to_thread.run_sync(
             partial(service.prepare, request, presentation)
         )
@@ -59,11 +69,11 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
         start_date: str,
         end_date: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: int,
+        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: int = 1024,
+        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
         """Prepare a frozen plan after a bounded market-data/engine trial; no full job.
 
@@ -73,8 +83,17 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
         keys are JSON pointers into captured constructor arguments (generated
         /fast_period; bundled /config/k_period and /fit_config/...). Include defaults.
         Missing descriptions return required_parameter_paths for repair. Values,
-        costs, coverage, text and HTML are rendered by the backend. Present the
-        confirmation_text and HTML link, then request_execution_confirmation(plan_id).
+        costs, coverage and HTML are rendered by the backend. Quote
+        confirmation_summary verbatim, preferably as a Markdown blockquote.
+        Preserve wording, labels, values, units and train/test roles; do not
+        paraphrase, rename, omit or recalculate them. For a locally accessible
+        html_path, use the clickable HTML link [閱讀確認單](<FULL_HTML_PATH>), replacing
+        FULL_HTML_PATH with the exact returned html_path. Do not add file:// or
+        invent another URI prefix. Put the link on a separate normal Markdown line,
+        outside the quote and code blocks, then STOP this turn.
+        Wait for the user to review and explicitly approve, decline or request edits
+        in a later conversation turn before calling submit_execution_decision.
+        The initial task request is not approval of a not-yet-reviewed plan.
         backtest_overrides can change known cost/capital/execution fields, not
         symbol/timeframe/dates. Edits require a new plan and another successful trial.
         """
@@ -89,12 +108,10 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
             backtest_overrides=backtest_overrides,
         )
         return await prepare(
-            PreflightRequest(
-                kind="backtest",
-                arguments=args.model_dump(mode="json"),
-                minimum_history_bars=minimum_history_bars,
-                sample_bars=sample_bars,
-            ),
+            "backtest",
+            args,
+            minimum_history_bars,
+            sample_bars,
             presentation,
         )
 
@@ -106,17 +123,23 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
         start_date: str,
         end_date: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: int,
+        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: int = 1024,
+        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
         """Prepare walk-forward confirmation after a bounded representative fold.
 
         Uses the same presentation and sample rules as prepare_backtest. A sample
         does not prove all folds or full-history training will succeed. Human
-        confirmation through request_execution_confirmation is required to launch.
+        confirmation in a later conversation turn is required before submission.
+        Quote confirmation_summary verbatim, preserving labels, values, units and
+        train/test roles; do not paraphrase. Prefer a Markdown blockquote. For a
+        locally accessible html_path, use the clickable HTML link
+        [閱讀確認單](<FULL_HTML_PATH>), replacing FULL_HTML_PATH with the exact returned
+        html_path. Do not add file:// or invent another URI prefix. Put the link
+        on a separate normal Markdown line outside quotes/code blocks; end and wait.
         """
         args = BacktestInput(
             strategy_id=strategy_id,
@@ -129,12 +152,10 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
             backtest_overrides=backtest_overrides,
         )
         return await prepare(
-            PreflightRequest(
-                kind="walk_forward",
-                arguments=args.model_dump(mode="json"),
-                minimum_history_bars=minimum_history_bars,
-                sample_bars=sample_bars,
-            ),
+            "walk_forward",
+            args,
+            minimum_history_bars,
+            sample_bars,
             presentation,
         )
 
@@ -150,19 +171,24 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
         test_start: str,
         test_end: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: int,
+        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: int = 1024,
+        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
         """Prepare a pinned search after checking the grid and trialing one candidate.
 
         Dates are inclusive UTC days, train_start < train_end < test_start < test_end.
         Present the complete ranges, objective direction, costs and sample coverage
-        from confirmation_text. Use human parameter descriptions as prepare_backtest.
-        request_execution_confirmation collects human consent for the whole search;
-        there is no additional worker-side confirmation after the search starts.
+        in the HTML. Use human parameter descriptions as prepare_backtest.
+        Quote confirmation_summary verbatim, preserving labels, values, units and
+        train/test roles; do not paraphrase. Prefer a Markdown blockquote. For a
+        locally accessible html_path, use the clickable HTML link
+        [閱讀確認單](<FULL_HTML_PATH>), replacing FULL_HTML_PATH with the exact returned
+        html_path. Do not add file:// or invent another URI prefix. Put the link
+        on a separate normal Markdown line outside quotes/code blocks; end and wait.
+        There is no additional worker-side confirmation after the search starts.
         """
         args = OptimizationInput(
             strategy_id=strategy_id,
@@ -179,21 +205,19 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
             backtest_overrides=backtest_overrides,
         )
         return await prepare(
-            PreflightRequest(
-                kind="optimization",
-                arguments=args.model_dump(mode="json"),
-                minimum_history_bars=minimum_history_bars,
-                sample_bars=sample_bars,
-            ),
+            "optimization",
+            args,
+            minimum_history_bars,
+            sample_bars,
             presentation,
         )
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_execution_plan(plan_id: str) -> PlanResponse | PlanRejected:
@@ -202,10 +226,10 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def cancel_execution_plan(plan_id: str) -> PlanResponse | PlanRejected:
@@ -214,72 +238,34 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=True,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=True,
         )
     )
-    async def request_execution_confirmation(
-        plan_id: str,
-        ctx: Context[Any, Any],
+    async def submit_execution_decision(
+        plan_id: str, decision: ExecutionDecision
     ) -> PlanStarted | PlanRejected:
-        """Ask the actual user through MCP form elicitation, then launch the saved plan.
+        """Relay an explicit user decision AFTER they reviewed this plan's HTML.
 
-        No model-supplied approval is accepted. The client must show the complete
-        server message to the user and return their decision, not auto-answer it.
-        Unsupported clients, declines, cancellation, timeout, stale plans and
-        changed strategy bytes do not launch a formal job. Repeating a successfully
-        submitted plan returns its existing job instead of launching another.
+        First quote confirmation_summary verbatim; preserve labels, values, units
+        and train/test roles without paraphrasing. Prefer a Markdown blockquote.
+        For a locally accessible html_path, use the clickable HTML link
+        [閱讀確認單](<FULL_HTML_PATH>), replacing FULL_HTML_PATH with the exact returned
+        html_path. Do not add file:// or invent another URI prefix. Put the link
+        on a separate normal Markdown line outside quotes/code blocks; end and wait.
+        Only a later clear user approval of this exact plan
+        permits decision='approve'. The initial request, silence, questions or
+        ambiguous replies are not consent. Ask for clarification if unclear.
+        Use 'decline' for refusal and 'revise' for requested changes; both cancel
+        the plan without launching. For changes, prepare a new plan and wait for
+        fresh user approval. Never approve a replacement plan automatically.
+        The backend trusts the caller to relay the user's decision; it cannot
+        independently prove human consent. It verifies the immutable plan,
+        expiry and source integrity, and deduplicates successful submissions.
+        No native MCP elicitation support is required.
         """
-        try:
-            client = ctx.session.client_params
-            capability = client.capabilities.elicitation if client else None
-        except (ValueError, AssertionError):
-            capability = None
-        if capability is None or (
-            capability.form is None and capability.url is not None
-        ):
-            return PlanRejected(
-                success=False,
-                code="confirmation_unsupported",
-                error=(
-                    "此客戶端未宣告支援 MCP 表單確認，正式回測未啟動。"
-                    "請使用會向使用者收集確認的客戶端。"
-                ),
-            )
-        try:
-            challenge = await anyio.to_thread.run_sync(
-                partial(service.begin_confirmation, plan_id)
-            )
-        except (LookupError, OSError, ValueError, RuntimeError) as exc:
-            return PlanRejected(
-                success=False,
-                code=exc.code
-                if isinstance(exc, PlanOperationError)
-                else "execution_plan_invalid",
-                error=str(exc),
-            )
-        if isinstance(challenge, PlanStarted):
-            return challenge
-        try:
-            with anyio.fail_after(300):
-                answer = await ctx.elicit(
-                    message=challenge.message, schema=UserApproval
-                )
-            accepted = answer.action == "accept"
-            return await anyio.to_thread.run_sync(
-                partial(service.finish_confirmation, challenge, accepted=accepted)
-            )
-        except BaseException as exc:
-            with anyio.CancelScope(shield=True):
-                await anyio.to_thread.run_sync(
-                    partial(service.abandon_confirmation, challenge)
-                )
-            if not isinstance(exc, Exception):
-                raise
-            return PlanRejected(
-                success=False,
-                code="confirmation_failed",
-                error=f"未收到有效的使用者確認，未啟動新的工作：{exc}",
-            )
+        return await anyio.to_thread.run_sync(
+            partial(service.decide, plan_id, decision=decision)
+        )

@@ -42,7 +42,7 @@ flowchart LR
 | ---- | -------- |
 | `mcp/server.py`、`mcp/tools/` | 組裝 services、註冊工具、驗證協定輸入與輸出 |
 | `mcp/workers/` | 背景工作入口、狀態更新及流程協調；最佳化 worker 直接協調搜尋與樣本外測試 |
-| `app/` | 策略生命週期、設定固定、限時試跑、確認計畫、工作提交、結果保存與查詢；`contracts/` 定義回覆 DTO |
+| `app/` | 策略生命週期、設定固定、限時試跑、確認計畫、工作提交、ML 研究、結果保存與查詢；`contracts/` 定義回覆 DTO |
 | `domain/strategies/` | 策略介面、來源探索與載入、參數解析、訊號契約及 bundled strategies |
 | `domain/execution.py`、`domain/randomness.py` | 執行規格與完整性檢查、每次執行的亂數 context |
 | `domain/execution_plan.py`、`domain/preflight.py` | 確認內容與執行身分綁定、限時試跑請求及覆蓋證據 |
@@ -57,13 +57,36 @@ flowchart LR
 這是目前實作的責任分組，尚未形成全面的依賴反轉。
 Application services 直接使用具體的儲存與程序 adapters；`domain/data` 內的
 crawlers、loader 與 DataManager 仍執行網路及檔案 I/O，StrategyLoader 也會
-讀取、載入策略檔案。最佳化的完整流程仍由 worker 協調，尚未全部收斂到 app。
+讀取、載入策略檔案。`domain/ml/registry` 的模型、特徵快取與排行榜 stores
+也執行檔案 I/O；ML dataset store 位於 `adapters/storage`。
+最佳化的完整流程仍由 worker 協調，尚未全部收斂到 app。
 修改這些模組時，不能假設 domain 全部都是無副作用的純計算。
 
 `mcp.server.create_server()` 是 MCP 的組裝入口，讓 services 共用 workspace
 與 SQLite store。匯入 server 模組不建立 runtime 檔案；建立 server 時才組裝執行資源。
 背景 worker 使用相同 Python interpreter，並明確繼承解析後的 workspace 與資料根目錄。
 Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存於使用者 workspace。
+
+### Repository 開發工具與研究原型
+
+產品程式位於 `src/tradingdev/`；repository 的開發工具、測試與研究原型分開管理：
+
+| 位置 | 目前責任 |
+| ---- | -------- |
+| `scripts/`、`.githooks/` | Shell 操作與 Git hook 入口，選定 repository 與 interpreter 後呼叫 Python 模組 |
+| `tooling/quality.py` | 共用品質檢查與格式化，涵蓋 `src/`、`tests/`、`tooling/`、`research/` |
+| `tooling/git/` | 候選 snapshot／合併 tree 的建立與驗證，以及 hook、本機 full、PR 檢查與分支清理流程 |
+| `tooling/review_docs.py` | 擷取固定 Git 版本的完整證據，協調文件審查批次與判定 |
+| `tooling/process_guard.py`、`tooling/codex_binary.py` | 開發工具與測試共用的程序觀測／清理及 Codex 執行檔定位 |
+| `tests/` | 測試案例、fixtures、MCP 與模型測試情境 |
+| `research/` | 獨立研究原型；MAE 原型直接讀取指定行情檔案，與正式 Dashboard 分開 |
+
+`tooling` 不依賴 `tests`；測試可直接使用共用工具。Git gate 與 PR 檢查共用候選
+驗證服務，文件審查使用執行檢查的 checkout 內的工具讀取候選 Git 內容，
+品質檢查與離線測試則使用候選 snapshot 內的入口與程式。
+`tooling/`、`research/` 不隨產品 wheel 發佈，也不屬於產品 application services。
+操作入口與檢查流程見[開發指南](docs/development.md)，研究原型用法見
+[開發指南的 MAE 研究原型](docs/development.md#mae-研究原型)。
 
 ## 核心概念與身分
 
@@ -75,6 +98,8 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | Job | 背景工作的進度、程序身分與控制紀錄，由 JobService／OptimizationService 提交，透過 JobStore 保存 |
 | Run | 一次已保存的執行結果，記錄策略、設定與資料來源資訊，由 RunService 查詢 |
 | Artifact | 與執行或研究相關的檔案及其索引，由 ArtifactService 提供探索與讀取 |
+| ML dataset | 已保存的特徵與標籤版本，身分包含建置資訊、特徵程式與資料內容 |
+| Model artifact | 已訓練模型的序列化內容、特徵契約及有效參數，由獨立模型 store 保存 |
 
 一個 revision 可以提交多次工作；工作開始或結束不會把策略狀態改成 running 或 done。
 參數實驗屬於工作設定：MCP 的 `parameters` 覆寫與 CLI 執行設定共用
@@ -184,14 +209,23 @@ ZIP 宣告的 CSV 解壓大小上限 128 MiB；超限即回報失敗。
 搜尋候選先套用與策略載入相同的純參數合併函數，再呈現完整有效值；巢狀映射未指定的
 欄位保留原值，空映射不清除既有映射，清單與其他值則整體取代。
 這些說明隨計畫保存，不改寫策略 revision 的 YAML。使用者可用自然語言要求調整，
-不必閱讀程式、內部變數或設定檔。文字與 HTML 共讀同一份具型別的確認文件，
-核心章節不可省略；技術身分與檔案位置放在獨立資訊區。
+不必閱讀程式、內部變數或設定檔。完整文字與 HTML 共讀同一份具型別的確認文件，
+核心章節不可省略；技術身分與檔案位置放在獨立資訊區。工具回覆只提供後端產生的
+`confirmation_summary` 與 HTML 位置，完整文字保留在計畫產物，不重貼到對話。
 
-`request_execution_confirmation` 要求客戶端支援 MCP form elicitation，透過該介面的
-明確接受提交計畫；表單不含欄位，接受動作本身即為同意，帶有任何欄位的回覆視為無效。模型不能用工具參數傳入 `confirmed: true` 代替確認；
-不支援 form、拒絕、取消、無效回覆或協定失敗都不啟動工作。協定錯誤可重新要求確認。
-伺服器信任客戶端將表單交給使用者；協定本身不能證明任意客戶端的回覆一定由真人操作。
-計畫預設一小時有效，確認時再次核對設定、策略完整性與資格。一次只允許一個確認互動，
+助手提供簡短摘要與可點的 HTML 連結後結束回合，等待使用者閱讀並在後續回合明確回覆。
+`submit_execution_decision(plan_id, decision)` 接受 `approve`、`decline` 或 `revise`；
+只有明確同意才提交原計畫，拒絕與修改要求都取消計畫。修改要求回傳
+`confirmation_adjustment_requested`，助手收集修改內容、重新準備與試跑，再等待新確認。
+提問、沉默、模糊回覆與最初的回測請求都不是對尚未閱讀計畫的同意。
+原 `request_execution_confirmation` 與 MCP 原生表單路徑已移除，不保留相容轉接。
+
+Streamable HTTP 使用 SSE 串流回覆；stdio 使用雙向通道。對話確認不要求
+elicitation capability，也不維持等待使用者五分鐘的工具呼叫。
+
+伺服器信任助手如實轉交使用者的對話決策，無法獨立證明人類同意；模型可讀的
+token 或原話也不能提供這種證明。計畫在對話等待期間保持 ready，預設一小時有效。
+提交時再次核對設定、策略完整性與資格；內部 reservation 防止並行提交競爭，
 重複提交已成功計畫回傳原 job，不重複執行。修改程式或有效設定須重新準備、試跑及確認。
 提交使用固定的計畫 ID 作為 job ID。若 worker 已啟動但最後的計畫狀態寫入失敗，
 回覆仍提供原 job 與警告；計畫查詢保留 submitting 及該 job ID。
@@ -213,9 +247,9 @@ sequenceDiagram
     MCP->>Plan: prepare_* 策略與執行設定
     Plan->>Preflight: 固定設定並完成受限試跑
     Preflight-->>Plan: manifest、試跑證據與清理確認
-    Plan-->>MCP: 計畫與文字／HTML 確認內容
-    MCP->>User: form elicitation 顯示確認內容
-    User-->>MCP: 明確接受
+    Plan-->>MCP: 簡短摘要與完整 HTML 位置
+    MCP->>User: 提供連結並結束回合等待
+    User-->>MCP: 閱讀後在下一回合明確同意
     MCP->>Plan: 核對本次確認與固定計畫
     Plan->>Submit: 提交已確認 manifest
     Submit->>Store: 發佈 manifest 並建立 queued job
@@ -292,6 +326,47 @@ RunService 提供 run 與指標查詢，ArtifactService 提供檔案探索與讀
 Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料表與保存位置見
 [執行產物契約](docs/run_artifacts.md)。
 
+## ML 訊號研究
+
+`mcp/tools/ml.py` 將工具請求交給 `MLService`，回覆由 `app/contracts/ml.py`
+驗證。這是同步研究流程，沒有 execution plan、背景 worker 或 backtest run；
+資料集、模型及排行榜使用自己的 stores，未登錄於 SQLite 的 run／artifact 索引。
+既有回測 CLI 與 dashboard 沒有對應的 ML 研究入口。
+
+`get_ml_contract` 從特徵、模型及驗證 registry 組裝可選項，讓助手選擇已登錄實作。
+`processor_types` 是 domain 前處理元件的探索資訊；目前 dataset／training 工具
+沒有 processor pipeline 參數，也不會依該清單自動正規化資料。
+
+`build_dataset` 透過 `DataService.load_cached` 讀取行情；缺年度檔或指定區間無資料時失敗，
+不走下載或替換年度快取的路徑，也不檢查每根 K 線是否齊全。
+特徵 registry 建立保留原列的矩陣，feature cache
+依商品、頻率、行情內容及特徵程式身分重用計算。Service 再建立未來報酬與方向標籤、
+排除不完整列，交 `MLDatasetStore` 發佈不可覆寫的內容版本。
+`build_panel` 先逐商品計算特徵及標籤，再由 `domain/ml/calendar.py` 對齊共同日期，
+並回報缺值、丟棄與向前補值情形。標籤始終來自各商品原本的行情。
+
+`MLService.train_model` 委派 `app/ml_training.py` 的 `MLTrainingService`，
+解析有效參數、分折評分並發佈最終 artifact；estimator 只接收宣告特徵與 target。
+最終模型訓練全部列，選填 validation 另建折模型。Walk-forward 依過去訓練；
+purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有兩側，是回顧交叉驗證。
+`domain/ml/validation/temporal.py` 以共享 timestamp 分折，保持同日期各商品的
+訓練／測試角色一致，再以來源行情保留的 label start/end 排除跨邊界的標籤資訊。
+含向前補值觀測的 panel 不接受折間驗證，須改用原始共同日期或丟棄缺值。
+驗證檢查的範圍及訊號評估語意見 [ML 研究契約](docs/strategy_contract.md#ml-research-contract)。
+
+`predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，再載入
+pickle 產生訊號。它不判斷資料是否曾用於訓練或選參。`evaluate_signal` 接收
+單一商品的訊號與實際未來報酬，計算訊號品質、分層描述與簡化報酬；提供資料集 ID
+時核對保存資料集的報酬、順序與 horizon 並拒絕 panel，指定記錄才將有限指標交
+leaderboard store 保存。簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
+`leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
+並提供候選數與多重比較限制。這些排名不提供獲利、樣本外來源或執行安全的證明。
+
+特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的
+讀取、更新與原子發佈期間持跨程序鎖；`entries` 不加鎖，讀取完整的新檔或舊檔。
+模型 pickle 需要可信的工作區；hash 只檢查內容一致性，不是 sandbox。格式、身分與重記語意集中在
+[ML 研究產物](docs/run_artifacts.md#ml-research-artifacts)。
+
 ## 績效計算與對話摘要
 
 績效處理分成計算、保存與呈現三個責任。摘要欄位只控制回覆大小，不決定後端留下哪些指標。
@@ -299,7 +374,7 @@ Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料
 | 元件 | 責任 |
 | ---- | ---- |
 | `domain/backtest/metrics.py` | 統一時間、淨值與交易紀錄，整合第三方統計，記錄計算設定與不可用原因 |
-| `empyrical-reloaded` | 報酬與風險統計；Python 匯入名稱為 `empyrical` |
+| `QuantStats` | 報酬與風險統計；日報酬統計與已平倉交易統計分開 |
 | `vectorbt` | 兩種引擎的已平倉交易統計；signal 引擎另使用其 portfolio 模擬 |
 | `domain/performance/catalog.py` | 指標 ID、定義、單位、適用模式、摘要選擇及最佳化方向 |
 | `domain/performance/sampling.py` | 日級觀測需求與 K 棒頻率判斷，供績效計算及最佳化提交共用 |
@@ -315,6 +390,13 @@ Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料
 在建立工作前拒絕不適用的目標。
 Volume 模式沒有初始資金基準，不產生虛構的資金報酬率。
 無法計算或不適用的數值保留原因，不以零代替。
+
+Sharpe 的無風險利率與 Sortino 的目標報酬先按設定轉為每期報酬並扣除，
+再交給 QuantStats，保留負利率與兩種不同門檻的語意。QuantStats 的價格自動判別
+無法辨識部分高報酬序列，且回撤介面需要時間索引；這些特例以原有數學定義計算，
+在 `metadata.calculation_fallbacks` 記錄指標、實際來源與原因，不新增推測日期。
+交易勝率與交易盈虧比仍來自 VectorBT，不能以 QuantStats 的獲利日比例或日報酬
+盈虧比替代。
 
 完整指標連同套件版本、計算設定與定義快照一起保存。一般 run／job 回覆只挑摘要，
 LLM 可先探索指標目錄與該 run 的可用範圍，再查詢未出現在摘要的指標。
@@ -344,12 +426,28 @@ Signal 引擎同時保留 VectorBT 原生 order attempts 與帳戶序列，型�
 不將此資料描述為交易所錢包或保證金。
 
 `ReportService` 共用此讀取路徑，提供章節目錄、建議範本與純文字評語介面。
-MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG renderer 與不可覆寫的
+MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG／Bokeh renderer 與不可覆寫的
 報告發佈位於 `adapters/reporting`。前端 LLM 選擇章節、順序並撰寫評價，
-後端呈現既存計算、表格、圖表與來源身分。建議範本不強制，明確空章節清單亦有效；
+後端呈現保存結果、表格、圖表與來源身分。選取單組詳情章節時，單一離線 HTML 提供兩層導覽：
+總覽列出全部 run／scope 的參數、期間、角色與主要績效，連到可返回總覽的單組詳情；
+未選總覽時改用結果清單；未選任何單組詳情時，總覽、來源與限制直接在主畫面呈現，
+不產生空的詳情連結。不把最佳化所有訓練組合誤作獨立測試結果。選取 `metrics` 時，QuantStats adapter
+另以保存的報酬及設定生成原生完整 HTML，保留月報酬、回撤期間與滾動分析。
+這是可追溯的衍生分析，不覆寫歷史指標；保存值與原生報告的統計口徑各自標明。
+原生詳表直接輸出於主 HTML，純文字讀取不依賴 JavaScript；完整圖表透過隔離的
+iframe 按選取範圍載入，也可下載含來源證據的獨立 HTML。
+建議範本不強制，明確空章節清單亦有效；
 不宣稱未選章節已呈現。章節選擇決定可見內容，不裁減載入或內嵌資料；
 即使清單為空，HTML 仍內嵌已載入 run 的完整 scope、觀察值與執行設定。
 LLM 評語標記並跳脫，不能注入 HTML 或替換數值。
+
+`ledger` 章節以保存的 execution records 與 account history 產生統一核對資料，
+按 K 線順序將委託事件置於收盤估值前，保留各自來源身分與估值基準。
+不推算缺失的原始委託或將收盤列當作成交；配對交易 `trades` 是附加損益檢視。
+同一核對欄位與資料供 Bokeh 狀態篩選／欄位勾選、無 JavaScript 靜態 HTML，
+以及全精度 CSV／JSON 下載使用。Bokeh 程式完整內嵌，不使用 CDN。
+原始觀測值與 MCP 的逐次執行／逐根帳戶查詢保持分離且不改寫。
+報告 schema 2 移除 `executions`、`account_history` 章節 ID，不保留轉接別名。
 
 報告章節、標題與建議範本集中於 domain/presentation；application service 與
 HTML renderer 使用同一份目錄。adapters/presentation 提供文件外殼、文字與 JSON
@@ -358,7 +456,13 @@ HTML renderer 使用同一份目錄。adapters/presentation 提供文件外殼�
 
 報告內容、章節、評語與範本版本共同決定內容身分；HTML 與 manifest 保存為
 registered artifacts，重試時核對檔案及登錄完整性。報告是離線文件，不含 CDN，
-選取交易章節時，完整交易資料供本機表格搜尋、排序及 CSV 匯出。
+衍生分析的套件版本、設定、輸入雜湊及原生 HTML 也參與內容身分。
+QuantStats 繪圖以程序內鎖及局部樣式隔離，固定 SVG 身分並移除產生時間；
+暫存輸出與新增圖形在成功及例外路徑都清除，不關閉呼叫端原有圖形。
+報表在非互動式 Agg 後端繪製，以支援 MCP 的執行緒呼叫；結束時恢復呼叫端
+已選定的繪圖後端，尚未選定後端的程序則保留 Agg。
+選取核對章節時，完整事件資料供本機表格篩選、排序、欄位選擇及 CSV／JSON 匯出；
+畫面篩選與兩位小數顯示不裁減或捨入下載資料。
 完整性核對不代表封存全部外部執行環境。
 
 ### 設定與儲存一致性
@@ -379,7 +483,7 @@ Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與�
 
 ### MCP 回覆契約
 
-MCP 使用 StrictFastMCP 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
+MCP 使用 StrictMCPServer 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
 `app/contracts` 的 DTO 再檢查 service 回覆，讓協定輸出可被工具 schema 驗證。
 預期的應用失敗使用穩定 code 或診斷；參數錯誤、非預期例外與回覆契約錯誤則使用
 MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受固定欄位白名單截斷。
@@ -394,6 +498,15 @@ MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受�
 `get_job_status` 的 `status: not_found` 表示查無工作，`status: failed` 則表示
 找到已失敗的工作。參數格式錯誤、未預期的例外或無效回覆使用 MCP
 `isError: true`；客戶端不能只依 `isError` 判斷應用操作是否成功。
+內部例外或回覆 DTO 驗證失敗只向客戶端提供通用的工具執行錯誤，
+完整原因留在 server 日誌；輸入參數驗證與明確的 `ToolError` 仍提供可修正的訊息。
+
+SDK 的 Python 模型使用 snake_case 屬性，MCP JSON wire 欄位維持 camelCase；
+模型客戶端序列化 SDK 回覆時須使用別名，避免遺失 `structuredContent` 等欄位。
+同步工具由 SDK 在線程中執行；application services 不持有跨呼叫共用的 SQLite
+connection，每次儲存操作各自建立連線。
+模型 store 以逐 ID writer lock、不可變 blob 與原子 metadata 發布支援並發讀取；
+預測使用同一次讀取且已驗證雜湊的 bytes，避免重新訓練期間讀到部分寫入內容。
 
 工具同時標註唯讀、破壞性、冪等及外部互動提示。這些標註描述實際副作用，
 不提供授權或隔離保證。例如 `get_job_status` 可能更新失去 worker 的工作狀態，
@@ -423,6 +536,10 @@ MCP 計畫準備時的策略模組載入、建構與訊號契約檢查在受監�
 Walk-forward 依固定 fold 順序共用該次執行的亂數串流；平行 trial 各自建立 context。
 策略透過 `domain.randomness` 取得產生器或種子，第三方模型的 seed 需明確傳入。
 這不會覆寫全域亂數狀態，也不會控制任意第三方產生器。
+
+直接 ML 研究不使用策略 execution manifest；`train_model` 使用所選模型的
+`random_state` 參數及其他有效設定，並將它們記入 model artifact。
+這與策略執行的頂層 `random_seed` 是兩個入口，不能互相推斷。
 
 Manifest 固定請求；來源 hash、資料指紋與套件版本提供追蹤依據。
 它們不等於封存完整行情、Python 依賴與執行環境，因此不承諾跨環境完全重現。

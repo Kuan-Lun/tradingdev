@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.performance import PerformanceStore
@@ -171,6 +172,47 @@ def test_summary_uses_saved_flags_and_detail_keeps_every_value(
     assert detail.definitions["total_pnl"].summary is False
     persisted = store.get_run("run")
     assert persisted is not None and persisted["metrics"]["total_volume"] == 210
+
+
+def test_quantstats_migration_keeps_historical_provider_and_definitions(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService],
+) -> None:
+    workspace, _, service = storage
+    historical = _scope(values={"total_return": 0.11})
+    _publish(
+        storage,
+        "historical",
+        scopes={"full": historical},
+        snapshot_changes={"total_return": {"provider": "empyrical"}},
+    )
+    original = {
+        path: path.read_bytes()
+        for path in (workspace.runs / "historical").rglob("*")
+        if path.is_file()
+    }
+    metadata = historical.model_dump(mode="json")["metadata"]
+    metadata["providers"] = {"quantstats": "0.0.86", "vectorbt": "1.0.0"}
+    _publish(
+        storage,
+        "current",
+        scopes={"full": historical.model_copy(update={"metadata": metadata})},
+    )
+    assert METRIC_CATALOG["total_return"].provider == "quantstats"
+    old = RunMetricsResponse.model_validate(service.get_run_metrics("historical"))
+    new = RunMetricsResponse.model_validate(service.get_run_metrics("current"))
+    assert old.metrics == new.metrics == {"total_return": 0.11}
+    assert old.definitions["total_return"].provider == "empyrical"
+    old_providers = old.metadata["providers"]
+    assert isinstance(old_providers, dict)
+    assert old_providers["empyrical-reloaded"] == "0.5.12"
+    assert new.definitions["total_return"].provider == "quantstats"
+    comparison = CompareRunsResponse.model_validate(
+        service.compare_runs(["historical", "current"], metric_ids=["total_return"])
+    )
+    reasons = comparison.metric_compatibility["total_return"].reasons
+    assert "definition.provider_differs:current" in reasons
+    assert "providers_differ:current" in reasons
+    assert all(path.read_bytes() == content for path, content in original.items())
 
 
 def test_scope_and_metric_selection_errors_include_available_choices(
@@ -416,13 +458,16 @@ def test_read_tools_dispatch_catalog_and_recorded_detail_with_declared_schema(
     storage: tuple[WorkspacePaths, SQLiteStore, RunService],
 ) -> None:
     _publish(storage, "run")
-    server = FastMCP("metric-query-test")
+    server = MCPServer("metric-query-test")
     runs.register(server, storage[2])
 
     async def check() -> None:
         catalog = await server.call_tool("get_metric_catalog", {"mode": "volume"})
-        assert isinstance(catalog, tuple)
-        typed = MetricCatalogResponse.model_validate(catalog[1]["result"])
+        assert isinstance(catalog, CallToolResult)
+        assert catalog.structured_content is not None
+        typed = MetricCatalogResponse.model_validate(
+            catalog.structured_content["result"]
+        )
         assert "max_drawdown_amount" in {
             definition.id for definition in typed.definitions
         }
@@ -436,15 +481,17 @@ def test_read_tools_dispatch_catalog_and_recorded_detail_with_declared_schema(
             "get_run_metrics",
             {"run_id": "run", "metric_ids": ["daily_pnl_mean", "total_volume"]},
         )
-        assert isinstance(result, tuple)
-        detail = RunMetricsResponse.model_validate(result[1]["result"])
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        detail = RunMetricsResponse.model_validate(result.structured_content["result"])
         assert detail.metrics == {"daily_pnl_mean": 5.5, "total_volume": 210.0}
         invalid = await server.call_tool(
             "get_run_metrics", {"run_id": "run", "scope": "absent"}
         )
-        assert isinstance(invalid, tuple)
+        assert isinstance(invalid, CallToolResult)
+        assert invalid.structured_content is not None
         assert MetricQueryError.model_validate(
-            invalid[1]["result"]
+            invalid.structured_content["result"]
         ).available_scopes == ["full"]
 
     asyncio.run(check())
@@ -574,7 +621,7 @@ def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
         summary["total_return"]["mean"] if walk_forward else summary["total_return"]
     ) == pytest.approx(0.3)
 
-    server = FastMCP("weekly-metric-query-test")
+    server = MCPServer("weekly-metric-query-test")
     runs.register(server, service)
     metric_ids = [
         "annual_return",
@@ -588,8 +635,11 @@ def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
         response = await server.call_tool(
             "get_run_metrics", {"run_id": "weekly_a", "metric_ids": metric_ids}
         )
-        assert isinstance(response, tuple)
-        detail = RunMetricsResponse.model_validate(response[1]["result"])
+        assert isinstance(response, CallToolResult)
+        assert response.structured_content is not None
+        detail = RunMetricsResponse.model_validate(
+            response.structured_content["result"]
+        )
         for metric_id in metric_ids[:-1]:
             assert detail.metrics[metric_id] == expected_missing
         scalar_response = await server.call_tool(
@@ -600,8 +650,11 @@ def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
                 "metric_ids": metric_ids,
             },
         )
-        assert isinstance(scalar_response, tuple)
-        scalar = RunMetricsResponse.model_validate(scalar_response[1]["result"])
+        assert isinstance(scalar_response, CallToolResult)
+        assert scalar_response.structured_content is not None
+        scalar = RunMetricsResponse.model_validate(
+            scalar_response.structured_content["result"]
+        )
         unavailable = scalar.metadata["unavailable"]
         assert isinstance(unavailable, dict)
         for metric_id in metric_ids[:-1]:
@@ -612,9 +665,10 @@ def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
             "compare_runs",
             {"run_ids": ["weekly_a", "weekly_b"], "metric_ids": ["sharpe_ratio"]},
         )
-        assert isinstance(comparison_response, tuple)
+        assert isinstance(comparison_response, CallToolResult)
+        assert comparison_response.structured_content is not None
         comparison = CompareRunsResponse.model_validate(
-            comparison_response[1]["result"]
+            comparison_response.structured_content["result"]
         )
         assert not comparison.comparable
         reason = "no_valid_folds" if walk_forward else "metric_unavailable"

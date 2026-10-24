@@ -1,5 +1,7 @@
 """Tests for UTC daily/monthly resampling of equity curves."""
 
+from typing import Literal
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -58,6 +60,22 @@ class TestFullYearHourly:
         pd.testing.assert_series_equal(
             period_pnl(equity, raw, "daily"),
             period_pnl(equity, timestamps, "daily"),
+        )
+
+
+class TestTimestampResolution:
+    @pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+    def test_any_input_resolution_gives_a_nanosecond_index(
+        self, unit: Literal["s", "ms", "us", "ns"]
+    ) -> None:
+        equity, timestamps = _hourly_2024()
+
+        returns = period_returns(equity, timestamps.as_unit(unit), "monthly")
+
+        assert isinstance(returns.index, pd.DatetimeIndex)
+        assert returns.index.unit == "ns"
+        pd.testing.assert_series_equal(
+            returns, period_returns(equity, timestamps.as_unit("ns"), "monthly")
         )
 
 

@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import csv
+import io
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from jsonschema import Draft202012Validator
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp_types import CallToolResult
+from pydantic import ValidationError
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
@@ -34,24 +40,24 @@ from tradingdev.domain.performance.artifacts import (
     build_artifacts,
 )
 from tradingdev.domain.strategies.execution import StrategyExecution
-from tradingdev.mcp.strict_server import StrictFastMCP
+from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import history
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-@pytest.fixture(params=[FastMCP, StrictFastMCP], ids=["sdk", "strict"])
+@pytest.fixture(params=[MCPServer, StrictMCPServer], ids=["sdk", "strict"])
 def context(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> Iterator[
-    tuple[WorkspacePaths, SQLiteStore, FastMCP, TradeHistoryService, ReportService]
+    tuple[WorkspacePaths, SQLiteStore, MCPServer, TradeHistoryService, ReportService]
 ]:
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
     service = TradeHistoryService(workspace=workspace, store=store)
     reports = ReportService(workspace=workspace, store=store)
-    server: FastMCP = request.param("history-contract-test")
+    server: MCPServer = request.param("history-contract-test")
     history.register(server, service, reports)
     _publish(workspace, store)
     yield workspace, store, server, service, reports
@@ -164,16 +170,17 @@ def _publish(
 
 
 async def _call(
-    server: FastMCP, name: str, arguments: dict[str, Any]
+    server: MCPServer, name: str, arguments: dict[str, Any]
 ) -> dict[str, Any]:
     """Validate the actual structured MCP payload against its advertised schema."""
     result = await server.call_tool(name, arguments)
-    assert isinstance(result, tuple)
-    payload = result[1]
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    payload = result.structured_content
     assert isinstance(payload, dict)
     tool = next(tool for tool in await server.list_tools() if tool.name == name)
-    assert tool.outputSchema is not None
-    Draft202012Validator(tool.outputSchema).validate(payload)
+    assert tool.output_schema is not None
+    Draft202012Validator(tool.output_schema).validate(payload)
     response = payload.get("result", payload)
     assert isinstance(response, dict)
     return response
@@ -181,7 +188,7 @@ async def _call(
 
 def test_history_tool_schemas_and_real_paginated_queries(
     context: tuple[
-        WorkspacePaths, SQLiteStore, FastMCP, TradeHistoryService, ReportService
+        WorkspacePaths, SQLiteStore, MCPServer, TradeHistoryService, ReportService
     ],
 ) -> None:
     _, _, server, _, _ = context
@@ -198,19 +205,19 @@ def test_history_tool_schemas_and_real_paginated_queries(
             "generate_report",
         }
         for name, tool in tools.items():
-            Draft202012Validator.check_schema(tool.inputSchema)
-            assert tool.outputSchema is not None
-            Draft202012Validator.check_schema(tool.outputSchema)
-            if isinstance(server, StrictFastMCP):
-                assert tool.inputSchema["additionalProperties"] is False
+            Draft202012Validator.check_schema(tool.input_schema)
+            assert tool.output_schema is not None
+            Draft202012Validator.check_schema(tool.output_schema)
+            if isinstance(server, StrictMCPServer):
+                assert tool.input_schema["additionalProperties"] is False
             assert tool.annotations is not None
-            assert tool.annotations.readOnlyHint is (name != "generate_report")
-            assert tool.annotations.destructiveHint is False
-            assert tool.annotations.openWorldHint is False
-        assert "run_id" in tools["get_run_trades"].inputSchema["required"]
-        assert "scope" not in tools["get_run_trades"].inputSchema["required"]
+            assert tool.annotations.read_only_hint is (name != "generate_report")
+            assert tool.annotations.destructive_hint is False
+            assert tool.annotations.open_world_hint is False
+        assert "run_id" in tools["get_run_trades"].input_schema["required"]
+        assert "scope" not in tools["get_run_trades"].input_schema["required"]
         # Strategy parameter names are dynamic even though top-level names are closed.
-        Draft202012Validator(tools["find_runs"].inputSchema).validate(
+        Draft202012Validator(tools["find_runs"].input_schema).validate(
             {"parameters": {"user_parameter": {"leaf": 7}}}
         )
         found = FindRunsResponse.model_validate(
@@ -293,7 +300,7 @@ def test_history_tool_schemas_and_real_paginated_queries(
 
 def test_trade_date_filter_excludes_individual_unknown_times_through_mcp(
     context: tuple[
-        WorkspacePaths, SQLiteStore, FastMCP, TradeHistoryService, ReportService
+        WorkspacePaths, SQLiteStore, MCPServer, TradeHistoryService, ReportService
     ],
 ) -> None:
     workspace, store, server, _, _ = context
@@ -335,7 +342,7 @@ def test_trade_date_filter_excludes_individual_unknown_times_through_mcp(
 
 def test_report_catalogue_and_composition_are_real_reusable_artifacts(
     context: tuple[
-        WorkspacePaths, SQLiteStore, FastMCP, TradeHistoryService, ReportService
+        WorkspacePaths, SQLiteStore, MCPServer, TradeHistoryService, ReportService
     ],
 ) -> None:
     workspace, store, server, _, _ = context
@@ -347,13 +354,28 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         catalog = ReportSectionCatalog.model_validate(
             await _call(server, "get_report_sections", {})
         )
-        assert {"trades", "settings", "equity"}.issubset(
+        assert [section.id for section in catalog.sections] == [
+            "overview",
+            "settings",
+            "metrics",
+            "equity",
+            "ledger",
+            "trades",
+            "limitations",
+            "provenance",
+        ]
+        assert catalog.templates["standard"] == [
             section.id for section in catalog.sections
-        )
-        assert "standard" in catalog.templates
+        ]
+        assert catalog.templates["trades"] == [
+            "overview",
+            "ledger",
+            "trades",
+            "provenance",
+        ]
         args = {
             "run_ids": ["run"],
-            "sections": ["overview", "trades"],
+            "sections": ["overview", "settings", "metrics", "trades"],
             "commentary": [
                 {"title": "使用者觀察", "text": "<script>unsafe()</script> 僅為解讀"}
             ],
@@ -367,6 +389,31 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         assert path.is_file() and report.sha256 == sha256_file(path)
         assert "&lt;script&gt;unsafe()&lt;/script&gt;" in path.read_text()
         assert "<script>unsafe()</script>" not in path.read_text()
+        assert "<th>進場時間（UTC）</th>" in path.read_text()
+        assert "<th>單邊手續費率</th>" in path.read_text()
+        assert "<th>總淨損益</th>" in path.read_text()
+        assert "<th>執行識別碼</th>" in path.read_text()
+        encoded = re.findall(
+            r"data-table-csv='trades-0-0' data-csv='([^']*)'", path.read_text()
+        )
+        assert len(encoded) == 1
+        rows = list(
+            csv.DictReader(
+                io.StringIO(base64.b64decode(encoded[0]).decode("utf-8-sig"))
+            )
+        )
+        assert rows and "淨損益（報價貨幣）" in rows[0]
+        assert "net_pnl" not in rows[0]
+        assert list(rows[0])[:4] == [
+            "序號",
+            "進場時間（UTC）",
+            "平倉時間（UTC）",
+            "期末估值時間（UTC）",
+        ]
+        assert "<th>淨損益（報價貨幣）</th>" in path.read_text()
+        assert "data-table-json='0:0:trades'" in path.read_text()
+        assert "href='#result-0-0'" in path.read_text()
+        assert "href='#overview'" in path.read_text()
         assert store.get_artifact(report.artifact_id) is not None
         assert store.get_artifact(report.manifest_artifact_id) is not None
         again = ReportResponse.model_validate(
@@ -424,6 +471,16 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         ),
         (
             "generate_report",
+            {"run_ids": ["run"], "sections": ["executions"]},
+            "invalid_report_sections",
+        ),
+        (
+            "generate_report",
+            {"run_ids": ["run"], "sections": ["account_history"]},
+            "invalid_report_sections",
+        ),
+        (
+            "generate_report",
             {"run_ids": ["run"], "commentary": [{"title": "", "text": "x"}]},
             "invalid_report_commentary",
         ),
@@ -432,7 +489,7 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
 )
 def test_expected_application_errors_match_advertised_union(
     context: tuple[
-        WorkspacePaths, SQLiteStore, FastMCP, TradeHistoryService, ReportService
+        WorkspacePaths, SQLiteStore, MCPServer, TradeHistoryService, ReportService
     ],
     name: str,
     arguments: dict[str, Any],
@@ -471,7 +528,7 @@ def test_expected_application_errors_match_advertised_union(
 )
 def test_invalid_typed_arguments_are_rejected_before_service_dispatch(
     context: tuple[
-        WorkspacePaths, SQLiteStore, FastMCP, TradeHistoryService, ReportService
+        WorkspacePaths, SQLiteStore, MCPServer, TradeHistoryService, ReportService
     ],
     name: str,
     arguments: dict[str, Any],
@@ -486,7 +543,7 @@ def test_strict_boundary_rejects_unknown_names_for_every_history_tool(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
-    server = StrictFastMCP("history-unknown-arguments")
+    server = StrictMCPServer("history-unknown-arguments")
     history.register(
         server,
         TradeHistoryService(workspace=workspace, store=store),
@@ -518,7 +575,7 @@ def test_strict_boundary_rejects_unknown_names_for_every_history_tool(
 )
 def test_service_schema_drift_is_not_returned_as_an_unvalidated_payload(
     context: tuple[
-        WorkspacePaths, SQLiteStore, FastMCP, TradeHistoryService, ReportService
+        WorkspacePaths, SQLiteStore, MCPServer, TradeHistoryService, ReportService
     ],
     monkeypatch: pytest.MonkeyPatch,
     name: str,
@@ -537,5 +594,8 @@ def test_service_schema_drift_is_not_returned_as_an_unvalidated_payload(
         arguments["run_id"] = "run"
     if name == "generate_report":
         arguments["run_ids"] = ["run"]
-    with pytest.raises(ToolError, match="validation error"):
+    with pytest.raises(
+        UnexpectedToolError, match=f"^Error executing tool {name}$"
+    ) as caught:
         asyncio.run(server.call_tool(name, arguments))
+    assert isinstance(caught.value.__cause__, ValidationError)
