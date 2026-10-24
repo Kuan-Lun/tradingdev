@@ -38,6 +38,7 @@ dependencies = [
     "pandas-stubs>=3.0.5.260914",
     "ruff>=0.17.1",
     "types-pyyaml>=6.0.12.20260906",
+    "arch>=8.0.0",
 ]
 
 [project.optional-dependencies]
