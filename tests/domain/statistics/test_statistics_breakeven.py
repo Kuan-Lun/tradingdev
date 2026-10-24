@@ -94,6 +94,41 @@ class TestTurnoverCost:
 
         assert summary.traded_notional == pytest.approx(2_100.0 + 4_000.0)
 
+    def test_open_trade_counts_only_its_entry_leg(self) -> None:
+        # Shaped like the engine's normalized trades: an open trade's
+        # exit_price is the last mark and its exit_notional is zero.
+        closed_exit, held_exit = 1_010.0, 0.0
+        closed = _trade(10.0, entry_price=100.0, exit_price=101.0, fee=1.0)
+        closed |= {"status": "closed", "exit_notional": closed_exit}
+        held = _trade(-20.0, entry_price=100.0, exit_price=98.0, fee=0.6)
+        held |= {"status": "open", "exit_notional": held_exit}
+
+        summary = summarize_breakeven([closed, held], start=_START, end=_ONE_YEAR)
+
+        # The engine's total_volume: entry notional plus exit_notional.
+        engine_volume = 1_000.0 + closed_exit + 1_000.0 + held_exit
+        assert summary.traded_notional == pytest.approx(engine_volume)
+        assert summary.traded_notional == pytest.approx(3_010.0)
+        assert summary.total_cost == pytest.approx(1.6)
+
+    def test_open_trade_stays_in_the_win_loss_sample(self) -> None:
+        held = _trade(-20.0) | {"status": "open"}
+
+        summary = summarize_breakeven([_trade(10.0), held], start=_START, end=_ONE_YEAR)
+
+        assert summary.total_trades == 2
+        assert (summary.winning_trades, summary.losing_trades) == (1, 1)
+        assert summary.avg_loss == pytest.approx(20.0)
+
+    def test_missing_status_counts_as_closed(self) -> None:
+        trade = _trade(1.0, entry_price=100.0, exit_price=110.0)
+        explicit = summarize_breakeven(
+            [trade | {"status": "closed"}], start=_START, end=_ONE_YEAR
+        )
+        legacy = summarize_breakeven([trade], start=_START, end=_ONE_YEAR)
+
+        assert legacy.traded_notional == explicit.traded_notional == 2_100.0
+
     def test_annualizes_over_the_given_period(self) -> None:
         trades = [_trade(1.0, size_quote=5_000.0, fee=6.0)] * 4
         half_year = _START + pd.Timedelta(days=365.25 / 2)
@@ -160,4 +195,10 @@ class TestValidation:
         trade = _trade(1.0)
         trade[field] = value
         with pytest.raises(ValueError, match=f"trade 1 has .*{message}"):
+            summarize_breakeven([_trade(1.0), trade], start=_START, end=_ONE_YEAR)
+
+    @pytest.mark.parametrize("status", ["OPEN", "partial", None])
+    def test_rejects_unknown_status(self, status: object) -> None:
+        trade = _trade(1.0) | {"status": status}
+        with pytest.raises(ValueError, match="trade 1 has an unknown status"):
             summarize_breakeven([_trade(1.0), trade], start=_START, end=_ONE_YEAR)

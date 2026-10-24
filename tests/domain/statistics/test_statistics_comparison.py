@@ -136,6 +136,37 @@ class TestAlignReturns:
         with pytest.raises(ValueError, match=message):
             align_returns(series)
 
+    def test_rejects_mixed_naive_and_aware_indexes(self) -> None:
+        aware = _daily(np.ones(30))
+        naive = aware.tz_localize(None)
+
+        with pytest.raises(ValueError, match="timezone mismatch") as raised:
+            align_returns({"strategy": aware, "benchmark": naive})
+
+        assert "naive: ['benchmark']" in str(raised.value)
+        assert "aware: ['strategy']" in str(raised.value)
+
+    def test_mixed_timezones_reach_inference_as_an_error(self) -> None:
+        a, b = _correlated_pair(60, 0.5, 0.0, seed=1)
+        statistic = _DAILY.sharpe
+
+        with pytest.raises(ValueError, match="timezone mismatch"):
+            difference_interval(a, b.tz_localize(None), statistic, reps=50, seed=0)
+
+    def test_aligns_aware_indexes_in_different_timezones(self) -> None:
+        utc = _daily(np.arange(30, dtype=float))
+        taipei = utc.tz_convert("Asia/Taipei")
+
+        aligned = align_returns({"utc": utc, "taipei": taipei})
+
+        assert aligned.overlap == 30
+        assert (aligned.frame["utc"] == aligned.frame["taipei"]).all()
+
+    def test_aligns_all_naive_indexes(self) -> None:
+        a = _daily(np.arange(30, dtype=float)).tz_localize(None)
+
+        assert align_returns({"a": a, "b": a.iloc[5:]}).overlap == 25
+
 
 class TestDifferenceInterval:
     def test_detects_a_known_difference(self, frequency: _Frequency) -> None:

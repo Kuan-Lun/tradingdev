@@ -301,6 +301,15 @@ def write_kd_inference(
     )
 
     cost = breakeven.traded_notional * (FEES + SLIPPAGE)
+    # Older engines left `fee = 0`; current ones record fees but fold slippage
+    # into fill prices, so either way the full cost is estimated from notional.
+    recorded_fees = (
+        "Trade records carry `fee = 0` because the engine folds costs into fill "
+        "prices, so this is an estimate."
+        if breakeven.total_cost == 0.0
+        else f"Trade records carry fees of {breakeven.total_cost:,.2f} but no "
+        "slippage, which the engine folds into fill prices, so this is an estimate."
+    )
     net = float(equity[-1] - equity[0])
     gross = net + cost
 
@@ -356,8 +365,7 @@ def write_kd_inference(
         "## Cost breakdown",
         "",
         f"Estimated cost = traded notional (entry + exit) x (fees {FEES} + "
-        f"slippage {SLIPPAGE}). Trade records carry `fee = 0` because the engine "
-        "folds costs into fill prices, so this is an estimate. The engine's "
+        f"slippage {SLIPPAGE}). {recorded_fees} The engine's "
         "`total_volume` metric changed upstream from entry-only to entry plus "
         "exit notional, so the cost is always derived from the trade records, "
         "never from that metric.",

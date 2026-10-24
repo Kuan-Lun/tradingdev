@@ -54,9 +54,9 @@ Conventions:
   whose rounding error is about one machine epsilon of the ratio near 1
   however small the return, so a quiet instrument does not lower it.
 * Both series must use the same kind of index, such as the UTC period
-  starts of :mod:`tradingdev.domain.statistics.periods`. A timezone-naive
-  index shares no label with a UTC one, which raises as having no common
-  period.
+  starts of :mod:`tradingdev.domain.statistics.periods`. Mixing a
+  timezone-naive index with a timezone-aware one raises a timezone
+  mismatch rather than reporting no common period.
 * Non-finite returns or duplicate index labels raise ``ValueError``.
 """
 
@@ -208,8 +208,9 @@ def compare_to_benchmark(
 
     Raises:
         ValueError: If ``periods_per_year`` is not positive and finite, the
-            series share no period, an index has duplicate labels, or a
-            return is not a finite number.
+            series share no period, timezone-naive and timezone-aware
+            indexes are mixed, an index has duplicate labels, or a return
+            is not a finite number.
     """
     periods = _periods_per_year(periods_per_year)
     aligned = align_returns(

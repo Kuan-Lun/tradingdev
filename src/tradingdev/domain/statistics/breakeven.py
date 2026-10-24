@@ -17,6 +17,18 @@ Conventions:
 * Traded notional counts both legs of a round trip: the entry notional
   ``size_quote`` plus the exit notional ``size_quote * exit_price /
   entry_price``.
+* A trade with ``status == "open"`` (still held at the last bar) counts
+  only its entry leg. Its ``exit_price`` is a mark price, not a fill, so
+  counting an exit would add turnover that never happened. It stays in the
+  sample rather than being excluded: the entry was executed and paid its
+  costs, so dropping it would understate turnover and cost, and the
+  engines' ``total_volume`` likewise counts only the executed orders. Its
+  ``net_pnl`` is marked to market and already in the equity curve, so it
+  still counts as a win or loss, keeping the trades' total ``net_pnl``
+  equal to the run's P&L. The engines' ``total_trades`` and ``win_rate``
+  count closed trades only, so with an open trade at the end the counts
+  and win rate here differ from theirs. Records without ``status`` count
+  as closed.
 * Costs are the sum of the trades' ``fee`` fields. Figures are only as
   complete as those records: an engine that folds costs into ``net_pnl``
   without reporting them in ``fee`` understates the cost here.
@@ -57,7 +69,8 @@ class BreakevenSummary:
         win_rate_edge: ``win_rate - breakeven_win_rate``; positive means the
             strategy wins more often than its payoff profile requires.
         years: Length of the evaluation period in years of 365.25 days.
-        traded_notional: Entry plus exit notional summed over all trades.
+        traded_notional: Entry plus exit notional summed over all trades;
+            open trades contribute their entry notional only.
         annual_traded_notional: ``traded_notional / years``.
         annual_turnover: ``annual_traded_notional / capital``; ``None``
             without a capital basis.
@@ -102,7 +115,8 @@ def summarize_breakeven(
 
     Args:
         trades: Trade records, each with numeric ``net_pnl``, ``size_quote``,
-            ``entry_price``, ``exit_price``, and ``fee``.
+            ``entry_price``, ``exit_price``, and ``fee``, and optionally a
+            ``status`` of ``"closed"`` or ``"open"``.
         start: Start of the evaluation period; naive values are UTC.
         end: End of the evaluation period; naive values are UTC.
         capital: Capital basis for turnover, such as the initial cash.
@@ -112,8 +126,9 @@ def summarize_breakeven(
     Raises:
         ValueError: If ``end`` is not after ``start``, ``capital`` is not
             positive, or a trade lacks a required finite field, has a
-            negative size or fee, or has a non-positive entry or a negative
-            exit price.
+            negative size or fee, has a non-positive entry or a negative
+            exit price, or has a ``status`` other than ``"closed"`` or
+            ``"open"``.
     """
     years = _years_between(start, end)
     if capital is not None and not (math.isfinite(capital) and capital > 0):
@@ -134,7 +149,8 @@ def summarize_breakeven(
             raise ValueError(f"trade {position} has an invalid entry or exit price")
         if fee < 0:
             raise ValueError(f"trade {position} has a negative fee")
-        traded_notional += size * (1.0 + exit_price / entry_price)
+        exit_leg = 0.0 if _is_open(trade, position) else exit_price / entry_price
+        traded_notional += size * (1.0 + exit_leg)
         total_cost += fee
 
     wins = [p for p in pnls if p > 0]
@@ -194,6 +210,13 @@ def _utc_timestamp(value: Any) -> pd.Timestamp:
     if timestamp.tzinfo is None:
         return timestamp.tz_localize("UTC")
     return timestamp.tz_convert("UTC")
+
+
+def _is_open(trade: Mapping[str, Any], position: int) -> bool:
+    status: object = trade.get("status", "closed")
+    if status not in ("closed", "open"):
+        raise ValueError(f"trade {position} has an unknown status {status!r}")
+    return status == "open"
 
 
 def _real_field(trade: Mapping[str, Any], key: str, position: int) -> float:

@@ -306,12 +306,12 @@ $$
 $s_{\text{PnL}}$ 是 `pandas.Series.std(ddof=1)`。這裡使用絕對金額 P&L 而不是報酬率，並假設各日獨立。
 本資料 $n = 366$，$t = -7.33$。
 
-### 2.6 損益兩平勝率（`summarize_breakeven`，`breakeven.py:91-181`）
+### 2.6 損益兩平勝率（`summarize_breakeven`，`breakeven.py:104-197`）
 
 腳本呼叫方式：`summarize_breakeven(result.trades, start=stamps[0], end=stamps[-1], capital=result.init_cash)`
 （`scripts/demo_statistics.py` 的 `write_kd_inference()`）。
 
-**勝敗定義**（`breakeven.py:140-141`）：$\mathcal W = \{k : \text{net\_pnl}_k > 0\}$，
+**勝敗定義**（`breakeven.py:156-157`）：$\mathcal W = \{k : \text{net\_pnl}_k > 0\}$，
 $\mathcal L = \{k : \text{net\_pnl}_k < 0\}$。`net_pnl == 0` 的交易兩邊都不算。
 
 $$
@@ -319,7 +319,7 @@ W = \frac{1}{|\mathcal W|}\sum_{k\in\mathcal W}\text{net\_pnl}_k,\qquad
 L = \frac{1}{|\mathcal L|}\sum_{k\in\mathcal L}\big|\text{net\_pnl}_k\big|
 $$
 
-$W$ 是勝場的平均淨損益，$L$ 是敗場的平均淨虧損絕對值（`breakeven.py:142-146`）。
+$W$ 是勝場的平均淨損益，$L$ 是敗場的平均淨虧損絕對值（`breakeven.py:158-162`）。
 
 $$
 p^{*} = \frac{1}{1+W/L} = \frac{L}{W+L},\qquad
@@ -327,7 +327,7 @@ p^{*} = \frac{1}{1+W/L} = \frac{L}{W+L},\qquad
 \text{edge} = \hat p - p^{*}
 $$
 
-（`breakeven.py:147-151, 164-168`）
+（`breakeven.py:163-167, 180-184`）
 
 - **勝率排除零損益交易**，分母是分出勝負的交易數（docstring `breakeven.py:13-16`）。
   docstring 指出，用這個分母時，edge > 0 若且唯若所有交易的 `net_pnl` 加總為正。
@@ -337,7 +337,7 @@ $$
 - 本資料沒有零損益交易：412 = 121 + 291。$W/L = 0.60$，$p^* = 62.5\%$，$\hat p = 29.4\%$，
   edge = −33.1%。
 
-**年化換手率**（`breakeven.py:137, 153, 172-174, 184-189`）：
+**年化換手率**（`breakeven.py:152-153, 169, 188-190, 200-205`）：
 
 $$
 \text{notional} = \sum_k \text{size\_quote}_k\left(1+\frac{\text{exit\_price}_k}{\text{entry\_price}_k}\right),\quad
@@ -345,7 +345,7 @@ $$
 \text{turnover} = \frac{\text{notional}/\text{years}}{\text{capital}}
 $$
 
-出場名目金額以 $\text{size\_quote}\times\text{exit}/\text{entry}$ 推算。`start` 與 `end` 分別取第一根與最後一根
+出場名目金額以 $\text{size\_quote}\times\text{exit}/\text{entry}$ 推算。`status` 為 `open` 的未平倉交易只算進場腿，因為它的 `exit_price` 是最後的標記價、不是成交價；它仍留在勝敗樣本中（理由見 docstring）。這份資料 412 筆都已平倉，不受影響。`start` 與 `end` 分別取第一根與最後一根
 K 棒的時間戳，因此 years $=365/365.25$。capital 是 `init_cash = 10000`。
 實測 notional = 5,014,735.72，換手率 501.8 倍。
 
@@ -457,20 +457,21 @@ $$
 - 模組 docstring 把它定位為**次要指標**，因為分母只由少數鄰居估計，數值不穩定。
 - 實測：A = (1.384 − 1.056)/0.164 = 1.997；B = (2.000 − 0.039)/0.224 = 8.752。
 
-### 2.12 forest 上排：各組參數的 Sharpe 區間（`interval_table_outcome`，`comparison.py:340-417`）
+### 2.12 forest 上排：各組參數的 Sharpe 區間（`interval_table_outcome`，`comparison.py:346-423`）
 
-`interval_table`（`comparison.py:311-337`）呼叫 `interval_table_outcome`：重疊期數不足時整張表回傳 `None`，其他無法計算的列轉成 `None`。
+`interval_table`（`comparison.py:317-343`）呼叫 `interval_table_outcome`：重疊期數不足時整張表回傳 `None`，其他無法計算的列轉成 `None`。
 
 1. 每組參數的日報酬：`period_returns(equity_curve, timestamps, "daily")`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
-2. `align_returns`（`comparison.py:153-191`）用 `pd.concat(..., join="inner")` 取三組都有的日期（`:183`）。
+2. `align_returns`（`comparison.py:153-197`）用 `pd.concat(..., join="inner")` 取三組都有的日期（`:189`）。
+   無時區與有時區的索引混用時直接 raise `ValueError`，指出是時區不一致，而不是靜默得到重疊 0 期。
    標題的「366 common days」是 `overlap`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
-3. **三組一起重抽樣**：用同一個 `StationaryBootstrap(block_size, *columns, ...)`（`comparison.py:391-393`），
+3. **三組一起重抽樣**：用同一個 `StationaryBootstrap(block_size, *columns, ...)`（`comparison.py:397-399`），
    每次重抽樣對三組序列使用**相同的日期索引**。
-4. block size（`_block_size`，`comparison.py:450-459`）：對**每一組**分別算 Politis–White 估計值，取**最大值**後無條件進位，
+4. block size（`_block_size`，`comparison.py:456-465`）：對**每一組**分別算 Politis–White 估計值，取**最大值**後無條件進位，
    至少為 1。完全沒有變動的序列不參與估計；所有估計值都不是有限數時，$b = 1$。實測 $b = 2$。
 5. 統計量為 `partial(sharpe_ratio, periods_per_year=365.0)`，`reps = 2000`（`COMPARISON_REPS`）、
    `seed = 0`（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
-6. 區間用百分位數法 $[Q_{0.025}, Q_{0.975}]$，每組各自丟棄 NaN 後計算（`comparison.py:399-406`）。
+6. 區間用百分位數法 $[Q_{0.025}, Q_{0.975}]$，每組各自丟棄 NaN 後計算（`comparison.py:405-412`）。
 
 | 標籤 | 點估計 | 95% CI | valid_reps |
 | --- | ---: | --- | ---: |
@@ -482,12 +483,12 @@ KD(14, 3, 3) 的區間和 `kd_inference.md` 的 $[-9.18, -5.87]$ 不同，但點
 原因是 reps（2000 對 1000）不同，而且這裡是三組共同重抽樣，亂數消耗方式也不同。
 兩邊的 block size 實測都是 2。
 
-### 2.13 forest 下排：配對差異（`difference_interval_outcome`，`comparison.py:221-308`）
+### 2.13 forest 下排：配對差異（`difference_interval_outcome`，`comparison.py:227-314`）
 
-`difference_interval`（`comparison.py:194-218`）呼叫 `difference_interval_outcome`，並把所有 `IntervalUnavailable` 轉成 `None`。
+`difference_interval`（`comparison.py:200-224`）呼叫 `difference_interval_outcome`，並把所有 `IntervalUnavailable` 轉成 `None`。
 
-**對同一組索引重抽樣**：先以 `align_returns({"a": a, "b": b})` 對齊日期（`:265`），再用
-`StationaryBootstrap(block_size, values_a, values_b, seed=np.random.default_rng(seed))`（`:286-288`）。
+**對同一組索引重抽樣**：先以 `align_returns({"a": a, "b": b})` 對齊日期（`:271`），再用
+`StationaryBootstrap(block_size, values_a, values_b, seed=np.random.default_rng(seed))`（`:292-294`）。
 arch 對所有位置參數套用**同一組索引**，所以每次重抽樣中 $a$、$b$ 取到的是同一批日期，保留了兩者的相關性。
 block size 是兩序列 Politis–White 估計值中的較大者，再無條件進位（`_block_size`）。
 每一對都會重新以 `seed = 0` 建立亂數產生器（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
@@ -497,10 +498,10 @@ $$
 \Delta^{*}_j = \widehat{SR}_{\text{ann}}(a^{*}_j) - \widehat{SR}_{\text{ann}}(b^{*}_j),\ \ j=1,\dots,B
 $$
 
-區間是 $[Q_{0.025}(\Delta^*), Q_{0.975}(\Delta^*)]$（百分位數法，`:293`），`reps = 2000`。
+區間是 $[Q_{0.025}(\Delta^*), Q_{0.975}(\Delta^*)]$（百分位數法，`:299`），`reps = 2000`。
 $B$ 是丟棄 NaN 後的有效重抽樣數。
 
-**p 值：雙尾**（`comparison.py:294, 299`；docstring `:245-248`）：
+**p 值：雙尾**（`comparison.py:300, 305`；docstring `:251-254`）：
 
 $$
 p = \min\!\Big(1,\ 2\cdot\min\Big\{\tfrac{1}{B}\textstyle\sum_j \mathbf 1[\Delta^*_j \le 0],\ \ \tfrac{1}{B}\sum_j \mathbf 1[\Delta^*_j \ge 0]\Big\}\Big)
@@ -512,7 +513,7 @@ docstring 說明，這個 p 值是讓百分位數區間剛好排除 0 的最小 
 再看 $\hat\Delta$ 的位置。這裡直接看**未平移**的 $\Delta^*$ 分配中 0 落在哪一側，屬於「反轉百分位數區間」的做法。
 此外，剛好等於 0 的抽樣兩側都會計入。
 
-**rho**（`_correlation`，`comparison.py:462-468`；欄位說明 `:132-133`）：
+**rho**（`_correlation`，`comparison.py:468-474`；欄位說明 `:132-133`）：
 
 $$
 \rho = \mathrm{corr}_{\text{Pearson}}\big(r^{a}_d,\ r^{b}_d\big),\qquad d \in \text{兩組共同日期}
@@ -563,10 +564,10 @@ $$
 2. **三組參數未經調校**：forest 圖註腳寫的是「untuned parameter sets」。
    KD(9, 3, 3)、KD(14, 3, 3)、KD(21, 5, 5) 是程式中手動列出的常見組合（`scripts/demo_statistics.py` 的常數 `KD_VARIANTS`），
    沒有經過最佳化或搜尋，所以不能當作「最佳參數」的證據，也不代表 KD 策略的參數空間。
-3. **CI 重疊不代表不顯著**：`comparison.py:17-20` 與 `interval_table_outcome` docstring `:354-358` 指出，
+3. **CI 重疊不代表不顯著**：`comparison.py:17-20` 與 `interval_table_outcome` docstring `:360-364` 指出，
    各自的區間忽略了策略之間的相關性，只能當作保守的初步篩選。區間不重疊可以推得差異顯著，
    但區間重疊**不能**推得不顯著，正式判斷要看配對差異。
-4. **`cost_per_turnover` 為何低估**：`breakeven.py:20-22` 指出，成本是交易紀錄 `fee` 欄位的加總。
+4. **`cost_per_turnover` 為何低估**：`breakeven.py:32-34` 指出，成本是交易紀錄 `fee` 欄位的加總。
    引擎若把成本併入 `net_pnl`、卻沒有寫進 `fee`，成本就會被低估。合併前的引擎把 `fee` 寫死為 0，
    所以這份 pickle 的 `total_cost` 與 `cost_per_turnover` 都是 0，完全看不到成本；
    `kd_inference.md` 因此改用 2.7 的外部估計。合併後的引擎會寫入手續費，但 signal 模式的 slippage

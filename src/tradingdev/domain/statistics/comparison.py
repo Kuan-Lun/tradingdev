@@ -164,14 +164,20 @@ def align_returns(
     ``None`` or an
     :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`.
 
+    Timezone-naive and timezone-aware labels never compare equal, so mixing
+    them would silently leave no overlap; that raises instead, because the
+    cause is a timezone mismatch, not disjoint periods.
+
     Raises:
         ValueError: If no series is given, ``min_overlap`` is not a
-            positive integer, an index has duplicate labels, or a return is
-            not a finite number.
+            positive integer, an index has duplicate labels, a return is
+            not a finite number, or timezone-naive and timezone-aware
+            datetime indexes are mixed.
     """
     if not series_by_name:
         raise ValueError("at least one return series is required")
     _positive_int(min_overlap, "min_overlap")
+    _require_consistent_timezones(series_by_name)
     columns: dict[str, pd.Series] = {}
     for name, series in series_by_name.items():
         if not series.index.is_unique:
@@ -479,3 +485,23 @@ def _tail(confidence: float) -> float:
 def _positive_int(value: int, label: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{label} must be a positive integer")
+
+
+def _require_consistent_timezones(series_by_name: Mapping[str, pd.Series]) -> None:
+    naive = [
+        name
+        for name, series in series_by_name.items()
+        if isinstance(series.index, pd.DatetimeIndex) and series.index.tz is None
+    ]
+    aware = [
+        name
+        for name, series in series_by_name.items()
+        if isinstance(series.index, pd.DatetimeIndex) and series.index.tz is not None
+    ]
+    if naive and aware:
+        raise ValueError(
+            "returns mix timezone-naive and timezone-aware indexes "
+            f"(naive: {naive}, aware: {aware}); naive labels never match aware "
+            "ones, so this is a timezone mismatch, not non-overlapping periods. "
+            "Localize the naive index first, e.g. to UTC."
+        )

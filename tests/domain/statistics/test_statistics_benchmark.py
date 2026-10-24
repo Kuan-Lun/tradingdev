@@ -310,13 +310,13 @@ class TestValidation:
         with pytest.raises(ValueError, match="must be finite"):
             compare_to_benchmark(strategy, benchmark, periods_per_year=_DAILY)
 
-    def test_naive_and_utc_indexes_share_no_period(self) -> None:
+    def test_naive_and_utc_indexes_raise_a_timezone_mismatch(self) -> None:
         utc = _daily([0.01, 0.02])
         naive = pd.Series(
             utc.to_numpy(), index=pd.date_range("2024-01-01", periods=2, freq="D")
         )
 
-        with pytest.raises(ValueError, match="same UTC periods"):
+        with pytest.raises(ValueError, match="timezone mismatch"):
             compare_to_benchmark(naive, utc, periods_per_year=_DAILY)
 
     def test_duplicate_labels_raise(self) -> None:

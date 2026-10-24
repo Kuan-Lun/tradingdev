@@ -16,6 +16,9 @@ import sys
 import numpy as np
 import pandas as pd
 
+from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.statistics.breakeven import summarize_breakeven
+
 TOL = 1e-6  # relative tolerance for accounting identities
 LOOSE = 0.02  # 2% tolerance for statistics with convention differences
 
@@ -227,7 +230,14 @@ def main(path: str) -> int:
     ]
     check("V1 所有指標為有限值", not bad, f"非有限: {bad}" if bad else "")
     check("V2 win_rate 落在 [0,1]", 0.0 <= float(m["win_rate"]) <= 1.0)
-    check("V3 max_drawdown 非正", float(m["max_drawdown"]) <= 0.0)
+    mdd_def = METRIC_CATALOG["max_drawdown"]
+    if mode in mdd_def.modes:
+        # The catalog reports a nonnegative magnitude with no upper bound:
+        # short positions can push equity below zero and the loss past 100%.
+        check(
+            "V3 max_drawdown 為非負幅度（catalog 定義）",
+            float(m["max_drawdown"]) >= 0.0,
+        )
     check("V4 equity 無 NaN/inf", bool(np.isfinite(eq).all()))
 
     missing = [k for k in REPORT_KEYS if k not in m]
@@ -235,9 +245,18 @@ def main(path: str) -> int:
 
     # ---------- 6. cost sanity ----------
     fee_rate = float(cfg.get("fees", 0.0)) + float(cfg.get("slippage", 0.0))
-    vol = float(m.get("total_volume", 0.0) or 0.0)
-    if fee_rate > 0 and vol > 0:
-        cost = 2 * fee_rate * vol
+    # total_volume already counts both legs, so derive the cost from the
+    # trades' traded notional, as scripts/demo_statistics.py does.
+    notional = 0.0
+    if fee_rate > 0 and trades:
+        try:
+            notional = summarize_breakeven(
+                trades, start=ts[0], end=ts[-1]
+            ).traded_notional
+        except ValueError as exc:
+            check("C2 交易紀錄可推算成交名目", False, str(exc))
+    if notional > 0:
+        cost = fee_rate * notional
         gross = tot + cost
         print(
             f"\n成本拆解  : 估計成本 {cost:,.0f} / 毛損益 {gross:,.0f} / "
