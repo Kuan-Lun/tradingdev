@@ -357,7 +357,7 @@ def deflated_sharpe_ratio(
       Sharpe of ``N`` skill-less trials, and the DSR is the probability
       that the true Sharpe clears it.
     * ``required_t_stat`` in the ML leaderboard
-      (``tradingdev.domain.ml.leaderboard``, from upstream ``main``)
+      (``tradingdev.domain.ml.leaderboard``)
       corrects the IC family:
       t-statistics of signal ICs. It is a two-sided Bonferroni threshold,
       ``Phi^-1(1 - alpha / (2 N))``, controlling the family-wise error

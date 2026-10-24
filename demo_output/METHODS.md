@@ -159,22 +159,22 @@ config 沒有指定 `source` 與 `market_type`，所以適用上述預設值 `bi
 
 ### 2.1 日頻報酬（`src/tradingdev/domain/statistics/periods.py`）
 
-**UTC 界線**（docstring `periods.py:3-13`；`to_utc_index`，`periods.py:36-45`）：
+**UTC 界線**（docstring `periods.py:3-13`；`to_utc_index`，`periods.py:36-50`）：
 
 - 一天是半開區間 $[00{:}00{:}00,\ 24{:}00{:}00)$ UTC；一個月是當月 1 日 00:00 UTC 到下月 1 日 00:00 UTC。
 - 時間戳**依原標籤**歸入所屬期間。Binance 以開盤時間標示 K 棒，所以 23:00 那根 K 棒算在它開盤的那一天。
 - 無時區的時間戳視為 UTC，有時區的先轉為 UTC。
-- `equity_series`（`periods.py:48-71`）會檢查：權益曲線非空、全為有限值、長度與時間戳相同、
+- `equity_series`（`periods.py:53-76`）會檢查：權益曲線非空、全為有限值、長度與時間戳相同、
   時間戳嚴格遞增。
 
-**期末權益**（`period_closing_equity`，`periods.py:74-87`）：
+**期末權益**（`period_closing_equity`，`periods.py:79-92`）：
 `series.resample("D").last().dropna()`，月頻則用 `"MS"`。
 
 $$
 C_d = E_{t^*(d)},\qquad t^*(d) = \max\{t : \text{ts}_t \in d\}
 $$
 
-**第一期的基準**（`_opening_equity`，`periods.py:128-130`）：
+**第一期的基準**（`_opening_equity`，`periods.py:133-135`）：
 `closing.shift(1).fillna(E_0)`。第一期的期初權益是權益曲線的第一個值 $E_0$，
 不是第一天之前某個收盤值。
 
@@ -182,14 +182,14 @@ $$
 O_{d_1} = E_0,\qquad O_{d_k} = C_{d_{k-1}}\ \ (k \ge 2)
 $$
 
-**報酬與損益**（`period_pnl`，`periods.py:90-99`；`period_returns`，`periods.py:102-120`）：
+**報酬與損益**（`period_pnl`，`periods.py:95-104`；`period_returns`，`periods.py:107-125`）：
 
 $$
 \text{PnL}_d = C_d - O_d,\qquad r_d = \frac{C_d}{O_d} - 1
 $$
 
 因此 $\sum_d \text{PnL}_d = E_{\text{last}} - E_0$，$\prod_d (1+r_d) = E_{\text{last}}/E_0$。
-只要有任何 $E_t \le 0$，`period_returns` 就會 raise `ValueError`（`periods.py:116-117`）。
+只要有任何 $E_t \le 0$，`period_returns` 就會 raise `ValueError`（`periods.py:121-122`）。
 
 **缺資料期間**：沒有觀測值的期間由 `.dropna()` **直接略過，不補 0**（docstring `periods.py:17-19`）。
 ⚠ **差異**：若中間有缺口，缺口後第一期的報酬會涵蓋整段缺口，並且只算 1 期；

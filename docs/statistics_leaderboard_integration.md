@@ -5,9 +5,8 @@ lists what the statistics modules in `src/tradingdev/domain/statistics/` need
 before they can analyse leaderboard candidates, and why.
 
 Every statement about the leaderboard comes from reading `upstream/main` at
-commit `3fa0852` (2026-10-23). That code is not on the `feat/stats-on-latest`
-branch yet, so the file paths below refer to `upstream/main`. Statements about
-the statistics modules refer to this branch.
+commit `3fa0852` (2026-10-23), which this branch has merged, so the file paths
+below refer to this branch.
 
 The leaderboard already does several things right that this contract relies
 on: it refuses to rank incomparable contexts, it reports the candidate count
