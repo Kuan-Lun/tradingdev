@@ -252,6 +252,69 @@ class TestDegenerateInputs:
         assert summary.spikiness is None
 
 
+def _inexact_grid(peak: float, *, neighbours: float = 0.7) -> list[Trial]:
+    # 0.7 has no exact binary form, so the mean of several 0.7s rounds away
+    # from 0.7 and their std comes out near 1e-16 instead of zero; 0.3 in
+    # test_constant_metric happens to avoid this.
+    return [
+        Trial(
+            params={"x": float(x), "y": float(y)},
+            metric=peak if x == y == 0 else neighbours,
+        )
+        for x, y in itertools.product(range(3), repeat=2)
+    ]
+
+
+_INEXACT_AXES = {"x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0]}
+
+
+class TestInexactConstantNeighbourhood:
+    def test_flat_grid_keeps_the_first_trial_as_plateau_best(self) -> None:
+        summary = plateau_summary(_inexact_grid(0.7), axes=_INEXACT_AXES)
+
+        assert summary.best_params == {"x": 0.0, "y": 0.0}
+        assert summary.plateau_best_params == {"x": 0.0, "y": 0.0}
+        assert summary.grid_distance == 0
+        assert summary.metric_gap == 0.0
+        assert summary.best_neighborhood_std == 0.0
+        assert summary.spikiness is None
+
+    def test_peak_over_constant_neighbours_has_no_spikiness(self) -> None:
+        summary = plateau_summary(_inexact_grid(1.0), axes=_INEXACT_AXES)
+
+        assert summary.best_neighborhood_mean == pytest.approx(0.7)
+        assert summary.best_neighborhood_std == 0.0
+        assert summary.spikiness is None
+
+    def test_small_real_dispersion_is_kept(self) -> None:
+        # (0, 1) is a neighbour of the best trial (0, 0).
+        trials = _inexact_grid(1.0)
+        trials[1] = Trial(params=trials[1].params, metric=0.7 + 1e-9)
+        summary = plateau_summary(trials, axes=_INEXACT_AXES)
+
+        assert summary.best_neighborhood_std is not None
+        assert summary.best_neighborhood_std > 0.0
+        assert summary.spikiness is not None
+
+    def test_small_real_score_lead_wins_over_input_order(self) -> None:
+        # Raising the (2, 2) corner by 1e-9 lifts the scores of its five-
+        # neighbour edges (1, 2) and (2, 1) by 2e-10, far above rounding.
+        trials = _inexact_grid(0.7)
+        trials[8] = Trial(params=trials[8].params, metric=0.7 + 1e-9)
+        summary = plateau_summary(trials, axes=_INEXACT_AXES)
+
+        assert summary.plateau_best_params == {"x": 1.0, "y": 2.0}
+
+    def test_a_far_off_score_does_not_widen_the_tie_tolerance(self) -> None:
+        # A failing corner at -1e8 gives scores near -2e7. A tolerance scaled
+        # by that would swallow the real 2e-7 lead of (1, 2) over (0, 1).
+        trials = _inexact_grid(-1e8, neighbours=0.5)
+        trials[8] = Trial(params=trials[8].params, metric=0.5 + 1e-6)
+        summary = plateau_summary(trials, axes=_INEXACT_AXES)
+
+        assert summary.plateau_best_params == {"x": 1.0, "y": 2.0}
+
+
 class TestGridIndexNeighbourhood:
     def test_parameters_a_thousand_times_apart_use_grid_steps(self) -> None:
         fast = [0.001, 0.002, 0.004, 0.008]

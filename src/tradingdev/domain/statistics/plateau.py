@@ -42,8 +42,14 @@ Conventions:
   failed slice still separates its neighbours and shrinks their
   neighbourhoods instead of collapsing the axis.
 * Ties for the best metric or best plateau score go to the earliest trial
-  in input order.
-* Standard deviations are sample standard deviations (``ddof=1``).
+  in input order. Plateau scores are means over neighbourhoods of different
+  sizes, so equal metrics can average to scores a few rounding errors
+  apart; scores within a relative ``1e-12`` of the highest one count as
+  tied. Metrics, which are inputs, tie only when exactly equal.
+* Standard deviations are sample standard deviations (``ddof=1``). A
+  neighbourhood whose metrics agree within a relative ``1e-12`` has zero
+  dispersion: its standard deviation is ``0.0`` rather than the rounding
+  error of the mean, and the spikiness is ``None``.
 * Undefined figures (no neighbours, fewer than two neighbours for a
   standard deviation, zero dispersion) are ``None`` rather than infinities
   or zeros.
@@ -97,6 +103,8 @@ if TYPE_CHECKING:
 
 DEFAULT_RADIUS = 1
 MAX_LOCAL_DIMENSIONS = 3
+# Relative gap below which two plateau figures differ only by rounding.
+_RELATIVE_TOLERANCE = 1e-12
 
 
 @dataclass(frozen=True)
@@ -431,7 +439,7 @@ def plateau_summary(
     plateau_best = _argmax_score(scores, eligible)
     neighbour_metrics = grid.metrics[grid.neighbours(best, radius)]
     mean = float(neighbour_metrics.mean()) if neighbour_metrics.size else None
-    std = float(neighbour_metrics.std(ddof=1)) if neighbour_metrics.size > 1 else None
+    std = _sample_std(neighbour_metrics)
     spikiness = (
         (best_metric - mean) / std
         if mean is not None and std is not None and std > 0
@@ -568,17 +576,40 @@ def _scores(grid: _Grid, radius: int) -> tuple[PlateauScore, ...]:
     return tuple(results)
 
 
+def _sample_std(values: npt.NDArray[np.float64]) -> float | None:
+    if values.size < 2:
+        return None
+    # Equal values give a rounding-error std from their inexact mean (about
+    # 1e-16 for 0.7), which would turn the spikiness into a huge number.
+    if _within_tolerance(float(np.ptp(values)), float(np.abs(values).max())):
+        return 0.0
+    return float(values.std(ddof=1))
+
+
 def _argmax_score(
     scores: Sequence[PlateauScore], eligible: Sequence[bool]
 ) -> int | None:
-    best: int | None = None
-    best_score = -math.inf
-    for index, (entry, allowed) in enumerate(zip(scores, eligible, strict=True)):
-        if not allowed or entry.score is None:
-            continue
-        if best is None or entry.score > best_score:
-            best, best_score = index, entry.score
-    return best
+    candidates = [
+        (index, entry.score)
+        for index, (entry, allowed) in enumerate(zip(scores, eligible, strict=True))
+        if allowed and entry.score is not None
+    ]
+    if not candidates:
+        return None
+    top = max(score for _, score in candidates)
+    # Means of equal metrics over different neighbourhood sizes round
+    # differently, so an exact comparison would pick a winner by rounding.
+    # The tolerance is relative to the two scores compared, not to the
+    # largest score anywhere, which a far-off failing region would inflate.
+    return next(
+        index
+        for index, score in candidates
+        if _within_tolerance(top - score, max(abs(top), abs(score)))
+    )
+
+
+def _within_tolerance(gap: float, scale: float) -> bool:
+    return gap <= _RELATIVE_TOLERANCE * scale
 
 
 def _build_grid(trials: Sequence[Trial], axes: Mapping[str, Iterable[float]]) -> _Grid:
