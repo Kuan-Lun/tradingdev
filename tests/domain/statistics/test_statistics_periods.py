@@ -113,6 +113,50 @@ class TestUtcBoundaries:
         ]
         assert pnl.tolist() == [0.0, 10.0]
 
+    @pytest.mark.parametrize(
+        "timestamps",
+        [
+            ["2024-03-30T12:00:00+01:00", "2024-03-31T12:00:00+02:00"],
+            [
+                pd.Timestamp("2024-03-30T12:00:00+01:00"),
+                pd.Timestamp("2024-03-31T12:00:00+02:00"),
+            ],
+            list(
+                pd.date_range(
+                    "2024-03-30 12:00", periods=2, freq="D", tz="Europe/Berlin"
+                )
+            ),
+        ],
+        ids=["strings", "fixed-offset-timestamps", "zone-timestamps"],
+    )
+    def test_aware_timestamps_across_a_dst_change_are_bucketed_in_utc(
+        self, timestamps: npt.ArrayLike
+    ) -> None:
+        # Berlin moves from +01:00 to +02:00 on 2024-03-31, so the two
+        # observations carry different offsets.
+        pnl = period_pnl([100.0, 101.0], timestamps, "daily")
+
+        assert pnl.index.tolist() == [
+            pd.Timestamp("2024-03-30", tz="UTC"),
+            pd.Timestamp("2024-03-31", tz="UTC"),
+        ]
+        assert pnl.tolist() == [0.0, 1.0]
+
+    @pytest.mark.parametrize(
+        "timestamps",
+        [
+            ["2024-01-01", "2024-01-01 01:00"],
+            # datetime.isoformat() drops a zero fraction.
+            ["2024-01-01T00:00:00", "2024-01-01T01:00:00.500"],
+            ["2024-01-01 00:00:00", "2024-01-01T01:00:00"],
+        ],
+        ids=["date-then-time", "isoformat-fraction", "space-then-t"],
+    )
+    def test_each_string_is_parsed_on_its_own(self, timestamps: list[str]) -> None:
+        index = to_utc_index(timestamps)
+
+        assert index.tolist() == [pd.Timestamp(value, tz="UTC") for value in timestamps]
+
     def test_naive_timestamps_are_treated_as_utc(self) -> None:
         naive = to_utc_index(pd.to_datetime(["2024-01-01 12:00"]))
 
@@ -150,6 +194,49 @@ class TestInvalidInputs:
         timestamps = pd.to_datetime(["2024-01-01 01:00", "2024-01-01 01:00"])
         with pytest.raises(ValueError, match="strictly increasing"):
             period_pnl([1.0, 2.0], timestamps, "daily")
+
+    @pytest.mark.parametrize(
+        "timestamps",
+        [
+            [
+                pd.Timestamp("2024-03-30T12:00:00"),
+                pd.Timestamp("2024-03-31T12:00+02:00"),
+            ],
+            [
+                pd.Timestamp("2024-03-30T12:00+01:00"),
+                pd.Timestamp("2024-03-31T12:00:00"),
+            ],
+            ["2024-03-30T12:00:00", "2024-03-31T12:00:00+02:00"],
+            ["2024-03-30T12:00:00+01:00", "2024-03-31T12:00:00"],
+            np.array(
+                [
+                    np.datetime64("2024-03-30T12:00"),
+                    pd.Timestamp("2024-03-31", tz="UTC"),
+                ],
+                dtype=object,
+            ),
+            np.array(
+                ["2024-03-30", pd.Timestamp("2024-03-31", tz="UTC")], dtype=object
+            ),
+        ],
+        ids=[
+            "naive-first",
+            "aware-first",
+            "naive-first-str",
+            "aware-first-str",
+            "datetime64-and-aware",
+            "str-and-aware",
+        ],
+    )
+    def test_rejects_naive_and_aware_timestamps_in_one_sequence(
+        self, timestamps: npt.ArrayLike
+    ) -> None:
+        with pytest.raises(ValueError, match="mix timezone-naive and timezone-aware"):
+            period_pnl([100.0, 101.0], timestamps, "daily")
+
+    def test_rejects_two_dimensional_timestamps(self) -> None:
+        with pytest.raises(ValueError, match="one-dimensional"):
+            period_pnl([100.0, 101.0], np.array([[0, 1]]), "daily")
 
     def test_rejects_non_finite_equity(self) -> None:
         timestamps = pd.date_range("2024-01-01", periods=2, freq="h")

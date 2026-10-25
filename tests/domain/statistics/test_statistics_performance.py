@@ -99,6 +99,21 @@ class TestEquityStatistics:
         assert summary.max_drawdown == 0.0
 
 
+class TestTimestamps:
+    def test_aware_timestamps_across_a_dst_change(self) -> None:
+        # Local Berlin times either side of the 2024-03-31 DST change.
+        summary = summarize_performance(
+            [100.0, 101.0],
+            ["2024-03-30T12:00:00+01:00", "2024-03-31T12:00:00+02:00"],
+            [],
+        )
+
+        assert summary.start == pd.Timestamp("2024-03-30 11:00", tz="UTC")
+        assert summary.end == pd.Timestamp("2024-03-31 10:00", tz="UTC")
+        assert summary.n_days == 2
+        assert summary.daily_pnl_mean == pytest.approx(0.5)
+
+
 class TestTradeStatistics:
     _timestamps = pd.date_range("2024-01-01", periods=2, freq="D")
 

@@ -36,18 +36,47 @@ _RESAMPLE_RULES: dict[Frequency, str] = {"daily": "D", "monthly": "MS"}
 def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
     """Return ``timestamps`` as a UTC ``DatetimeIndex`` (naive means UTC).
 
+    Aware timestamps may carry different UTC offsets, as local times on
+    either side of a daylight saving change do; each is converted to UTC on
+    its own. Naive and aware timestamps in one sequence are rejected rather
+    than guessing that the naive ones are UTC.
+
     The index is always in nanoseconds. pandas 3 keeps the resolution of its
     input (``date_range`` yields microseconds, a ``datetime64[ns]`` array
     nanoseconds), so without this the same timestamps would give period
     series with different index dtypes depending on how they were passed.
+
+    Raises:
+        ValueError: If ``timestamps`` is not one-dimensional, naive and
+            aware timestamps are mixed, or a value cannot be parsed as a
+            timestamp.
     """
-    index = (
-        timestamps
-        if isinstance(timestamps, pd.DatetimeIndex)
-        else pd.DatetimeIndex(np.asarray(timestamps))
-    )
+    if isinstance(timestamps, pd.DatetimeIndex):
+        index = timestamps
+    else:
+        values = np.asarray(timestamps)
+        if values.ndim != 1:
+            raise ValueError("timestamps must be one-dimensional")
+        index = (
+            _parse_each(values)
+            if values.dtype.kind in "OU"
+            else pd.DatetimeIndex(values)
+        )
     utc = index.tz_localize("UTC") if index.tz is None else index.tz_convert("UTC")
     return utc.as_unit("ns")
+
+
+def _parse_each(values: npt.NDArray[np.object_ | np.str_]) -> pd.DatetimeIndex:
+    # Each value is parsed on its own, as pd.DatetimeIndex did: one inferred
+    # format for all (pd.to_datetime) rejects "2024-01-01" next to
+    # "2024-01-01 01:00", and utc=True would silently read naive values as
+    # UTC. Converting aware values one by one accepts differing offsets.
+    parsed = [pd.Timestamp(value) for value in values.tolist()]
+    if len({ts.tzinfo is not None for ts in parsed if not pd.isna(ts)}) > 1:
+        raise ValueError("timestamps mix timezone-naive and timezone-aware values")
+    return pd.DatetimeIndex(
+        [ts.tz_convert("UTC") if ts.tzinfo is not None else ts for ts in parsed]
+    )
 
 
 def equity_series(
@@ -58,7 +87,8 @@ def equity_series(
 
     Raises:
         ValueError: If the inputs are empty, differ in length, contain
-            non-finite equity, or timestamps are not strictly increasing.
+            non-finite equity, or timestamps mix naive and aware values or
+            are not strictly increasing.
     """
     equity = np.asarray(equity_curve, dtype=np.float64)
     if equity.ndim != 1 or equity.size == 0:

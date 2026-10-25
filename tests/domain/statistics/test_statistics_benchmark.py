@@ -79,6 +79,19 @@ class TestBuyAndHoldReturns:
         )
         assert returns.to_numpy() == pytest.approx([0.0, 0.1, -0.1])
 
+    def test_accepts_aware_timestamps_with_different_offsets(self) -> None:
+        # Local Berlin times either side of the 2024-03-31 DST change.
+        timestamps = ["2024-03-30T12:00:00+01:00", "2024-03-31T12:00:00+02:00"]
+
+        returns = buy_and_hold_returns(
+            [100.0, 110.0], timestamps=timestamps, frequency="daily"
+        )
+
+        assert list(returns.index) == list(
+            pd.date_range("2024-03-30", periods=2, freq="D", tz="UTC")
+        )
+        assert returns.to_numpy() == pytest.approx([0.0, 0.1])
+
     @pytest.mark.parametrize(
         ("prices", "timestamps", "match"),
         [
