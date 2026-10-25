@@ -32,16 +32,16 @@ records the same rule from the statistics side.
 
 ### What Plateau Analysis Needs
 
-`trials_from_metrics` (`domain/statistics/plateau.py:136`) builds the trials
+`trials_from_metrics` (`domain/statistics/plateau.py:144`) builds the trials
 for `plateau_summary` and `plateau_grid` from rows. The minimum input is:
 
 | Input | Requirement |
 | --- | --- |
-| Numeric parameter coordinates per candidate | A non-empty mapping of parameter name to a finite number, with the same names in every row (`plateau.py:177-186`). |
-| One metric value per candidate | A number, or `None` for a failed candidate. The key must be present: a missing key raises `ValueError` (`plateau.py:173-175`). |
-| The metric's optimisation direction | Passed as `direction`, `"maximize"` or `"minimize"`, with no default; `"minimize"` metrics are negated (`plateau.py:141`, `:165-167`). |
+| Numeric parameter coordinates per candidate | A non-empty mapping of parameter name to a finite number, with the same names in every row (`plateau.py:185-194`). |
+| One metric value per candidate | A number, or `None` for a failed candidate. The key must be present: a missing key raises `ValueError` (`plateau.py:181-183`). |
+| The metric's optimisation direction | Passed as `direction`, `"maximize"` or `"minimize"`, with no default; `"minimize"` metrics are negated (`plateau.py:149`, `:173-175`). |
 
-A parameter set must not repeat (`plateau.py:187-189`).
+A parameter set must not repeat (`plateau.py:195-197`).
 
 Failed candidates must stay in the input with a `None` metric. Since commit
 `1b51608` ("keep failed slices on the plateau grid axes"),
@@ -137,7 +137,9 @@ For KD(9, 3, 3) and KD(14, 3, 3), whose daily returns correlate at 0.68, the
 paired Sharpe difference interval is 3.53 wide, which is 0.69 times the 5.15
 expected from the two individual intervals if the strategies were
 independent (the square root of the sum of the squared widths 3.89 and 3.38).
-See `demo_output/METHODS.md`, sections 2.12 and 2.13. IC series of
+See `demo_output/METHODS.md`, sections 2.12 and 2.13. These figures predate
+the current block length rule for paired differences and have not been
+regenerated since; section 2.13 says the same about its table. IC series of
 neighbouring candidates are expected to correlate at least as strongly, but
 that has not been measured.
 
