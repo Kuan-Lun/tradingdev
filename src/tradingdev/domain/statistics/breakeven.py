@@ -124,7 +124,8 @@ def summarize_breakeven(
             capital-relative figures undefined.
 
     Raises:
-        ValueError: If ``end`` is not after ``start``, ``capital`` is not
+        ValueError: If ``start`` or ``end`` is missing (``None``, NaN, or
+            ``NaT``), ``end`` is not after ``start``, ``capital`` is not
             positive, or a trade lacks a required finite field, has a
             negative size or fee, has a non-positive entry or a negative
             exit price, or has a ``status`` other than ``"closed"`` or
@@ -198,15 +199,19 @@ def summarize_breakeven(
 
 
 def _years_between(start: Any, end: Any) -> float:
-    first = _utc_timestamp(start)
-    last = _utc_timestamp(end)
+    first = _utc_timestamp(start, "start")
+    last = _utc_timestamp(end, "end")
     if last <= first:
         raise ValueError("end must be after start")
     return (last - first) / pd.Timedelta(days=DAYS_PER_YEAR)
 
 
-def _utc_timestamp(value: Any) -> pd.Timestamp:
+def _utc_timestamp(value: Any, label: str) -> pd.Timestamp:
     timestamp = pd.Timestamp(value)
+    # None and NaN become NaT, which compares False with everything and so
+    # would slip past the ordering check as a NaN period length.
+    if pd.isna(timestamp):
+        raise ValueError(f"{label} is missing")
     if timestamp.tzinfo is None:
         return timestamp.tz_localize("UTC")
     return timestamp.tz_convert("UTC")

@@ -1,5 +1,7 @@
 """Tests for the break-even win rate and turnover cost statistics."""
 
+import math
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -168,6 +170,22 @@ class TestTurnoverCost:
 
 
 class TestValidation:
+    @pytest.mark.parametrize(
+        "missing", [None, pd.NaT, math.nan, ""], ids=["None", "NaT", "nan", "empty"]
+    )
+    @pytest.mark.parametrize("side", ["start", "end"])
+    def test_rejects_missing_period_dates(self, side: str, missing: object) -> None:
+        # NaT compares False with everything, so a missing date used to pass
+        # the ordering check and turn every annual figure into NaN.
+        dates: dict[str, object] = {"start": _START, "end": _ONE_YEAR, side: missing}
+        with pytest.raises(ValueError, match=f"{side} is missing"):
+            summarize_breakeven(
+                [_trade(1.0)],
+                start=dates["start"],
+                end=dates["end"],
+                capital=1000.0,
+            )
+
     def test_rejects_non_increasing_period(self) -> None:
         with pytest.raises(ValueError, match="end must be after start"):
             summarize_breakeven([], start=_ONE_YEAR, end=_START)
