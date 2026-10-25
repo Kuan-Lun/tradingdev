@@ -13,6 +13,7 @@
 - `src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml`
 - 合併前（`6826e41`）的 `src/tradingdev/domain/backtest/{signal_engine,metrics,base_engine}.py`
 - 第三方實作：`arch` 8.0.0（`arch/bootstrap/base.py`、`_samplers_python.py`）、`vectorbt` 1.0.0
+  （分析合併前引擎時，合併前的 `uv.lock` 鎖定的版本；目前鎖定的版本見第五節）
 
 實作與教科書寫法不同之處，以 **⚠ 差異** 標註。文中的「實測」表示本次實際執行程式得到的值。
 
@@ -581,7 +582,7 @@ $$
 | `comparison_forest.png` | 「366 common days」 | **真實回測** | `align_returns` 的 overlap |
 | `comparison_forest.png` | 標題「BTC/USDT 1h」、註腳「2024」 | 寫死的文字 | `scripts/demo_statistics.py` 的 `plot_comparison_forest()` |
 | `kd_inference.md` | 日／月數、Sharpe、CI、PSR、t、勝率、換手率 | **真實回測** | `cd03bf19459b48af.pkl` |
-| `kd_inference.md` | 成本拆解 | 真實的 `total_volume` × **寫死的**費率 | 估計值，見 2.7 |
+| `kd_inference.md` | 成本拆解 | 交易紀錄推得的 `traded_notional`（`summarize_breakeven`）× **寫死的**費率 | 估計值，見 2.7 |
 
 ---
 
@@ -635,7 +636,11 @@ $$
 | 成本估計費率 | fees 0.0006、slippage 0.0005 | `scripts/demo_statistics.py` 的 `FEES`、`SLIPPAGE` |
 | 平原半徑 | 1 | `plateau.py` 的 `DEFAULT_RADIUS` |
 | bootstrap 最少觀測數 | 20 | `sharpe.py:45` |
-| 函式庫版本 | `arch` 8.0.0、`vectorbt` 1.0.0（`uv.lock` 鎖定） | `.venv` |
+| 函式庫版本（目前） | `arch` 8.0.0、`vectorbt` 1.2.0、`pandas` 3.0.6、`numpy` 2.5.4、`quantstats` 0.0.86 | 目前的 `uv.lock` |
+| 函式庫版本（產生 demo 圖時） | `arch` 8.0.0、`vectorbt` 1.0.0、`pandas` 2.3.3、`numpy` 2.2.6 | 合併前（`814b05a`）的 `uv.lock` |
+
+重現指令以目前的 `uv.lock` 建立環境，所以重現時使用的是「目前」那一列的版本，不是產生 demo 圖時的版本。
+第 2.13 節的表格與 `comparison_forest.png` 尚未以目前程式重新產生（見該節）。
 
 ### 重現指令
 
