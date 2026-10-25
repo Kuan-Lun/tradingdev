@@ -88,16 +88,54 @@ context at once, including instrument, dates and data, and the result is
 still a ranking.
 
 A plateau view needs the candidates that share every other part of the
-context, with `window`, `horizon` or `n_quantiles` as the axes. The rest of
-the context (instrument, dates, feature set, code and data fingerprints) must
-still match. The plateau result must not feed the winner selection.
+context, with `window`, `horizon` or `n_quantiles` as the axes. The plateau
+result must not feed the winner selection.
+
+### Grouping Across Horizons Is Not Possible Yet
+
+An earlier version of this section required the rest of the context, data
+fingerprint included, to match while `horizon` varies. No two entries with
+different horizons can meet that requirement:
+
+- `_record_evaluation` sets `data_fingerprint` to the dataset's
+  `content_hash` (`app/ml_service.py:378`), and `leaderboard` checks entries
+  against the same value (`:473`). That hash is the SHA-256 of the whole
+  labelled Parquet file (`adapters/storage/ml_datasets.py:43`).
+- The horizon is applied before the dataset is saved: `_symbol_frame` derives
+  `forward_return`, `target` and `label_end` from it and drops the rows whose
+  label runs past the data (`app/ml_service.py:896-906`). A different horizon
+  therefore changes the labelled frame, its row count, and its hash, even
+  when the market data are identical.
+- Reproduced with five identical daily bars: horizon 1 keeps 4 rows and
+  horizon 2 keeps 3, and the two `content_hash` values differ.
+
+Grouping by `window` or `n_quantiles` alone is unaffected: both are applied
+after the dataset is built, so those entries can share one dataset.
+
+The direction that would make horizon groups possible is to separate two
+identities that `data_fingerprint` currently merges:
+
+- the identity of the raw market data, which stays the same across horizons
+  (the feature cache already hashes the raw OHLCV bars for its own key,
+  `app/ml_service.py:860`, but that value is not recorded on entries); and
+- the identity of the horizon-derived dataset, which must keep changing
+  with the horizon so that rankings stay protected.
+
+Plateau grouping would also need a definition of which evaluation rows
+entries at different horizons have in common, since each horizon drops a
+different number of trailing rows and so is scored on a different set of
+bars. **Both definitions are open and still to be agreed with the
+leaderboard owner**; this document does not settle them. Until then, a
+plateau over `horizon` must not be built from leaderboard entries.
 
 ### Missing for Plateau Analysis
 
 1. Parameter coordinates per entry: model hyperparameters, plus `window`,
    `horizon` and `n_quantiles` when they are searched.
 2. A way to group entries that match on everything except the searched
-   settings, separate from the `comparability_error` check for ranking.
+   settings, separate from the `comparability_error` check for ranking. For
+   `horizon` this first needs the two identities and the common evaluation
+   rows described above, which are still open.
 3. Failed candidates kept as entries, with the metric recorded as missing in
    a form an adapter can turn into `None`, rather than absent without trace.
 
