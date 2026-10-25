@@ -49,6 +49,7 @@ flowchart LR
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
+| `domain/statistics/` | 與引擎無關的推論統計：期間損益與報酬、Sharpe 區間與多重比較校正、配對比較、參數平原、損益兩平與買進持有基準；目前未接入 services，見[引擎無關的統計分析](#引擎無關的統計分析) |
 | `domain/data/`、`domain/indicators/`、`domain/ml/` | 行情與特徵資料處理、技術指標、模型及訓練邏輯 |
 | `adapters/storage/`、`adapters/execution/` | SQLite、revision／manifest／績效檔案保存，以及程序啟動與監督 |
 | `adapters/cli/`、`adapters/dashboard/` | 終端機與視覺化入口 |
@@ -73,7 +74,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 
 | 位置 | 目前責任 |
 | ---- | -------- |
-| `scripts/`、`.githooks/` | Shell 操作與 Git hook 入口，選定 repository 與 interpreter 後呼叫 Python 模組 |
+| `scripts/`、`.githooks/` | Shell 操作與 Git hook 入口，選定 repository 與 interpreter 後呼叫 Python 模組；`scripts/` 另有三個獨立 Python 腳本，用於統計展示與執行結果驗證 |
 | `tooling/quality.py` | 共用品質檢查與格式化，涵蓋 `src/`、`tests/`、`tooling/`、`research/` |
 | `tooling/git/` | 候選 snapshot／合併 tree 的建立與驗證，以及 hook、本機 full、PR 檢查與分支清理流程 |
 | `tooling/review_docs.py` | 擷取固定 Git 版本的完整證據，協調文件審查批次與判定 |
@@ -407,6 +408,27 @@ Walk-forward 保存每個 fold 的訓練／測試結果；其摘要是各 fold �
 不是整段期間重新計算的報酬。最佳化分別保存各 trial 與選定參數的樣本外測試。
 比較 run 時會指出定義、套件、設定、範圍與資金基準差異，避免直接排名不可比的結果。
 具體 scope 與數值契約見 [績效範圍與來源](docs/run_artifacts.md#performance-scopes-and-provenance)。
+
+### 引擎無關的統計分析
+
+`domain/statistics/` 回答引擎指標之外的推論問題：結果的不確定性有多大、
+兩個策略的差異是否顯著、在多次嘗試中選出的 Sharpe 是否只是運氣、最佳參數是否
+落在穩定的區域。它與上述績效計算的關係如下：
+
+- **輸入**：只讀呼叫端傳入的權益曲線、時間戳、交易紀錄、報酬序列或 trial 列，
+  不讀取 run、manifest、績效 JSON 或快取，也不寫入任何檔案。
+- **與引擎 metrics**：不讀 `metrics` 字典，而是從原始輸出重新計算，因此可用來交叉
+  檢查引擎回報值。慣例並不完全相同：期間損益的第一期以權益曲線第一個值為基準，
+  而引擎以初始資金為基準；`summarize_performance` 的標準差用 `ddof=1`，引擎的
+  期間損益標準差用 `ddof=0`；Sharpe 不扣無風險利率。兩者不能直接混用或比較。
+- **與 catalog**：不註冊指標 ID，也不屬於 run 保存的績效產物。平原分析需要的
+  最佳化方向由呼叫端依 catalog 的 `optimization_direction` 傳入，模組不自行推斷。
+- **與 MCP／報告服務**：目前沒有 application service、MCP 工具或報告引用這個套件，
+  模型與使用者都看不到這些結果。現有使用端只有 `scripts/demo_statistics.py`、
+  `scripts/demo_plateau.py` 與 `scripts/validate_run.py`（見
+  [開發指南](docs/development.md#統計展示與執行結果驗證腳本)）。接入 ML 排行榜前
+  需要的前提整理在 [統計與排行榜整合](docs/statistics_leaderboard_integration.md)，
+  其中部分契約尚待與排行榜負責人議定。
 
 ## 一致性、程序管理與保證範圍
 

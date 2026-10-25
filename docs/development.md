@@ -23,10 +23,12 @@ uv sync --locked --all-extras --python 3.14
 | `./scripts/check-full.sh` | 執行上述品質檢查與完整離線 pytest；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
 
-`scripts/` 保留 Shell 操作入口，`.githooks/` 保留 Git hook 入口；Python 實作
-集中在 `tooling/`，以同一個 `.venv` interpreter 執行 `python -m tooling...`。
+`scripts/` 保留 Shell 操作入口，`.githooks/` 保留 Git hook 入口；開發流程的
+Python 實作集中在 `tooling/`，以同一個 `.venv` interpreter 執行 `python -m tooling...`。
+例外是 `scripts/` 下三個獨立的 Python 腳本，用於統計展示與執行結果驗證，
+見[統計展示與執行結果驗證腳本](#統計展示與執行結果驗證腳本)。
 `tooling/quality.py` 共用格式化與唯讀檢查流程，Python 檢查範圍為 `src/`、
-`tests/`、`tooling/`、`research/`；Markdown 檢查涵蓋根目錄與 `docs/`。
+`tests/`、`tooling/`、`research/`，不含 `scripts/`；Markdown 檢查涵蓋根目錄與 `docs/`。
 
 Git 檢查與分支清理位於 `tooling/git/`，文件審查位於 `tooling/review_docs.py`。
 候選驗證先由目前 checkout 的 reviewer 讀取候選 Git 內容，再執行候選
@@ -80,6 +82,47 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 
 開啟終端機顯示的本機網址，選擇日期、持倉分鐘數與停損比例，查看 MAE 分布及統計。
 結束時按 `Ctrl+C`。
+
+## 統計展示與執行結果驗證腳本
+
+`scripts/` 下有三個 Python 腳本，各自以 `uv run python scripts/<名稱>.py` 執行，
+不經過 MCP、CLI 或 application services，也不屬於產品功能：
+
+| 腳本 | 用途 |
+| --- | --- |
+| `demo_plateau.py` | 以合成資料產生平原分析展示圖與表，寫入 `demo_output/`。 |
+| `demo_statistics.py` | 以快取的 KD 回測與重新執行的回測產生統計展示，寫入 `demo_output/`。 |
+| `validate_run.py` | 以原始權益、時間戳與交易紀錄重算一次執行的指標，逐項核對。 |
+
+兩個 demo 的資料來源、公式與重現方式見
+[`demo_output/METHODS.md`](../demo_output/METHODS.md)。
+
+`validate_run.py` 的用法：
+
+```bash
+uv run python scripts/validate_run.py [path/to/pipeline_result.pkl]
+```
+
+- 只支援 simple backtest 的 `PipelineResult`；walk-forward 等其他模式以
+  退出碼 2 結束，不做檢查。
+- 檔案以 `pickle` 載入，載入過程可以執行任意程式碼，只檢查自己產生或信任的檔案。
+- 未指定路徑時，選 `workspace/runs/*/pipeline_result.pkl` 中依名稱排序的最後一個；
+  沒有任何 run 時，改選 `workspace/data/processed/cache/*.pkl` 中依名稱排序的最後一個。
+  不依修改時間挑選，需要特定檔案時請明確指定路徑。
+- 每項檢查的結果是 `PASS`、`FAIL`、`N/A` 或 `WARN`：
+  - `N/A`：引擎依契約合法地不提供數值，例如沒有已平倉交易時的勝率，
+    或 volume 模式不適用的報酬指標；會一併顯示 metric metadata 中的原因碼。
+    原因會與執行本身推得的結果核對（交易紀錄、模式、資金基準、K 棒頻率與年化設定），
+    不一致時為 `FAIL`。
+  - `FAIL`：數值與重算不符，或紀錄缺欄位、資料損壞。
+  - `WARN`：提醒，不影響結果。
+- 交易類指標依 catalog 只計已平倉交易；權益與交易淨損益的對帳包含未平倉交易的
+  marked-to-market 損益。日、月與 Sharpe 的重算使用執行保存的初始資金與年化設定。
+- 退出碼：沒有 `FAIL` 為 0，有任何 `FAIL` 為 1；明確指定的檔案不存在或無法讀取也算 `FAIL`。
+  非 simple backtest，或未指定路徑且找不到任何檔案，為 2。
+
+這三個腳本目前不在 `tooling/quality.py` 的檢查範圍內，`check-fast` 與 `check-full`
+不會對它們執行 Ruff 與 Mypy。`validate_run.py` 的行為由 `tests/scripts/` 的測試涵蓋。
 
 ## 選擇性 LLM 測試
 
