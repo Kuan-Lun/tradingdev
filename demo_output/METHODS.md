@@ -483,37 +483,66 @@ KD(14, 3, 3) 的區間和 `kd_inference.md` 的 $[-9.18, -5.87]$ 不同，但點
 原因是 reps（2000 對 1000）不同，而且這裡是三組共同重抽樣，亂數消耗方式也不同。
 兩邊的 block size 實測都是 2。
 
-### 2.13 forest 下排：配對差異（`difference_interval_outcome`，`comparison.py:227-314`）
+### 2.13 forest 下排：配對差異（`difference_interval_outcome`，`comparison.py:239-362`）
 
-`difference_interval`（`comparison.py:200-224`）呼叫 `difference_interval_outcome`，並把所有 `IntervalUnavailable` 轉成 `None`。
+`difference_interval`（`comparison.py:203-236`）呼叫 `difference_interval_outcome`，並把所有 `IntervalUnavailable` 轉成 `None`。
 
-**對同一組索引重抽樣**：先以 `align_returns({"a": a, "b": b})` 對齊日期（`:271`），再用
-`StationaryBootstrap(block_size, values_a, values_b, seed=np.random.default_rng(seed))`（`:292-294`）。
+**對同一組索引重抽樣**：先以 `align_returns({"a": a, "b": b})` 對齊日期（`:319`），再用
+`StationaryBootstrap(block_size, values_a, values_b, seed=np.random.default_rng(seed))`（`:341-343`）。
 arch 對所有位置參數套用**同一組索引**，所以每次重抽樣中 $a$、$b$ 取到的是同一批日期，保留了兩者的相關性。
-block size 是兩序列 Politis–White 估計值中的較大者，再無條件進位（`_block_size`）。
 每一對都會重新以 `seed = 0` 建立亂數產生器（`scripts/demo_statistics.py` 的 `plot_comparison_forest()`）。
+
+**block size：從差額估計**（`_difference_block_size`、`_jackknife_influence`，`comparison.py:517-543`；docstring `:258-289`）。
+區塊要保留的是「差額估計量」的時間相依性，不是 $a$、$b$ 各自的相依性。兩策略共享較大的市場雜訊時，雜訊在差額中相消，
+留下的小而持續的差額才是要保留的結構；若照 $a$、$b$ 各自估計，區塊長度會跟著短記憶的雜訊走，低估差額的變異，
+把不顯著的差額判成顯著。因此先算差額的 jackknife 影響值
+
+$$
+I_t = (n-1)\big(\hat\Delta - \hat\Delta_{(-t)}\big),\qquad
+\hat\Delta_{(-t)} = \widehat{SR}_{\text{ann}}(a_{(-t)}) - \widehat{SR}_{\text{ann}}(b_{(-t)}),
+$$
+
+$a_{(-t)}$、$b_{(-t)}$ 是兩序列同時去掉第 $t$ 期。對平均數而言 $I_t$ 就是 $a_t - b_t$ 減去常數。
+再對 $I_t$ 序列算 Politis–White 估計值（含 Patton–Politis–White 修正），無條件進位，至少為 1。
+任一 leave-one-out 統計量無定義時，改用原始差額 $a - b$ 估計。
+
+這需要額外 $2n$ 次統計量計算。呼叫端可用 `block_size` 參數直接指定區塊長度並略過這一步；
+中位數、分位數、最大回撤這類**不平滑**的統計量，jackknife 無法代表其敏感度，**必須**手動指定。
+不指定時，估計出的區塊可能太短：區間會變窄、p 值變小，正是這個檢定要防止的假陽性；區塊偏長只損失一些精確度。
 
 $$
 \hat\Delta = \widehat{SR}_{\text{ann}}(a) - \widehat{SR}_{\text{ann}}(b),\qquad
 \Delta^{*}_j = \widehat{SR}_{\text{ann}}(a^{*}_j) - \widehat{SR}_{\text{ann}}(b^{*}_j),\ \ j=1,\dots,B
 $$
 
-區間是 $[Q_{0.025}(\Delta^*), Q_{0.975}(\Delta^*)]$（百分位數法，`:299`），`reps = 2000`。
-$B$ 是丟棄 NaN 後的有效重抽樣數。
+區間是 $[Q_{0.025}(\Delta^*), Q_{0.975}(\Delta^*)]$（百分位數法，`:348`），`reps = 2000`。
+$B$ 是丟棄 NaN 後的有效重抽樣數。$Q_p$ 是 `np.quantile` 預設的線性內插：把排序後的 $\Delta^*_{(0)},\dots,\Delta^*_{(B-1)}$
+在位置 $(B-1)p$ 內插。
 
-**p 值：雙尾**（`comparison.py:300, 305`；docstring `:251-254`）：
+**p 值：反轉同一個百分位數區間**（`_percentile_p_value`、`_crossing`，`comparison.py:546-578`；docstring `:291-300`）：
 
 $$
-p = \min\!\Big(1,\ 2\cdot\min\Big\{\tfrac{1}{B}\textstyle\sum_j \mathbf 1[\Delta^*_j \le 0],\ \ \tfrac{1}{B}\sum_j \mathbf 1[\Delta^*_j \ge 0]\Big\}\Big)
+p = \min\!\Big(1,\ 2\cdot\min\big\{\,\sup\{q : Q_q(\Delta^*) \le 0\},\ \ 1 - \inf\{q : Q_q(\Delta^*) \ge 0\}\,\big\}\Big)
 $$
 
-docstring 說明，這個 p 值是讓百分位數區間剛好排除 0 的最小 $1-\text{confidence}$，所以 p 值與區間的判斷總是一致。
+也就是讓上述內插區間剛好排除 0 的最小 $1-\text{confidence}$。區間和 p 值用的是同一個內插分位數函數，
+所以「區間不含 0」恰好等於「$p < 1-\text{confidence}$」，對任何 reps 與 confidence 都成立
+（只有兩者剛好相等時，可能受浮點捨入影響）。所有抽樣都在 0 的同一側時 $p = 0$。
+
+⚠ **有限重抽樣的限制**：$p < 2/(B-1)$ 時，0 落在最極端的兩個抽樣之間，p 值只是這兩點之間的內插，
+reps 很少時並不精確。要判讀的顯著水準應遠高於 $2/(B-1)$；本 demo 的 $B = 2000$，約 0.001。
+
+⚠ **舊定義**：先前的 p 值用離散尾端計數
+$2\min\{\tfrac1B\sum_j \mathbf 1[\Delta^*_j \le 0],\ \tfrac1B\sum_j \mathbf 1[\Delta^*_j \ge 0]\}$，
+區間卻用線性內插，所以兩者在 reps 少時可能矛盾（例如 reps = 20 時 95% 區間全為正，p 卻是 0.1）；這一定義已移除。
 
 ⚠ **差異**：教科書的 bootstrap 假設檢定通常先把分配平移到虛無假設下（例如以 $\Delta^*-\hat\Delta$ 為基準），
-再看 $\hat\Delta$ 的位置。這裡直接看**未平移**的 $\Delta^*$ 分配中 0 落在哪一側，屬於「反轉百分位數區間」的做法。
-此外，剛好等於 0 的抽樣兩側都會計入。
+再看 $\hat\Delta$ 的位置。這裡直接看**未平移**的 $\Delta^*$ 分配中 0 落在哪個分位，屬於「反轉百分位數區間」的做法。
 
-**rho**（`_correlation`，`comparison.py:468-474`；欄位說明 `:132-133`）：
+⚠ **下表數字尚未重新產生**：下表與 `comparison_forest.png` 仍是改用差額 block size 與新 p 值定義**之前**的輸出
+（當時 block size 取兩序列估計值的較大者）。重跑 `scripts/demo_statistics.py` 後會更新。
+
+**rho**（`_correlation`，`comparison.py:581-587`；欄位說明 `:135-136`）：
 
 $$
 \rho = \mathrm{corr}_{\text{Pearson}}\big(r^{a}_d,\ r^{b}_d\big),\qquad d \in \text{兩組共同日期}

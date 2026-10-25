@@ -124,11 +124,14 @@ class DifferenceInterval:
         difference: ``estimate_a - estimate_b`` on the aligned returns.
         lower: Lower percentile bound of the bootstrap differences.
         upper: Upper percentile bound of the bootstrap differences.
-        p_value: Two-sided bootstrap p-value of a zero difference.
+        p_value: Two-sided bootstrap p-value of a zero difference, from
+            inverting the percentile interval: ``[lower, upper]`` excludes
+            zero exactly when ``p_value < 1 - confidence``.
         estimate_a: Statistic of ``a`` on the aligned returns.
         estimate_b: Statistic of ``b`` on the aligned returns.
         confidence: Two-sided confidence level of ``[lower, upper]``.
-        block_size: Mean block length of the stationary bootstrap.
+        block_size: Mean block length of the stationary bootstrap, either
+            given by the caller or estimated from the difference.
         correlation: Pearson correlation of the aligned returns; ``None``
             when either series is constant.
         overlap: Number of aligned observations.
@@ -205,6 +208,7 @@ def difference_interval(
     reps: int = 2000,
     confidence: float = 0.95,
     seed: int | None = None,
+    block_size: int | None = None,
 ) -> DifferenceInterval | None:
     """Paired stationary-bootstrap interval of ``statistic(a) - statistic(b)``.
 
@@ -216,10 +220,18 @@ def difference_interval(
     """
     _positive_int(reps, "reps")
     _tail(confidence)
+    if block_size is not None:
+        _positive_int(block_size, "block_size")
     if not align_returns({"a": a, "b": b}).sufficient:
         return None
     outcome = difference_interval_outcome(
-        a, b, statistic, reps=reps, confidence=confidence, seed=seed
+        a,
+        b,
+        statistic,
+        reps=reps,
+        confidence=confidence,
+        seed=seed,
+        block_size=block_size,
     )
     return outcome if isinstance(outcome, DifferenceInterval) else None
 
@@ -232,6 +244,7 @@ def difference_interval_outcome(
     reps: int = 2000,
     confidence: float = 0.95,
     seed: int | None = None,
+    block_size: int | None = None,
 ) -> DifferenceInterval | IntervalUnavailable:
     """Paired stationary-bootstrap interval of ``statistic(a) - statistic(b)``.
 
@@ -242,16 +255,49 @@ def difference_interval_outcome(
     the individual intervals suggest. This is the formal test; see the
     module docstring for why overlapping individual intervals are not.
 
-    Block size: the Politis and White (2004) automatic stationary block
-    length with the Patton, Politis and White (2009) correction, computed
-    for each series by :func:`arch.bootstrap.optimal_block_length`; the
-    larger estimate is used, rounded up to a whole period and at least one,
-    so neither series' dependence is cut short.
+    Block size: the blocks must preserve the dependence of the estimator
+    of the difference, which is not the dependence of either series. When
+    both strategies share large market noise, the noise cancels in the
+    difference while a small but persistent difference remains; block
+    lengths fitted to ``a`` and ``b`` then follow the short-memory noise,
+    the bootstrap understates the variance of the difference, and a
+    difference that is not significant comes out significant. The block
+    length is therefore estimated from the jackknife influence values of
+    the difference: element ``t`` is ``(n - 1)`` times the change in
+    ``statistic(a) - statistic(b)`` when period ``t`` is left out of both
+    series, which for the mean is ``a_t - b_t`` up to a constant. The
+    Politis and White (2004) automatic stationary block length with the
+    Patton, Politis and White (2009) correction
+    (:func:`arch.bootstrap.optimal_block_length`) of that sequence is
+    rounded up to a whole period and at least one. If a leave-one-out
+    statistic is undefined, the raw difference ``a - b`` is used instead.
 
-    p-value: twice the smaller tail share of the bootstrap differences on
-    either side of zero, capped at one. It is the smallest ``1 -
-    confidence`` at which the percentile interval would exclude zero, so
-    the interval and the p-value always agree.
+    This costs ``2 * n`` extra evaluations of ``statistic`` on ``n - 1``
+    periods, which is about the cost of the bootstrap itself for a few
+    thousand daily returns. Pass ``block_size`` to skip it. A block size
+    must be given whenever the jackknife does not describe the statistic:
+
+    * Non-smooth statistics, such as a median, a quantile, or a maximum
+      drawdown, whose leave-one-out values jump instead of tracking the
+      statistic's sensitivity to each period.
+    * Statistics too expensive to evaluate ``2 * n`` more times.
+
+    Without one, the estimated block length may be too short, and a block
+    length that is too short narrows the interval and lowers the p-value,
+    which is the false positive this test is meant to prevent. A block
+    size that is too long costs only some precision. An explicit
+    ``block_size`` is used as given and reported back unchanged.
+
+    p-value: the smallest ``1 - confidence`` at which the percentile
+    interval excludes zero, obtained by inverting the same linearly
+    interpolated quantiles that give ``lower`` and ``upper``. The interval
+    at ``confidence`` therefore excludes zero exactly when ``p_value < 1 -
+    confidence``, for any number of resamples, up to floating-point
+    rounding when the two are equal. It is zero when every resample is on
+    one side of zero. Below ``2 / (valid_reps - 1)`` it only interpolates
+    between the two most extreme resamples, so with few ``reps`` a small
+    p-value is no more precise than that interpolation; draw enough
+    ``reps`` that the levels of interest lie well above it.
 
     Returns an :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`
     when the overlap is below ``MIN_BOOTSTRAP_OBSERVATIONS``, either
@@ -262,12 +308,14 @@ def difference_interval_outcome(
     one).
 
     Raises:
-        ValueError: If ``reps`` is not a positive integer, ``confidence``
-            is not strictly between 0 and 1, an index has duplicate labels,
-            or a return is not a finite number.
+        ValueError: If ``reps`` or a given ``block_size`` is not a positive
+            integer, ``confidence`` is not strictly between 0 and 1, an
+            index has duplicate labels, or a return is not a finite number.
     """
     _positive_int(reps, "reps")
     tail = _tail(confidence)
+    if block_size is not None:
+        _positive_int(block_size, "block_size")
     aligned = align_returns({"a": a, "b": b})
     values_a = aligned.frame["a"].to_numpy()
     values_b = aligned.frame["b"].to_numpy()
@@ -288,7 +336,8 @@ def difference_interval_outcome(
     ) -> npt.NDArray[np.float64]:
         return np.array([_evaluate(statistic, x) - _evaluate(statistic, y)])
 
-    block_size = _block_size(aligned.frame)
+    if block_size is None:
+        block_size = _difference_block_size(statistic, values_a, values_b)
     bootstrap = StationaryBootstrap(
         block_size, values_a, values_b, seed=np.random.default_rng(seed)
     )
@@ -297,12 +346,11 @@ def difference_interval_outcome(
     if draws.size == 0:
         return _unavailable("no_valid_resample", difference, aligned, reps)
     lower, upper = np.quantile(draws, [tail, 1.0 - tail])
-    smaller_tail = min(float(np.mean(draws <= 0.0)), float(np.mean(draws >= 0.0)))
     return DifferenceInterval(
         difference=estimate_a - estimate_b,
         lower=float(lower),
         upper=float(upper),
-        p_value=min(1.0, 2.0 * smaller_tail),
+        p_value=_percentile_p_value(draws),
         estimate_a=estimate_a,
         estimate_b=estimate_b,
         confidence=float(confidence),
@@ -354,8 +402,9 @@ def interval_table_outcome(
     """Individual stationary-bootstrap intervals for a forest plot.
 
     The series are aligned with :func:`align_returns` first, so every row
-    covers the same periods, and resampled jointly with one block length
-    (the largest per-series estimate, as in :func:`difference_interval`).
+    covers the same periods, and resampled jointly with one block length:
+    the largest Politis and White estimate over the series, so no series'
+    dependence is cut short.
 
     These intervals answer "how precise is each estimate", not "do two
     strategies differ". Non-overlapping rows imply a significant difference;
@@ -463,6 +512,70 @@ def _block_size(frame: pd.DataFrame) -> int:
     if finite.size == 0:
         return 1
     return max(1, math.ceil(float(finite.max())))
+
+
+def _difference_block_size(
+    statistic: Statistic,
+    a: npt.NDArray[np.float64],
+    b: npt.NDArray[np.float64],
+) -> int:
+    influence = _jackknife_influence(statistic, a, b)
+    if influence is None:
+        influence = a - b
+    return _block_size(pd.DataFrame({"influence": influence}))
+
+
+def _jackknife_influence(
+    statistic: Statistic,
+    a: npt.NDArray[np.float64],
+    b: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64] | None:
+    keep = np.ones(a.size, dtype=bool)
+    left_out = np.empty(a.size)
+    for period in range(a.size):
+        keep[period] = False
+        left_out[period] = _evaluate(statistic, a[keep]) - _evaluate(statistic, b[keep])
+        keep[period] = True
+    if not np.all(np.isfinite(left_out)):
+        return None
+    # The block length estimator ignores location and scale, so the usual
+    # centring on the full-sample difference is left out.
+    return (a.size - 1) * -left_out
+
+
+def _percentile_p_value(draws: npt.NDArray[np.float64]) -> float:
+    # Inverts np.quantile's default linear interpolation: the quantile at
+    # level p is the sorted draws interpolated at position (m - 1) * p.
+    ordered = np.sort(draws)
+    last = ordered.size - 1
+    if last == 0:
+        return 1.0 if ordered[0] == 0.0 else 0.0
+    # Highest level whose quantile is still <= 0; the lower bound excludes
+    # zero exactly when the lower tail level is above it.
+    below = int(np.searchsorted(ordered, 0.0, side="right")) - 1
+    if below < 0:
+        lower_level = 0.0
+    elif below == last:
+        lower_level = 1.0
+    else:
+        lower_level = _crossing(ordered, below) / last
+    # Lowest level whose quantile is already >= 0; the upper bound excludes
+    # zero exactly when the upper level 1 - tail is below it.
+    above = int(np.searchsorted(ordered, 0.0, side="left"))
+    if above == 0:
+        upper_level = 0.0
+    elif above > last:
+        upper_level = 1.0
+    else:
+        upper_level = _crossing(ordered, above - 1) / last
+    return min(1.0, 2.0 * min(lower_level, 1.0 - upper_level))
+
+
+def _crossing(ordered: npt.NDArray[np.float64], index: int) -> float:
+    # Position between ordered[index] <= 0 and ordered[index + 1] >= 0 where
+    # the linear interpolation reaches zero.
+    low, high = float(ordered[index]), float(ordered[index + 1])
+    return index + (-low / (high - low) if high > low else 0.0)
 
 
 def _correlation(

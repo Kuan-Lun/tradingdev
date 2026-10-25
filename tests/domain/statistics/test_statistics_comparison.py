@@ -8,6 +8,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import pytest
+from arch.bootstrap import optimal_block_length
 
 from tradingdev.domain.statistics.comparison import (
     align_returns,
@@ -317,6 +318,9 @@ class TestDifferenceInterval:
             ({"reps": True}, "reps"),
             ({"confidence": 1.0}, "confidence"),
             ({"confidence": 0.0}, "confidence"),
+            ({"block_size": 0}, "block_size"),
+            ({"block_size": True}, "block_size"),
+            ({"block_size": 2.0}, "block_size"),
         ],
     )
     def test_rejects_invalid_arguments(
@@ -528,8 +532,154 @@ class TestUnavailableReasons:
 
         with pytest.raises(ValueError, match="reps"):
             difference_interval(a, a, frequency.sharpe, reps=0)
+        with pytest.raises(ValueError, match="block_size"):
+            difference_interval(a, a, frequency.sharpe, block_size=0)
         with pytest.raises(ValueError, match="confidence"):
             interval_table({"a": a}, frequency.sharpe, confidence=1.0)
+
+
+def _shared_noise_pair(
+    shared_noise: bool,
+) -> tuple[pd.Series, pd.Series, npt.NDArray[np.float64]]:
+    """The review's case: a zero-mean AR(1) difference, optionally under noise.
+
+    With ``shared_noise`` the strategies are ``c + d`` and ``c`` for white
+    noise ``c`` a hundred times larger than the AR(1) difference ``d``;
+    without it they are ``d`` and zero. Both pairs have the same mean
+    difference on every resample of the same indices.
+    """
+    rng = np.random.default_rng(2)
+    n, phi, sigma = 1000, 0.95, 0.0001
+    d = np.empty(n)
+    d[0] = rng.normal(0.0, sigma / math.sqrt(1.0 - phi**2))
+    for t in range(1, n):
+        d[t] = phi * d[t - 1] + rng.normal(0.0, sigma)
+    c = rng.normal(0.0, 0.01, n) if shared_noise else np.zeros(n)
+    return _daily(c + d), _daily(c), d
+
+
+class TestDifferenceDependence:
+    """The block length follows the difference, not the two series."""
+
+    def test_shared_noise_does_not_hide_a_persistent_difference(self) -> None:
+        # Block lengths fitted to c + d and c see only the white noise c
+        # (block 2) and called this p = 0.002, although the exact test for
+        # this Gaussian AR(1) gives p = 0.489.
+        raw_a, raw_b, _ = _shared_noise_pair(shared_noise=True)
+        clean_a, clean_b, _ = _shared_noise_pair(shared_noise=False)
+
+        raw = difference_interval(raw_a, raw_b, np.mean, reps=1000, seed=0)
+        clean = difference_interval(clean_a, clean_b, np.mean, reps=1000, seed=0)
+
+        assert raw is not None
+        assert clean is not None
+        assert raw.block_size == clean.block_size
+        assert raw.block_size > 20
+        assert raw.p_value == pytest.approx(clean.p_value)
+        assert raw.p_value > 0.05
+        assert raw.lower < 0.0 < raw.upper
+
+    def test_block_size_is_estimated_from_the_mean_difference(self) -> None:
+        a, b, d = _shared_noise_pair(shared_noise=True)
+        expected = math.ceil(
+            float(optimal_block_length(d - d.mean())["stationary"].iloc[0])
+        )
+
+        result = difference_interval(a, b, np.mean, reps=50, seed=0)
+
+        assert result is not None
+        assert result.block_size == expected
+
+    def test_explicit_block_size_is_used_and_reported(self) -> None:
+        a, b, _ = _shared_noise_pair(shared_noise=True)
+        calls = 0
+
+        def counted_mean(values: npt.NDArray[np.float64]) -> float:
+            nonlocal calls
+            calls += 1
+            return float(np.mean(values))
+
+        given = difference_interval(a, b, counted_mean, reps=100, seed=0, block_size=7)
+        same_blocks = difference_interval(a, b, np.mean, reps=100, seed=0, block_size=7)
+
+        assert given is not None
+        assert given.block_size == 7
+        assert given == same_blocks
+        # The jackknife alone would take 2 * 1000 calls; without it there are
+        # two per resample plus a few on the full sample.
+        assert calls < 2 * 100 + 10
+
+    def test_undefined_leave_one_out_falls_back_to_the_raw_difference(
+        self,
+    ) -> None:
+        # One active period: leaving it out of ``a`` leaves a constant
+        # series, whose Sharpe is undefined, so the jackknife is unusable.
+        rng = np.random.default_rng(31)
+        values_a = np.zeros(60)
+        values_a[17] = 0.05
+        values_b = rng.normal(0.0, 0.01, 60)
+        a, b = _daily(values_a), _daily(values_b)
+        expected = math.ceil(
+            float(optimal_block_length(values_a - values_b)["stationary"].iloc[0])
+        )
+
+        def sharpe(values: npt.NDArray[np.float64]) -> float | None:
+            return sharpe_ratio(values, periods_per_year=365.0)
+
+        result = difference_interval_outcome(a, b, sharpe, reps=50, seed=0)
+
+        assert not isinstance(result, IntervalUnavailable)
+        assert result.block_size == max(1, expected)
+
+
+class TestPValueMatchesInterval:
+    """The percentile interval excludes zero exactly when p < 1 - confidence."""
+
+    def test_few_resamples_from_the_review(self) -> None:
+        # Tail counting gave p = 0.1 next to an all-positive 95% interval.
+        x = np.random.default_rng(0).normal(0.0, 0.01, 30) + 0.007677586331544943
+
+        result = difference_interval(
+            _daily(x), _daily(np.zeros(30)), np.mean, reps=20, seed=0
+        )
+
+        assert result is not None
+        assert result.lower > 0.0
+        assert result.p_value < 0.05
+
+    @pytest.mark.parametrize("reps", [1, 2, 5, 20, 41, 200])
+    @pytest.mark.parametrize("confidence", [0.5, 0.9, 0.95, 0.99])
+    def test_agreement_for_any_reps_and_confidence(
+        self, reps: int, confidence: float
+    ) -> None:
+        rng = np.random.default_rng(reps)
+        for seed in range(25):
+            edge = rng.uniform(-0.006, 0.006)
+            a = _daily(rng.normal(edge, 0.01, 30))
+            b = _daily(np.zeros(30))
+            result = difference_interval(
+                a, b, np.mean, reps=reps, confidence=confidence, seed=seed
+            )
+            assert result is not None
+            excludes_zero = result.lower > 0.0 or result.upper < 0.0
+            assert excludes_zero == (result.p_value < 1.0 - confidence), seed
+
+    def test_one_sided_resamples_give_zero(self) -> None:
+        a = _daily(np.random.default_rng(32).normal(0.05, 0.001, 30))
+
+        result = difference_interval(a, _daily(np.zeros(30)), np.mean, reps=50, seed=0)
+
+        assert result is not None
+        assert result.p_value == 0.0
+
+    def test_identical_series_give_one(self) -> None:
+        a = _daily(np.random.default_rng(33).normal(0.0, 0.01, 30))
+
+        result = difference_interval(a, a, np.mean, reps=50, seed=0)
+
+        assert result is not None
+        assert (result.lower, result.upper) == (0.0, 0.0)
+        assert result.p_value == 1.0
 
 
 def _monthly_strategy_returns(months: int, seed: int) -> dict[str, pd.Series]:
