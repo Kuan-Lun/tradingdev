@@ -22,14 +22,13 @@ import numbers
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from tradingdev.domain.statistics.periods import (
     equity_series,
     has_positive_equity,
     period_pnl,
     period_returns,
 )
+from tradingdev.domain.statistics.sharpe import _annualisation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -111,11 +110,10 @@ def summarize_performance(
     Raises:
         ValueError: If the inputs are inconsistent (see
             :func:`~tradingdev.domain.statistics.periods.equity_series`),
-            ``periods_per_year`` is not positive, or a trade lacks a finite
-            ``net_pnl``.
+            ``periods_per_year`` is not a positive finite number, or a trade
+            lacks a finite ``net_pnl``.
     """
-    if periods_per_year <= 0:
-        raise ValueError("periods_per_year must be positive")
+    annualisation = _annualisation(periods_per_year)
     equity = equity_series(equity_curve, timestamps)
     daily = period_pnl(equity_curve, timestamps, "daily")
     monthly = period_pnl(equity_curve, timestamps, "monthly")
@@ -144,7 +142,7 @@ def summarize_performance(
         monthly_pnl_mean=float(monthly.mean()),
         monthly_pnl_std=_sample_std(monthly),
         sharpe_ratio=(
-            _sharpe(period_returns(equity_curve, timestamps, "daily"), periods_per_year)
+            _sharpe(period_returns(equity_curve, timestamps, "daily"), annualisation)
             if positive
             else None
         ),
@@ -175,8 +173,8 @@ def _sample_std(values: pd.Series) -> float | None:
     return float(values.std(ddof=1))
 
 
-def _sharpe(daily_returns: pd.Series, periods_per_year: float) -> float | None:
+def _sharpe(daily_returns: pd.Series, annualisation: float) -> float | None:
     std = _sample_std(daily_returns)
     if std is None or std == 0.0:
         return None
-    return float(daily_returns.mean()) / std * float(np.sqrt(periods_per_year))
+    return float(daily_returns.mean()) / std * annualisation

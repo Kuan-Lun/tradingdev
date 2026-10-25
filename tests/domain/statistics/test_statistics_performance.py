@@ -1,5 +1,7 @@
 """Tests for the engine-independent performance summary."""
 
+import math
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -165,8 +167,16 @@ class TestTradeStatistics:
                 [100.0, 100.0], self._timestamps, [{"net_pnl": float("inf")}]
             )
 
-    def test_rejects_non_positive_periods_per_year(self) -> None:
+    @pytest.mark.parametrize(
+        "periods_per_year", [0, -365.0, math.nan, math.inf, -math.inf, True, "365"]
+    )
+    def test_rejects_invalid_periods_per_year(self, periods_per_year: object) -> None:
+        # The curve has a finite Sharpe, so only the setting can make it
+        # non-finite; NaN and +inf used to pass the ``<= 0`` check.
         with pytest.raises(ValueError, match="periods_per_year"):
             summarize_performance(
-                [100.0, 100.0], self._timestamps, [], periods_per_year=0
+                [100.0, 110.0, 100.0, 120.0],
+                pd.date_range("2024-01-01", periods=4, freq="D", tz="UTC"),
+                [],
+                periods_per_year=periods_per_year,  # type: ignore[arg-type]
             )
