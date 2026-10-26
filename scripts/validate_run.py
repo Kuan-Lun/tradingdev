@@ -6,13 +6,18 @@ Usage, from the repository root:
 Without a path, it checks the last ``workspace/runs/*/pipeline_result.pkl``
 in name order, or, when there is none, the last
 ``workspace/data/processed/cache/*.pkl`` in name order; it does not look at
-modification times. Only simple backtests
+modification times, and the paths are relative to the current directory,
+ignoring ``TRADINGDEV_WORKSPACE`` and ``TRADINGDEV_DATA_ROOT``. Only simple backtests
 are supported. The file is unpickled, which can run arbitrary code, so only
 check pickles you trust.
 
-Every reported metric is treated as a claim and recomputed from the equity
+The checked metrics are treated as claims and recomputed from the equity
 curve, timestamps and trades, following the engine's definitions in
-``src/tradingdev/domain/performance/catalog.py``. Each check ends as:
+``src/tradingdev/domain/performance/catalog.py``: total_pnl, total_return,
+max_drawdown, total_trades, win_rate, profit_factor, n_days, n_months,
+daily_pnl_mean, daily_pnl_std, monthly_pnl_mean and sharpe_ratio. Other
+metrics are only checked for being finite or ``None`` with a reason. Each
+check ends as:
 
 * ``PASS``: the reported value matches the recomputation.
 * ``FAIL``: it does not, or the record is missing a field or is corrupt.
@@ -22,7 +27,8 @@ curve, timestamps and trades, following the engine's definitions in
   ``missing_annualization``, ...) is shown. The reason is checked against
   what the run itself implies (the trades, the mode, the capital basis, the
   bar frequency and the annualisation setting), so a wrong reason fails.
-* ``WARN``: advisory, not an error.
+* ``WARN``: advisory, not an error, such as gaps between bars, which the
+  engine allows.
 
 Exit code: 0 without FAIL, 1 with any FAIL (an explicit path that cannot be
 read is a FAIL), 2 when the file is not a simple backtest or, without a path,
@@ -51,9 +57,8 @@ from tradingdev.domain.statistics.breakeven import summarize_breakeven
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-TOL = 1e-6  # relative tolerance for accounting identities
+TOL = 1e-6  # relative tolerance for recomputed values
 PERIOD_PNL_STD_DDOF = 0  # catalog: daily/monthly P&L std uses ddof=0
-LOOSE = 0.02  # 2% tolerance for statistics with convention differences
 
 REPORT_KEYS = [
     "total_pnl",
@@ -89,7 +94,7 @@ T1 = "T1 n_days = 實際 UTC 日曆天數"
 T2 = "T2 n_months = 實際 UTC 月數"
 T3 = "T3 daily_pnl_std 為真正的日波動"
 T4 = "T4 monthly_pnl_mean 為真正的月均"
-T5 = "T5 日/月加總 = 期末權益 − 初始權益"
+T5 = "T5 daily_pnl_mean 為真正的日均"
 T6 = "T6 sharpe_ratio 與日頻重算相符"
 V2 = "V2 win_rate 落在 [0,1]"
 V3 = "V3 max_drawdown 為非負幅度（catalog 定義）"
@@ -173,7 +178,7 @@ class Run:
             if not (np.all(baseline[:-1] > 0) and np.all(equity >= 0)):
                 return "nonpositive_capital"
         if key in DAILY_EQUITY_METRICS:
-            frequency = self.setting("frequency")
+            frequency = self.setting("frequency", "timeframe")
             if frequency is not None:
                 reason = daily_observation_unavailable_reason(str(frequency))
                 if reason is not None:
@@ -275,7 +280,10 @@ def main(path: str) -> int:
     except Exception as exc:  # noqa: BLE001 - any unreadable file is one FAIL
         check("L1 讀取 pickle", False, f"{type(exc).__name__}: {exc}")
         return report()
-    if getattr(pr, "mode", None) != "simple" or pr.backtest_result is None:
+    if (
+        getattr(pr, "mode", None) != "simple"
+        or getattr(pr, "backtest_result", None) is None
+    ):
         print(f"mode={getattr(pr, 'mode', None)}: 只支援 simple backtest")
         return 2
     print(f"file      : {path}")
@@ -317,11 +325,16 @@ def validate(pr: Any) -> int:
     else:
         step = diffs.median()
         regular = float((diffs == step).mean())
-        check("S4 K 棒間隔一致", regular > 0.99, f"間隔 {step}, 一致比例 {regular:.3%}")
+        # The engine allows calendar gaps, so irregular bars only warn.
+        check(
+            "S4 K 棒間隔一致",
+            True if regular > 0.99 else None,
+            f"間隔 {step}, 一致比例 {regular:.3%}",
+        )
         span_bars = int((ts[-1] - ts[0]) / step) + 1
         check(
             "S5 期間內無缺漏 K 棒",
-            len(ts) >= span_bars * 0.99,
+            True if len(ts) >= span_bars * 0.99 else None,
             f"實際 {len(ts)} / 期望 {span_bars}",
         )
         bars_per_day = pd.Timedelta("1D") / step
@@ -365,7 +378,7 @@ def validate(pr: Any) -> int:
         closed = run.closed
         wins = sum(1 for t in closed if t["net_pnl"] > 0)
         expected = wins / len(closed) if closed else "no_trades"
-        compare(run, A4, "win_rate", expected, LOOSE)
+        compare(run, A4, "win_rate", expected)
 
     def a5() -> None:
         closed = run.closed
@@ -380,7 +393,7 @@ def validate(pr: Any) -> int:
             if gain
             else "zero_denominator"
         )
-        compare(run, A5, "profit_factor", expected, LOOSE)
+        compare(run, A5, "profit_factor", expected)
 
     def a6() -> None:
         reason = run.expected_reason("max_drawdown")
@@ -396,7 +409,7 @@ def validate(pr: Any) -> int:
         # Only the magnitude here; V3 checks the catalog's nonnegative sign.
         check(
             A6,
-            close(abs(value), drawdown, LOOSE),
+            close(abs(value), drawdown),
             f"報告 {value:.4f} vs 重算 {drawdown:.4f}（比較幅度）",
         )
 
@@ -406,7 +419,7 @@ def validate(pr: Any) -> int:
             compare(run, A7, "total_return", reason)
             return
         expected = (eq[-1] - run.initial) / run.initial
-        compare(run, A7, "total_return", expected, LOOSE)
+        compare(run, A7, "total_return", expected)
 
     for name, body in (
         (A1, a1),
@@ -478,19 +491,17 @@ def validate(pr: Any) -> int:
         compare(run, T4, "monthly_pnl_mean", reason or monthly_mean)
 
     def t5() -> None:
-        total = eq[-1] - run.initial
-        day_sum = float(period_pnl(run, "D").sum())
-        month_sum = float(period_pnl(run, "MS").sum())
-        check(
-            T5,
-            close(day_sum, total, 1e-4) and close(month_sum, total, 1e-4),
-            f"日 {day_sum:.2f} / 月 {month_sum:.2f} vs {total:.2f}",
-        )
+        reason = run.expected_reason("daily_pnl_mean")
+        daily_mean = float(period_pnl(run, "D").mean())
+        compare(run, T5, "daily_pnl_mean", reason or daily_mean)
 
     def t6() -> None:
         saved = run.setting("periods_per_year")
         periods = float(saved) if saved is not None else 365.0
         rate = float(run.setting("risk_free_rate") or 0.0)
+        if mode not in METRIC_CATALOG["sharpe_ratio"].modes:
+            compare(run, T6, "sharpe_ratio", "not_applicable")
+            return
 
         def excess() -> pd.Series:
             return daily_returns(run) - math.expm1(math.log1p(rate) / periods)

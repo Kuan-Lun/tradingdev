@@ -11,6 +11,7 @@ import pickle
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -88,6 +89,21 @@ def _signal_run(
     )
 
 
+def _volume_run() -> PipelineResult:
+    result = VolumeBacktestEngine(
+        fees=0.0,
+        slippage=0.0,
+        freq="1d",
+        signal_as_position=True,
+        periods_per_year=365.0,
+    ).run(_bars(_OPEN_TRADE))
+    return PipelineResult(
+        mode="simple",
+        backtest_result=result,
+        config_snapshot={"backtest": {"mode": "volume", "fees": 0.0}},
+    )
+
+
 def _check(
     validator: ModuleType, run: PipelineResult, tmp_path: Path
 ) -> tuple[int, dict[str, tuple[str, str]]]:
@@ -154,20 +170,7 @@ class TestUnavailableMetrics:
     def test_volume_mode_return_metrics_are_not_applicable(
         self, validator: ModuleType, tmp_path: Path
     ) -> None:
-        result = VolumeBacktestEngine(
-            fees=0.0,
-            slippage=0.0,
-            freq="1d",
-            signal_as_position=True,
-            periods_per_year=365.0,
-        ).run(_bars(_OPEN_TRADE))
-        run = PipelineResult(
-            mode="simple",
-            backtest_result=result,
-            config_snapshot={"backtest": {"mode": "volume", "fees": 0.0}},
-        )
-
-        code, checks = _check(validator, run, tmp_path)
+        code, checks = _check(validator, _volume_run(), tmp_path)
 
         assert code == 0
         for name in ("A6", "A7", "T6", "V3"):
@@ -235,6 +238,34 @@ class TestDerivedReasons:
         assert code == 1
         assert checks[failing][0] == "FAIL"
         assert reason in checks[failing][1]
+
+    def test_run_without_settings_keeps_sharpe_not_applicable_in_volume_mode(
+        self, validator: ModuleType, tmp_path: Path
+    ) -> None:
+        # Older runs kept no settings; volume mode still has no Sharpe.
+        run = _volume_run()
+        del _result(run).metric_metadata["settings"]
+
+        _, checks = _check(validator, run, tmp_path)
+
+        assert checks["T6"] == ("N/A", "引擎無值，原因 not_applicable")
+
+    def test_run_without_settings_reads_the_configured_timeframe(
+        self, validator: ModuleType, tmp_path: Path
+    ) -> None:
+        # BacktestConfig names the bar frequency ``timeframe``.
+        run = _signal_run(_OPEN_TRADE, freq="W-MON", engine_freq="1w")
+        del _result(run).metric_metadata["settings"]
+        assert run.config_snapshot is not None
+        run.config_snapshot["backtest"]["timeframe"] = "1w"
+
+        _, checks = _check(validator, run, tmp_path)
+
+        for name in ("T3", "T4", "T5"):
+            assert checks[name] == (
+                "N/A",
+                "引擎無值，原因 unsupported_daily_sampling",
+            ), name
 
     def test_declared_ddof_other_than_the_catalog_fails(
         self, validator: ModuleType, tmp_path: Path
@@ -363,6 +394,46 @@ class TestEngineDefinitions:
         assert code == 1
         assert _statuses(checks, "FAIL") == {failing}
 
+    @pytest.mark.parametrize(
+        ("metric", "failing"),
+        [
+            ("win_rate", "A4"),
+            ("profit_factor", "A5"),
+            ("max_drawdown", "A6"),
+            ("total_return", "A7"),
+            ("daily_pnl_mean", "T5"),
+        ],
+    )
+    def test_one_percent_tampering_fails(
+        self,
+        validator: ModuleType,
+        tmp_path: Path,
+        metric: str,
+        failing: str,
+    ) -> None:
+        # A 2% tolerance used to let these through; the values are exact.
+        run = _signal_run(_OPEN_TRADE)
+        _result(run).metrics[metric] *= 1.01
+
+        code, checks = _check(validator, run, tmp_path)
+
+        assert code == 1
+        assert _statuses(checks, "FAIL") == {failing}
+
+    def test_calendar_gaps_only_warn(
+        self, validator: ModuleType, tmp_path: Path
+    ) -> None:
+        # Business-day bars skip the weekend, which the engine allows.
+        run = _signal_run(_OPEN_TRADE * 2, _PRICES * 2, freq="B", engine_freq="1d")
+
+        code, checks = _check(validator, run, tmp_path)
+
+        assert code == 0, checks
+        assert checks["S4"][0] == "WARN"
+        assert checks["S5"][0] == "WARN"
+        for name in ("T1", "T3", "T5", "T6"):
+            assert checks[name][0] == "PASS", (name, checks[name])
+
 
 class TestCorruptRecords:
     """Missing fields and corrupt records fail a check instead of crashing."""
@@ -457,6 +528,14 @@ class TestCorruptRecords:
         assert validator.main(str(tmp_path / "missing.pkl")) == 1
         assert validator.results[0][:2] == ("FAIL", "L1 讀取 pickle")
 
+    def test_simple_mode_without_a_backtest_result_is_not_checked(
+        self, validator: ModuleType, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "pipeline_result.pkl"
+        path.write_bytes(pickle.dumps(SimpleNamespace(mode="simple")))
+
+        assert validator.main(str(path)) == 2
+
     def test_unreadable_file_fails(self, validator: ModuleType, tmp_path: Path) -> None:
         path = tmp_path / "broken.pkl"
         path.write_bytes(b"not a pickle")
@@ -488,4 +567,55 @@ def test_script_exits_without_a_traceback(
     )
 
     assert completed.returncode == exit_code, completed.stdout + completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
+def _run_script(cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(_SCRIPT)],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+
+
+def test_without_a_path_the_last_run_by_name_wins_over_the_cache(
+    tmp_path: Path,
+) -> None:
+    good = pickle.dumps(_signal_run([0] * 6))
+    files = {
+        "workspace/runs/a/pipeline_result.pkl": b"not a pickle",
+        "workspace/runs/b/pipeline_result.pkl": good,
+        "workspace/data/processed/cache/z.pkl": b"not a pickle",
+    }
+    for name, content in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(content)
+
+    completed = _run_script(tmp_path)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "workspace/runs/b/pipeline_result.pkl" in completed.stdout
+
+
+def test_without_a_path_the_cache_is_used_when_there_is_no_run(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "workspace" / "data" / "processed" / "cache"
+    cache.mkdir(parents=True)
+    (cache / "a.pkl").write_bytes(b"not a pickle")
+    (cache / "b.pkl").write_bytes(pickle.dumps(_signal_run([0] * 6)))
+
+    completed = _run_script(tmp_path)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "cache/b.pkl" in completed.stdout
+
+
+def test_without_a_path_and_no_file_exits_2(tmp_path: Path) -> None:
+    completed = _run_script(tmp_path)
+
+    assert completed.returncode == 2
     assert "Traceback" not in completed.stderr

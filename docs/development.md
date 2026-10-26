@@ -92,7 +92,7 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 | --- | --- |
 | `demo_plateau.py` | 以合成資料產生平原分析展示圖與表，寫入 `demo_output/`。 |
 | `demo_statistics.py` | 以快取的 KD 回測與重新執行的回測產生統計展示，寫入 `demo_output/`。 |
-| `validate_run.py` | 以原始權益、時間戳與交易紀錄重算一次執行的指標，逐項核對。 |
+| `validate_run.py` | 以原始權益、時間戳與交易紀錄重算一次執行的主要指標，逐項核對。 |
 
 兩個 demo 的資料來源、公式與重現方式見
 [`demo_output/METHODS.md`](../demo_output/METHODS.md)。
@@ -108,16 +108,22 @@ uv run python scripts/validate_run.py [path/to/pipeline_result.pkl]
 - 檔案以 `pickle` 載入，載入過程可以執行任意程式碼，只檢查自己產生或信任的檔案。
 - 未指定路徑時，選 `workspace/runs/*/pipeline_result.pkl` 中依名稱排序的最後一個；
   沒有任何 run 時，改選 `workspace/data/processed/cache/*.pkl` 中依名稱排序的最後一個。
-  不依修改時間挑選，需要特定檔案時請明確指定路徑。
+  不依修改時間挑選，需要特定檔案時請明確指定路徑。路徑相對於目前目錄，不讀
+  `TRADINGDEV_WORKSPACE` 與 `TRADINGDEV_DATA_ROOT`；workspace 不在 repository 根目錄的
+  `workspace/` 時須明確指定。
+- 重算核對的指標是 `total_pnl`、`total_return`、`max_drawdown`、`total_trades`、
+  `win_rate`、`profit_factor`、`n_days`、`n_months`、`daily_pnl_mean`、`daily_pnl_std`、
+  `monthly_pnl_mean` 與 `sharpe_ratio`；其他指標只檢查是否為有限值或附原因的 `None`。
 - 每項檢查的結果是 `PASS`、`FAIL`、`N/A` 或 `WARN`：
   - `N/A`：引擎依契約合法地不提供數值，例如沒有已平倉交易時的勝率，
     或 volume 模式不適用的報酬指標；會一併顯示 metric metadata 中的原因碼。
     原因會與執行本身推得的結果核對（交易紀錄、模式、資金基準、K 棒頻率與年化設定），
     不一致時為 `FAIL`。
   - `FAIL`：數值與重算不符，或紀錄缺欄位、資料損壞。
-  - `WARN`：提醒，不影響結果。
+  - `WARN`：提醒，不影響結果，例如引擎允許的 K 棒間隔不一致或日曆缺口。
 - 交易類指標依 catalog 只計已平倉交易；權益與交易淨損益的對帳包含未平倉交易的
-  marked-to-market 損益。日、月與 Sharpe 的重算使用執行保存的初始資金與年化設定。
+  marked-to-market 損益。日、月與 Sharpe 的重算使用執行保存的初始資金與年化設定；
+  沒有保存年化設定的舊執行，Sharpe 判為 `FAIL`（volume 模式仍為 `N/A`）。
 - 退出碼：沒有 `FAIL` 為 0，有任何 `FAIL` 為 1；明確指定的檔案不存在或無法讀取也算 `FAIL`。
   非 simple backtest，或未指定路徑且找不到任何檔案，為 2。
 
