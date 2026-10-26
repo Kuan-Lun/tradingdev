@@ -17,7 +17,7 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 - [研究機器學習訊號](#研究機器學習訊號)
 - [查看結果與圖表](#查看結果與圖表)
 - [資料與工作區](#資料與工作區)
-- [終端機與 HTTP 用法](#終端機與-http-用法)
+- [終端機用法](#終端機用法)
 - [常見問題](#常見問題)
 - [相關文件](#相關文件)
 
@@ -27,7 +27,7 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 
 你需要 macOS（Apple Silicon）或 Linux、Git、
 [uv](https://docs.astral.sh/uv/getting-started/installation/)，
-以及支援本機 MCP（stdio）的 AI 客戶端。專案使用 Python 3.14；
+以及支援 MCP stdio 或 Streamable HTTP 的 AI 客戶端。專案使用 Python 3.14；
 鎖定的 Numba／llvmlite 不提供 Intel Mac 預編譯套件，
 原生 Windows 目前不支援背景回測與最佳化。
 
@@ -50,7 +50,12 @@ FLAML 自動選模在此環境由專案測試驗證；Python 3.14 與所用 XGBo
 
 以下終端機命令皆在專案根目錄執行。
 
-### 2. 將 TradingDev 加入 AI 客戶端
+### 2. 啟動 MCP server 並連接助手
+
+依客戶端支援的連線方式，選擇以下其中一種：stdio 由客戶端自動啟動 server，
+HTTP 則由你在終端機手動啟動，再讓客戶端連線。
+
+#### 由客戶端啟動（stdio）
 
 在客戶端的 MCP 設定中新增一個本機 stdio server，名稱填 `tradingdev`，
 啟動命令填 `uv`。支援 `mcpServers` JSON 格式的客戶端可使用：
@@ -86,6 +91,30 @@ FLAML 自動選模在此環境由專案測試驗證；Python 3.14 與所用 XGBo
 
 儲存後重新載入 MCP 設定或重啟客戶端，並啟用 TradingDev 工具。
 客戶端會自行啟動 server，不需要另外開終端機常駐執行。
+
+#### 手動啟動並使用 HTTP 連接
+
+若客戶端支援 Streamable HTTP，在專案根目錄執行：
+
+```bash
+uv run --locked tradingdev-mcp \
+  --workspace /absolute/path/to/tradingdev-workspace \
+  --web --transport streamable-http --port 8000
+```
+
+將 `--workspace` 換成執行 server 的主機上用來保存策略、行情與回測結果的資料夾絕對路徑。
+將同一台電腦上的客戶端 MCP URL 設為 `http://127.0.0.1:8000/mcp`，
+並保持此終端機執行；停止 server 時按 `Ctrl+C`。
+這是 MCP 工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
+
+`127.0.0.1` 指向發起連線的設備本身，另一台設備不能直接用這個網址連到你的主機。
+跨設備測試需另行設定網路轉送及存取控制；目前啟動命令未提供 `--host` 參數。
+只支援雲端 URL 的客戶端也無法透過這個本機位址連接。
+
+HTTP 客戶端須支援 Streamable HTTP 的 SSE 串流回覆；若經過代理轉送，也須保留串流。
+執行前的確認仍在一般對話中完成。
+Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413；
+傳送大型策略程式或設定時，請縮小單次內容。
 
 ### 3. 確認助手能使用工具
 
@@ -177,6 +206,13 @@ FLAML 自動選模在此環境由專案測試驗證；Python 3.14 與所用 XGBo
 你可以描述希望的切分方式，由助手準備設定；自建策略修改切分設定時會另存新版本。
 指定切分日期會先換算為 UTC，再忽略時分秒並涵蓋整日；確認文件會列出實際使用的 UTC 區間。
 
+內建 Quantile（`quantile_volume`）、XGBoost Direction（`xgboost_direction`）與
+Safety Volume（`safety_first_volume`）必須先訓練，一般回測與參數最佳化會在載入資料前被拒絕。
+收到 `strategy_requires_training` 時，請助手確認策略支援的模式與有效的 `validation`
+訓練／測試設定，再以 `prepare_walk_forward` 準備新的確認單。這不是背景訓練中的通知；
+移除 `validation` 也不能讓未訓練策略執行。能力宣告與設定限制見
+[訓練前置條件](docs/strategy_contract.md#training-before-scoring)。
+
 若訓練標籤前看 5 根 K 線，可在策略 YAML 頂層設定：
 
 ```yaml
@@ -193,7 +229,8 @@ validation:
 完整限制見[策略 walk-forward 設定](docs/strategy_contract.md#strategy-walk-forward-settings)。
 
 **參數最佳化** 在訓練期間逐組回測指定的候選值，依目標指標選出參數，
-再以獨立的測試期間回測。這個搜尋流程不會額外訓練機器學習模型。例如：
+再以獨立的測試期間回測。這個搜尋流程不會額外訓練機器學習模型，僅適用於支援此模式的策略；
+上述必須訓練的內建策略請使用 walk-forward。請助手先確認策略能力，再準備最佳化，例如：
 
 > 請對內建 KD 交叉策略，搜尋回顧週期為 9、14、21 根 K 線、D 值平滑週期為 3、5 根 K 線的組合，
 > 以 BTC/USDT、1 小時 K 線、總損益為目標。
@@ -224,9 +261,9 @@ walk-forward 切分。結果應同時查看訓練表現與樣本外表現。
    建置不會下載或更新行情；缺年度檔或區間無資料時失敗。成功也不保證每根 K 線齊全，須核對覆蓋與缺口。
    暖機與無法形成未來標籤的尾端資料會排除，實際筆數以回覆為準。
 3. 用 `train_model` 訓練，保存 `dataset_id`、`model_id`、有效參數與驗證回覆。
-4. 用 `predict` 取得模型在指定資料集上的完整訊號與實際未來報酬，再原值交給
-   `evaluate_signal`；不能截短、四捨五入或重排兩組資料。
-5. 評估時指定 `record=True` 與資料集 ID，再用 `leaderboard(dataset_id=...)` 查詢該版本的候選。
+4. 用 `predict` 分頁預覽模型在指定資料集上的訊號，再將 `model_id`、`dataset_id`
+   交給 `evaluate_signal`；後端會對完整資料集產生訊號並評估，不必在對話中搬運陣列。
+5. 評估時指定 `record=True`，再用 `leaderboard(dataset_id=...)` 分頁查詢該版本的候選。
    查詢預設拒絕混合不同期間、資料或評估條件；先篩選可比較的研究，再解讀排名與限制。
 
 多商品研究可用 `build_panel` 訓練與預測，須檢查覆蓋率及缺值，不能把補值當成新行情。
@@ -280,6 +317,10 @@ walk-forward 切分。結果應同時查看訓練表現與樣本外表現。
 
 ### 交易紀錄與 HTML 報告
 
+要求助手完成回測並解讀績效、風險時，預設也會產生完整離線 HTML 報告；
+若只需要對話摘要，可明確說「只要摘要，不需要報告」。完成回覆應包含報告連結、
+對應結果及查看明細的方法，只有績效數字或 run ID 不代表報告已交付。
+
 請助手為已完成或歷史回測產生離線 HTML，可一次比較最多 8 次執行。例如：
 
 > 請為剛才的三次回測產生比較報告，包含參數、績效、權益曲線、交易紀錄與你的評語。
@@ -307,6 +348,8 @@ walk-forward 切分。結果應同時查看訓練表現與樣本外表現。
 包括設定與交易紀錄；接收檔案的人仍可讀取這些內容。
 報告保存在工作區的 `reports/`。若助手提供的檔案路徑無法在你的電腦開啟，
 請它透過客戶端取得檔案；執行 MCP 的主機上的路徑不是公開網址。
+關閉 MCP server 不會刪除報告或回測結果；離線 HTML 仍可閱讀，重新連接同一工作區
+可繼續查詢原結果。若報告產生或交付失敗，請沿用已完成的結果重試，不必重新回測。
 
 報告格式、指標口徑與程式查詢介面見
 [執行結果與產物](docs/run_artifacts.md#composable-offline-reports)。
@@ -369,12 +412,14 @@ MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
 每次開新終端機時，請重新設定環境變數，或在自己的 shell 設定中保存它。
 
 升級至先確認再執行的流程時，舊版「等待確認」的最佳化工作不會自動遷移。
-若工作區仍有這種紀錄，新版的工作清單、該工作的查詢與取消會回傳錯誤；
-在同一工作區建立新計畫也無法修復舊紀錄。請先用建立工作的舊版停止其工作與服務，
+若工作區仍有這種紀錄，包含該紀錄的工作清單分頁，以及該工作的查詢與取消會回傳錯誤。
+篩選後或其他頁面讀取成功，不代表所有舊紀錄都相容；在同一工作區建立新計畫也無法修復舊紀錄。
+請先用建立工作的舊版停止其工作與服務，
 確認程序已結束，再保留原工作區於原位置，將客戶端 MCP 設定的 `--workspace`
 改成新的空白資料夾絕對路徑，重新載入客戶端。
 不要把舊資料庫或 worker 控制檔複製進新工作區；新工作區不會自動帶入原有策略與歷史，
 舊結果檔案仍保留在原工作區。這是另建工作區的復原方式，不是原地遷移。
+詳細限制見[執行結果與產物契約](docs/run_artifacts.md)。
 
 若需要另外存放行情，可設定 `TRADINGDEV_DATA_ROOT`，預設使用其下的 `raw/` 與
 `processed/`；CLI 的圖表快取也會跟隨這個環境變數。
@@ -387,7 +432,7 @@ MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
 清理舊草稿時，工具預設先預覽可刪版本，由你確認清單並授權刪除。
 目前版本、非草稿版本、被歷史工作或結果引用，以及無法確認完整性的版本都會保留。
 
-## 終端機與 HTTP 用法
+## 終端機用法
 
 ### 直接執行設定檔
 
@@ -429,25 +474,6 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
 
 要比較多次結果，可重複加入 `--run-id`，最多 8 次；命令會輸出報告的本機路徑。
 自選章節與評語參數可用 `uv run --locked tradingdev-report --help` 查看。
-
-### 使用 HTTP 連接
-
-若客戶端使用本機 Streamable HTTP 連線，可手動啟動：
-
-```bash
-uv run --locked tradingdev-mcp \
-  --workspace /absolute/path/to/tradingdev-workspace \
-  --web --transport streamable-http --port 8000
-```
-
-將客戶端的 MCP URL 設為 `http://127.0.0.1:8000/mcp`，並保持此終端機執行。
-這是本機工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
-只支援雲端 URL 的客戶端無法透過這個本機位址連接。
-
-HTTP 客戶端須支援 Streamable HTTP 的 SSE 串流回覆；若經過代理轉送，也須保留串流。
-執行前的確認仍在一般對話中完成。
-Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413；
-傳送大型策略程式或設定時，請縮小單次內容。
 
 ## 常見問題
 

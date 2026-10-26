@@ -7,9 +7,14 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Event, Thread
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 _PROGRESS = "offline fixture progress before completion"
@@ -77,6 +82,23 @@ def _script_environment(tmp_path: Path) -> dict[str, str]:
         "    Path('ml_pipeline.ran').write_text('done', encoding='utf-8')\n",
         encoding="utf-8",
     )
+    (tmp_path / "tests/e2e/test_llm_discovery.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_natural_request_only():\n"
+        "    Path('natural_request.ran').write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests/e2e/test_llm_strategy_execution_guidance.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_strategy_execution_guidance_only():\n"
+        "    Path('strategy_execution_guidance.ran').write_text(\n"
+        "        'done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
     environment = {
         **os.environ,
         "TRADINGDEV_CHECK_PYTHON": sys.executable,
@@ -94,10 +116,18 @@ def _script_environment(tmp_path: Path) -> dict[str, str]:
     return environment
 
 
+@pytest.fixture
+def script_workspace(tmp_path: Path) -> Iterator[Path]:
+    with TemporaryDirectory(dir=tmp_path) as directory:
+        workspace = Path(directory)
+        yield workspace
+    assert not workspace.exists()
+
+
 def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
-    tmp_path: Path,
+    script_workspace: Path,
 ) -> None:
-    environment = _script_environment(tmp_path)
+    environment = _script_environment(script_workspace)
     output: list[str] = []
     progress = Event()
     with subprocess.Popen(
@@ -112,7 +142,7 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
             "-p",
             "no:cacheprovider",
         ],
-        cwd=tmp_path,
+        cwd=script_workspace,
         env=environment,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -137,7 +167,7 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
                 + "".join(output)
             )
             assert process.poll() is None
-            assert not (tmp_path / "completed.ran").exists()
+            assert not (script_workspace / "completed.ran").exists()
             process.stdin.write("release\n")
             process.stdin.flush()
             returncode = process.wait(timeout=20)
@@ -153,16 +183,25 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
     assert "intentional offline workflow failure" in transcript
     assert "stopping after 1 failures" in transcript
     assert "1 failed, 1 deselected" in transcript
-    assert (tmp_path / "completed.ran").exists()
-    assert not (tmp_path / "second.ran").exists()
+    assert (script_workspace / "completed.ran").exists()
+    assert not (script_workspace / "second.ran").exists()
 
 
-@pytest.mark.parametrize("scenario", ["cleanup", "execution_plan", "ml_pipeline"])
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "cleanup",
+        "execution_plan",
+        "ml_pipeline",
+        "natural_request",
+        "strategy_execution_guidance",
+    ],
+)
 def test_script_selects_scenario_without_running_authoring_suite(
-    tmp_path: Path,
+    script_workspace: Path,
     scenario: str,
 ) -> None:
-    environment = _script_environment(tmp_path)
+    environment = _script_environment(script_workspace)
     result = subprocess.run(
         [
             "bash",
@@ -175,7 +214,7 @@ def test_script_selects_scenario_without_running_authoring_suite(
             "-p",
             "no:cacheprovider",
         ],
-        cwd=tmp_path,
+        cwd=script_workspace,
         env=environment,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -185,6 +224,6 @@ def test_script_selects_scenario_without_running_authoring_suite(
         check=False,
     )
     assert result.returncode == pytest.ExitCode.OK, result.stdout
-    assert "1 passed, 5 deselected" in result.stdout
-    assert (tmp_path / f"{scenario}.ran").read_text() == "done"
-    assert not (tmp_path / "completed.ran").exists()
+    assert "1 passed, 7 deselected" in result.stdout
+    assert (script_workspace / f"{scenario}.ran").read_text() == "done"
+    assert not (script_workspace / "completed.ran").exists()

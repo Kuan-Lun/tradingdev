@@ -22,7 +22,17 @@ from tradingdev.adapters.storage.strategy_revisions import (
     StrategyRevisionStore,
     UnsupportedStrategyRevisionError,
 )
+from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
+from tradingdev.app.contracts.strategy import (
+    BundledStrategySummary,
+    GeneratedStrategySummary,
+    LegacyStrategySummary,
+    StrategyKind,
+    StrategySummary,
+)
+from tradingdev.app.pagination import paginate
 from tradingdev.app.quality_policy import quality_config_path
+from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
@@ -217,6 +227,7 @@ class StrategyService:
             config_path=str(entry.config_path),
             status=StrategyStatus.PROMOTED,
             kind="bundled",
+            execution_capabilities=entry.execution_capabilities,
             metadata={
                 "version": entry.strategy_section.get("version"),
                 "declared_source_path": entry.declared_source_path,
@@ -498,6 +509,9 @@ class StrategyService:
                     "class_name": entry.class_name,
                     "description": strategy.get("description", ""),
                     "kind": "bundled",
+                    "execution_capabilities": entry.execution_capabilities.model_dump(
+                        mode="json"
+                    ),
                     "revision_id": None,
                     "status": "promoted",
                     "config_path": str(entry.config_path),
@@ -519,6 +533,9 @@ class StrategyService:
                     "revision_id": metadata.revision_id,
                     "class_name": metadata.class_name,
                     "kind": "generated",
+                    "execution_capabilities": StrategyCapabilities().model_dump(
+                        mode="json"
+                    ),
                     "status": metadata.status.value,
                     "source_path": metadata.source_path,
                     "config_path": metadata.config_path,
@@ -545,6 +562,7 @@ class StrategyService:
             "strategy_id": strategy_id,
             "revision_id": None,
             "kind": "legacy",
+            "execution_capabilities": StrategyCapabilities().model_dump(mode="json"),
             "status": "revision_required",
             "code": "strategy_revision_required",
             "message": (
@@ -553,6 +571,54 @@ class StrategyService:
                 "Legacy status and evidence do not authorize execution."
             ),
         }
+
+    def list_strategies_page(
+        self,
+        *,
+        kind: StrategyKind | None = None,
+        strategy_id: str | None = None,
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_LIMIT,
+    ) -> Page[StrategySummary]:
+        """Discover identities without expanding configuration or run history."""
+        entries: list[StrategySummary] = []
+        if kind in (None, "bundled"):
+            entries.extend(
+                BundledStrategySummary(
+                    strategy_id=entry.strategy_id,
+                    revision_id=None,
+                    class_name=entry.class_name,
+                    description=entry.strategy_section.get("description", ""),
+                    kind="bundled",
+                    execution_capabilities=entry.execution_capabilities,
+                    status="promoted",
+                )
+                for entry in self._catalog.entries()
+                if strategy_id is None or entry.strategy_id == strategy_id
+            )
+        if kind in (None, "generated"):
+            entries.extend(
+                GeneratedStrategySummary(
+                    strategy_id=metadata.strategy_id,
+                    revision_id=metadata.revision_id,
+                    class_name=metadata.class_name,
+                    kind="generated",
+                    execution_capabilities=StrategyCapabilities(),
+                    status=metadata.status,
+                )
+                for metadata in self._revisions.list_current()
+                if strategy_id is None or metadata.strategy_id == strategy_id
+            )
+        if kind in (None, "legacy"):
+            entries.extend(
+                LegacyStrategySummary.model_validate(self._legacy_summary(identity))
+                for identity in self._revisions.list_legacy_ids()
+                if strategy_id is None or identity == strategy_id
+            )
+        entries.sort(
+            key=lambda item: (item.strategy_id, item.kind, item.revision_id or "")
+        )
+        return paginate(entries, project=lambda item: item, offset=offset, limit=limit)
 
     def get_strategy(
         self,
@@ -587,6 +653,9 @@ class StrategyService:
                 "success": True,
                 "strategy_id": strategy_id,
                 "kind": "generated",
+                "execution_capabilities": StrategyCapabilities().model_dump(
+                    mode="json"
+                ),
                 "revision_id": metadata.revision_id,
                 "source_code": source_path.read_text(encoding="utf-8"),
                 "yaml_config": config_path.read_text(encoding="utf-8"),
@@ -600,6 +669,9 @@ class StrategyService:
                 "success": True,
                 "strategy_id": strategy_id,
                 "kind": "bundled",
+                "execution_capabilities": entry.execution_capabilities.model_dump(
+                    mode="json"
+                ),
                 "revision_id": None,
                 "source_code": entry.module_source_path.read_text(encoding="utf-8"),
                 "yaml_config": entry.config_path.read_text(encoding="utf-8"),

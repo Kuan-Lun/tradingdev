@@ -149,6 +149,11 @@ stateDiagram-v2
 bundled 策略由 Git 管理並以 promoted 身分提供，沒有生成策略的 revision ID。
 舊的平面生成策略檔案可供讀取與重新保存，其舊狀態不能授權執行。
 
+Bundled catalog 從註冊 YAML 讀取訓練需求宣告，不為探索能力匯入或執行策略。
+`StrategyCapabilities` 由同一宣告提供探索回覆及共用執行模式檢查；生成與舊格式策略
+維持未知，不由 `fit()` 方法或生命週期狀態猜測能力。支援模式不是模型已訓練或目前
+設定可執行的證明，設定前提與回覆欄位見[訓練契約](docs/strategy_contract.md#training-before-scoring)。
+
 `StrategyService` 先做靜態政策及共用品質檢查，再透過 `SignalContractChecker`
 檢查完整執行設定與訊號契約。驗證與 dry-run 共用 checker，使用不同長度的測試資料。
 固定設定欄位拒絕未知名稱；策略參數保留明確的動態結構。成功解析的設定會以
@@ -169,6 +174,12 @@ MCP 先以 `prepare_backtest`、`prepare_walk_forward` 或 `prepare_optimization
 準備執行計畫：套用交易對、期間等請求設定，再解析資料位置與策略建構子參數，形成 manifest。
 ExecutionPlanService 經 PreflightService 完成受限試跑，確認程序已停止並清理臨時內容後，
 才發佈白話文字與 HTML 確認文件。準備不建立正式 job 或 run；失敗回傳結構化錯誤。
+
+JobService、OptimizationService 與 CLI 共用的 BacktestService 在資料載入前，依
+註冊策略的能力拒絕無法完成必要訓練的模式；呼叫端的 YAML 宣告不能覆寫註冊能力。
+`strategy_requires_training` 的模式與設定指引經 preflight worker、PreflightService
+及 ExecutionPlanService 保留，MCP adapter 再映射為 `next_tool`。這個回覆不會建立
+可執行計畫，也不免除後續試跑與使用者確認。
 
 JobService 與 OptimizationService 將準備和提交分開：prepare 方法只回傳
 PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmissionService
@@ -355,13 +366,17 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 含向前補值觀測的 panel 不接受折間驗證，須改用原始共同日期或丟棄缺值。
 驗證檢查的範圍及訊號評估語意見 [ML 研究契約](docs/strategy_contract.md#ml-research-contract)。
 
-`predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，再載入
-pickle 產生訊號。它不判斷資料是否曾用於訓練或選參。`evaluate_signal` 接收
-單一商品的訊號與實際未來報酬，計算訊號品質、分層描述與簡化報酬；提供資料集 ID
-時核對保存資料集的報酬、順序與 horizon 並拒絕 panel，指定記錄才將有限指標交
-leaderboard store 保存。簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
+`MLService.predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，
+再載入 pickle 產生完整訊號；MCP `predict` 經 `predict_page` 只回傳指定預覽頁。
+它不判斷資料是否曾用於訓練或選參。MCP `evaluate_signal` 以 model／dataset ID
+呼叫 `evaluate_prediction`，由後端對完整資料產生訊號並核對資料列、報酬、horizon
+及非重疊標籤區間，拒絕 panel。Python `MLService.evaluate_signal` 保留陣列計算入口；
+提供 dataset ID 時仍須符合完整資料集契約。指定記錄才將有限指標交 leaderboard store
+保存；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
+簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
 `leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
-並提供候選數與多重比較限制。這些排名不提供獲利、樣本外來源或執行安全的證明。
+並提供候選數與多重比較限制。MCP 在完整候選集合完成比較與排序後分頁，拒絕時
+只回傳有限 context 示例及修復指引。這些排名不提供獲利、樣本外來源或執行安全的證明。
 
 特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的
 讀取、更新與原子發佈期間持跨程序鎖；`entries` 不加鎖，讀取完整的新檔或舊檔。
@@ -505,6 +520,18 @@ Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與�
 
 ### MCP 回覆契約
 
+`mcp/prompts.py` 提供依任務階段編排的啟動指引，保留契約探索、執行同意、報告交付
+及證據保存規則。策略詳細規則由 `get_strategy_contract` 的 core、configuration、
+example 章節提供，每個回覆列出可讀章節；ML 研究解讀集中在 `get_ml_contract`，
+資料來源能力由 crawler registry 經 `list_data_sources` 提供，報告章節由
+`get_report_sections` 提供。工具描述與輸入 schema 保留呼叫前需要的條件與參數說明，
+不另載入整份研究手冊。這些入口都是標準 MCP tools，不依賴客戶端能讀取伺服器檔案
+或自動載入 resource。
+
+`tooling/context_budget.py` 量測實際註冊的 instructions 與工具投影；Local 測試記錄
+序列化 request 的大小及峰值。這些開發量測不改變產品工具內容，也不推測其他客戶端
+如何選工具、壓縮歷史或預留輸出，使用方式見[開發指南](docs/development.md#量測模型上下文)。
+
 MCP 使用 StrictMCPServer 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
 `app/contracts` 的 DTO 再檢查 service 回覆，讓協定輸出可被工具 schema 驗證。
 預期的應用失敗使用穩定 code 或診斷；參數錯誤、非預期例外與回覆契約錯誤則使用
@@ -514,6 +541,12 @@ MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受�
 `structuredContent`：單一物件回覆直接位於根層；清單與成功／失敗聯集回覆
 放在 `structuredContent.result`。舊自訂客戶端若直接從根層讀取 `success`、
 `job_id` 等欄位，須依目前 schema 調整；此回覆格式不會遷移或改寫工作區資料。
+
+會隨工作區成長的五項探索清單由 application services 篩選、排序並投影為共用
+`Page[T]`，MCP 回傳 `items` 與續頁資訊；內部 Python 全量查詢保留原用途。
+策略、執行與 artifact 清單只傳識別摘要，詳細 metadata、指標與原始碼由單筆查詢取得。
+這限制每次傳回的筆數及欄位，不限制後端儲存量，也不提供跨寫入的一致快照；
+欄位、篩選與排序見[探索分頁契約](docs/run_artifacts.md#discovery-pages)。
 
 預期的操作失敗保留 `success: false` 或空 `job_id` 等工具語意，並提供穩定的
 `code`；驗證失敗的 `diagnostics` 包含 `code`、`phase` 與 `fix`。
