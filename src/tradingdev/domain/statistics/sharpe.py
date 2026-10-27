@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
 
+from tradingdev.domain.statistics._validation import positive_int, real_array
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -218,8 +220,7 @@ def sharpe_interval_outcome(
     scale = _annualisation(periods_per_year)
     if not (isinstance(confidence, numbers.Real) and 0.0 < confidence < 1.0):
         raise ValueError("confidence must be strictly between 0 and 1")
-    if isinstance(reps, bool) or not isinstance(reps, int) or reps < 1:
-        raise ValueError("reps must be a positive integer")
+    positive_int(reps, "reps")
     values = _returns(returns)
     sharpe = _period_sharpe(values)
 
@@ -398,14 +399,8 @@ def deflated_sharpe_ratio(
         if trial_sharpes.size == 0:
             raise ValueError("annualised_trial_sharpes is empty; give n_trials")
         n = trial_sharpes.size
-    elif (
-        isinstance(n_trials, bool)
-        or not isinstance(n_trials, numbers.Integral)
-        or n_trials < 1
-    ):
-        raise ValueError("n_trials must be a positive integer")
     else:
-        n = int(n_trials)
+        n = positive_int(n_trials, "n_trials")
     if n < trial_sharpes.size:
         raise ValueError("n_trials must not be smaller than the trial Sharpes")
     try:
@@ -459,7 +454,7 @@ def _resample_sharpe(values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]
 
 
 def _returns(returns: Iterable[float]) -> npt.NDArray[np.float64]:
-    values = np.asarray(list(returns), dtype=np.float64)
+    values = real_array(list(returns), "returns")
     if values.ndim != 1:
         raise ValueError("returns must be one-dimensional")
     if not np.all(np.isfinite(values)):

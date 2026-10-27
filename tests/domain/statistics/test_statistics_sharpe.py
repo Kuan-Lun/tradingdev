@@ -438,16 +438,16 @@ class TestDeflatedSharpeRatio:
             )
         )
 
-    def test_accepts_numpy_integer_trial_count(self) -> None:
-        result = deflated_sharpe_ratio(
-            _selected_returns(),
-            [0.5, 1.5],
-            periods_per_year=_DAILY,
-            n_trials=np.int64(5),  # type: ignore[arg-type]
-        )
-
-        assert result is not None
-        assert result.n_trials == 5
+    def test_rejects_numpy_integer_trial_count(self) -> None:
+        # n_trials follows the package rule for counts: a built-in int.
+        # len(result.trials) + result.dropped_count is one.
+        with pytest.raises(ValueError, match="n_trials must be a positive integer"):
+            deflated_sharpe_ratio(
+                _selected_returns(),
+                [0.5, 1.5],
+                periods_per_year=_DAILY,
+                n_trials=np.int64(5),  # type: ignore[arg-type]
+            )
 
     def test_huge_trial_count_keeps_a_finite_hurdle(self) -> None:
         result = deflated_sharpe_ratio(

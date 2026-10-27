@@ -96,6 +96,8 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from tradingdev.domain.statistics._validation import positive_int
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -410,7 +412,7 @@ def plateau_summary(
     """
     radius = _checked_radius(radius)
     if min_neighborhood is not None:
-        min_neighborhood = _positive_int(min_neighborhood, "min_neighborhood")
+        min_neighborhood = positive_int(min_neighborhood, "min_neighborhood")
     grid = _build_grid(trials, axes)
     scores = _scores(grid, radius)
     n_trials = len(scores)
@@ -700,11 +702,4 @@ def _finite(value: object, label: str) -> float:
 
 
 def _checked_radius(radius: int) -> int:
-    return _positive_int(radius, "radius")
-
-
-def _positive_int(value: int, name: str) -> int:
-    # numbers.Integral admits numpy integers, which grid indices usually are.
-    if isinstance(value, bool) or not isinstance(value, numbers.Integral) or value < 1:
-        raise ValueError(f"{name} must be a positive integer")
-    return int(value)
+    return positive_int(radius, "radius")

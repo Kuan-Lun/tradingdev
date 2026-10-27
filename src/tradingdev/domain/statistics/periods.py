@@ -22,15 +22,22 @@ filled with zero. Period P&L therefore always sums to
 
 from __future__ import annotations
 
+import numbers
 from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from tradingdev.domain.statistics._validation import real_array
+
 Frequency = Literal["daily", "monthly"]
 
 _RESAMPLE_RULES: dict[Frequency, str] = {"daily": "D", "monthly": "MS"}
+_NUMERIC_TIMESTAMPS = (
+    "timestamps must be datetimes or date strings, not numbers ({}); a number "
+    "has no unit, so convert it first, e.g. pd.to_datetime(values, unit='s')"
+)
 
 
 def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
@@ -46,10 +53,19 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
     nanoseconds), so without this the same timestamps would give period
     series with different index dtypes depending on how they were passed.
 
+    Numbers are rejected, not read as times. A number carries no unit:
+    pandas reads ``1_704_067_200`` as nanoseconds after the epoch, so Unix
+    seconds silently became a fraction of a second on 1970-01-01, and 30
+    days of hourly bars one daily period. There is no ``unit`` parameter on
+    purpose: every function that takes timestamps would have to carry it,
+    seconds and nanoseconds cannot be told apart reliably from the values,
+    and the caller can state the unit once, for example with
+    ``pd.to_datetime(values, unit="s")``. Run outputs already hold datetimes.
+
     Raises:
-        ValueError: If ``timestamps`` is not one-dimensional, naive and
-            aware timestamps are mixed, or a value cannot be parsed as a
-            timestamp.
+        ValueError: If ``timestamps`` is not one-dimensional, holds numbers
+            or booleans, mixes naive and aware timestamps, or has a value
+            that cannot be parsed as a timestamp.
     """
     if isinstance(timestamps, pd.DatetimeIndex):
         index = timestamps
@@ -57,6 +73,8 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
         values = np.asarray(timestamps)
         if values.ndim != 1:
             raise ValueError("timestamps must be one-dimensional")
+        if values.dtype.kind in "biufc":
+            raise ValueError(_NUMERIC_TIMESTAMPS.format(values.dtype))
         index = (
             _parse_each(values)
             if values.dtype.kind in "OU"
@@ -71,7 +89,11 @@ def _parse_each(values: npt.NDArray[np.object_ | np.str_]) -> pd.DatetimeIndex:
     # format for all (pd.to_datetime) rejects "2024-01-01" next to
     # "2024-01-01 01:00", and utc=True would silently read naive values as
     # UTC. Converting aware values one by one accepts differing offsets.
-    parsed = [pd.Timestamp(value) for value in values.tolist()]
+    elements = values.tolist()
+    for element in elements:
+        if isinstance(element, numbers.Number):
+            raise ValueError(_NUMERIC_TIMESTAMPS.format(type(element).__name__))
+    parsed = [pd.Timestamp(value) for value in elements]
     if len({ts.tzinfo is not None for ts in parsed if not pd.isna(ts)}) > 1:
         raise ValueError("timestamps mix timezone-naive and timezone-aware values")
     return pd.DatetimeIndex(
@@ -86,11 +108,12 @@ def equity_series(
     """Validate raw run outputs and pair them into a UTC-indexed series.
 
     Raises:
-        ValueError: If the inputs are empty, differ in length, contain
-            non-finite equity, or timestamps mix naive and aware values or
-            are not strictly increasing.
+        ValueError: If the inputs are empty, differ in length, equity is not
+            numeric (booleans and strings are rejected, not converted) or not
+            finite, or timestamps are invalid as for :func:`to_utc_index` or
+            not strictly increasing.
     """
-    equity = np.asarray(equity_curve, dtype=np.float64)
+    equity = real_array(equity_curve, "equity_curve")
     if equity.ndim != 1 or equity.size == 0:
         raise ValueError("equity_curve must be a non-empty one-dimensional array")
     if not np.isfinite(equity).all():

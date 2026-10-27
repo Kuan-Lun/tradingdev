@@ -54,6 +54,7 @@ import numpy as np
 import pandas as pd
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
 
+from tradingdev.domain.statistics._validation import positive_int, real_array
 from tradingdev.domain.statistics.sharpe import (
     MIN_BOOTSTRAP_OBSERVATIONS,
     IntervalUnavailable,
@@ -174,21 +175,23 @@ def align_returns(
     Raises:
         ValueError: If no series is given, ``min_overlap`` is not a
             positive integer, an index has duplicate labels, a return is
-            not a finite number, or timezone-naive and timezone-aware
-            datetime indexes are mixed.
+            not a finite number (booleans and strings are not numbers), or
+            timezone-naive and timezone-aware datetime indexes are mixed.
     """
     if not series_by_name:
         raise ValueError("at least one return series is required")
-    _positive_int(min_overlap, "min_overlap")
+    positive_int(min_overlap, "min_overlap")
     _require_consistent_timezones(series_by_name)
     columns: dict[str, pd.Series] = {}
     for name, series in series_by_name.items():
         if not series.index.is_unique:
             raise ValueError(f"returns {name!r} have duplicate index labels")
-        values = pd.to_numeric(series, errors="coerce").astype(np.float64)
-        if not np.all(np.isfinite(values.to_numpy())):
+        # Booleans and numeric strings are rejected, not coerced: a 0/1
+        # signal passed by mistake would otherwise pair as returns.
+        array = real_array(series, f"returns {name!r}")
+        if not np.all(np.isfinite(array)):
             raise ValueError(f"returns {name!r} must be finite")
-        columns[name] = values
+        columns[name] = pd.Series(array, index=series.index, name=series.name)
     frame = pd.concat(columns, axis=1, join="inner").sort_index()
     overlap = len(frame)
     return AlignedReturns(
@@ -218,10 +221,10 @@ def difference_interval(
     statistic is evaluated, so a statistic that rejects short arrays is
     never called on one.
     """
-    _positive_int(reps, "reps")
+    positive_int(reps, "reps")
     _tail(confidence)
     if block_size is not None:
-        _positive_int(block_size, "block_size")
+        positive_int(block_size, "block_size")
     if not align_returns({"a": a, "b": b}).sufficient:
         return None
     outcome = difference_interval_outcome(
@@ -312,10 +315,10 @@ def difference_interval_outcome(
             integer, ``confidence`` is not strictly between 0 and 1, an
             index has duplicate labels, or a return is not a finite number.
     """
-    _positive_int(reps, "reps")
+    positive_int(reps, "reps")
     tail = _tail(confidence)
     if block_size is not None:
-        _positive_int(block_size, "block_size")
+        positive_int(block_size, "block_size")
     aligned = align_returns({"a": a, "b": b})
     values_a = aligned.frame["a"].to_numpy()
     values_b = aligned.frame["b"].to_numpy()
@@ -378,7 +381,7 @@ def interval_table(
     is ``None``. A short overlap returns ``None`` before the statistic is
     evaluated, as in :func:`difference_interval`.
     """
-    _positive_int(reps, "reps")
+    positive_int(reps, "reps")
     _tail(confidence)
     if not align_returns(series_by_name).sufficient:
         return None
@@ -424,7 +427,7 @@ def interval_table_outcome(
             integer, ``confidence`` is not strictly between 0 and 1, an
             index has duplicate labels, or a return is not a finite number.
     """
-    _positive_int(reps, "reps")
+    positive_int(reps, "reps")
     tail = _tail(confidence)
     aligned = align_returns(series_by_name)
     columns = [aligned.frame[name].to_numpy() for name in aligned.frame.columns]
@@ -593,11 +596,6 @@ def _tail(confidence: float) -> float:
     if not 0.0 < confidence < 1.0:
         raise ValueError("confidence must be strictly between 0 and 1")
     return (1.0 - float(confidence)) / 2.0
-
-
-def _positive_int(value: int, label: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"{label} must be a positive integer")
 
 
 def _require_consistent_timezones(series_by_name: Mapping[str, pd.Series]) -> None:

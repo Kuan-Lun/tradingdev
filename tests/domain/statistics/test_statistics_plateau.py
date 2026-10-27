@@ -853,13 +853,14 @@ class TestAxesValidation:
 
 
 class TestNumpyIntegers:
-    def test_radius_and_min_neighborhood_accept_numpy_integers(self) -> None:
+    # The package rule for counts is a built-in int, as the annotations
+    # state; comparison and sharpe already rejected NumPy integers.
+    def test_radius_and_min_neighborhood_reject_numpy_integers(self) -> None:
         trials = _corner_grid()
 
-        summary = _summary(trials, radius=np.int64(1), min_neighborhood=np.int64(8))
-
-        assert summary.radius == 1
-        assert type(summary.radius) is int
-        assert summary.min_neighborhood == 8
-        assert type(summary.min_neighborhood) is int
-        assert summary == _summary(trials, radius=1, min_neighborhood=8)
+        with pytest.raises(ValueError, match="radius must be a positive integer"):
+            _summary(trials, radius=np.int64(1))
+        with pytest.raises(
+            ValueError, match="min_neighborhood must be a positive integer"
+        ):
+            _summary(trials, min_neighborhood=np.int64(8))
