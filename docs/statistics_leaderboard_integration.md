@@ -175,7 +175,9 @@ For KD(9, 3, 3) and KD(14, 3, 3), whose daily returns correlate at 0.68, the
 paired Sharpe difference interval is 3.53 wide, which is 0.69 times the 5.15
 expected from the two individual intervals if the strategies were
 independent (the square root of the sum of the squared widths 3.89 and 3.38).
-See `demo_output/METHODS.md`, sections 2.12 and 2.13. These figures predate
+See `METHODS.md`, sections 2.12 and 2.13, in the
+[demo evidence](https://github.com/cklivse/tradingdev/tree/b74fd7e/evidence/2026-10-27-statistics-demo)
+kept outside this repository's history. These figures predate
 the current block length rule for paired differences and have not been
 regenerated since; section 2.13 says the same about its table. IC series of
 neighbouring candidates are expected to correlate at least as strongly, but

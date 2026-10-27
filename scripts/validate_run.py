@@ -604,7 +604,7 @@ def validate(pr: Any) -> int:
         fee_rate = float(config.get("fees", 0.0)) + float(config.get("slippage", 0.0))
         if fee_rate > 0 and trades:
             # total_volume already counts both legs, so derive the cost from
-            # the trades' traded notional, as scripts/demo_statistics.py does.
+            # the trades' traded notional.
             notional = summarize_breakeven(
                 trades, start=ts[0], end=ts[-1]
             ).traded_notional

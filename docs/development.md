@@ -29,8 +29,8 @@ uv sync --locked --all-extras --python 3.14
 
 `scripts/` 保留 Shell 操作入口，`.githooks/` 保留 Git hook 入口；開發流程的
 Python 實作集中在 `tooling/`，以同一個 `.venv` interpreter 執行 `python -m tooling...`。
-例外是 `scripts/` 下三個獨立的 Python 腳本，用於統計展示與執行結果驗證，
-見[統計展示與執行結果驗證腳本](#統計展示與執行結果驗證腳本)。
+例外是 `scripts/validate_run.py`，一個獨立的執行結果驗證腳本，
+見[執行結果驗證腳本](#執行結果驗證腳本)。
 `tooling/quality.py` 共用格式化與唯讀檢查流程，Python 檢查範圍為 `src/`、
 `tests/`、`tooling/`、`research/`，不含 `scripts/`；Markdown 檢查涵蓋根目錄與 `docs/`。
 
@@ -100,19 +100,11 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 開啟終端機顯示的本機網址，選擇日期、持倉分鐘數與停損比例，查看 MAE 分布及統計。
 結束時按 `Ctrl+C`。
 
-## 統計展示與執行結果驗證腳本
+## 執行結果驗證腳本
 
-`scripts/` 下有三個 Python 腳本，各自以 `uv run python scripts/<名稱>.py` 執行，
-不經過 MCP、CLI 或 application services，也不屬於產品功能：
-
-| 腳本 | 用途 |
-| --- | --- |
-| `demo_plateau.py` | 以合成資料產生平原分析展示圖與表，寫入 `demo_output/`。 |
-| `demo_statistics.py` | 以快取的 KD 回測與重新執行的回測產生統計展示，寫入 `demo_output/`。 |
-| `validate_run.py` | 以原始權益、時間戳與交易紀錄重算一次執行的主要指標，逐項核對。 |
-
-兩個 demo 的資料來源、公式與重現方式見
-[`demo_output/METHODS.md`](../demo_output/METHODS.md)。
+`scripts/validate_run.py` 以原始權益、時間戳與交易紀錄重算一次執行的主要指標，
+逐項核對。它以 `uv run python scripts/validate_run.py` 執行，不經過 MCP、CLI 或
+application services，也不屬於產品功能。
 
 `validate_run.py` 的用法：
 
@@ -144,8 +136,8 @@ uv run python scripts/validate_run.py [path/to/pipeline_result.pkl]
 - 退出碼：沒有 `FAIL` 為 0，有任何 `FAIL` 為 1；明確指定的檔案不存在或無法讀取也算 `FAIL`。
   非 simple backtest，或未指定路徑且找不到任何檔案，為 2。
 
-這三個腳本目前不在 `tooling/quality.py` 的檢查範圍內，`check-fast` 與 `check-full`
-不會對它們執行 Ruff 與 Mypy。`validate_run.py` 的行為由 `tests/scripts/` 的測試涵蓋。
+這個腳本目前不在 `tooling/quality.py` 的檢查範圍內，`check-fast` 與 `check-full`
+不會對它執行 Ruff 與 Mypy。它的行為由 `tests/scripts/` 的測試涵蓋。
 
 ## 選擇性 LLM 測試
 

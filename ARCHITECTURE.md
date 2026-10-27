@@ -74,7 +74,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 
 | 位置 | 目前責任 |
 | ---- | -------- |
-| `scripts/`、`.githooks/` | Shell 操作與 Git hook 入口，選定 repository 與 interpreter 後呼叫 Python 模組；`scripts/` 另有三個獨立 Python 腳本，用於統計展示與執行結果驗證 |
+| `scripts/`、`.githooks/` | Shell 操作與 Git hook 入口，選定 repository 與 interpreter 後呼叫 Python 模組；`scripts/` 另有一個獨立 Python 腳本，用於執行結果驗證 |
 | `tooling/quality.py` | 共用品質檢查與格式化，涵蓋 `src/`、`tests/`、`tooling/`、`research/` |
 | `tooling/git/` | 候選 snapshot／合併 tree 的建立與驗證，以及 hook、本機 full、PR 檢查與分支清理流程 |
 | `tooling/review_docs.py` | 擷取固定 Git 版本的完整證據，協調文件審查批次與判定 |
@@ -439,9 +439,8 @@ Walk-forward 保存每個 fold 的訓練／測試結果；其摘要是各 fold �
 - **與 catalog**：不註冊指標 ID，也不屬於 run 保存的績效產物。平原分析需要的
   最佳化方向由呼叫端依 catalog 的 `optimization_direction` 傳入，模組不自行推斷。
 - **與 MCP／報告服務**：目前沒有 application service、MCP 工具或報告引用這個套件，
-  模型與使用者都看不到這些結果。現有使用端只有 `scripts/demo_statistics.py`、
-  `scripts/demo_plateau.py` 與 `scripts/validate_run.py`（見
-  [開發指南](docs/development.md#統計展示與執行結果驗證腳本)）。接入 ML 排行榜前
+  模型與使用者都看不到這些結果。現有使用端只有 `scripts/validate_run.py`（見
+  [開發指南](docs/development.md#執行結果驗證腳本)）。接入 ML 排行榜前
   需要的前提整理在 [統計與排行榜整合](docs/statistics_leaderboard_integration.md)，
   其中部分契約尚待與排行榜負責人議定。
 
