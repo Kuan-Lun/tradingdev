@@ -186,11 +186,31 @@ class TestValidation:
                 capital=1000.0,
             )
 
+    @pytest.mark.parametrize(
+        "number",
+        [2024, 2024.0, np.int64(2024), True],
+        ids=["int", "float", "np", "bool"],
+    )
+    @pytest.mark.parametrize("side", ["start", "end"])
+    def test_rejects_numbers_as_period_dates(self, side: str, number: object) -> None:
+        # pd.Timestamp(2024) is 2024 ns after the epoch, which used to turn a
+        # year meant as a date into a period of about 3e-17 years.
+        dates: dict[str, object] = {"start": _START, "end": _ONE_YEAR, side: number}
+        with pytest.raises(ValueError, match=f"{side} must be a timestamp"):
+            summarize_breakeven([], start=dates["start"], end=dates["end"])
+
+    def test_accepts_date_strings_and_datetime64(self) -> None:
+        summary = summarize_breakeven(
+            [], start="2024-01-01", end=np.datetime64(_ONE_YEAR.to_datetime64())
+        )
+
+        assert summary.years == pytest.approx(1.0)
+
     def test_rejects_non_increasing_period(self) -> None:
         with pytest.raises(ValueError, match="end must be after start"):
             summarize_breakeven([], start=_ONE_YEAR, end=_START)
 
-    @pytest.mark.parametrize("capital", [0.0, -1.0, float("inf")])
+    @pytest.mark.parametrize("capital", [0.0, -1.0, float("inf"), True])
     def test_rejects_invalid_capital(self, capital: float) -> None:
         with pytest.raises(ValueError, match="capital"):
             summarize_breakeven([], start=_START, end=_ONE_YEAR, capital=capital)

@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 import numbers
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from tradingdev.domain.statistics.periods import (
     equity_series,
@@ -94,7 +94,7 @@ class PerformanceSummary:
 def summarize_performance(
     equity_curve: npt.ArrayLike,
     timestamps: npt.ArrayLike,
-    trades: Sequence[Mapping[str, Any]],
+    trades: Sequence[Mapping[str, object]],
     *,
     periods_per_year: float = DEFAULT_PERIODS_PER_YEAR,
 ) -> PerformanceSummary:
@@ -155,7 +155,7 @@ def summarize_performance(
     )
 
 
-def _trade_net_pnls(trades: Sequence[Mapping[str, Any]]) -> list[float]:
+def _trade_net_pnls(trades: Sequence[Mapping[str, object]]) -> list[float]:
     pnls: list[float] = []
     for position, trade in enumerate(trades):
         value = trade.get("net_pnl")

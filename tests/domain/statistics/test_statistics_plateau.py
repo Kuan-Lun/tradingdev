@@ -573,6 +573,17 @@ class TestTrialsFromMetrics:
             ([{"params": {"a": math.nan}, "m": 0.1}], "maximize", "not finite"),
             ([{"params": [("a", 1.0)], "m": 0.1}], "maximize", "non-empty mapping"),
             ([{"params": {}, "m": 0.1}], "maximize", "non-empty mapping"),
+            ([{"params": {1: 1.0}, "m": 0.1}], "maximize", "name 1 is not a string"),
+            (
+                [{"params": {"a": 1.0, 2: 1.0}, "m": 0.1}],
+                "maximize",
+                "name 2 is not a string",
+            ),
+            (
+                [{"params": {"a": 1.0}, "m": 0.1}, {"params": {1: 2.0}, "m": 0.2}],
+                "maximize",
+                "row 1 parameter name 1 is not a string",
+            ),
         ],
         ids=[
             "direction",
@@ -582,6 +593,9 @@ class TestTrialsFromMetrics:
             "nan-param",
             "list-params",
             "empty-params",
+            "int-param-name",
+            "mixed-param-names",
+            "int-param-name-later-row",
         ],
     )
     def test_rejects_invalid_rows(

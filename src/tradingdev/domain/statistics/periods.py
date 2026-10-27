@@ -115,7 +115,17 @@ def period_closing_equity(
 
     The index holds each period's UTC start (midnight of the day or of the
     month's first day).
+
+    Raises:
+        ValueError: If ``frequency`` is not ``"daily"`` or ``"monthly"``, or
+            the inputs are invalid as for :func:`equity_series`.
     """
+    # Literal only constrains literal arguments; a str read from settings
+    # would otherwise surface as a KeyError from the lookup below.
+    if frequency not in _RESAMPLE_RULES:
+        raise ValueError(
+            f"frequency must be one of {sorted(_RESAMPLE_RULES)}, got {frequency!r}"
+        )
     series = equity_series(equity_curve, timestamps)
     closing = series.resample(_RESAMPLE_RULES[frequency]).last().dropna()
     closing.name = "equity"

@@ -41,8 +41,10 @@ from __future__ import annotations
 import math
 import numbers
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from datetime import date
+from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
@@ -102,10 +104,10 @@ class BreakevenSummary:
 
 
 def summarize_breakeven(
-    trades: Sequence[Mapping[str, Any]],
+    trades: Sequence[Mapping[str, object]],
     *,
-    start: Any,
-    end: Any,
+    start: object,
+    end: object,
     capital: float | None = None,
 ) -> BreakevenSummary:
     """Compute the break-even win rate and turnover cost of a run's trades.
@@ -117,22 +119,26 @@ def summarize_breakeven(
         trades: Trade records, each with numeric ``net_pnl``, ``size_quote``,
             ``entry_price``, ``exit_price``, and ``fee``, and optionally a
             ``status`` of ``"closed"`` or ``"open"``.
-        start: Start of the evaluation period; naive values are UTC.
-        end: End of the evaluation period; naive values are UTC.
+        start: Start of the evaluation period, as a timestamp, datetime or
+            date string; naive values are UTC.
+        end: End of the evaluation period, like ``start``.
         capital: Capital basis for turnover, such as the initial cash.
             ``None`` (as in fixed-notional volume runs) leaves the
             capital-relative figures undefined.
 
     Raises:
         ValueError: If ``start`` or ``end`` is missing (``None``, NaN, or
-            ``NaT``), ``end`` is not after ``start``, ``capital`` is not
-            positive, or a trade lacks a required finite field, has a
-            negative size or fee, has a non-positive entry or a negative
+            ``NaT``) or not a timestamp, datetime or date string, ``end``
+            is not after ``start``, ``capital`` is not a positive number,
+            or a trade lacks a required finite field, has a negative size
+            or fee, has a non-positive entry or a negative
             exit price, or has a ``status`` other than ``"closed"`` or
             ``"open"``.
     """
     years = _years_between(start, end)
-    if capital is not None and not (math.isfinite(capital) and capital > 0):
+    if capital is not None and (
+        isinstance(capital, bool) or not (math.isfinite(capital) and capital > 0)
+    ):
         raise ValueError("capital must be positive and finite")
 
     pnls: list[float] = []
@@ -198,7 +204,7 @@ def summarize_breakeven(
     )
 
 
-def _years_between(start: Any, end: Any) -> float:
+def _years_between(start: object, end: object) -> float:
     first = _utc_timestamp(start, "start")
     last = _utc_timestamp(end, "end")
     if last <= first:
@@ -206,10 +212,19 @@ def _years_between(start: Any, end: Any) -> float:
     return (last - first) / pd.Timedelta(days=DAYS_PER_YEAR)
 
 
-def _utc_timestamp(value: Any, label: str) -> pd.Timestamp:
+def _utc_timestamp(value: object, label: str) -> pd.Timestamp:
+    # None, NaN and NaT are missing dates. NaT compares False with
+    # everything, so it would slip past the ordering check as a NaN period
+    # length.
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        raise ValueError(f"{label} is missing")
+    # pd.Timestamp reads a number as nanoseconds since the epoch, so a year
+    # such as 2024 would silently become a period of a few nanoseconds.
+    if not isinstance(value, (date, np.datetime64, str)):
+        raise ValueError(
+            f"{label} must be a timestamp, datetime or date string, not {value!r}"
+        )
     timestamp = pd.Timestamp(value)
-    # None and NaN become NaT, which compares False with everything and so
-    # would slip past the ordering check as a NaN period length.
     if pd.isna(timestamp):
         raise ValueError(f"{label} is missing")
     if timestamp.tzinfo is None:
@@ -217,14 +232,14 @@ def _utc_timestamp(value: Any, label: str) -> pd.Timestamp:
     return timestamp.tz_convert("UTC")
 
 
-def _is_open(trade: Mapping[str, Any], position: int) -> bool:
+def _is_open(trade: Mapping[str, object], position: int) -> bool:
     status: object = trade.get("status", "closed")
     if status not in ("closed", "open"):
         raise ValueError(f"trade {position} has an unknown status {status!r}")
     return status == "open"
 
 
-def _real_field(trade: Mapping[str, Any], key: str, position: int) -> float:
+def _real_field(trade: Mapping[str, object], key: str, position: int) -> float:
     value = trade.get(key)
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise ValueError(f"trade {position} has no numeric {key}")

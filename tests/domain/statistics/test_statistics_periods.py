@@ -1,6 +1,6 @@
 """Tests for UTC daily/monthly resampling of equity curves."""
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -13,6 +13,9 @@ from tradingdev.domain.statistics.periods import (
     period_returns,
     to_utc_index,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _hourly_2024() -> tuple[npt.NDArray[np.float64], pd.DatetimeIndex]:
@@ -181,6 +184,17 @@ class TestUtcBoundaries:
 
 
 class TestInvalidInputs:
+    @pytest.mark.parametrize(
+        "function", [period_closing_equity, period_pnl, period_returns]
+    )
+    def test_rejects_unknown_frequency(self, function: Callable[..., object]) -> None:
+        # A str from settings passes the Literal annotation; it used to fail
+        # with a bare KeyError from the resample rule lookup.
+        frequency: str = "weekly"
+        timestamps = pd.date_range("2024-01-01", periods=2, freq="D")
+        with pytest.raises(ValueError, match="frequency must be one of"):
+            function([1.0, 2.0], timestamps, frequency)
+
     def test_rejects_length_mismatch(self) -> None:
         timestamps = pd.date_range("2024-01-01", periods=3, freq="h")
         with pytest.raises(ValueError, match="does not match"):

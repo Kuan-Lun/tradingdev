@@ -92,7 +92,7 @@ import warnings
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -142,7 +142,7 @@ class DroppedTrialsWarning(UserWarning):
 
 
 def trials_from_metrics(
-    rows: Iterable[Mapping[str, Any]],
+    rows: Iterable[Mapping[str, object]],
     *,
     params_key: str,
     metric_key: str,
@@ -165,8 +165,9 @@ def trials_from_metrics(
 
     Raises:
         ValueError: If ``direction`` is unknown, a row lacks ``params_key``
-            or ``metric_key``, ``params`` is not a non-empty mapping, rows
-            have different parameter names, a parameter is not a finite
+            or ``metric_key``, ``params`` is not a non-empty mapping, a
+            parameter name is not a string, rows have different parameter
+            names, a parameter is not a finite
             number, a metric is neither ``None`` nor a number, or a
             parameter set repeats.
     """
@@ -184,10 +185,15 @@ def trials_from_metrics(
         raw_params = row[params_key]
         if not isinstance(raw_params, Mapping) or not raw_params:
             raise ValueError(f"row {position} params must be a non-empty mapping")
-        params = {
-            name: _finite(value, f"row {position} parameter {name!r}")
-            for name, value in raw_params.items()
-        }
+        # The mapping is unchecked input, so narrow it to the declared
+        # Mapping[str, float] here rather than trusting its annotation.
+        params: dict[str, float] = {}
+        for name, value in raw_params.items():
+            if not isinstance(name, str):
+                raise ValueError(
+                    f"row {position} parameter name {name!r} is not a string"
+                )
+            params[name] = _finite(value, f"row {position} parameter {name!r}")
         if names is None:
             names = frozenset(params)
         elif frozenset(params) != names:
