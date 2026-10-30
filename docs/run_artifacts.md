@@ -165,6 +165,14 @@ fold checks do not reconstruct the original dataset or prove its split geometry.
   and `worker_control_id`, its unique launch token. The PID belongs to the
   supervisor, not the strategy-executing child. New submissions also record
   `manifest_hash`, the expected digest of their fixed execution specification.
+  Field updates read, validate and merge within one SQLite `BEGIN IMMEDIATE`
+  transaction, including the indexed columns and JSON payload. Execution identity
+  remains immutable. The first persisted terminal state (`done`, `failed`,
+  `cancelled`, `estimation_timeout`) wins; later lifecycle updates cannot replace
+  its status, timestamps or error. Late process identity fields may still be
+  attached without restoring an earlier lifecycle snapshot. Polling and
+  cancellation condition their writes on an active state and report the state
+  actually saved; completion during cancellation is not reported as cancellation.
 - `runs`: completed run metadata, owning `job_id`, metrics JSON, config hash, source hash,
   random seed, dataset id, artifact directory, selected `revision_id`, and
   execution `manifest_hash`.
