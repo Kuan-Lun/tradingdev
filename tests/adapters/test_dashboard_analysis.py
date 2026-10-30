@@ -15,6 +15,7 @@ from tradingdev.adapters.dashboard.analysis import (
     filter_by_month,
     metric_cards,
     monthly_volume,
+    rolling_mdd_absolute,
 )
 
 
@@ -176,3 +177,73 @@ def test_percentage_curve_uses_initial_capital() -> None:
     equity = pd.Series([100.0, 110.0, 90.0])
 
     np.testing.assert_allclose(cumulative_pnl_pct(equity, 100.0), [0.0, 10.0, -10.0])
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ([100.0, 50.0, 60.0, 70.0], [50.0, 0.0]),
+        ([10.0, 20.0, 30.0, 40.0], [0.0, 0.0]),
+        ([40.0, 30.0, 20.0, 10.0], [20.0, 20.0]),
+        ([20.0, 20.0, 20.0, 20.0], [0.0, 0.0]),
+        ([10.0, 40.0, 30.0, 20.0], [10.0, 20.0]),
+    ],
+)
+def test_rolling_drawdown_uses_only_ordered_pairs_in_each_window(
+    values: list[float], expected: list[float]
+) -> None:
+    result = rolling_mdd_absolute(pd.Series(values), 3)
+    assert result.iloc[:2].isna().all()
+    np.testing.assert_allclose(result.iloc[2:], expected)
+
+
+def test_rolling_drawdown_matches_independent_pairwise_reference() -> None:
+    values = np.random.default_rng(72).normal(size=100)
+    for window in (1, 7, 30):
+        expected = [
+            max(
+                values[a] - values[b]
+                for a in range(i - window + 1, i + 1)
+                for b in range(a, i + 1)
+            )
+            for i in range(window - 1, len(values))
+        ]
+        np.testing.assert_allclose(
+            rolling_mdd_absolute(pd.Series(values), window).iloc[window - 1 :], expected
+        )
+
+
+@pytest.mark.parametrize("frequency", ["2min", "90min", "7D", "MS"])
+def test_calendar_drawdown_uses_elapsed_time_for_every_frequency(
+    frequency: str,
+) -> None:
+    index = pd.date_range("2024-01-01", "2024-03-01", freq=frequency, tz="UTC")
+    # A peak before the current window must disappear even with sparse bars.
+    equity = pd.Series(50.0, index=index)
+    equity.iloc[0] = 100.0
+    result = rolling_mdd_absolute(equity, pd.Timedelta(days=30))
+    assert result.loc[index < index[0] + pd.Timedelta(days=30)].isna().all()
+    assert result.iloc[-1] == 0.0
+
+
+def test_calendar_drawdown_handles_missing_bars_and_excludes_left_boundary() -> None:
+    equity = pd.Series(
+        [100.0, 50.0, 80.0, 60.0, 70.0],
+        index=pd.to_datetime(
+            ["2024-01-01", "2024-01-04", "2024-01-31", "2024-02-02", "2024-02-04"],
+            utc=True,
+        ),
+    )
+    result = rolling_mdd_absolute(equity, pd.Timedelta(days=30))
+    np.testing.assert_allclose(
+        result, [np.nan, np.nan, 0.0, 20.0, 20.0], equal_nan=True
+    )
+
+
+def test_rolling_drawdown_invalid_values_do_not_become_zero_risk() -> None:
+    result = rolling_mdd_absolute(pd.Series([10.0, np.nan, 20.0, 15.0, 12.0]), 2)
+    np.testing.assert_allclose(
+        result, [np.nan, np.nan, np.nan, 5.0, 3.0], equal_nan=True
+    )
+    with pytest.raises(ValueError, match="DatetimeIndex"):
+        rolling_mdd_absolute(pd.Series([10.0, 20.0]), pd.Timedelta(days=30))
