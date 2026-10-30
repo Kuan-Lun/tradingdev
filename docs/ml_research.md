@@ -30,7 +30,8 @@ because its name appears in discovery.
 `build_dataset` and `build_panel` select cached OHLCV by source, effective
 `market_type`, exact symbol and timeframe. Binance Vision defaults to `futures/um`
 and also accepts `spot`; providers that ignore market type store it as `null`.
-The effective market is saved in dataset metadata and participates in its identity.
+The effective source/market is returned in the build summary, saved in dataset
+metadata and participates in its identity.
 Each requested year slice requires a covering successful query acquired at least
 seven days after that slice ended. Missing coverage, unsettled acquisition or an
 empty selected period fails; success does not establish complete bar coverage.

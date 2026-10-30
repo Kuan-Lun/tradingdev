@@ -858,6 +858,8 @@ class MLService:
             "success": True,
             "dataset": {
                 "dataset_id": dataset_id,
+                "source": manifest["source"],
+                "market_type": manifest["market_type"],
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "start_date": start_date,
@@ -979,6 +981,8 @@ class MLService:
             "success": True,
             "panel": {
                 "dataset_id": dataset_id,
+                "source": manifest["source"],
+                "market_type": manifest["market_type"],
                 "symbols": list(ordered),
                 "timeframe": timeframe,
                 "start_date": start_date,

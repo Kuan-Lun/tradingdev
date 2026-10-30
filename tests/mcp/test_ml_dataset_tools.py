@@ -470,6 +470,8 @@ def test_ml_market_selection_preserves_prices_and_identity(
         assert payload["success"] is True
         summary = payload["dataset" if tool == "build_dataset" else "panel"]
         assert isinstance(summary, dict)
+        assert summary["source"] == "binance_vision"
+        assert summary["market_type"] == market
         dataset_id = str(summary["dataset_id"])
         identities.add(dataset_id)
         frame, manifest = MLDatasetStore(workspace.ml_datasets).load(dataset_id)

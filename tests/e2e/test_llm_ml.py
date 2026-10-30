@@ -258,17 +258,22 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     assert not list(paths.runs.glob("*/manifest.json")), "ML research must not backtest"
 
 
+def seed_ml_markets(workspace: MCPWorkspace) -> None:
+    """Provide selected spot prices alongside a different default futures market."""
+    seed_market_cache(
+        workspace.data_root / "processed", ml_market_frame(), market_type="spot"
+    )
+    other_market = ml_market_frame()
+    other_market["close"] *= 2
+    workspace.seed_market(other_market)
+
+
 @pytest.mark.live_llm
 def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
     with temporary_mcp_workspace() as workspace:
-        seed_market_cache(
-            workspace.data_root / "processed", ml_market_frame(), market_type="spot"
-        )
-        other_market = ml_market_frame()
-        other_market["close"] *= 2
-        workspace.seed_market(other_market)
+        seed_ml_markets(workspace)
         turns: list[ModelTurn] = []
 
         async def observe_final(turn: ModelTurn) -> None:
