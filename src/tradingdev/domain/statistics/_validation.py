@@ -56,34 +56,44 @@ def is_real(value: object) -> bool:
     return isinstance(value, numbers.Real) and not isinstance(value, bool | np.bool_)
 
 
+def _plain_numbers(values: object) -> bool:
+    """Whether every element of a flat sequence has a plain numeric type.
+
+    Collecting the element types is far cheaper than a ``numbers.Real``
+    check of every element. Only Python and NumPy integers and floats
+    count: ``bool`` and ``np.bool_`` are excluded, and so is anything else
+    NumPy would have converted, such as a 0-d array.
+    """
+    types = set(map(type, values))  # type: ignore[call-overload]
+    return all(
+        issubclass(kind, int | float | np.integer | np.floating)
+        and not issubclass(kind, bool | np.bool_)
+        for kind in types
+    )
+
+
 def real_array(values: object, label: str) -> npt.NDArray[np.float64]:
     """Return ``values`` as a float array if every element is a real number.
 
     Integer and floating dtypes are accepted. Booleans, strings and other
     objects are rejected even where NumPy could convert them, so ``True`` is
     not read as 1.0 and ``"0.01"`` not as a return of one percent. Object
-    arrays, such as nullable pandas columns, and plain Python sequences are
-    checked element by element: NumPy promotes ``[100.0, True]`` to floats
-    before any dtype could show the boolean. Finiteness and shape are left to
-    the caller.
+    arrays, such as nullable pandas columns, are checked element by element.
+    So is a plain sequence unless it is flat and every element is a Python
+    or NumPy integer or float: NumPy promotes ``[100.0, True]`` to floats
+    before any dtype could show the boolean. Finiteness and shape are left
+    to the caller.
     """
     array = np.asarray(values)
     kind = array.dtype.kind
-    if getattr(values, "dtype", None) is None:
-        if kind not in "iuf":
-            # Judge each element, so the message names the first bad one.
-            array = np.asarray(values, dtype=object)
-            kind = "O"
-        elif array.ndim == 1:
-            # NumPy turned the sequence into numbers, which may have hidden
-            # booleans in it. Collecting the element types is far cheaper
-            # than a numbers.Real check of every element, and exact types
-            # suffice: bool cannot be subclassed. Callers reject other
-            # shapes, so only one-dimensional input is scanned.
-            types = set(map(type, values))  # type: ignore[call-overload]
-            for boolean in (bool, np.bool_):
-                if boolean in types:
-                    raise ValueError(f"{label} must be numbers, not booleans")
+    if getattr(values, "dtype", None) is None and not (
+        kind in "iuf" and array.ndim == 1 and _plain_numbers(values)
+    ):
+        # A sequence NumPy could not keep as plain numbers, or one it may
+        # have promoted from booleans or 0-d arrays: judge each element, so
+        # the message names the first bad one.
+        array = np.asarray(values, dtype=object)
+        kind = "O"
     if kind == "b":
         raise ValueError(f"{label} must be numbers, not booleans")
     if kind == "O":

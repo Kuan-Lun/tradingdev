@@ -187,8 +187,11 @@ class TestEquity:
             (np.array([100.0, None, 102.0], dtype=object), "got None"),
             (np.array([100.0, True, 102.0], dtype=object), "got True"),
             # NumPy promotes these lists to floats before a dtype can show it.
-            ([100.0, True, 102.0], "not booleans"),
-            ([np.True_, 100.0, 102.0], "not booleans"),
+            ([100.0, True, 102.0], "got True"),
+            ([np.True_, 100.0, 102.0], "got np.True_"),
+            ((100.0, True, 102.0), "got True"),
+            ([100, True, 102], "got True"),
+            ([100.0, np.array(True), 102.0], "got array"),
         ],
         ids=[
             "bool",
@@ -197,6 +200,9 @@ class TestEquity:
             "object-bool",
             "list-with-bool",
             "list-with-numpy-bool",
+            "tuple-with-bool",
+            "int-list-with-bool",
+            "list-with-0d-bool-array",
         ],
     )
     def test_non_numbers_are_rejected(self, equity: object, match: str) -> None:
@@ -208,9 +214,12 @@ class TestEquity:
             has_positive_equity([True, True])
         with pytest.raises(ValueError, match="got '1'"):
             has_positive_equity(["1", "2"])
+        # Not scanned before: the 1-D fast path skipped nested lists.
+        with pytest.raises(ValueError, match="got True"):
+            has_positive_equity([[1.0, True]])
 
     def test_summarize_performance_rejects_a_boolean_in_a_list(self) -> None:
-        with pytest.raises(ValueError, match="not booleans"):
+        with pytest.raises(ValueError, match="got True"):
             summarize_performance([100.0, True, 102.0], self._DAYS, [])
 
     def test_buy_and_hold_rejects_boolean_prices(self) -> None:
