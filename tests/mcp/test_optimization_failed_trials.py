@@ -10,6 +10,7 @@ feed :func:`trials_from_metrics` with the failed slice kept on its axis.
 
 from __future__ import annotations
 
+import pickle
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -98,7 +99,9 @@ def test_parallel_transport_also_returns_the_zero_trade_combo() -> None:
         _STRATEGY,
         StrategyLoader().resolve_execution(_STRATEGY),
         _config().model_dump(),
-        frame.to_json(orient="split", date_format="iso"),
+        # Since upstream 21c124c the worker hands joblib the frame itself,
+        # which pickles it to each worker process; round-trip it the same way.
+        pickle.loads(pickle.dumps(frame)),
         {"k_period": _NEVER_TRADES},
         _METRIC,
         ParallelConfig().model_dump(),
