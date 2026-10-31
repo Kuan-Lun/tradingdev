@@ -64,8 +64,9 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
 
     Raises:
         ValueError: If ``timestamps`` is not one-dimensional, holds numbers,
-            booleans, durations or bytes, mixes naive and aware timestamps,
-            or has a value that cannot be parsed as a timestamp. No other
+            booleans, durations, bytes or missing values (``NaT``,
+            ``None``), mixes naive and aware timestamps, or has a value that
+            cannot be parsed as a timestamp. No other
             exception type escapes for a value of the wrong kind.
     """
     if isinstance(timestamps, pd.DatetimeIndex):
@@ -86,6 +87,9 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
             raise ValueError(
                 f"timestamps must be datetimes or date strings, got {values.dtype}"
             )
+    if index.hasnans:
+        # Caught later as "not strictly increasing", which hides the cause.
+        raise ValueError("timestamps must not contain missing values (NaT or None)")
     utc = index.tz_localize("UTC") if index.tz is None else index.tz_convert("UTC")
     return utc.as_unit("ns")
 

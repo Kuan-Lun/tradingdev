@@ -147,6 +147,22 @@ class TestTimestamps:
         with pytest.raises(ValueError, match=match):
             to_utc_index(timestamps)  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize(
+        "timestamps",
+        [
+            [pd.Timestamp("2024-01-01"), pd.NaT],
+            ["2024-01-01", None],
+            pd.DatetimeIndex(["2024-01-01", None]),
+        ],
+        ids=["nat", "none", "index-with-nat"],
+    )
+    def test_missing_timestamps_are_named(self, timestamps: object) -> None:
+        # equity_series used to report these as "not strictly increasing".
+        with pytest.raises(ValueError, match="missing values"):
+            to_utc_index(timestamps)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="missing values"):
+            equity_series([100.0, 101.0], timestamps)  # type: ignore[arg-type]
+
     def test_numpy_strings_are_parsed_like_strings(self) -> None:
         values = np.array([np.str_("2024-01-01"), np.str_("2024-01-02")], dtype=object)
 
