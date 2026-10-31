@@ -6,8 +6,11 @@ objects, or, for the period series and buy-and-hold returns, a
 ``pd.Series`` and, for ``plateau_scores``, a tuple of scores. Nothing here
 reads runs, artifacts, caches or an engine's
 ``metrics``, and nothing writes files. No application service or MCP tool
-calls this package yet; ``docs/statistics_leaderboard_integration.md``
-lists what the ML leaderboard still needs before it can.
+calls this package yet. ``docs/statistics_leaderboard_integration.md``
+records the leaderboard integration as reviewed against an older main: the
+leaderboard has since gained recorded parameters, ``None`` metrics and
+parameter-axis ranking, so its list of what is still missing is out of date
+until that document is rewritten.
 
 Known limitations
 -----------------
@@ -77,8 +80,11 @@ Modules, by the question each answers
     How often must the strategy win to break even with its payoff ratio,
     and how much do turnover and costs take per year?
 ``benchmark``
-    Is the strategy doing more than holding the instrument would (beta,
-    alpha, tracking error, information ratio, up/down capture)?
+    Is the strategy doing more than holding the instrument it trades would
+    (beta, alpha, tracking error, information ratio, up/down capture)? A
+    research comparison on the same instrument, without costs; the
+    product's stored benchmark is ``tradingdev.domain.benchmark``, and the
+    ``benchmark`` module docstring says how the two differ.
 
 Dependencies and reading order
 ------------------------------
@@ -110,8 +116,10 @@ What to call:
 * The best of ``N`` trials: ``deflated_sharpe_ratio``.
 * A against B: ``difference_interval_outcome``; ``interval_table_outcome``
   for each strategy's own interval in a forest plot.
-* Against buy-and-hold: ``buy_and_hold_returns`` then
-  ``compare_to_benchmark``.
+* Against buy-and-hold of the same instrument: ``buy_and_hold_returns`` then
+  ``compare_to_benchmark``. This is not the benchmark that runs store and
+  reports show, which ``tradingdev.domain.benchmark`` defines per asset
+  class and buys once with the run's fee and slippage.
 * A parameter search: ``trials_from_metrics``, then ``plateau_summary``,
   ``plateau_grid`` or ``plateau_scores``.
 

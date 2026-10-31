@@ -53,7 +53,7 @@ flowchart LR
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
-| `domain/statistics/` | 與引擎無關的推論統計：期間損益與報酬、Sharpe 區間與多重比較校正、配對比較、參數平原、損益兩平與買進持有基準；目前未接入 services，見[引擎無關的統計分析](#引擎無關的統計分析) |
+| `domain/statistics/` | 與引擎無關的推論統計：期間損益與報酬、Sharpe 區間與多重比較校正、配對比較、參數平原、損益兩平與同一標的、不計成本的買進持有對照（產品保存的正式基準見下一列）；目前未接入 services，見[引擎無關的統計分析](#引擎無關的統計分析) |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 依資產類別固定的基準定義、買進持有計算與基準行情取得 |
 | `domain/data/`、`domain/indicators/`、`domain/ml/` | 行情與特徵資料處理、技術指標、模型及訓練邏輯 |
 | `adapters/storage/`、`adapters/execution/` | SQLite、revision／manifest／績效檔案保存，以及程序啟動與監督 |
@@ -354,9 +354,13 @@ stdio 回傳本機路徑，不假設客戶端能下載。
 - **與 catalog**：不註冊指標 ID，也不屬於 run 保存的績效產物。平原分析需要的
   最佳化方向由呼叫端依 catalog 的 `optimization_direction` 傳入，模組不自行推斷。
 - **與 MCP／報告服務**：目前沒有 application service、MCP 工具或報告引用這個套件，
-  模型與使用者都看不到這些結果；目前只有測試呼叫它。接入 ML 排行榜前
-  需要的前提整理在 [統計與排行榜整合](docs/statistics_leaderboard_integration.md)，
-  其中部分契約尚待與排行榜負責人議定。
+  模型與使用者都看不到這些結果；目前只有測試呼叫它。
+  [統計與排行榜整合](docs/statistics_leaderboard_integration.md) 記錄的是對較早
+  主線的整合分析；排行榜之後已加入參數欄位、`None` 指標與參數軸排名，其中「尚缺」
+  的清單已經過時，待該文件改寫。
+- **與產品基準**：`statistics/benchmark.py` 是同一標的、不計成本的研究對照；
+  run 保存並在報告呈現的正式基準由 `domain/benchmark.py` 定義（依資產類別固定標的、
+  以該次 run 的手續費與滑價買進一次後持有）。兩者回答不同問題，數值不能互換；成本規則是否統一尚待決定。
 
 ## 一致性、程序管理與保證範圍
 

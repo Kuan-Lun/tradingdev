@@ -1,5 +1,15 @@
 """Buy-and-hold benchmark returns and a strategy's regression on them.
 
+This is a research comparison, not the product's benchmark.
+:mod:`tradingdev.domain.benchmark` defines the benchmark that runs store
+and reports show: a fixed instrument per asset class (BTC/USDT for any
+Binance USDT pair, the S&P 500 for US equities), bought once with the
+run's fee and slippage and held to the end. This module takes whatever prices
+the caller passes, charges no costs, and is meant for holding the very
+instrument the strategy trades; the two answer different questions and
+their figures are not interchangeable. Whether the cost rules should be
+unified is an open decision.
+
 All functions take series supplied by the caller, such as daily returns from
 :func:`tradingdev.domain.statistics.periods.period_returns`, and never read
 runs, artifacts, or caches.
@@ -17,15 +27,20 @@ strategy co-moves with the benchmark (:func:`compare_to_benchmark`).
 
 Reading the results:
 
-* Beta here is not systematic risk. The strategy trades the same instrument
-  as the benchmark, so the regression slope mostly measures the strategy's
-  average net exposure to that instrument (1.0 always long, 0.0 flat on
-  average or balanced long and short, negative net short), not a market
-  beta in the CAPM sense. Alpha is correspondingly the return not explained
-  by that average exposure, which includes any timing skill.
-* The benchmark pays no transaction costs and the strategy does. This is
-  deliberate and fair: costs are part of what a strategy has to overcome to
-  beat holding the asset, so do not "fix" it by charging the benchmark.
+* Beta here is not systematic risk. When the strategy trades the same
+  instrument as the benchmark, the regression slope mostly measures the
+  strategy's average net exposure to that instrument (1.0 always long, 0.0
+  flat on average or balanced long and short, negative net short), not a
+  market beta in the CAPM sense. Alpha is correspondingly the return not
+  explained by that average exposure, which includes any timing skill. For
+  a different instrument, such as the product's BTC/USDT benchmark of an
+  ETH strategy, neither reading holds.
+* The benchmark pays no transaction costs and the strategy does. Here that
+  is deliberate: costs are part of what a strategy has to overcome to beat
+  holding the asset. The product's stored benchmark charges the run's entry
+  costs instead, so the two excess returns differ by construction; its
+  "excess return" in reports is also a total-return difference, while
+  ``excess_return_annualised`` here is an annualised mean difference.
 * Both series must cover the same bars. They are always aligned with
   :func:`tradingdev.domain.statistics.comparison.align_returns`, which keeps
   only the periods both cover; build the benchmark from the same bars and
