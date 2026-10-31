@@ -399,9 +399,11 @@ being converted to `null`. Invalid resolved execution settings return
 `invalid_optimization_request` for optimization, without creating a job.
 For refusal codes and caller-specific error handling, use the relevant
 [MCP execution tools](../src/tradingdev/mcp/tools/execution.py),
-[PreflightService](../src/tradingdev/app/preflight_service.py),
 [JobService](../src/tradingdev/app/job_service.py) or
 [OptimizationService](../src/tradingdev/app/optimization_service.py).
+MCP preparation exceptions are mapped in
+[`execute_preflight`](../src/tradingdev/adapters/execution/preflight_worker.py)
+and forwarded by [PreflightService](../src/tradingdev/app/preflight_service.py).
 The lower-level `BacktestService` raises exceptions rather than service responses.
 
 The mode must match the presence of walk-forward

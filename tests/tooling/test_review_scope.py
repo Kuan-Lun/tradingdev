@@ -599,15 +599,22 @@ def test_focused_contract_sections_retain_semantics_without_unrelated_context(
         assert (section in selected) == (scope in scopes or scope == "general")
 
 
-def test_quantile_scoring_reference_remains_available_to_authoring_reviewers() -> None:
+def test_quantile_scoring_references_retain_reader_specific_contracts() -> None:
     root = Path(__file__).resolve().parents[2]
-    path = "docs/strategies/quantile_strategy.md"
-    text = (root / path).read_text(encoding="utf-8")
+    guide_path = "docs/strategies/quantile_strategy.md"
+    guide_text = (root / guide_path).read_text(encoding="utf-8")
+    contract_path = "docs/strategy_contract.md"
+    contract_text = (root / contract_path).read_text(encoding="utf-8")
     for scope in ("strategy", "execution", "ml", "interfaces"):
-        selected = "".join(s.text for s in sections_for_scope(scope, path, text))
-        assert "malformed output fails" in selected
-        assert "feature gaps and chunks" in selected
-    assert not sections_for_scope("tooling", path, text)
+        guide = "".join(
+            s.text for s in sections_for_scope(scope, guide_path, guide_text)
+        )
+        contract = "".join(
+            s.text for s in sections_for_scope(scope, contract_path, contract_text)
+        )
+        assert "malformed output fails" in contract
+        assert "feature gaps and chunks" in guide
+    assert not sections_for_scope("tooling", guide_path, guide_text)
 
 
 @pytest.mark.parametrize("path", ["docs/strategy_contract.md", "docs/run_artifacts.md"])

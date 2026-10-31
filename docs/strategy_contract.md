@@ -271,9 +271,17 @@ identity, or with duplicated or decreasing timestamps, raises `ValueError`.
 
 An empty scored frame produces no signals. `RollingRetrainer` and the SafetyVolume
 Risk Gate return before validating either frame; Quantile validates both time
-identities before returning. For Quantile's readiness, model-output validation,
-row alignment and unavailable-feature handling, read its
+identities before returning. For Quantile's readiness and unavailable-feature
+behavior, read its
 [signal logic](strategies/quantile_strategy.md#signal-logic).
+
+When implementing or debugging Quantile alignment and model output, read
+[`QuantileStrategy.generate_signals`](../src/tradingdev/domain/strategies/bundled/quantile_strategy/strategy.py)
+and [`QuantileFeatureEngineer.transform`](../src/tradingdev/domain/ml/features/quantile_features.py).
+Features retain surviving input index labels; callers needing positional mapping
+supply a positional index. Model output requires one finite four-class vector
+per scored feature row, normalized to float64; malformed output fails rather than
+being treated as a feature gap.
 
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.

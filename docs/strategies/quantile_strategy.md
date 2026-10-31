@@ -54,14 +54,8 @@ resetting holding count, entry price and size weight on an unscorable bar. Param
 search uses the same full-frame gap handling. Scoring features omit targets, so
 an unavailable future label does not suppress a usable tail prediction.
 
-When debugging alignment or model output, read
-[`QuantileStrategy.generate_signals`](../../src/tradingdev/domain/strategies/bundled/quantile_strategy/strategy.py)
-and [`QuantileFeatureEngineer.transform`](../../src/tradingdev/domain/ml/features/quantile_features.py).
-Features retain surviving input index labels; callers needing positional mapping
-supply a positional index. Model output requires one finite four-class vector
-per scored feature row, normalized to float64; malformed output fails rather than
-being treated as a feature gap. Even an empty scored frame validates both time
-identities before returning. Shared chronology rules remain in the
+For chronology, empty-frame handling and the developer contracts for feature
+alignment and model output, read the
 [training contract](../strategy_contract.md#training-before-scoring).
 
 ## Running
