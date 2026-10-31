@@ -269,8 +269,10 @@ the input uses a `DatetimeIndex`; the original frames are unchanged. Naive
 values are interpreted as UTC. A frame with no
 identity, or with duplicated or decreasing timestamps, raises `ValueError`.
 
-Empty-frame and model-output checks are implementation-specific; for Quantile's
-readiness, row alignment and unavailable-feature handling, read its
+An empty scored frame produces no signals. `RollingRetrainer` and the SafetyVolume
+Risk Gate return before validating either frame; Quantile validates both time
+identities before returning. For Quantile's readiness, model-output validation,
+row alignment and unavailable-feature handling, read its
 [signal logic](strategies/quantile_strategy.md#signal-logic).
 
 When warm-up or immature horizon labels leave a rolling training slice with no

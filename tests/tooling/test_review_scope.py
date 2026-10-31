@@ -471,6 +471,13 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
             "periods_per_year",
         ),
         (
+            "docs/run_artifacts.md",
+            "results",
+            "Execution Manifest",
+            {"strategy", "execution", "results", "interfaces"},
+            "Empty\nobjects preserve existing mappings",
+        ),
+        (
             "docs/performance_artifacts.md",
             "results",
             "Performance Scopes and Provenance",
