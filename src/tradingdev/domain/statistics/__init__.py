@@ -2,7 +2,9 @@
 
 Every function takes data the caller supplies (equity curves, timestamps,
 trade records, return series or trial rows) and returns frozen result
-objects. Nothing here reads runs, artifacts, caches or an engine's
+objects, or, for the period series and buy-and-hold returns, a
+``pd.Series`` and, for ``plateau_scores``, a tuple of scores. Nothing here
+reads runs, artifacts, caches or an engine's
 ``metrics``, and nothing writes files. No application service or MCP tool
 calls this package yet; ``docs/statistics_leaderboard_integration.md``
 lists what the ML leaderboard still needs before it can.
@@ -78,8 +80,11 @@ Modules, by the question each answers
 Dependencies and reading order
 ------------------------------
 
-``a -> b`` means ``a`` imports ``b``; ``_validation`` holds the input checks
-every module shares::
+``a -> b`` means ``a`` imports ``b``. The private ``_validation`` module
+holds the shared input checks (real-number arrays, counts, seeds); it is
+used by ``periods``, ``sharpe``, ``comparison``, ``plateau`` and
+``breakeven``, and ``performance`` and ``benchmark`` reach it through
+``periods`` and ``comparison``::
 
     performance -> periods, sharpe
     benchmark   -> periods, comparison
@@ -114,11 +119,15 @@ These are spread over the modules and are the easiest part to misuse.
 
 **Raise or ``None``.** Invalid input raises ``ValueError``: a value of the
 wrong kind, non-finite, empty or mismatched in length, unordered
-timestamps, an unknown direction or frequency, or a count that is not a
-built-in ``int`` of at least one. Nothing is converted on the way:
-booleans and numeric strings are not numbers, NumPy integers are not
-counts, and numeric timestamps are rejected because a number has no unit
-(convert Unix seconds with ``pd.to_datetime(values, unit="s")``). A figure
+timestamps, an unknown direction or frequency, a return series that is
+not a ``pd.Series`` where returns are paired by index, a count that is
+not a built-in ``int`` of at least one, or a seed that is not ``None`` or
+a built-in ``int`` of at least zero. Nothing is converted on the way:
+booleans (also inside lists and object arrays) and numeric strings are not
+numbers, NumPy integers are not counts, and numeric timestamps are rejected
+because a number has no unit (convert Unix seconds with
+``pd.to_datetime(values, unit="s")``). Integers are numbers, though, so a
+0/1 signal of integer dtype passed as returns is not caught. A figure
 that is undefined for valid input is ``None``, never ``0`` or infinity: a
 Sharpe ratio of fewer than two returns or of constant returns, a return
 or drawdown percentage when equity is not strictly positive, a win rate
@@ -160,7 +169,9 @@ intervals, ``deflated_sharpe_ratio`` (whose trial Sharpes must be
 annualised with the same value), ``summarize_performance`` and
 ``compare_to_benchmark`` all annualise with it. Use the value that
 matches the return frequency, and the same value for every figure that is
-compared; the functions cannot detect a mismatch. The exception is
+compared; the functions cannot detect a mismatch. All of them require it
+except ``summarize_performance``, which defaults to 365 for markets that
+trade every day; pass it explicitly for anything else. The exception is
 ``probabilistic_sharpe_ratio``, which works per period: its
 ``benchmark_sr`` is a per-period Sharpe, so divide an annual benchmark by
 ``sqrt(periods_per_year)``.
