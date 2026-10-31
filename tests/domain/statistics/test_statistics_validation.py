@@ -163,6 +163,14 @@ class TestTimestamps:
         with pytest.raises(ValueError, match="missing values"):
             equity_series([100.0, 101.0], timestamps)  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("timestamps", [[], np.array([])], ids=["list", "array"])
+    def test_empty_timestamps_give_an_empty_index(self, timestamps: object) -> None:
+        # np.asarray([]) is float64; it used to be refused as numbers.
+        index = to_utc_index(timestamps)  # type: ignore[arg-type]
+
+        assert len(index) == 0
+        assert str(index.tz) == "UTC"
+
     def test_numpy_strings_are_parsed_like_strings(self) -> None:
         values = np.array([np.str_("2024-01-01"), np.str_("2024-01-02")], dtype=object)
 

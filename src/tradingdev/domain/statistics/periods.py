@@ -62,6 +62,9 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
     and the caller can state the unit once, for example with
     ``pd.to_datetime(values, unit="s")``. Run outputs already hold datetimes.
 
+    Empty input gives an empty UTC index; whether that is acceptable is the
+    caller's rule, and :func:`equity_series` rejects empty equity.
+
     Raises:
         ValueError: If ``timestamps`` is not one-dimensional, holds numbers,
             booleans, durations, bytes or missing values (``NaT``,
@@ -76,9 +79,12 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
         if values.ndim != 1:
             raise ValueError("timestamps must be one-dimensional")
         kind = values.dtype.kind
-        if kind in "biufc":
+        if values.size == 0:
+            # np.asarray([]) is float64, which is not a number given.
+            index = pd.DatetimeIndex([])
+        elif kind in "biufc":
             raise ValueError(_NUMERIC_TIMESTAMPS.format(values.dtype))
-        if kind in "OU":
+        elif kind in "OU":
             index = _parse_each(values)
         elif kind == "M":
             index = pd.DatetimeIndex(values)
