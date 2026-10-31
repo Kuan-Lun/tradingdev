@@ -589,9 +589,10 @@ promotion and executable-state checks. Static/quality failures stop checks befor
 generated Python executes; runtime checks have the [security boundary](#security-model).
 
 Names are optional and separate from technical identity. `display_name` and
-YAML `strategy.display_name` must agree when both are given; otherwise the first
-outline line supplies the name, limited to 80 characters. It is part of the base
-config hash, so renaming requires a revision. Presentation titles are independent.
+YAML `strategy.display_name` must agree when both are given. If only one is given,
+that name is used; if neither is given, the first outline line supplies the name,
+limited to 80 characters. It is part of the base config hash, so renaming requires
+a revision. Presentation titles are independent.
 `request_summary` is derived from the outline, not a save input.
 
 Creation never overwrites bundled IDs, legacy files, incomplete directories or
