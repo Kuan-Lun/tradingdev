@@ -393,6 +393,26 @@ def _count_parameters() -> list[tuple[str, Callable[[int], object]]]:
             lambda v: difference_interval_outcome(_A, _B, _mean, reps=20, block_size=v),
         ),
         ("reps", lambda v: interval_table({"a": _A}, _mean, reps=v)),
+        (
+            "block_size",
+            lambda v: interval_table({"a": _A}, _mean, reps=20, block_size=v),
+        ),
+        (
+            "block_size",
+            lambda v: interval_table_outcome({"a": _A}, _mean, reps=20, block_size=v),
+        ),
+        (
+            "block_size",
+            lambda v: sharpe_interval_outcome(
+                _A, periods_per_year=365, reps=20, block_size=v
+            ),
+        ),
+        (
+            "block_size",
+            lambda v: sharpe_confidence_interval(
+                _A, periods_per_year=365, reps=20, block_size=v
+            ),
+        ),
         ("reps", lambda v: interval_table_outcome({"a": _A}, _mean, reps=v)),
         (
             "reps",

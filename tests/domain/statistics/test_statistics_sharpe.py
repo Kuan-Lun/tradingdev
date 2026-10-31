@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import pytest
-from arch.bootstrap import IIDBootstrap
+from arch.bootstrap import IIDBootstrap, optimal_block_length
 
 from tradingdev.domain.statistics.periods import period_returns
 from tradingdev.domain.statistics.sharpe import (
@@ -34,6 +34,26 @@ def _ar1(n: int, phi: float, seed: int) -> npt.NDArray[np.float64]:
     for t in range(1, n):
         values[t] = phi * values[t - 1] + shocks[t]
     return values + 0.0005
+
+
+def _regime_returns(seed: int, n: int = 1000) -> npt.NDArray[np.float64]:
+    """Returns whose volatility switches between two regimes, as in review.
+
+    Each period the regime switches with probability 0.01; the standard
+    deviations are 0.001 and 0.02 and the innovations are independent, so
+    the returns are nearly uncorrelated while their volatility persists.
+    """
+    rng = np.random.default_rng(seed)
+    state = np.empty(n, dtype=int)
+    state[0] = rng.integers(2)
+    switches = rng.random(n - 1) < 0.01
+    for t in range(1, n):
+        state[t] = 1 - state[t - 1] if switches[t - 1] else state[t - 1]
+    return 0.01 + np.where(state, 0.02, 0.001) * rng.normal(size=n)
+
+
+# Per-period Sharpe of _regime_returns, from its stationary distribution.
+_REGIME_SHARPE = 0.01 / math.sqrt((0.02**2 + 0.001**2) / 2)
 
 
 def _annual_sharpe(values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
@@ -281,6 +301,81 @@ class TestIntervalOutcome:
         assert outcome == sharpe_confidence_interval(
             returns, periods_per_year=_MONTHLY, reps=200, seed=0
         )
+
+
+class TestVolatilityClustering:
+    """Blocks must keep volatility persistence, not only autocorrelation."""
+
+    def test_the_review_simulation_covers_far_more_often(self) -> None:
+        # The review's reproduction, unchanged. Blocks fitted to the returns
+        # alone had a median length of 2 and covered the true Sharpe in 49
+        # of 100 samples; the rule measured 70. That is still well below the
+        # nominal 95%, a limitation the docstring states: the bound checks
+        # the improvement, it does not claim calibration.
+        covered = 0
+        blocks = []
+        for seed in range(100):
+            result = sharpe_interval_outcome(
+                _regime_returns(seed),
+                periods_per_year=1,
+                confidence=0.95,
+                reps=300,
+                seed=0,
+            )
+            assert isinstance(result, SharpeInterval)
+            covered += result.lower <= _REGIME_SHARPE <= result.upper
+            blocks.append(result.block_size)
+
+        assert covered >= 65
+        assert np.median(blocks) >= 30
+
+    def test_volatility_regimes_lengthen_the_block(self) -> None:
+        values = _regime_returns(0)
+        result = sharpe_interval_outcome(values, periods_per_year=1, reps=50, seed=0)
+
+        assert isinstance(result, SharpeInterval)
+        squared = float(optimal_block_length(values**2)["stationary"].iloc[0])
+        assert result.block_size == math.ceil(squared)
+        assert result.block_size > 10 * math.ceil(
+            float(optimal_block_length(values)["stationary"].iloc[0])
+        )
+
+    def test_independent_returns_keep_a_short_block(self) -> None:
+        values = 0.05 + np.random.default_rng(0).normal(size=1000)
+        result = sharpe_interval_outcome(values, periods_per_year=1, reps=50, seed=0)
+
+        assert isinstance(result, SharpeInterval)
+        assert result.block_size <= 3
+
+    def test_mean_dependence_is_still_kept(self) -> None:
+        # Squares of an AR(1) are less persistent than the series itself, so
+        # the squares alone would shorten the block.
+        values = _ar1(2000, 0.5, seed=1)
+        result = sharpe_interval_outcome(values, periods_per_year=1, reps=50, seed=0)
+        raw = math.ceil(float(optimal_block_length(values)["stationary"].iloc[0]))
+
+        assert isinstance(result, SharpeInterval)
+        assert result.block_size >= raw
+
+    @pytest.mark.parametrize(
+        "call",
+        [sharpe_interval_outcome, sharpe_confidence_interval],
+        ids=["outcome", "interval"],
+    )
+    def test_a_given_block_size_is_used_and_reported(self, call: object) -> None:
+        values = _regime_returns(0)
+        fixed = call(  # type: ignore[operator]
+            values, periods_per_year=1, reps=200, seed=0, block_size=7
+        )
+        other = call(  # type: ignore[operator]
+            values, periods_per_year=1, reps=200, seed=0, block_size=80
+        )
+
+        assert isinstance(fixed, SharpeInterval)
+        assert isinstance(other, SharpeInterval)
+        assert fixed.block_size == 7
+        assert other.block_size == 80
+        assert (fixed.lower, fixed.upper) != (other.lower, other.upper)
 
 
 class TestValidation:

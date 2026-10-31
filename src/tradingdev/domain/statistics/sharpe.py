@@ -107,7 +107,9 @@ class SharpeInterval:
         lower: Lower percentile bound of the bootstrap distribution.
         upper: Upper percentile bound of the bootstrap distribution.
         confidence: Two-sided confidence level of ``[lower, upper]``.
-        block_size: Mean block length of the stationary bootstrap.
+        block_size: Mean block length of the stationary bootstrap, either
+            given by the caller or estimated from the returns and their
+            squares.
         reps: Number of bootstrap resamples drawn.
         valid_reps: Resamples with a defined Sharpe ratio; resamples whose
             returns are all equal are discarded.
@@ -169,6 +171,7 @@ def sharpe_confidence_interval(
     confidence: float = 0.95,
     reps: int = 1000,
     seed: int | None = None,
+    block_size: int | None = None,
 ) -> SharpeInterval | None:
     """Stationary-bootstrap percentile interval of the annualised Sharpe.
 
@@ -181,6 +184,7 @@ def sharpe_confidence_interval(
         confidence=confidence,
         reps=reps,
         seed=seed,
+        block_size=block_size,
     )
     return outcome if isinstance(outcome, SharpeInterval) else None
 
@@ -192,6 +196,7 @@ def sharpe_interval_outcome(
     confidence: float = 0.95,
     reps: int = 1000,
     seed: int | None = None,
+    block_size: int | None = None,
 ) -> SharpeInterval | IntervalUnavailable:
     """Stationary-bootstrap percentile interval of the annualised Sharpe.
 
@@ -201,15 +206,44 @@ def sharpe_interval_outcome(
     resamples blocks with geometrically distributed lengths, keeping the
     short-range dependence while producing a stationary resample.
 
-    Block size: the mean block length is the Politis and White (2004)
-    automatic estimate, with the correction of Patton, Politis and White
-    (2009), as computed by :func:`arch.bootstrap.optimal_block_length`,
-    rounded up to a whole number of periods and at least one. The estimate
-    adapts to the measured autocorrelation: nearly independent returns get
-    a block length near one, persistent returns get longer blocks. It needs
-    a reasonable sample, so fewer than ``MIN_BOOTSTRAP_OBSERVATIONS``
-    returns give no interval. That is 20 periods at any frequency: 20 days
-    of daily returns, but 20 months of monthly ones.
+    Block size: the blocks must keep the dependence the Sharpe ratio
+    depends on, which is that of the mean and of the variance. Returns can
+    be nearly uncorrelated while their volatility persists for long
+    stretches, and blocks fitted to the returns alone then cut those
+    stretches apart and understate the variability. The mean block length
+    is therefore the larger of two Politis and White (2004) automatic
+    estimates, with the correction of Patton, Politis and White (2009), as
+    computed by :func:`arch.bootstrap.optimal_block_length`: one for the
+    returns and one for the squared returns, rounded up to a whole number
+    of periods and at least one. Nearly independent returns with stable
+    volatility still get a block length near one. The estimate needs a
+    reasonable sample, so fewer than ``MIN_BOOTSTRAP_OBSERVATIONS`` returns
+    give no interval. That is 20 periods at any frequency: 20 days of daily
+    returns, but 20 months of monthly ones.
+
+    The rule improves coverage but does not guarantee it. In the review
+    simulation (two volatility regimes with standard deviations 0.001 and
+    0.02, switching with probability 0.01 per period, 1000 periods, 100
+    samples, 300 resamples), nominal 95% intervals covered the true Sharpe
+    ratio in 70 samples, against 49 with blocks fitted to the returns
+    alone; regimes lasting about a hundred periods are few in one sample,
+    which no block length repairs. The jackknife influence values used for
+    paired differences covered 60 in the same simulation, because the
+    variance term is diluted by the mean term. With the same settings the
+    rule kept the previous coverage on independent returns (94 of 100) and
+    on AR(1) returns with coefficient 0.5 (93); on GARCH(1,1) returns with
+    a per-period Sharpe ratio of 0.05 it covered 89 against 91, within the
+    sampling error of 100 samples.
+
+    Pass ``block_size`` to use a fixed mean block length instead, reported
+    back unchanged. Give one whenever the estimate is known to be too
+    short: dependence that neither the returns nor their squares show
+    (regimes in higher moments, or returns whose persistence spans much of
+    the sample), or a sample long enough to bootstrap but too short for a
+    reliable estimate. A given ``block_size`` does not lift the minimum:
+    fewer than ``MIN_BOOTSTRAP_OBSERVATIONS`` returns still give no
+    interval. A block length that is too short narrows the interval; one
+    that is too long costs only precision.
 
     Returns an :class:`IntervalUnavailable` when the sample is too short,
     the Sharpe ratio itself is undefined, or no resample has a defined
@@ -218,15 +252,18 @@ def sharpe_interval_outcome(
 
     Raises:
         ValueError: If ``periods_per_year`` is not positive and finite,
-            ``confidence`` is not strictly between 0 and 1, ``reps`` is not
-            a positive integer, ``seed`` is neither ``None`` nor a
-            non-negative int, or a return is not a finite number.
+            ``confidence`` is not strictly between 0 and 1, ``reps`` or a
+            given ``block_size`` is not a positive integer, ``seed`` is
+            neither ``None`` nor a non-negative int, or a return is not a
+            finite number.
     """
     scale = _annualisation(periods_per_year)
     if not (isinstance(confidence, numbers.Real) and 0.0 < confidence < 1.0):
         raise ValueError("confidence must be strictly between 0 and 1")
     positive_int(reps, "reps")
     seed_value(seed)
+    if block_size is not None:
+        positive_int(block_size, "block_size")
     values = _returns(returns)
     sharpe = _period_sharpe(values)
 
@@ -244,8 +281,8 @@ def sharpe_interval_outcome(
     if sharpe is None:
         return unavailable("undefined_statistic", 0)
 
-    estimate = float(optimal_block_length(values)["stationary"].iloc[0])
-    block_size = max(1, math.ceil(estimate)) if math.isfinite(estimate) else 1
+    if block_size is None:
+        block_size = _returns_block_size(values[:, np.newaxis])
     bootstrap = StationaryBootstrap(
         block_size, values, seed=np.random.default_rng(seed)
     )
@@ -444,6 +481,32 @@ def deflated_sharpe_ratio(
         n_trials=n,
         trial_sharpe_std_annualised=std_annualised,
     )
+
+
+def _block_length(columns: npt.NDArray[np.float64]) -> int:
+    """Largest automatic stationary block length over the columns.
+
+    Constant columns have no dependence to preserve and break the
+    estimator, so they are left out; without a finite estimate the block
+    length is one.
+    """
+    varying = columns[:, np.ptp(columns, axis=0) > 0.0]
+    if varying.shape[1] == 0:
+        return 1
+    estimates = optimal_block_length(varying)["stationary"].to_numpy()
+    finite = estimates[np.isfinite(estimates)]
+    if finite.size == 0:
+        return 1
+    return max(1, math.ceil(float(finite.max())))
+
+
+def _returns_block_size(columns: npt.NDArray[np.float64]) -> int:
+    """Block length that keeps the dependence of returns and of volatility.
+
+    ``columns`` holds one return series per column. Their squares carry
+    the persistence of volatility that the returns themselves may not show.
+    """
+    return _block_length(np.hstack([columns, columns**2]))
 
 
 def _period_sharpe(values: npt.NDArray[np.float64]) -> float | None:

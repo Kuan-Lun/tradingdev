@@ -24,13 +24,16 @@ Read these first; each one limits what a result may claim.
   ``MIN_BOOTSTRAP_OBSERVATIONS = 20`` periods (20 common periods for a
   comparison): 20 days of daily returns, but 20 months of monthly ones, so
   a one-year run never has a monthly interval.
-* **Single-series Sharpe intervals may be too narrow.** Their block length
-  follows the linear autocorrelation of the returns only, not the
-  persistence of volatility. In a review simulation with two volatility
-  regimes, the 95% interval covered the true Sharpe in 49 of 100 samples.
-  This affects ``sharpe_interval_outcome`` and the individual rows of
-  ``interval_table_outcome``; paired differences choose their block length
-  from the statistic itself.
+* **Bootstrap intervals can still be too narrow.** Single-series Sharpe
+  intervals and the individual rows of ``interval_table_outcome`` choose
+  their block length from the returns and their squares, so persistent
+  volatility lengthens the blocks; paired differences choose it from the
+  statistic itself. This improves coverage without guaranteeing it: in a
+  simulation with two volatility regimes that switch about every hundred
+  periods, nominal 95% Sharpe intervals covered the true value in 70 of
+  100 samples (49 when blocks followed the returns alone). Long regimes
+  are few in one sample, and no block length repairs that. Pass
+  ``block_size`` when the dependence is known to outlast the estimate.
 * **Plateau scores are local to one search.** They depend on the radius
   and the grid density, so they compare trials within one run only, never
   across runs or radii. A broad plateau fitted to one market regime is

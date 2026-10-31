@@ -11,6 +11,7 @@ import pytest
 from arch.bootstrap import optimal_block_length
 
 from tradingdev.domain.statistics.comparison import (
+    StatisticInterval,
     align_returns,
     difference_interval,
     difference_interval_outcome,
@@ -376,6 +377,45 @@ class TestIntervalTable:
         }
 
         assert interval_table(series, frequency.sharpe, reps=50) is None
+
+
+class TestIntervalTableVolatility:
+    """Individual rows use the same volatility-aware block rule as Sharpe."""
+
+    @staticmethod
+    def _regime(seed: int, n: int = 1000) -> pd.Series:
+        rng = np.random.default_rng(seed)
+        state = np.empty(n, dtype=int)
+        state[0] = rng.integers(2)
+        switches = rng.random(n - 1) < 0.01
+        for t in range(1, n):
+            state[t] = 1 - state[t - 1] if switches[t - 1] else state[t - 1]
+        return _daily(0.01 + np.where(state, 0.02, 0.001) * rng.normal(size=n))
+
+    def test_volatility_regimes_lengthen_the_shared_block(self) -> None:
+        clustered = self._regime(0)
+        steady = _daily(np.random.default_rng(1).normal(0.001, 0.01, 1000))
+        table = interval_table_outcome(
+            {"clustered": clustered, "steady": steady}, np.mean, reps=50, seed=0
+        )
+        squared = optimal_block_length(clustered.to_numpy() ** 2)["stationary"]
+
+        rows = list(table.values())
+        assert all(isinstance(row, StatisticInterval) for row in rows)
+        assert {row.block_size for row in rows} == {  # type: ignore[union-attr]
+            math.ceil(float(squared.iloc[0]))
+        }
+
+    def test_a_given_block_size_is_used_and_reported(self) -> None:
+        series = {"a": self._regime(0), "b": self._regime(1)}
+        table = interval_table_outcome(series, np.mean, reps=50, seed=0, block_size=9)
+        collapsed = interval_table(series, np.mean, reps=50, seed=0, block_size=9)
+
+        assert collapsed is not None
+        for rows in (table, collapsed):
+            for row in rows.values():
+                assert isinstance(row, StatisticInterval)
+                assert row.block_size == 9
 
 
 def _only_on_originals(

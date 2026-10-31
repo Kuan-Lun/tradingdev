@@ -52,7 +52,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-from arch.bootstrap import StationaryBootstrap, optimal_block_length
+from arch.bootstrap import StationaryBootstrap
 
 from tradingdev.domain.statistics._validation import (
     positive_int,
@@ -63,6 +63,8 @@ from tradingdev.domain.statistics.sharpe import (
     MIN_BOOTSTRAP_OBSERVATIONS,
     IntervalUnavailable,
     UnavailableReason,
+    _block_length,
+    _returns_block_size,
 )
 
 if TYPE_CHECKING:
@@ -105,7 +107,8 @@ class StatisticInterval:
         upper: Upper percentile bound of the bootstrap distribution.
         confidence: Two-sided confidence level of ``[lower, upper]``.
         block_size: Mean block length of the stationary bootstrap, shared
-            by every series of the table.
+            by every series of the table: either given by the caller or
+            estimated from the series and their squares.
         overlap: Number of aligned observations.
         reps: Number of bootstrap resamples drawn.
         valid_reps: Resamples with a defined statistic.
@@ -389,6 +392,7 @@ def interval_table(
     reps: int = 2000,
     confidence: float = 0.95,
     seed: int | None = None,
+    block_size: int | None = None,
 ) -> dict[str, StatisticInterval | None] | None:
     """Individual stationary-bootstrap intervals for a forest plot.
 
@@ -401,10 +405,17 @@ def interval_table(
     positive_int(reps, "reps")
     _tail(confidence)
     seed_value(seed)
+    if block_size is not None:
+        positive_int(block_size, "block_size")
     if not align_returns(series_by_name).sufficient:
         return None
     table = interval_table_outcome(
-        series_by_name, statistic, reps=reps, confidence=confidence, seed=seed
+        series_by_name,
+        statistic,
+        reps=reps,
+        confidence=confidence,
+        seed=seed,
+        block_size=block_size,
     )
     return {
         name: row if isinstance(row, StatisticInterval) else None
@@ -419,13 +430,22 @@ def interval_table_outcome(
     reps: int = 2000,
     confidence: float = 0.95,
     seed: int | None = None,
+    block_size: int | None = None,
 ) -> dict[str, StatisticInterval | IntervalUnavailable]:
     """Individual stationary-bootstrap intervals for a forest plot.
 
     The series are aligned with :func:`align_returns` first, so every row
     covers the same periods, and resampled jointly with one block length:
-    the largest Politis and White estimate over the series, so no series'
-    dependence is cut short.
+    the largest Politis and White estimate over the series and their
+    squares, so neither a series' own dependence nor the persistence of its
+    volatility is cut short. This is the rule of
+    :func:`~tradingdev.domain.statistics.sharpe.sharpe_interval_outcome`,
+    whose docstring gives its measured coverage: better than blocks fitted
+    to the returns alone when volatility clusters, still below the nominal
+    level. Pass ``block_size`` to use a fixed mean block length instead,
+    under the same conditions as there, and for statistics whose dependence
+    neither the returns nor their squares describe, such as a maximum
+    drawdown.
 
     These intervals answer "how precise is each estimate", not "do two
     strategies differ". Non-overlapping rows imply a significant difference;
@@ -441,15 +461,17 @@ def interval_table_outcome(
     undefined on the aligned returns or on every resample.
 
     Raises:
-        ValueError: If no series is given, ``reps`` is not a positive
-            integer, ``seed`` is neither ``None`` nor a non-negative int,
-            ``confidence`` is not strictly between 0 and 1, a value is not
-            a ``pd.Series``, an index has duplicate labels, or a return is
-            not a finite number.
+        ValueError: If no series is given, ``reps`` or a given
+            ``block_size`` is not a positive integer, ``seed`` is neither
+            ``None`` nor a non-negative int, ``confidence`` is not strictly
+            between 0 and 1, a value is not a ``pd.Series``, an index has
+            duplicate labels, or a return is not a finite number.
     """
     positive_int(reps, "reps")
     tail = _tail(confidence)
     seed_value(seed)
+    if block_size is not None:
+        positive_int(block_size, "block_size")
     aligned = align_returns(series_by_name)
     columns = [aligned.frame[name].to_numpy() for name in aligned.frame.columns]
     if not aligned.sufficient:
@@ -466,7 +488,8 @@ def interval_table_outcome(
     def resample(*values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return np.array([_evaluate(statistic, column) for column in values])
 
-    block_size = _block_size(aligned.frame)
+    if block_size is None:
+        block_size = _returns_block_size(np.column_stack(columns))
     bootstrap = StationaryBootstrap(
         block_size, *columns, seed=np.random.default_rng(seed)
     )
@@ -526,18 +549,6 @@ def _unavailable(
     )
 
 
-def _block_size(frame: pd.DataFrame) -> int:
-    # A constant series has no dependence to preserve and breaks the estimator.
-    varying = frame.loc[:, np.ptp(frame.to_numpy(), axis=0) > 0.0]
-    if varying.empty:
-        return 1
-    estimates = optimal_block_length(varying)["stationary"].to_numpy()
-    finite = estimates[np.isfinite(estimates)]
-    if finite.size == 0:
-        return 1
-    return max(1, math.ceil(float(finite.max())))
-
-
 def _difference_block_size(
     statistic: Statistic,
     a: npt.NDArray[np.float64],
@@ -546,7 +557,7 @@ def _difference_block_size(
     influence = _jackknife_influence(statistic, a, b)
     if influence is None:
         influence = a - b
-    return _block_size(pd.DataFrame({"influence": influence}))
+    return _block_length(influence[:, np.newaxis])
 
 
 def _jackknife_influence(
