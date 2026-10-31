@@ -460,8 +460,15 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
             "docs/execution_plans.md",
             "execution",
             "Execution Plans and Confirmation Documents",
-            {"execution", "results", "interfaces"},
+            {"strategy", "execution", "results", "interfaces"},
             "confirmation_adjustment_requested",
+        ),
+        (
+            "docs/performance_artifacts.md",
+            "results",
+            "Metric Interpretation",
+            {"strategy", "execution", "results", "interfaces"},
+            "periods_per_year",
         ),
         (
             "docs/performance_artifacts.md",
@@ -528,3 +535,81 @@ def test_research_contracts_reach_all_product_reviewers_without_tooling_duplicat
         assert contract in sections_for_scope(scope, path, text)
     for scope in ("tooling", "presentation"):
         assert contract not in sections_for_scope(scope, path, text)
+
+
+@pytest.mark.parametrize(
+    ("path", "heading", "scopes", "evidence"),
+    [
+        (
+            "docs/strategy_contract.md",
+            "Signal and Execution Semantics",
+            {"strategy", "execution", "results", "interfaces"},
+            "Stop-loss takes priority",
+        ),
+        (
+            "docs/strategy_contract.md",
+            "Draft Cleanup",
+            {"strategy", "execution", "results", "interfaces"},
+            "Ambiguous history",  # Matched case-insensitively below.
+        ),
+        (
+            "docs/run_artifacts.md",
+            "Job State and Worker Identity",
+            {"execution", "results", "interfaces"},
+            "potentially reused PID",
+        ),
+        (
+            "docs/run_artifacts.md",
+            "Market Data Cache",
+            {"data", "results", "interfaces"},
+            "successful empty ones",
+        ),
+        (
+            "docs/run_artifacts.md",
+            "Automatic DVOL Queries",
+            {"data", "results", "interfaces"},
+            "unqueried interval",
+        ),
+        (
+            "docs/run_artifacts.md",
+            "Research Notes and Archives",
+            {"results", "interfaces"},
+            "do not modify runs",
+        ),
+    ],
+)
+def test_focused_contract_sections_retain_semantics_without_unrelated_context(
+    path: str, heading: str, scopes: set[str], evidence: str
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / path).read_text(encoding="utf-8")
+    section = next(
+        part for part in markdown_sections(path, text) if part.headings[-1] == heading
+    )
+    assert evidence.lower() in " ".join(section.text.lower().split())
+    for scope in SCOPES:
+        selected = sections_for_scope(scope, path, text)
+        assert (section in selected) == (scope in scopes or scope == "general")
+
+
+def test_quantile_scoring_reference_remains_available_to_authoring_reviewers() -> None:
+    root = Path(__file__).resolve().parents[2]
+    path = "docs/strategies/quantile_strategy.md"
+    text = (root / path).read_text(encoding="utf-8")
+    for scope in ("strategy", "execution", "ml", "interfaces"):
+        selected = "".join(s.text for s in sections_for_scope(scope, path, text))
+        assert "malformed output fails" in selected
+        assert "feature gaps and chunks" in selected
+    assert not sections_for_scope("tooling", path, text)
+
+
+@pytest.mark.parametrize("path", ["docs/strategy_contract.md", "docs/run_artifacts.md"])
+def test_contract_headings_have_reviewed_ownership(path: str) -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / path).read_text(encoding="utf-8")
+    for scope in SCOPES:
+        if scope != "general":
+            assert (
+                selection_reason(scope, path, text)
+                == "registered-heading-responsibility"
+            )
