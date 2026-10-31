@@ -7,14 +7,19 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import pytest
 import yaml
 
-from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.execution_fixtures import (
+    confirm_prepared,
+    research_arguments,
+    research_from_config,
+    research_input,
+    save_execution_evidence,
+)
 
 if TYPE_CHECKING:
-    import pandas as pd
-
     from tests.integration.mcp_harness import MCPClient, MCPWorkspace
 
 pytestmark = [pytest.mark.integration, pytest.mark.anyio]
@@ -29,9 +34,7 @@ RUN_ARGUMENTS = {
     "end_date": "2024-01-08",
 }
 
-PREPARE_ARGUMENTS = RUN_ARGUMENTS | execution_options(
-    {"fast_period": 3, "slow_period": 8}
-)
+PREPARE_ARGUMENTS = research_arguments(RUN_ARGUMENTS)
 
 
 async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
@@ -52,6 +55,7 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"]["parameters"] = {"fast_period": 3, "slow_period": 8}
     config["backtest"]["symbol"] = "ETH/USDT"
+    config["data"]["requirements"]["market"]["symbol"] = "ETH/USDT"
     config["random_seed"] = 42
     config_text = yaml.safe_dump(config)
     saved = await client.call(
@@ -59,7 +63,7 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
         strategy_id=STRATEGY_ID,
         code=code,
         yaml_config=config_text,
-        request_summary=PROMPT,
+        research=research_from_config(config, outline=PROMPT),
     )
     assert saved["success"], saved
     assert saved["status"] == "draft"
@@ -97,7 +101,7 @@ async def test_generated_strategy_full_mcp_workflow(
             "get_job_status",
             "get_artifact",
         } <= tools.keys()
-        assert {"strategy_id", "code", "yaml_config"} <= set(
+        assert {"research", "code", "yaml_config"} <= set(
             tools["save_strategy"].input_schema["required"]
         )
         assert all(
@@ -117,9 +121,15 @@ async def test_generated_strategy_full_mcp_workflow(
         assert not (await client.call("promote_strategy", strategy_id=STRATEGY_ID))[
             "success"
         ]
-        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
-            "success"
-        ]
+        assert not (
+            await client.call(
+                "prepare_backtest",
+                **PREPARE_ARGUMENTS,
+                evidence_id=await save_execution_evidence(
+                    client, {"fast_period": 3, "slow_period": 8}
+                ),
+            )
+        )["success"]
         assert (await client.call("list_jobs"))["items"] == []
         await make_runnable(client, saved["revision_id"])
         promoted = await client.call(
@@ -138,7 +148,12 @@ async def test_generated_strategy_full_mcp_workflow(
         assert data["success"] and data["rows"] > 0
         assert data["processed_path"] == str(cache_path)
         prepared = await client.call(
-            "prepare_backtest", **PREPARE_ARGUMENTS, revision_id=saved["revision_id"]
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+            revision_id=saved["revision_id"],
         )
         started = await confirm_prepared(client, prepared)
         assert len(started["manifest_hash"]) == 64
@@ -248,7 +263,7 @@ async def test_generated_strategy_full_mcp_workflow(
             "ledger",
             "trades",
         ]
-        assert json.loads(report_manifest)["schema_version"] == 2
+        assert json.loads(report_manifest)["schema_version"] == 3
         source = await client.read_artifact_text(
             by_type["strategy_source"]["artifact_id"]
         )
@@ -305,6 +320,10 @@ async def test_generated_strategy_full_mcp_workflow(
             strategy_id=STRATEGY_ID,
             code=code + "\n# Revised draft\n",
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         assert revision["status"] == "draft"
         assert revision["revision_id"] != saved["revision_id"]
@@ -314,16 +333,27 @@ async def test_generated_strategy_full_mcp_workflow(
         assert old["metadata"]["status"] == "promoted"
         assert old["source_code"] == code
         rerun_prepared = await client.call(
-            "prepare_backtest", **PREPARE_ARGUMENTS, revision_id=saved["revision_id"]
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+            revision_id=saved["revision_id"],
         )
         rerun = await confirm_prepared(client, rerun_prepared)
         rerun_done = await client.wait_for_job(rerun["job_id"])
         assert rerun_done["status"] == "done"
         assert rerun_done["revision_id"] == saved["revision_id"]
         assert rerun_done["metrics"] == completed["metrics"]
-        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
-            "success"
-        ]
+        assert not (
+            await client.call(
+                "prepare_backtest",
+                **PREPARE_ARGUMENTS,
+                evidence_id=await save_execution_evidence(
+                    client, {"fast_period": 3, "slow_period": 8}
+                ),
+            )
+        )["success"]
         assert Path(by_type["strategy_source"]["path"]).read_text() == code
 
 
@@ -346,7 +376,9 @@ async def test_rejected_drafts_diagnostics_and_repair(
             },
             {"strategy_id": STRATEGY_ID, "code": code, "yaml_config": "strategy: ["},
         ):
-            assert not (await client.call("save_strategy", **args))["success"]
+            assert not (
+                await client.call("save_strategy", **args, research=research_input())
+            )["success"]
         assert {path: path.read_bytes() for path in before} == before
         assert not (mcp_workspace.root / "escaped.py").exists()
         marker = mcp_workspace.root / "must-not-execute.txt"
@@ -358,6 +390,10 @@ async def test_rejected_drafts_diagnostics_and_repair(
             strategy_id=STRATEGY_ID,
             code=forbidden,
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
         assert not rejected["success"] and rejected["status"] == "draft"
@@ -372,6 +408,10 @@ async def test_rejected_drafts_diagnostics_and_repair(
             strategy_id=STRATEGY_ID,
             code=removed_import,
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
         assert not rejected["success"] and rejected["status"] == "draft"
@@ -397,6 +437,10 @@ async def test_rejected_drafts_diagnostics_and_repair(
             strategy_id=STRATEGY_ID,
             code=bad_signal,
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
         assert not rejected["success"]
@@ -405,7 +449,14 @@ async def test_rejected_drafts_diagnostics_and_repair(
         }
         assert all(item.get("fix") for item in rejected["diagnostics"])
         repaired = await client.call(
-            "save_strategy", strategy_id=STRATEGY_ID, code=code, yaml_config=config_text
+            "save_strategy",
+            strategy_id=STRATEGY_ID,
+            code=code,
+            yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         await make_runnable(client, repaired["revision_id"])
         metadata_path = Path(repaired["py_path"]).parent / "metadata.json"
@@ -426,7 +477,13 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
     async with mcp_workspace.connect() as client:
         await save_example(client)
         await make_runnable(client)
-        prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        prepared = await client.call(
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+        )
         assert prepared["success"], prepared
         cache.write_bytes(b"invalid parquet")
         started = await confirm_prepared(client, prepared)
@@ -435,7 +492,13 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
         assert failed["error"]
         assert (await client.call("list_runs"))["items"] == []
         mcp_workspace.seed_market(sample_ohlcv_with_kd)
-        prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        prepared = await client.call(
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+        )
         started = await confirm_prepared(client, prepared)
         cancelled = await client.call("cancel_job", job_id=started["job_id"])
         assert cancelled["success"] and cancelled["process_terminated"], cancelled
@@ -457,15 +520,25 @@ async def test_real_quality_gates_reject_invalid_llm_output(
             strategy_id=STRATEGY_ID,
             code=code + "\nUNKNOWN = undefined_variable\n",
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
         assert not rejected["success"]
         codes = {item["code"] for item in rejected["diagnostics"]}
         assert {"ruff_failed", "mypy_failed"} <= codes
         assert "contract_execution_error" not in codes
-        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
-            "success"
-        ]
+        assert not (
+            await client.call(
+                "prepare_backtest",
+                **PREPARE_ARGUMENTS,
+                evidence_id=await save_execution_evidence(
+                    client, {"fast_period": 3, "slow_period": 8}
+                ),
+            )
+        )["success"]
         malformed = await client.session.call_tool(
             "save_strategy", {"strategy_id": STRATEGY_ID}
         )
@@ -478,9 +551,10 @@ async def test_real_quality_gates_reject_invalid_llm_output(
 @pytest.mark.parametrize(
     ("validation", "fold_count"),
     [
-        ({"n_splits": 2, "train_ratio": 0.6}, 2),
+        ({"mode": "automatic", "n_splits": 2, "train_ratio": 0.6}, 2),
         (
             {
+                "mode": "explicit",
                 "train_start": "2024-01-02T03:00:00+08:00",
                 "train_end": "2024-01-03T03:00:00+08:00",
                 "test_start": "2024-01-04T03:00:00+08:00",
@@ -491,14 +565,13 @@ async def test_real_quality_gates_reject_invalid_llm_output(
         (
             {
                 "n_splits": 2,
-                "purged_split": True,
+                "mode": "purged",
                 "label_horizon": 5,
-                "train_start": "2024-01-08",
             },
             2,
         ),
     ],
-    ids=["automatic", "explicit_offset_dates", "purged_partial_dates"],
+    ids=["automatic", "explicit_offset_dates", "purged"],
 )
 async def test_walk_forward_runs_through_real_worker(
     mcp_workspace: MCPWorkspace,
@@ -516,12 +589,28 @@ async def test_walk_forward_runs_through_real_worker(
             strategy_id=STRATEGY_ID,
             code=code,
             yaml_config=yaml.safe_dump(config),
+            research=research_from_config(config, outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         await make_runnable(client)
-        wrong_mode = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        wrong_mode = await client.call(
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+        )
         assert not wrong_mode["success"]
         assert "prepare_walk_forward" in wrong_mode["error"]
-        prepared = await client.call("prepare_walk_forward", **PREPARE_ARGUMENTS)
+        prepared = await client.call(
+            "prepare_walk_forward",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+        )
         assert prepared["success"], prepared
         if fold_count == 1:
             confirmation = (
@@ -547,6 +636,20 @@ async def test_walk_forward_runs_through_real_worker(
         )
         assert fold["kind"] == "backtest" and fold["split"] == "test"
         assert isinstance(fold["metrics"]["total_pnl"], float)
+        if validation["mode"] == "automatic":
+            final_fold = await client.call(
+                "get_run_metrics",
+                run_id=completed["run_id"],
+                scope=f"fold/{fold_count - 1}/test",
+            )
+            expected_end = min(
+                sample_ohlcv_with_kd.timestamp.iloc[-1],
+                pd.Timestamp(RUN_ARGUMENTS["end_date"], tz="UTC"),
+            )
+            assert (
+                pd.Timestamp(final_fold["metadata"]["observations"]["end_date"])
+                == expected_end
+            )
         if fold_count == 1:
             assert fold["metadata"]["observations"]["bar_count"] == 48
             assert fold["metadata"]["observations"]["start_date"].startswith(

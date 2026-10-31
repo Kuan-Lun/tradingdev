@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
@@ -11,7 +12,10 @@ import pytest
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
 from tests.e2e.test_llm_workflows import assert_workflow
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import (
+    execution_evidence_draft,
+    synthetic_preflight_receipt,
+)
 
 
 def _repair_evidence() -> list[ToolCall]:
@@ -19,9 +23,25 @@ def _repair_evidence() -> list[ToolCall]:
     target = {"strategy_id": strategy_id}
     versioned = {**target, "revision_id": "revision_a"}
     metrics = {"total_return": 0.25}
+    # Synthetic tool output, independently recorded from the later prepare input.
+    config: dict[str, dict[str, Any]] = {
+        "research": {"strategy_outline": "Saved moving-average fixture rules."},
+        "backtest": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01T00:00:00Z",
+            "end_date": "2024-01-08T00:00:00Z",
+            "init_cash": 10000.0,
+            "fees": 0.0,
+            "slippage": 0.0,
+            "periods_per_year": 365.0,
+        },
+    }
     return [
         ToolCall("get_strategy_contract", {}, {"lifecycle": "fixture"}),
-        ToolCall("get_strategy", target, {"success": True}),
+        ToolCall(
+            "get_strategy", target, {"success": True, "revision_id": "broken-revision"}
+        ),
         ToolCall(
             "validate_strategy",
             target,
@@ -29,28 +49,47 @@ def _repair_evidence() -> list[ToolCall]:
         ),
         ToolCall(
             "save_strategy",
-            target,
+            {
+                **target,
+                "research": {
+                    **SCENARIOS["repair"].research,
+                    "strategy_outline": config["research"]["strategy_outline"],
+                },
+                "expected_revision_id": "broken-revision",
+            },
             {"success": True, "status": "draft", "revision_id": "revision_a"},
         ),
         ToolCall(
             "validate_strategy",
             versioned,
-            {"success": True, "status": "validated", "revision_id": "revision_a"},
+            {
+                "success": True,
+                "status": "validated",
+                "revision_id": "revision_a",
+                "effective_config": deepcopy(config),
+            },
         ),
         ToolCall(
             "dry_run_strategy",
             versioned,
-            {"success": True, "status": "runnable", "revision_id": "revision_a"},
+            {
+                "success": True,
+                "status": "runnable",
+                "revision_id": "revision_a",
+                "effective_config": deepcopy(config),
+            },
+        ),
+        ToolCall(
+            "save_research_evidence",
+            {"draft": execution_evidence_draft(SCENARIOS["repair"].parameters)},
+            {"success": True, "evidence_id": "e" * 32},
         ),
         ToolCall(
             "prepare_backtest",
             {
                 **versioned,
-                "symbol": "BTC/USDT",
-                "timeframe": "1h",
-                "start_date": "2024-01-01",
-                "end_date": "2024-01-08",
-                **execution_options(SCENARIOS["repair"].parameters),
+                "research": {"kind": "inherit_selected_revision"},
+                "evidence_id": "e" * 32,
             },
             {
                 "success": True,
@@ -60,7 +99,7 @@ def _repair_evidence() -> list[ToolCall]:
                 "confirmation_summary": "確認本次參數與歷史模擬期間。",
                 "html_path": "/fixture/confirmation.html",
                 "artifact_id": "plan:confirmation",
-                "preflight": {"status": "passed"},
+                "preflight": synthetic_preflight_receipt("a" * 64),
             },
         ),
         ToolCall(
@@ -159,6 +198,39 @@ def test_missing_metric_discovery_or_detail_is_rejected(tool: str) -> None:
         assert_workflow(calls, SCENARIOS["repair"])
 
 
+@pytest.mark.parametrize("metrics_before_summary", [False, True])
+def test_natural_runtime_repair_accepts_report_without_artifact_listing(
+    metrics_before_summary: bool,
+) -> None:
+    calls = [call for call in _repair_evidence() if call.name != "list_artifacts"]
+    calls[2].result["diagnostics"] = [{"code": "strategy_check_failed"}]
+    if metrics_before_summary:
+        summary = next(call for call in calls if call.name == "get_run")
+        calls.remove(summary)
+        calls.append(summary)
+    report = ToolCall(
+        "generate_report",
+        {"run_ids": ["run"]},
+        {"success": True, "run_ids": ["run"], "artifact_id": "report:html"},
+    )
+    calls.append(report)
+    scenario = replace(SCENARIOS["repair"], runtime_exit=True)
+    assert_workflow(calls, scenario)
+    for result in (
+        {"success": False},
+        {"success": True, "run_ids": ["unrelated"], "artifact_id": "report:html"},
+    ):
+        report.result = result
+        with pytest.raises(AssertionError, match="generate_report"):
+            assert_workflow(calls, scenario)
+
+
+def test_scripted_repair_still_requires_artifact_listing() -> None:
+    calls = [call for call in _repair_evidence() if call.name != "list_artifacts"]
+    with pytest.raises(AssertionError, match="list_artifacts"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
 def test_detail_from_another_run_is_rejected() -> None:
     calls = _repair_evidence()
     calls[-1].arguments["run_id"] = "unrelated"
@@ -216,13 +288,13 @@ def test_failed_lookup_does_not_count_as_reading_the_draft() -> None:
         (3, ("save_strategy", "strategy_id='llm_repair'", "success=True")),
         (4, ("validate_strategy", "status='validated'", "after save_strategy")),
         (5, ("dry_run_strategy", "status='runnable'", "after validate_strategy")),
-        (6, ("prepare_backtest", "ready plan_id", "after successful dry_run_strategy")),
+        (7, ("prepare_backtest", "ready plan_id", "after successful dry_run_strategy")),
         (
-            7,
+            8,
             ("submit_execution_decision", "plan_id='plan'", "nonempty job_id"),
         ),
         (
-            8,
+            9,
             (
                 "get_job_status",
                 "job_id='job'",
@@ -230,8 +302,8 @@ def test_failed_lookup_does_not_count_as_reading_the_draft() -> None:
                 "after submit_execution_decision",
             ),
         ),
-        (9, ("get_run", "run_id='run'", "after get_job_status reported done")),
-        (10, ("list_artifacts", "run_id='run'", "nonempty result")),
+        (10, ("get_run", "run_id='run'", "after get_job_status reported done")),
+        (11, ("list_artifacts", "run_id='run'", "nonempty result")),
     ],
     ids=[
         "contract",
@@ -261,7 +333,7 @@ def test_missing_step_reports_required_tool_target_and_outcome(
 
 @pytest.mark.parametrize(
     ("event_index", "actual_status", "expected_status"),
-    [(4, "draft", "validated"), (5, "validated", "runnable"), (8, "failed", "done")],
+    [(4, "draft", "validated"), (5, "validated", "runnable"), (9, "failed", "done")],
 )
 def test_wrong_status_reports_the_required_status(
     event_index: int, actual_status: str, expected_status: str
@@ -306,10 +378,20 @@ def test_repair_order_failure_explains_read_diagnose_save_sequence() -> None:
     assert "precede successful save_strategy" in str(error.value)
 
 
-@pytest.mark.parametrize("event_index", [4, 5, 8, 9])
+@pytest.mark.parametrize("revision", [None, "another-draft"])
+def test_repair_cannot_claim_a_save_without_the_selected_draft(
+    revision: str | None,
+) -> None:
+    calls = _repair_evidence()
+    calls[3].arguments["expected_revision_id"] = revision
+    with pytest.raises(AssertionError, match="bind expected_revision_id"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize("event_index", [4, 5, 9, 10])
 def test_mixed_revisions_cannot_supply_workflow_evidence(event_index: int) -> None:
     calls = _repair_evidence()
-    if event_index == 9:
+    if event_index == 10:
         calls[event_index].result["run"]["revision_id"] = "revision_b"
     else:
         calls[event_index].result["revision_id"] = "revision_b"
@@ -317,11 +399,11 @@ def test_mixed_revisions_cannot_supply_workflow_evidence(event_index: int) -> No
         assert_workflow(calls, SCENARIOS["repair"])
 
 
-@pytest.mark.parametrize("event_index", [6, 7, 8, 9])
+@pytest.mark.parametrize("event_index", [7, 8, 9, 10])
 def test_different_manifests_cannot_supply_workflow_evidence(event_index: int) -> None:
     calls = _repair_evidence()
     result = calls[event_index].result
-    payload = result["run"] if event_index == 9 else result
+    payload = result["run"] if event_index == 10 else result
     payload["manifest_hash"] = "b" * 64
     with pytest.raises(AssertionError):
         assert_workflow(calls, SCENARIOS["repair"])
@@ -334,9 +416,9 @@ def test_parameter_experiment_requires_explicit_overrides_and_original_revision(
     calls = _repair_evidence()
     with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
         assert_workflow(calls, scenario)
-    calls[6].arguments["parameters"] = scenario.overrides
+    calls[7].arguments["parameters"] = scenario.overrides
     assert_workflow(calls, scenario)
-    calls[6].arguments["revision_id"] = "another_revision"
+    calls[7].arguments["revision_id"] = "another_revision"
     with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
         assert_workflow(calls, scenario)
 
@@ -355,8 +437,140 @@ def test_nonexperiment_preparation_accepts_omitted_or_null_overrides(
     optional_arguments: dict[str, Any],
 ) -> None:
     calls = _repair_evidence()
-    calls[6].arguments.update(optional_arguments)
+    calls[7].arguments.update(optional_arguments)
     assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize(
+    "repeated",
+    [
+        {"fees": 0, "slippage": 0},
+        {
+            "start_date": "2024-01-01T08:00:00+08:00",
+            "end_date": "2024-01-08",
+        },
+        {
+            "strategy_outline": "Saved moving-average fixture rules.",
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01T00:00:00Z",
+            "end_date": "2024-01-08T00:00:00+00:00",
+            "init_cash": 10000,
+            "fees": 0,
+            "slippage": 0,
+            "annualization": 365,
+        },
+    ],
+    ids=["zero-cost-subset", "equivalent-utc-period", "all-research-fields"],
+)
+@pytest.mark.parametrize("json_encoded", [False, True], ids=["object", "sdk-json"])
+def test_repeated_research_is_compared_to_recorded_revision_values(
+    repeated: dict[str, Any], json_encoded: bool
+) -> None:
+    calls = _repair_evidence()
+    research = {"kind": "inherit_selected_revision", **repeated}
+    calls[7].arguments["research"] = json.dumps(research) if json_encoded else research
+    original = deepcopy(calls)
+    assert_workflow(calls, SCENARIOS["repair"])
+    assert calls == original, "Verification must preserve raw arguments and results"
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("strategy_outline", "Different entry rules"),
+        ("symbol", "ETH/USDT"),
+        ("timeframe", "4h"),
+        ("start_date", "2024-01-02"),
+        ("end_date", "2024-01-09"),
+        ("init_cash", 20000),
+        ("fees", 0.0006),
+        ("slippage", 0.0005),
+        ("annualization", 252),
+        ("annualization", "unavailable"),
+    ],
+)
+def test_inherited_research_cannot_change_any_recorded_setting(
+    field: str, changed: Any
+) -> None:
+    calls = _repair_evidence()
+    calls[7].arguments["research"][field] = changed
+    with pytest.raises(AssertionError, match=f"research changes {field}"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_fixed_research_cannot_reselect_market_annualization_policy() -> None:
+    calls = _repair_evidence()
+    calls[7].arguments["research"]["annualization"] = "market"
+    with pytest.raises(AssertionError, match="reselect.*annualization policy"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_explicit_unavailable_annualization_matches_only_recorded_none() -> None:
+    calls = _repair_evidence()
+    for call in calls[4:6]:
+        call.result["effective_config"]["backtest"]["periods_per_year"] = None
+    calls[7].arguments["research"]["annualization"] = "unavailable"
+    assert_workflow(calls, SCENARIOS["repair"])
+    calls[7].arguments["research"]["annualization"] = 365
+    with pytest.raises(AssertionError, match="research changes annualization"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_same_new_research_does_not_substitute_for_explicit_inheritance() -> None:
+    calls = _repair_evidence()
+    calls[7].arguments["research"] = SCENARIOS["repair"].research
+    with pytest.raises(AssertionError, match="must inherit the selected revision"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize("event_index", [4, 5], ids=["validate", "dry-run"])
+@pytest.mark.parametrize(
+    "missing",
+    ["effective_config", "strategy_outline", "fees", "periods_per_year"],
+)
+def test_research_comparison_never_supplies_missing_recorded_evidence(
+    event_index: int, missing: str
+) -> None:
+    calls = _repair_evidence()
+    result = calls[event_index].result
+    if missing == "effective_config":
+        result.pop(missing)
+    else:
+        section = "research" if missing == "strategy_outline" else "backtest"
+        result["effective_config"][section].pop(missing)
+    with pytest.raises(AssertionError, match="effective_config"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_validate_and_dry_run_must_record_the_same_research() -> None:
+    calls = _repair_evidence()
+    calls[5].result["effective_config"]["backtest"]["fees"] = 0.0006
+    with pytest.raises(
+        AssertionError, match="effective_config research settings differ"
+    ):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_validation_evidence_accepts_equivalent_utc_dates() -> None:
+    calls = _repair_evidence()
+    calls[4].result["effective_config"]["backtest"]["start_date"] = "2024-01-01"
+    calls[5].result["effective_config"]["backtest"]["start_date"] = (
+        "2024-01-01T08:00:00+08:00"
+    )
+    assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize("field", ["fees", "periods_per_year"])
+@pytest.mark.parametrize("invalid", [True, "0", float("nan")])
+def test_equal_but_invalid_recorded_numbers_are_not_research_evidence(
+    field: str, invalid: Any
+) -> None:
+    calls = _repair_evidence()
+    for call in calls[4:6]:
+        call.result["effective_config"]["backtest"][field] = invalid
+    with pytest.raises(AssertionError, match="must record a finite number"):
+        assert_workflow(calls, SCENARIOS["repair"])
 
 
 @pytest.mark.parametrize(
@@ -382,7 +596,7 @@ def test_nonexperiment_preparation_rejects_override_mappings(
     overrides: dict[str, Any],
 ) -> None:
     calls = _repair_evidence()
-    calls[6].arguments.update(overrides)
+    calls[7].arguments.update(overrides)
     with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
         assert_workflow(calls, SCENARIOS["repair"])
 
@@ -397,7 +611,7 @@ def test_parameter_experiment_requires_the_complete_requested_override(
 ) -> None:
     scenario = replace(SCENARIOS["repair"], experiment=True)
     calls = _repair_evidence()
-    calls[6].arguments["parameters"] = parameters
+    calls[7].arguments["parameters"] = parameters
     with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
         assert_workflow(calls, scenario)
 
@@ -405,7 +619,7 @@ def test_parameter_experiment_requires_the_complete_requested_override(
 def test_parameter_experiment_cannot_resave_after_base_is_runnable() -> None:
     scenario = replace(SCENARIOS["repair"], experiment=True)
     calls = _repair_evidence()
-    calls[6].arguments["parameters"] = scenario.overrides
+    calls[7].arguments["parameters"] = scenario.overrides
     calls.append(
         ToolCall(
             "save_strategy",
@@ -422,14 +636,14 @@ def test_confirmation_of_another_plan_cannot_supply_execution_evidence(
     location: str,
 ) -> None:
     calls = _repair_evidence()
-    getattr(calls[7], location)["plan_id"] = "another_plan"
+    getattr(calls[8], location)["plan_id"] = "another_plan"
     with pytest.raises(AssertionError, match="submit_execution_decision"):
         assert_workflow(calls, SCENARIOS["repair"])
 
 
 def test_legacy_approval_field_does_not_match_the_decision_contract() -> None:
     calls = _repair_evidence()
-    calls[7].arguments["approved"] = True
+    calls[8].arguments["approved"] = True
     with pytest.raises(AssertionError, match="submit_execution_decision"):
         assert_workflow(calls, SCENARIOS["repair"])
 
@@ -439,7 +653,27 @@ def test_legacy_approval_field_does_not_match_the_decision_contract() -> None:
 )
 def test_preparation_requires_reviewable_confirmation_evidence(field: str) -> None:
     calls = _repair_evidence()
-    calls[6].result.pop(field)
+    calls[7].result.pop(field)
+    with pytest.raises(AssertionError):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"manifest_hash": "b" * 64},
+        {"schema_version": 1},
+        {"synthetic_fixture_rows": []},
+        {"checked_paths": ["configuration", "engine"]},
+        {"not_checked": ["backtest_engine", "training", "performance"]},
+        {"trade_count": 3},
+    ],
+)
+def test_workflow_rejects_stale_or_historical_preparation_evidence(
+    changes: dict[str, Any],
+) -> None:
+    calls = _repair_evidence()
+    calls[7].result["preflight"].update(changes)
     with pytest.raises(AssertionError):
         assert_workflow(calls, SCENARIOS["repair"])
 
@@ -447,15 +681,13 @@ def test_preparation_requires_reviewable_confirmation_evidence(field: str) -> No
 def test_workflow_accepts_sdk_decoded_metadata_and_parameter_arguments() -> None:
     scenario = replace(SCENARIOS["repair"], experiment=True)
     calls = _repair_evidence()
-    arguments = calls[6].arguments
-    arguments["presentation"] = json.dumps(arguments["presentation"])
+    arguments = calls[7].arguments
+    calls[6].arguments["draft"] = json.dumps(calls[6].arguments["draft"])
     arguments["parameters"] = json.dumps(scenario.overrides)
     arguments["backtest_overrides"] = "null"
-    arguments["minimum_history_bars"] = "20"
-    arguments["sample_bars"] = "128"
     original = dict(arguments)
     assert_workflow(calls, scenario)
-    assert calls[6].arguments == original, "Raw model evidence must remain available"
+    assert calls[7].arguments == original, "Raw model evidence must remain available"
 
 
 @pytest.mark.parametrize(
@@ -480,7 +712,7 @@ def test_workflow_rejects_invalid_or_incomplete_presentation(
     presentation: Any,
 ) -> None:
     calls = _repair_evidence()
-    calls[6].arguments["presentation"] = presentation
+    calls[6].arguments["draft"]["presentation"] = presentation
     with pytest.raises(AssertionError):
         assert_workflow(calls, SCENARIOS["repair"])
 
@@ -488,7 +720,7 @@ def test_workflow_rejects_invalid_or_incomplete_presentation(
 def test_workflow_does_not_convert_nested_strategy_parameter_strings() -> None:
     scenario = replace(SCENARIOS["repair"], experiment=True)
     calls = _repair_evidence()
-    calls[6].arguments["parameters"] = json.dumps(
+    calls[7].arguments["parameters"] = json.dumps(
         {name: str(value) for name, value in scenario.overrides.items()}
     )
     with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):

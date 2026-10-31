@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ import pytest
 from tooling.process_guard import terminate_tree
 
 from tests.e2e import codex_harness
+from tests.e2e.llm_client import ToolCall, codex_calls
 from tests.integration.mcp_harness import SimulatedUserApproval
 
 if TYPE_CHECKING:
@@ -65,7 +67,9 @@ for line in sys.stdin:
         form_enabled = (isinstance(policy, dict)
                         and policy.get('granular', {}).get('mcp_elicitations'))
         result = {'thread': {'id': 'thread'},
-                  'model': request['params'].get('model') or 'fixture-default'}
+                  'model': request['params'].get('model') or 'fixture-default',
+                  'reasoningEffort': ('ultra' if mode == 'effort-mismatch'
+                                      else 'xhigh')}
     elif method == 'turn/start':
         result = {'turn': {'id': 'turn'}}
     else:
@@ -88,9 +92,10 @@ for line in sys.stdin:
             for item in json.loads(sys.argv[2]) if len(sys.argv) > 2 else []:
                 print(json.dumps({'method': 'item/completed', 'params': {
                     'threadId': 'thread', 'turnId': 'turn', 'item': item}}), flush=True)
-            print(json.dumps({'method': 'turn/completed', 'params': {
-                'threadId': 'thread', 'turn': {'id': 'turn', 'status': mode}}}),
-                  flush=True)
+            if mode != 'tool-timeout':
+                print(json.dumps({'method': 'turn/completed', 'params': {
+                    'threadId': 'thread', 'turn': {'id': 'turn', 'status': mode}}}),
+                      flush=True)
         time.sleep(60)
 """
 
@@ -105,6 +110,42 @@ def model_environment(
     else:
         monkeypatch.setenv("TRADINGDEV_CODEX_MODEL", model)
     return model
+
+
+def test_codex_process_config_isolates_effort_and_host_capabilities(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(codex_harness, "resolve_codex_binary", lambda: "/test/codex")
+    command = codex_harness._command(Path("/test/isolated"), "selected-model")
+    assert command[:4] == ["/test/codex", "app-server", "--listen", "stdio://"]
+    assert command[4::2] == ["-c"] * len(command[5::2])
+    settings = {
+        key: json.loads(value)
+        for item in command[5::2]
+        for key, _, value in [item.partition("=")]
+    }
+    assert settings["model"] == "selected-model"
+    assert settings["model_reasoning_effort"] == "xhigh"
+    assert settings["features.skip_host_skill_discovery"] is True
+    assert "skip_host_skill_discovery" not in settings
+    for feature in (
+        "multi_agent",
+        "shell_tool",
+        "shell_snapshot",
+        "plugins",
+        "remote_plugin",
+        "apps",
+        "hooks",
+        "memories",
+        "code_mode",
+        "js_repl",
+    ):
+        assert settings[f"features.{feature}"] is False
+    assert settings["web_search"] == "disabled"
+    assert settings["project_doc_max_bytes"] == 0
+    assert settings["history.persistence"] == "none"
+    assert settings["log_dir"] == "/test/isolated/codex_logs"
+    assert settings["sqlite_home"] == "/test/isolated/codex_state"
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "timeout"])
@@ -137,6 +178,9 @@ def test_codex_stops_client_and_detached_child(
                 )
         requested = json.loads((root / "thread_request.json").read_text())
         assert requested["model"] == model_environment
+        assert set(requested["config"]) == {"mcp_servers"}, (
+            "A partial thread features table would erase process isolation flags"
+        )
         servers = requested["config"]["mcp_servers"]
         assert len(servers) == 1
         assert next(iter(servers.values()))["enabled_tools"] == (
@@ -149,6 +193,34 @@ def test_codex_stops_client_and_detached_child(
             except psutil.NoSuchProcess:
                 continue
             assert process.status() == psutil.STATUS_ZOMBIE
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("failure", ["effort-mismatch", "subagent"])
+def test_codex_rejects_bypass_and_stops_client_and_detached_child(
+    monkeypatch: MonkeyPatch, failure: str
+) -> None:
+    item = {"id": "delegated", "type": "subAgentActivity"}
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            failure if failure == "effort-mismatch" else "completed",
+            json.dumps([item]),
+        ],
+    )
+    with TemporaryDirectory(prefix="tradingdev-codex-isolation-") as temporary:
+        root = Path(temporary)
+        expected = (
+            "expected 'xhigh'" if failure == "effort-mismatch" else "bypassed MCP"
+        )
+        with pytest.raises(AssertionError, match=expected):
+            asyncio.run(codex_harness.run_codex(root, "prompt"))
+        for pid in json.loads((root / "client_pids.json").read_text()):
+            assert not psutil.pid_exists(pid)
     assert not root.exists()
 
 
@@ -277,6 +349,74 @@ def test_codex_user_callback_reads_only_the_terminal_answer(
     assert any(event.get("params", {}).get("item") == progress for event in events)
 
 
+@pytest.mark.parametrize("outcome", ["completed", "failed", "tool-timeout"])
+def test_codex_completed_tool_evidence_survives_later_turn_failure(
+    monkeypatch: MonkeyPatch, outcome: str
+) -> None:
+    arguments = {"run_id": "approved-run", "direction": "short", "limit": 1}
+    result = {"success": False, "error": "saved history unavailable"}
+    item = {
+        "id": "trade-page",
+        "type": "mcpToolCall",
+        "server": "tradingdev",
+        "tool": "get_run_trades",
+        "arguments": json.dumps(arguments),
+        "status": "completed",
+        "result": {"structuredContent": result, "isError": True},
+    }
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            outcome,
+            json.dumps([item]),
+        ],
+    )
+    observed: list[ToolCall] = []
+    turns: list[ModelTurn] = []
+
+    def observe(call: ToolCall) -> None:
+        observed.append(deepcopy(call))
+        call.arguments["run_id"] = "wrong-run"
+        call.result["error"] = "changed by observer"
+
+    async def user_reply(turn: ModelTurn) -> None:
+        turns.append(turn)
+
+    with TemporaryDirectory(prefix="tradingdev-codex-tool-evidence-") as temporary:
+        root = Path(temporary)
+
+        async def run() -> list[dict[str, Any]]:
+            return await codex_harness.run_codex(
+                root,
+                "Read trades",
+                timeout_seconds=1,
+                on_tool_call=observe,
+                user_reply=user_reply,
+            )
+
+        if outcome == "completed":
+            events = asyncio.run(run())
+            assert codex_calls(events) == observed
+            assert len(turns) == 1 and turns[0].calls == observed
+        else:
+            expected = "Codex turn failed" if outcome == "failed" else "Codex exceeded"
+            with pytest.raises(AssertionError, match=expected):
+                asyncio.run(run())
+            assert turns == []
+        assert observed == [ToolCall("get_run_trades", arguments, result)]
+        for pid in json.loads((root / "client_pids.json").read_text()):
+            try:
+                process = psutil.Process(pid)
+            except psutil.NoSuchProcess:
+                continue
+            assert not process.is_running() or process.status() == psutil.STATUS_ZOMBIE
+    assert not root.exists()
+
+
 def _fail_after_cleanup(
     leader: psutil.Process | None,
     descendants: set[psutil.Process] | None = None,
@@ -342,4 +482,101 @@ def test_verifier_reaps_process_when_cleanup_verification_fails(
                 if process.poll() is None:
                     process.kill()
                 process.communicate(timeout=3)
+    assert not root.exists()
+
+
+def test_codex_rejected_tool_response_can_be_repaired_without_losing_attempts(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    rejected: dict[str, Any] = {
+        "id": "bad-draft",
+        "type": "mcpToolCall",
+        "server": "tradingdev",
+        "tool": "save_research_evidence",
+        "arguments": {"draft": {"parameter_provenance": ["invalid"]}},
+        "status": "failed",
+        "error": None,
+        "result": {
+            "content": [{"type": "text", "text": "Invalid target_ids: use search_1_1"}],
+            "structuredContent": None,
+        },
+    }
+    repaired: dict[str, Any] = {
+        **rejected,
+        "id": "corrected-draft",
+        "arguments": {"draft": {"parameter_provenance": ["corrected"]}},
+        "status": "completed",
+        "result": {"structuredContent": {"success": True, "evidence_id": "e" * 32}},
+    }
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            "completed",
+            json.dumps([rejected, repaired]),
+        ],
+    )
+    observed: list[ToolCall] = []
+    with TemporaryDirectory(prefix="tradingdev-codex-repair-") as temporary:
+        root = Path(temporary)
+        events = asyncio.run(
+            codex_harness.run_codex(root, "prompt", on_tool_call=observed.append)
+        )
+        assert codex_calls(events) == observed
+        assert len(observed) == 2
+        assert observed[0].arguments == rejected["arguments"]
+        assert observed[0].result["success"] is False
+        assert observed[0].result["mcp_result"] == rejected["result"]
+        assert observed[1].result == repaired["result"]["structuredContent"]
+        for pid in json.loads((root / "client_pids.json").read_text()):
+            assert not psutil.pid_exists(pid)
+    assert not root.exists()
+
+
+@pytest.mark.parametrize(
+    ("result", "error"),
+    [
+        (None, {"message": "connection closed"}),
+        ({}, None),
+        (
+            {"content": [{"type": "text", "text": "partial"}]},
+            {"message": "transport failed"},
+        ),
+    ],
+)
+def test_codex_failed_transport_remains_a_failure(
+    monkeypatch: MonkeyPatch,
+    result: Any,
+    error: Any,
+) -> None:
+    item = {
+        "id": "lost",
+        "type": "mcpToolCall",
+        "server": "tradingdev",
+        "tool": "save_research_evidence",
+        "arguments": {},
+        "status": "failed",
+        "result": result,
+        "error": error,
+    }
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            "completed",
+            json.dumps([item]),
+        ],
+    )
+    with TemporaryDirectory(prefix="tradingdev-codex-transport-") as temporary:
+        root = Path(temporary)
+        with pytest.raises(AssertionError, match="failed without a tool response"):
+            asyncio.run(codex_harness.run_codex(root, "prompt"))
+        for pid in json.loads((root / "client_pids.json").read_text()):
+            assert not psutil.pid_exists(pid)
     assert not root.exists()

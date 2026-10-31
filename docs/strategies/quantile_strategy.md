@@ -45,6 +45,13 @@ one direction has a clear edge.
 - Dynamic sizing scales exposure by directional edge when enabled.
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
 
+Warm-up or unavailable features produce a flat signal and reset the position,
+even before the minimum holding period. When features return, a new entry must
+pass the entry conditions again. Indicator gaps can also make subsequent bars
+unavailable, so missing data may cause extra exits or periods without exposure.
+See the [scoring contract](../strategy_contract.md#training-before-scoring) for
+the alignment and state-handling requirements.
+
 ## Running
 
 A simple backtest cannot train this strategy. Preparation rejects that mode
@@ -62,14 +69,24 @@ uv run python -m tradingdev \
   --walk-forward
 ```
 
-The split settings (`train_start`, `test_start`, `purged_split`,
+The split settings (`train_start`, `test_start`, `mode`,
 `label_horizon`, ...) are documented in
 [Strategy Walk-Forward Settings](../strategy_contract.md#strategy-walk-forward-settings).
 A config that declares `validation` cannot be run as a simple backtest, and
 `--walk-forward` against a config without it fails with `Config has no
 validation section for walk-forward.`
 
-For MCP, ask the assistant to use walk-forward validation. Strategy discovery
+Each fold reports metrics for its test window and for its training window. The
+training-window figures are in-sample: the strategy is fitted on that window and
+then scores the same bars, so they describe fit rather than out-of-sample
+performance. Only the test-window metrics are held out. See the
+[training contract](../strategy_contract.md#training-before-scoring) for the
+scoring requirements.
+
+For MCP, provide the required
+[research choices](../strategy_contract.md#research-inputs-and-simulation-policy)
+and ask the assistant to use walk-forward validation. Bundled example dates do not
+replace the user's period selection. Strategy discovery
 reports that training is required and walk-forward is the supported mode.
 If the assistant tries a simple backtest or optimization, preparation returns
 the reason and points it to `prepare_walk_forward`, with validation settings as a
@@ -80,10 +97,17 @@ failure semantics.
 
 ## Data Requirements
 
+Training and scoring inputs need a `timestamp` column or `DatetimeIndex` with
+non-missing, unique, strictly increasing times. Times are normalized to UTC;
+values without a timezone are interpreted as UTC. Invalid time identities are
+rejected because their history cannot be ordered reliably.
+
 The config declares OHLCV plus two feature sources:
 
 ```yaml
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"
@@ -120,3 +144,9 @@ artifacts under `workspace/generated_strategies/`.
 - `edge_for_full_size_candidates`: dynamic sizing scale candidates.
 - `retrain_interval` and `train_window`: rolling retrain cadence and context.
 - `target_metric` and `min_monthly_pnl`: optimization objective and guardrail.
+
+An omitted or empty horizon, entry-edge or full-size-edge candidate list uses
+the corresponding single configured value. With `dynamic_sizing: false`, the
+full-size-edge candidate list is ignored and only `edge_for_full_size` is used.
+Defaults therefore evaluate at least one combination; a finite eligible
+objective is still required after evaluation to complete `fit()`.

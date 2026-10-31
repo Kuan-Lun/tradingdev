@@ -13,24 +13,28 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from tradingdev.app.contracts.reports import ReportCommentary
-from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
+from tradingdev.app.contracts.execution_requests import ParameterCandidateInput
+from tradingdev.app.contracts.reports import ReportAnalysis, ReportCommentary
+from tradingdev.domain.research import ResearchSpec, research_payload
+from tradingdev.domain.research_evidence import EvidenceId, ResearchEvidenceDraft
+from tradingdev.domain.validation.config import WalkForwardConfig
 
 if TYPE_CHECKING:
     from tests.e2e.llm_client import ToolCall
 
 _PREPARE: dict[str, TypeAdapter[Any]] = {
-    "presentation": TypeAdapter(ConfirmationPresentation),
+    "research": TypeAdapter(ResearchSpec),
+    "evidence_id": TypeAdapter(EvidenceId),
     "parameters": TypeAdapter(dict[str, JsonValue] | None),
     "backtest_overrides": TypeAdapter(dict[str, JsonValue] | None),
-    "minimum_history_bars": TypeAdapter(int),
-    "sample_bars": TypeAdapter(int),
 }
 _PAGE: dict[str, TypeAdapter[Any]] = {
     "limit": TypeAdapter(int),
     "offset": TypeAdapter(int),
 }
 _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
+    "save_strategy": {"research": TypeAdapter(ResearchSpec)},
+    "save_research_evidence": {"draft": TypeAdapter(ResearchEvidenceDraft)},
     "build_dataset": {"horizon": TypeAdapter(int)},
     "train_model": {
         "parameters": TypeAdapter(dict[str, JsonValue] | None),
@@ -39,23 +43,38 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
         "min_train_bars": TypeAdapter(int | None),
     },
     "predict": _PAGE,
-    "leaderboard": _PAGE,
+    "leaderboard": {
+        **_PAGE,
+        "horizon": TypeAdapter(int | None),
+        "allow_mixed": TypeAdapter(bool),
+        "allow_parameter_axes": TypeAdapter(bool),
+    },
     "evaluate_signal": {
         "window": TypeAdapter(int),
         "n_quantiles": TypeAdapter(int),
         "record": TypeAdapter(bool),
     },
     "prepare_backtest": _PREPARE,
-    "prepare_walk_forward": _PREPARE,
+    "prepare_comparison": {
+        **{name: adapter for name, adapter in _PREPARE.items() if name != "parameters"},
+        "candidates": TypeAdapter(list[ParameterCandidateInput]),
+    },
+    "prepare_walk_forward": {
+        **_PREPARE,
+        "validation_config": TypeAdapter(WalkForwardConfig | None),
+    },
     "prepare_optimization": {
         **_PREPARE,
         "param_ranges": TypeAdapter(dict[str, list[JsonValue]]),
     },
     "find_runs": {"parameters": TypeAdapter(dict[str, Any] | None)},
     "generate_report": {
-        "run_ids": TypeAdapter(list[str]),
+        "run_ids": TypeAdapter(list[str] | None),
+        "ml_entry_ids": TypeAdapter(list[str] | None),
+        "ml_allow_parameter_axes": TypeAdapter(bool),
         "sections": TypeAdapter(list[str] | None),
         "commentary": TypeAdapter(list[ReportCommentary] | None),
+        "analysis": TypeAdapter(ReportAnalysis | None),
     },
     "get_run_trades": _PAGE,
     "get_run_executions": _PAGE,
@@ -95,8 +114,10 @@ def effective_workflow_calls(calls: list[ToolCall]) -> list[ToolCall]:
                 raise AssertionError(
                     f"Invalid successful {call.name} argument {name}: {exc}"
                 ) from exc
-            arguments[name] = adapter.dump_python(
-                validated, mode="json", exclude_unset=True
+            arguments[name] = (
+                research_payload(validated)
+                if name == "research"
+                else adapter.dump_python(validated, mode="json", exclude_unset=True)
             )
         normalized.append(replace(call, arguments=arguments))
     return normalized

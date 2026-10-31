@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +12,12 @@ import pandas as pd
 import pytest
 import yaml
 
-from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.execution_fixtures import (
+    confirm_prepared,
+    research_from_config,
+    research_input,
+    save_execution_evidence,
+)
 from tradingdev.domain.execution import ExecutionManifest
 
 if TYPE_CHECKING:
@@ -54,15 +60,18 @@ class DirectionStrategy(BaseStrategy):
 def _opposite_trends() -> pd.DataFrame:
     # Train rises for three days; OOS falls for four days. Both periods have
     # equal open/close prices, so the fee-free hold return can be hand calculated.
-    prices = np.concatenate((np.arange(100.0, 172.0), np.arange(200.0, 104.0, -1)))
+    # Small positive prices expose any lossy worker serialization as zero prices.
+    prices = (
+        np.concatenate((np.arange(100.0, 172.0), np.arange(200.0, 104.0, -1))) * 1e-13
+    )
     return pd.DataFrame(
         {
             "timestamp": pd.date_range(
                 "2024-01-01", periods=len(prices), freq="h", tz="UTC"
             ),
             "open": prices,
-            "high": prices + 0.5,
-            "low": prices - 0.5,
+            "high": prices + 0.5e-13,
+            "low": prices - 0.5e-13,
             "close": prices,
             "volume": np.full(len(prices), 1000.0),
         }
@@ -81,13 +90,15 @@ async def _save_runnable(
     )
     # The MCP request must override these without editing the saved strategy.
     config["backtest"].update(symbol="ETH/USDT", timeframe="4h", fees=0, slippage=0)
+    config["data"]["requirements"]["market"].update(symbol="ETH/USDT", timeframe="4h")
     if walk_forward:
-        config["validation"] = {"n_splits": 2}
+        config["validation"] = {"mode": "automatic", "n_splits": 2}
     saved = await client.call(
         "save_strategy",
         strategy_id=STRATEGY_ID,
         code=STRATEGY_CODE,
         yaml_config=yaml.safe_dump(config),
+        research=research_from_config(config),
     )
     assert saved["success"], saved
     for tool in ("validate_strategy", "dry_run_strategy"):
@@ -107,15 +118,25 @@ async def test_optimization_rejects_walk_forward_config_through_mcp(
             "prepare_optimization",
             strategy_id=STRATEGY_ID,
             revision_id=saved["revision_id"],
-            symbol="BTC/USDT",
-            timeframe="1h",
+            research=research_input(
+                end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
+            ),
             param_ranges={"direction": [-1, 1]},
             optimization_metric="total_return",
             train_start="2024-01-01",
             train_end="2024-01-03",
             test_start="2024-01-04",
             test_end="2024-01-07",
-            **execution_options({"direction": -1, "warmup": 2}),
+            evidence_id=await save_execution_evidence(
+                client,
+                {"direction": -1, "warmup": 2},
+                target_paths={
+                    "base": ["/direction", "/warmup"],
+                    "search_1_1": ["/direction"],
+                    "search_1_2": ["/direction"],
+                    "search_1_3": ["/direction"],
+                },
+            ),
         )
         assert rejected["success"] is False
         assert rejected["code"] == "invalid_optimization_request"
@@ -138,15 +159,26 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             "prepare_optimization",
             strategy_id=STRATEGY_ID,
             revision_id=saved["revision_id"],
-            symbol="BTC/USDT",
-            timeframe="1h",
-            param_ranges={"direction": [-1, 0, 1]},
+            research=research_input(
+                end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
+            ),
+            param_ranges={"direction": [-1, 0, 1, -1]},
             optimization_metric="total_return",
             train_start="2024-01-01",
             train_end="2024-01-03",
             test_start="2024-01-03",
             test_end="2024-01-07",
-            **execution_options({"direction": -1, "warmup": 2}),
+            evidence_id=await save_execution_evidence(
+                client,
+                {"direction": -1, "warmup": 2},
+                target_paths={
+                    "base": ["/direction", "/warmup"],
+                    "search_1_1": ["/direction"],
+                    "search_1_2": ["/direction"],
+                    "search_1_3": ["/direction"],
+                    "search_1_4": ["/direction"],
+                },
+            ),
         )
         assert not overlapping["success"]
         assert "without overlap" in overlapping["error"]
@@ -155,15 +187,26 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             "prepare_optimization",
             strategy_id=STRATEGY_ID,
             revision_id=saved["revision_id"],
-            symbol="BTC/USDT",
-            timeframe="1h",
-            param_ranges={"direction": [-1, 0, 1]},
+            research=research_input(
+                end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
+            ),
+            param_ranges={"direction": [-1, 0, 1, -1]},
             optimization_metric="total_return",
             train_start="2024-01-01",
             train_end="2024-01-03",
             test_start="2024-01-04",
             test_end="2024-01-07",
-            **execution_options({"direction": -1, "warmup": 2}),
+            evidence_id=await save_execution_evidence(
+                client,
+                {"direction": -1, "warmup": 2},
+                target_paths={
+                    "base": ["/direction", "/warmup"],
+                    "search_1_1": ["/direction"],
+                    "search_1_2": ["/direction"],
+                    "search_1_3": ["/direction"],
+                    "search_1_4": ["/direction"],
+                },
+            ),
         )
         assert prepared["success"] and prepared["status"] == "ready", prepared
         manifest_hash = prepared["manifest_hash"]
@@ -179,6 +222,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             strategy_id=STRATEGY_ID,
             code=STRATEGY_CODE.replace("= self._direction", "= -self._direction"),
             yaml_config=Path(saved["yaml_path"]).read_text(),
+            research={"kind": "inherit_selected_revision"},
+            expected_revision_id=saved["revision_id"],
         )
         assert replacement["revision_id"] != saved["revision_id"]
         assert replacement["status"] == "draft"
@@ -192,8 +237,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert completed["manifest_hash"] == manifest_hash
         assert completed["best_params"] == {"direction": 1}
         assert completed["optimization_metric"] == "total_return"
-        assert completed["total_combinations"] == 3
-        assert (await client.read_all_pages("list_jobs"))[0]["completed"] == 3
+        assert completed["total_combinations"] == 4
+        assert (await client.read_all_pages("list_jobs"))[0]["completed"] == 4
         # warmup=2 is a captured constructor default, not a grid parameter.
         # The engine enters one
         # bar later (index 3), and training must include the entire last day.
@@ -217,7 +262,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert run["strategy_id"] == STRATEGY_ID
         assert run["revision_id"] == saved["revision_id"]
         assert run["manifest_hash"] == manifest_hash
-        assert run["dataset_id"].startswith("BTC/USDT:1h:2024-01-01:2024-01-07:")
+        assert re.fullmatch(r"query-sha256:[0-9a-f]{64}", run["dataset_id"])
         assert run["details_available"] is True
         assert run["default_scope"] == "test"
         assert run["selected_train_scope"] == "trial/2/train"
@@ -225,6 +270,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             "trial/0/train",
             "trial/1/train",
             "trial/2/train",
+            "trial/3/train",
             "test",
         }
         assert "daily_pnl_median" in run["available_metric_ids"]
@@ -264,6 +310,14 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert losing["parameters"] == {"direction": -1}
         assert losing["metrics"]["total_return"] < 0
         assert losing["metrics"]["daily_pnl_median"] < 0
+        repeated_trial = await client.call(
+            "get_run_metrics",
+            run_id=job_id,
+            scope="trial/3/train",
+            metric_ids=["total_return", "daily_pnl_median"],
+        )
+        assert repeated_trial["parameters"] == losing["parameters"]
+        assert repeated_trial["metrics"] == losing["metrics"]
         flat = await client.call(
             "get_run_metrics",
             run_id=job_id,
@@ -288,7 +342,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         }
         search = manifest.optimization
         assert search is not None
-        assert search.param_ranges == {"direction": [-1, 0, 1]}
+        assert search.param_ranges == {"direction": [-1, 0, 1, -1]}
         assert search.optimization_metric == "total_return"
         assert search.train_start.isoformat() == "2024-01-01"
         assert search.train_end.isoformat() == "2024-01-03"
@@ -315,13 +369,23 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         observations = json.loads(original_observations)
         assert observations["manifest_hash"] == manifest_hash
         assert set(observations["scopes"]) == set(run["available_scopes"])
-        for scope_id in ["trial/0/train", "trial/1/train", "trial/2/train"]:
+        for scope_id in [
+            "trial/0/train",
+            "trial/1/train",
+            "trial/2/train",
+            "trial/3/train",
+        ]:
             raw = observations["scopes"][scope_id]
             assert (
                 len(raw["equity_curve"])
                 == len(raw["returns"])
                 == len(raw["timestamps"])
                 == 72
+            )
+        for field in ("equity_curve", "returns"):
+            assert (
+                observations["scopes"]["trial/0/train"][field]
+                == observations["scopes"]["trial/3/train"][field]
             )
         assert observations["scopes"]["trial/1/train"]["trades"] == []
         assert observations["scopes"]["trial/2/train"]["trades"][0][
@@ -335,7 +399,9 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert Path(artifacts["strategy_source"]["path"]).read_text() == STRATEGY_CODE
         assert effective["backtest"]["symbol"] == "BTC/USDT"
         assert effective["backtest"]["timeframe"] == "1h"
-        assert effective["backtest"]["end_date"] == "2024-01-07T23:59:59.999999"
+        assert pd.Timestamp(effective["backtest"]["end_date"]) == pd.Timestamp(
+            "2024-01-07T23:59:59.999999Z"
+        )
         assert effective["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
         assert effective["strategy"]["parameters"] == {"direction": -1}
         assert effective == manifest.config_copy()

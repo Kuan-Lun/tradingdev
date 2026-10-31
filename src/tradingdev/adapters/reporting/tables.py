@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -109,8 +110,15 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
                 else ""
             )
             if item["field"] == "sequence" and spec.get("navigate_field"):
-                # Only renderer-generated result hashes are ever used here.
-                cell = f"<a href='{escape(row[spec['navigate_field']])}'>{cell}</a>"
+                destination = row.get(spec["navigate_field"])
+                cell = (
+                    f"<a href='{escape(destination)}' "
+                    f"aria-label='查看結果 {escape(value)} 的明細'>"
+                    f"{cell} · 查看明細 →</a>"
+                    if isinstance(destination, str)
+                    and re.fullmatch(r"#result-\d+-\d+", destination)
+                    else f"{cell} · 無可用明細"
+                )
             cells.append(f"<td{attributes}>{cell}</td>")
         body.append("<tr>" + "".join(cells) + "</tr>")
     encoded = base64.b64encode(table_csv(spec)).decode("ascii")
@@ -136,7 +144,14 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
         "<p class='muted'>預設四捨五入至小數點後兩位；"
         "請勾選完整精度後再核算數量 × 價格與費用。"
         "例如顯示 0.10 的成交量不一定等於精確的 0.1。</p>"
-        f"<div class='bokeh-table' data-table-key='{escape(key)}'></div>"
+        + (
+            "<p class='table-navigation'><strong>如何查看詳細結果：</strong>"
+            "點選每列的「查看明細 →」，開啟這組結果的詳細內容。"
+            "互動表格也可直接點選資料列。</p>"
+            if spec.get("navigate_field")
+            else ""
+        )
+        + f"<div class='bokeh-table' data-table-key='{escape(key)}'></div>"
         "<details class='static-table' open><summary>"
         "文字版完整表格（不需 JavaScript）</summary>"
         f"<p>共 {len(rows)} 筆；全部欄位與資料均保留。</p>"
@@ -154,10 +169,57 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
     )
 
 
+def _benchmark_row(scope: dict[str, Any]) -> dict[str, Any]:
+    """Summarize a saved baseline; absent evidence stays empty, not zero."""
+    benchmark = scope.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return {
+            "benchmark_symbol": None,
+            "benchmark_return": None,
+            "excess_return": None,
+            "benchmark_coverage": None,
+        }
+    definition = benchmark.get("definition")
+    definition = definition if isinstance(definition, dict) else {}
+    values = benchmark.get("values")
+    values = values if isinstance(values, dict) else {}
+    reference = values.get("total_return")
+    reference = (
+        reference
+        if isinstance(reference, int | float) and not isinstance(reference, bool)
+        else None
+    )
+    strategy = scope["values"].get("total_return")
+    strategy = (
+        strategy
+        if isinstance(strategy, int | float) and not isinstance(strategy, bool)
+        else None
+    )
+    coverage = benchmark.get("coverage")
+    coverage = coverage if isinstance(coverage, dict) else {}
+    return {
+        "benchmark_symbol": definition.get("symbol"),
+        "benchmark_return": reference,
+        "excess_return": None
+        if strategy is None or reference is None or coverage.get("complete") is not True
+        else float(strategy) - float(reference),
+        "benchmark_coverage": (
+            f"{coverage['aligned_bars']}/{coverage['scope_bars']}"
+            if "aligned_bars" in coverage and "scope_bars" in coverage
+            else None
+        ),
+    }
+
+
 def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, Any]:
     """Compare every saved result without combining train/test or fold equity."""
     columns = [
-        column("sequence", "結果序號", "integer", width=85),
+        column(
+            "sequence",
+            "結果序號／明細" if navigate else "結果序號",
+            "integer",
+            width=190 if navigate else 85,
+        ),
         column("period", "涵蓋日期（UTC；精確時間可勾選）", width=260),
         column("start", "開始時間（UTC）", visible=False),
         column("end", "結束時間（UTC）", visible=False),
@@ -234,6 +296,28 @@ def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, An
                     width=165,
                 )
             )
+    columns.append(column("benchmark_symbol", "基準標的", group="基準", width=110))
+    columns.append(
+        column("benchmark_coverage", "基準覆蓋 K 線", group="基準", width=130)
+    )
+    columns.append(
+        column(
+            "benchmark_return",
+            "基準報酬（買進持有）",
+            "percent",
+            group="基準",
+            width=165,
+        )
+    )
+    columns.append(
+        column(
+            "excess_return",
+            "超額報酬（策略−基準）",
+            "percent",
+            group="基準",
+            width=165,
+        )
+    )
     rows: list[dict[str, Any]] = []
     text_parameters = {
         item["field"].removeprefix("parameter:")
@@ -286,12 +370,63 @@ def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, An
                     row[f"metric:{metric}:{unit}"] = (
                         value if not isinstance(value, dict) else None
                     )
+            row.update(_benchmark_row(scope))
             rows.append(row)
+    if fixed := payload.get("fixed_comparison"):
+        by_run = {row["run_id"]: row for row in rows}
+        rows = []
+        for sequence, candidate in enumerate(fixed["candidates"], 1):
+            row = dict(by_run.get(candidate["run_id"], {}))
+            row.update(
+                sequence=sequence,
+                candidate=candidate["label"],
+                status={
+                    "succeeded": "成功",
+                    "failed": "失敗／無結果",
+                    "cancelled": "已取消／無結果",
+                    "not_run": "未執行／無結果",
+                }[candidate["status"]],
+                rationale=candidate["rationale"],
+                reason=candidate["reason"],
+                effective_parameters=json.dumps(
+                    candidate["parameters"], ensure_ascii=False, sort_keys=True
+                ),
+                run_id=candidate["run_id"],
+            )
+            rows.append(row)
+        metric_columns = [
+            item for item in columns if item["field"].startswith("metric:")
+        ]
+        other_columns = [item for item in columns[1:] if item not in metric_columns]
+        for item in other_columns:
+            item["visible"] = False
+        for item in metric_columns:
+            item["width"] = 145
+            if item["field"].startswith("metric:total_trades:"):
+                item["visible"] = False
+        columns = [
+            columns[0],
+            column("candidate", "固定候選", width=145),
+            column("status", "執行狀態", width=145),
+            column("effective_parameters", "完整有效參數", width=190),
+            *metric_columns,
+            column("reason", "無結果原因", width=230),
+            column("rationale", "執行前比較理由", width=300, visible=False),
+            *other_columns,
+        ]
     return _with_precision(
         {
             "columns": columns,
             "rows": rows,
             "navigate_field": "detail" if navigate else None,
+            **(
+                {
+                    "height": max(160, 50 + 32 * len(rows)),
+                    "search_placeholder": "固定候選、狀態、參數或原因…",
+                }
+                if fixed
+                else {}
+            ),
         }
     )
 

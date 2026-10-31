@@ -10,6 +10,16 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from tests.e2e.llm_client import tool_payload
+from tests.integration.execution_fixtures import (
+    execution_evidence_draft,
+    research_input,
+)
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.research_evidence import ResearchEvidenceStore
+from tradingdev.domain.research_evidence import (
+    ResearchEvidenceDraft,
+    ResearchEvidenceRecord,
+)
 
 if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
@@ -27,11 +37,16 @@ _CAPABILITIES = {
     "training_requirement": "required",
     "supported_execution_modes": ["walk_forward"],
 }
-_PRESENTATION = {
-    "title": "策略入口相容性診斷",
-    "summary": "只確認不支援的入口如何回覆，不啟動策略研究。",
-    "parameter_descriptions": {},
-}
+_EVIDENCE_ID = "d" * 32
+
+
+def seed_guidance_evidence(workspace: MCPWorkspace) -> None:
+    """Fixture setup for rejection diagnostics, not a model-authored research flow."""
+    record = ResearchEvidenceRecord.create(
+        ResearchEvidenceDraft.model_validate(execution_evidence_draft({})),
+        evidence_id=_EVIDENCE_ID,
+    )
+    ResearchEvidenceStore(WorkspacePaths(workspace.workspace)).save(record)
 
 
 def guidance_arguments(tool: str) -> dict[str, Any]:
@@ -42,19 +57,13 @@ def guidance_arguments(tool: str) -> dict[str, Any]:
         return {"strategy_id": STRATEGY_ID}
     arguments: dict[str, Any] = {
         "strategy_id": STRATEGY_ID,
-        "symbol": "BTC/USDT",
-        "timeframe": "1h",
-        "minimum_history_bars": 20,
-        "sample_bars": 128,
-        "presentation": _PRESENTATION,
+        "research": research_input(strategy_outline="診斷既有分位數策略的執行能力"),
+        "evidence_id": _EVIDENCE_ID,
     }
     if tool == "prepare_backtest":
-        return {
-            **arguments,
-            "start_date": "2024-01-01",
-            "end_date": "2024-01-08",
-        }
+        return arguments
     if tool == "prepare_optimization":
+        arguments["research"]["end_date"] = "2024-01-08T23:59:59.999999"
         return {
             **arguments,
             "param_ranges": {"horizon": [15, 30]},

@@ -14,6 +14,7 @@ from tests.mcp.ml_fixtures import model_pair, seed_bars
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import MlContractResponse, PredictionEvaluationResponse
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
 from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import ml
 
@@ -53,10 +54,13 @@ def test_get_ml_contract_lists_the_enumerable_vocabulary(tmp_path: Path) -> None
         "purged_walk_forward",
         "purged_kfold",
     }
+    assert {rs.name for rs in contract.rolling_schemes} == {"roll_sd", "roll_ex"}
+    assert {rs.rtype for rs in contract.rolling_schemes} == {"ROLL_SD", "ROLL_EX"}
     assert len(contract.processor_types) == 6
     assert contract.ic_methods == ["pearson", "spearman"]
     assert contract.n_quantiles_range == [2, 10]
     assert contract.schema_version == 1
+    assert ML_SAMPLE_PROVENANCE_NOTE in contract.guidance["reports"]
 
 
 def test_evaluate_signal_runs_the_signal_suite(tmp_path: Path) -> None:

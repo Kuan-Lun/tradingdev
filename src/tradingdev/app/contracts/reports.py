@@ -1,6 +1,8 @@
 """Public identity of a reproducible, offline report artifact."""
 
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import Field, StringConstraints
 
 from tradingdev.app.contracts.common import ContractModel
 
@@ -15,7 +17,10 @@ class ReportResponse(ContractModel):
     path: str
     sha256: str
     run_ids: list[str]
+    navigation_instructions: str
     scope_count: int
+    comparison_job_id: str | None = None
+    ml_entry_ids: list[str] = Field(default_factory=list)
 
 
 class ReportSection(ContractModel):
@@ -39,3 +44,23 @@ class ReportCommentary(ContractModel):
 
     title: str
     text: str
+
+
+type AnalysisText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)
+]
+
+
+class AnalysisReference(ContractModel):
+    run_id: str
+    scope: str
+
+
+class ReportAnalysis(ContractModel):
+    """Client-authored interpretation, distinct from saved/computed evidence."""
+
+    summary: AnalysisText
+    observations: AnalysisText
+    hypotheses_and_limits: AnalysisText
+    next_steps: AnalysisText
+    references: Annotated[list[AnalysisReference], Field(max_length=32)]

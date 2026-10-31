@@ -44,27 +44,133 @@ workspace/
   ml_leaderboard/
     .leaderboard.lock
     leaderboard.jsonl
+  comparisons/
+    <job_id>/
+      manifest.json
+      config.yaml
+      ledger.json
+      snapshot.parquet
+      receipt.json
   runs/
     <run_id>/
       manifest.json
       result.json
       performance.json
       observations.json
+      research_evidence.json
       config.yaml
       strategy.py
       dataset_fingerprint.json
       pipeline_result.pkl
   feature_requests/
+  research_evidence/
+    <evidence_id>.json
+  submitted_research/
+    <job_id>.json
   execution_plans/
     <plan_id>/
       confirmation.txt
       confirmation.html
       .approval.lock
+  research_archives/
+    <archive_id>/
+      index.html
+      research.json
+      manifest.json
+      reports/
+      research.zip
   reports/
     <report_id>/
       report.html
       manifest.json
 ```
+
+Comparison snapshots and receipts are published only after approval and data
+loading. A failed or cancelled comparison may have neither `snapshot.parquet`
+nor `receipt.json` if it stopped before data publication.
+
+Strategy validation and dry-run use a separate system temporary directory named
+`tradingdev-strategy-check-*`, outside the source workspace. It contains
+`request.json`, the worker's `result.json` when available, `.workers/<launch_token>`
+supervisor controls, and isolated `tmp`, `numba`, `matplotlib` and `mypy` paths as
+needed. The request identifies the source workspace, fixed revision metadata and
+fixture size; the response binds its evidence to the request's SHA-256 digest.
+These files are runtime-check artifacts, not saved research runs or reports.
+
+The directory is removed after the supervisor confirms its owned process group
+has stopped, on both success and failure. If shutdown cannot be verified, the
+directory is retained and its path is included in failure diagnostics. Failure
+to remove the directory also returns a cleanup diagnostic with its path; neither
+case grants passing validation or dry-run evidence. The process-group guarantee
+excludes descendants that create a separate session and external forced
+termination of the supervisor, as described in the
+[strategy security model](strategy_contract.md#security-model).
+
+## Research Evidence Records
+
+`ResearchEvidenceService` saves client-authored explanations without fetching
+sources, executing strategies or acquiring market data. Each
+`research_evidence/<evidence_id>.json` is a canonical UTF-8 record, limited to
+512 KiB, with a creation time, 32-character hexadecimal ID and content digest.
+Publication does not replace an existing record; an identical record can be
+retried. Reads check the ID, schema, digest and canonical bytes, rejecting unsafe
+paths and symbolic links. These checks detect inconsistency, not an attacker
+who can rewrite both the record and its digest; approved content must retain its
+own expected digest.
+
+The draft contains human parameter descriptions, trading conditions and formulas,
+variable meanings, limitations, source declarations and parameter provenance.
+Sources identify client-reported web retrieval or user-supplied references;
+neither their presence nor a hash proves that browsing occurred or that a claim
+is true. Reference-backed parameter declarations must cite explicit source claim
+values matching the effective values, including JSON type. Every cited claim must
+match each bound value; differently valued settings need separate declarations.
+A source supporting only a formula cannot
+also establish a suggested parameter value.
+
+`bind_research_evidence` expands grouped provenance declarations against the
+complete fixed execution, rejecting missing, overlapping or unknown targets and
+parameter pointers. Values come from the manifest, not from a repeated client
+copy. A single constructor uses target `base`; fixed comparisons use
+`candidate_1` through `candidate_8`. Optimization also binds each search-axis
+option's merged parameter subtree as `search_<group>_<option>`; the base value
+alone does not explain the search grid. Bound content retains the complete record,
+target values, execution identities and its own digest. These are explanation
+bindings, not proof that the supplied formulas faithfully implement Python or ML.
+
+`ApprovedResearch` freezes bound declarations together with one versioned execution
+policy disclosure per distinct manifest. Submission and worker startup compare the
+saved policy with the simulator's current policy before acquiring data or running
+the strategy. Historical reads validate the saved content and identity without
+replacing its wording with today's policy.
+
+Execution policy `execution-v2` uses the observed month-boundary equity baseline
+for Volume's monthly loss limit, as defined in the
+[signal and execution contract](strategy_contract.md#python-contract).
+Plans prepared under an older execution policy must be prepared and confirmed
+again before submission; already saved results and their disclosures are not
+rewritten or recalculated.
+
+`submitted_research/<job_id>.json` retains the complete target and approved snapshot
+before worker launch; the job stores its expected `research_evidence_hash`. The
+canonical envelope is limited to 4 MiB, with its size checked before confirmation.
+Successful runs receive an independently readable `research_evidence.json`, registered
+as artifact type `research_evidence` with its byte hash, parent job ID and approved
+content hash. Publication rollback and comparison recovery include this artifact.
+A failed comparison can retain its parent disclosure even when no run was published.
+Removing the original draft, confirmation HTML or submitted copy does not invalidate
+a completed run's registered copy. Missing or changed declared evidence is an error;
+legacy runs and direct callers that never supplied evidence remain explicitly
+`not_recorded`, rather than receiving reconstructed explanations.
+
+Historical scope reads verify parameter membership before attaching provenance.
+Optimization binds each training trial to its Cartesian search position, including
+duplicate-valued options, and the selected test scope to the saved winning trial.
+Walk-forward constructor settings remain distinct from fitted model parameters.
+Walk-forward reads require the complete numbered train/test fold set and summary,
+ordered disjoint test windows, and training observations before their test window.
+Active explicit windows are checked using inclusive UTC calendar days. Automatic
+fold checks do not reconstruct the original dataset or prove its split geometry.
 
 ## SQLite Tables
 
@@ -76,7 +182,20 @@ workspace/
   and `worker_control_id`, its unique launch token. The PID belongs to the
   supervisor, not the strategy-executing child. New submissions also record
   `manifest_hash`, the expected digest of their fixed execution specification.
-- `runs`: completed run metadata, metrics JSON, config hash, source hash,
+  Field updates read, validate and merge within one SQLite `BEGIN IMMEDIATE`
+  transaction, including the indexed columns and JSON payload. Execution identity
+  remains immutable. The first persisted terminal state (`done`, `failed`,
+  `cancelled`, `estimation_timeout`) wins; later lifecycle updates cannot replace
+  its status, timestamps or error. Late process identity fields may still be
+  attached without restoring an earlier lifecycle snapshot. Polling and
+  cancellation condition their writes on an active state and report the state
+  actually saved; completion during cancellation is not reported as cancellation.
+  Status and list responses compute `elapsed_seconds` from creation to the saved
+  terminal `ended_at`; only active jobs use the query time. Missing, invalid,
+  timezone-less or reversed timestamps return `elapsed_seconds: null` with
+  `elapsed_unavailable_reason: missing_or_invalid_timestamps`, without inventing
+  a duration or rewriting legacy records.
+- `runs`: completed run metadata, owning `job_id`, metrics JSON, config hash, source hash,
   random seed, dataset id, artifact directory, selected `revision_id`, and
   execution `manifest_hash`.
 - `artifacts`: run and non-run artifact metadata, path, sha256, and metadata JSON.
@@ -85,12 +204,35 @@ workspace/
   active confirmation token, submitted job ID, error, and the saved text/HTML
   digests. The plan payload includes its manifest, preflight evidence and document.
 
-`job_id` and `run_id` are currently the same for completed backtest and
-optimization jobs. `get_job_status(job_id)` returns the `run_id` once a run is
-done. Generated strategy jobs and runs carry their selected `revision_id`;
+`job_id` and `run_id` are currently the same for completed standalone backtest,
+walk-forward and optimization jobs. `get_job_status(job_id)` returns the `run_id`
+once such a run is done. A fixed comparison has a parent job and separate candidate
+run IDs recorded in its ledger; the parent has no performance run of its own.
+Generated strategy jobs and runs carry their selected `revision_id`;
 bundled strategies and historical records without revision identity expose
-`null`. A later save changes only the current pointer and does not change the
+`null`. A successful explicit revision save changes only that strategy's current
+pointer and does not change the
 revision used by an existing job or completed run.
+
+Run publication is handled by `RunPublisher`, separately from job lifecycle
+updates. `RunPublicationBinding` supplies the owning `job_id`, the distinct
+`run_id`, and the expected execution manifest established by the submission
+owner. The publisher verifies comparison membership against the saved parent
+bundle and ledger; the binding alone does not prove that a child was approved.
+The publisher verifies the existing
+job, strategy/revision, executed manifest, configuration, source and performance
+identity. Each run keeps its own `manifest.json` and run-scoped artifact IDs.
+Artifacts registered directly by `RunPublisher` retain the owning job ID in their
+metadata. `PerformanceStore` instead registers `performance_json` and
+`observations_json` with only `schema_version` and `manifest_hash` in metadata;
+their owning job is obtained through the artifact's `run_id` and the run record's
+`job_id`. Child runs require complete
+performance artifacts. Publication locking, rollback and retry checks cover
+the run files and lineage. `JobStore.save_result` retains the single-run
+interface and always constructs a binding with `run_id == job_id`.
+Job creation and child publication share the run-ID submission lock; a new job
+cannot reuse an existing run ID, and a child cannot occupy an existing job ID.
+The lock file remains for concurrent waiters and same-thread nested submission.
 
 Draft cleanup scans raw job identities and payloads, run references and all stored
 manifests, including manifests left without a database job. Failed and cancelled
@@ -101,12 +243,13 @@ or migrate old revisions. The per-strategy `.locks` files coordinate saves,
 validation, status updates and cleanup; they stay outside deletable revision
 directories and are never unlinked while another process might use their inode.
 
-Successful MCP `prepare_backtest`, `prepare_walk_forward`, and
+Successful MCP `prepare_backtest`, `prepare_comparison`, `prepare_walk_forward`, and
 `prepare_optimization` responses include the required `manifest_hash` and a
 `plan_id`; they do not create a job. `submit_execution_decision` with `approve`
 returns the job ID after the caller relays the user's explicit consent.
-Job status, job-list items, and `get_run` records
-carry the same digest; historical entries without an execution manifest
+Job status and job-list items carry the parent digest. Single-run `get_run`
+records carry that same digest; comparison children instead carry their individual
+execution digests and retain the parent job ID. Historical entries without an execution manifest
 return `null`. Historical results remain readable, but old jobs cannot resume
 through the new workers. Prepare a new plan to execute through MCP under a fixed
 specification. The old MCP `start_backtest`, `start_walk_forward`,
@@ -133,214 +276,137 @@ rest of the temporary workspace after verified cleanup.
 Cancellation of an active job without a complete control identity fails without
 signalling or claiming that the process stopped. A queued job that has not started
 a process can be cancelled directly. Status checks mark a started job failed when
-its supervisor identity is missing or no longer matches; the first response
-includes the same error persisted in the database. Spawn failures also persist
-`failed`, an explanatory error and `ended_at` before propagating the exception.
+its supervisor identity is missing or no longer matches, with a comparison-specific
+exception: comparison status checks must first confirm worker cleanup. If cleanup
+cannot be verified, the status check does not itself change job or candidate
+states and returns `detail_error.code = worker_cleanup_failed`. Explicit
+cancellation likewise does not change lifecycle states on cleanup failure and
+returns `code = worker_cleanup_failed`. Both reread the saved job, so a concurrent
+worker completion is preserved and reported: `status = done` can appear alongside
+the cleanup diagnostic. Missing control identity during cancellation instead
+returns `worker_identity_unavailable`. When a status check does mark a job failed, its
+first response includes the same error persisted in the database. Spawn failures
+also persist `failed`, an explanatory error and `ended_at` before propagating the
+exception.
 
 ## ML Research Artifacts
 
-ML datasets, feature matrices, trained models and signal evaluations use the
-workspace directories above. They do not create background jobs, backtest runs
-or SQLite artifact registrations. Dataset and model IDs refer to their own
-stores; they are not run IDs.
+Dataset, feature-cache, model and leaderboard identities and retention are defined
+in [ML Research](ml_research.md#ml-research-artifacts). They use separate stores,
+not backtest run IDs or the SQLite artifact index.
 
-### Immutable Datasets
+## Research Settings and Provenance
 
-`MLDatasetStore` publishes schema version 2 datasets as a complete directory
-containing `dataset.parquet` and `manifest.json`. The manifest records:
+Research intake is not a separate persistent session. The shared resolver writes
+one effective config before a generated revision or execution manifest is saved.
+The required request modes, cost defaults and annualization rules are described
+in the [research-input contract](strategy_contract.md#research-inputs-and-simulation-policy).
 
-- The single symbol or ordered panel symbols, timeframe, requested date range,
-  source and dataset kind.
-- Feature-set name, ordered feature columns, build-time feature-code fingerprint,
-  label column, label horizon and dropped-row count.
-- For panels, the calendar settings, coverage summary and date count. As in the
-  tool response, dropped/missing date lists each contain at most 50 dates;
-  `n_dropped_dates` and each `n_missing` remain exact.
-- `schema_version`, `rows`, the SHA-256 `content_hash` of the exact Parquet bytes,
-  and `dataset_id`.
+The canonical values are stored at their execution locations:
 
-The Parquet frame retains `label_start` and `label_end`: the original source-bar
-timestamps used to calculate each row's forward return, captured before feature
-rows are dropped or a panel calendar is aligned. Panel labels are computed on
-each symbol's own bars. Forward filling carries these timestamps together with
-the original label; it does not turn that label into a newly observed outcome
-at the filled calendar date. Fold validation refuses panels with carried
-observations and requires rebuilding with intersection or dropped missing dates.
+- `research.strategy_outline`: the resolved research outline;
+- `backtest.symbol`, `timeframe`, `start_date`, `end_date`, `init_cash`, `fees`,
+  `slippage`, and `periods_per_year`: the effective choices and simulation settings;
+- `strategy.display_name`: the human-readable name supplied during authoring or
+  generated from the outline, separate from `strategy.id` and `revision_id`.
 
-`dataset_id` is `ds_` followed by the first 16 hexadecimal characters of the
-SHA-256 of the sorted JSON manifest, excluding `dataset_id` itself. Thus metadata,
-feature code and the saved data bytes all participate in identity. Rebuilding
-after an input or feature-code change publishes a different version rather than
-replacing the previous dataset. Cache-hit status is response metadata only and
-does not change dataset identity.
+`research` uses metadata schema version 1. Besides its outline, it contains
+`policy_version`, `field_sources`, optional `selected_revision`, and
+`annualization_reason`. `field_sources` covers exactly the JSON pointer for the
+outline and each of the eight backtest fields above. Values are `request`,
+`project_default`, or `selected_revision`; these describe resolution paths, not
+proof of human input or approval. No second copy of the market, period, cost or
+annualization values is stored in this metadata. An inherited field requires a
+selected-revision identity containing `strategy_id`, `revision_id`, and its
+`config_hash` when recorded. Generated revision metadata's `request_summary` is
+a derived outline projection, not an independent save input or configuration
+authority.
 
-Publication holds `.publish.lock` across the existence check and same-directory
-rename of a completed temporary directory. An existing ID is reused only after
-its data and manifest pass verification and its manifest matches the proposed
-one; a collision or corrupt existing version fails without replacing it.
-Temporary publication directories are removed on success and failure. The lock
-file remains available to coordinate later writers.
+The config hash and manifest hash cover these saved values and origins. Equal
+numeric costs with different origins or policy versions can therefore have
+different hashes. Reusing a saved manifest does not reapply current policy defaults;
+a new research request resolves its policy before producing a new manifest.
+Direct execution configs and older artifacts can have no research provenance;
+confirmation displays that absence rather than fabricating request origins.
+Direct Python override helpers remove research metadata from the effective config
+when applying request-level market/date or backtest settings, since they cannot
+preserve the original field origins for that new execution. They do not rewrite
+the saved revision or its metadata.
+Direct YAML loading through CLI or `BacktestService.run_config` does not use these
+override helpers: it preserves supplied research metadata without rebuilding its
+origins. When manually editing research-owned settings in an execution YAML copy,
+remove the entire top-level `research` mapping to avoid recording stale origins.
+Keep the generated strategy identity and revision-bound declarations unchanged;
+the saved source revision remains intact. Only changing strategy parameters does
+not require removing research metadata.
 
-Every dataset load validates the ID syntax, schema, manifest identity, Parquet
-content hash and row count before exposing a frame. Hashing and parsing use the
-same bytes. Missing, incomplete or altered versions fail rather than rebuilding
-silently. Earlier dataset schemas are unsupported and must be rebuilt; reads do
-not migrate, delete or rewrite their files. These hashes detect inconsistent
-content, not a writer able to replace both the manifest and its data.
+Strategy creation and revision publication share the per-strategy lifecycle lock.
+Omitted strategy IDs allocate a new `strategy_<uuid>` namespace; explicit IDs
+without `expected_revision_id` also mean creation. Existing revision directories,
+legacy files and incomplete publications reserve their namespace. Revising requires
+the explicit expected current revision and verifies its stored content before
+publication. A stale revision or creation collision does not move current.
+Recovery from legacy flat files creates a new identity and leaves the original
+files in place. As before, revision-directory publication and current-pointer
+replacement are separate filesystem operations: a failed pointer update can leave
+a complete unreferenced revision while the previous current pointer remains.
 
-Schema 2 alone does not establish that label intervals are present. Fold
-validation additionally requires both interval columns; single-symbol
-evaluation requires `label_end` and chronological `timestamp` rows to check its
-holding intervals. Earlier schema 2 datasets missing the required columns must
-also be rebuilt for those operations. The generic store does not infer missing
-intervals or modify an old version. Validation and evaluation semantics are
-defined in the [ML research contract](strategy_contract.md#fold-validation-and-signal-interpretation).
+## Fixed Comparison Evidence
 
-### Feature Matrix Cache
+`ComparisonManifest` fixes one to eight ordered ordinary-backtest candidates,
+including their labels, proposal rationale and complete execution manifests.
+Only effective constructor parameters may differ; strategy identity, research,
+data settings, execution assumptions and seed must match. Repeated effective
+parameter sets are rejected. Its digest binds every candidate before execution.
+`prepare_comparison` resolves research once and captures complete constructor
+values from one selected revision. Candidate overrides never rewrite the base
+revision. The plan contains this bundle, a separate program receipt for each
+candidate and one confirmation covering the entire set. Each candidate, including
+bundled strategies, passes both fixed synthetic fixtures; the whole preparation
+shares one supervised time limit. No market data, engine or training runs before
+approval. Training-required and walk-forward comparisons are not supported.
 
-`ml_feature_cache/<cache_key>.parquet` stores a feature matrix, with a JSON
-sidecar describing the symbol, timeframe, input-data fingerprint, feature set,
-code fingerprint, feature and stored columns, row count, content hash and last
-use time. Labels are constructed after the cache lookup, so changing the label
-horizon can reuse the same feature computation.
+`ComparisonStore` uses `comparisons/<job_id>/manifest.json` and `ledger.json`.
+Alongside them, `config.yaml` projects the shared configuration without selecting
+one candidate's parameters; each child's manifest contains its complete settings.
+The ledger reserves `<job_id>_candidate_N` run IDs and retains every candidate's
+child manifest hash, status and failure reason. It progresses from `pending` to
+`running`, then `succeeded`, `failed` or `cancelled`; untouched candidates can
+become `not_run`. Identical retries preserve terminal outcomes. A reserved run ID
+does not prove a result exists; the execution coordinator must verify published
+child results before recording success. Metrics remain in each run's artifacts.
 
-The cache key includes bar values, symbol, timeframe, feature set and feature
-code. The default code fingerprint hashes the feature package's relative source
-paths, source bytes and registered column declarations; it does not depend on
-the installation's absolute path or a Git checkout. An application caller may
-explicitly supply that fingerprint. Dataset manifests retain the fingerprint
-used at build time, so later evaluation does not substitute the currently
-installed feature code's identity.
+After approval, `snapshot.parquet` and `receipt.json` retain the actual merged
+data bytes and their SHA-256, data binding, source request ID and comparison hash.
+The coordinator verifies the snapshot's data binding against the accepted
+execution; the storage adapter validates identity, JSON and file integrity.
+This receipt does not change the approved manifest. Initial ledger publication
+precedes the manifest completion marker; a missing ledger beside an existing
+manifest is corruption and cannot reset completed candidates. Failed snapshot
+publication rolls back only files created by that attempt. Draft cleanup scans
+comparison children, including orphaned manifests, and blocks ambiguous history.
 
-A cache hit requires matching computation metadata and feature columns, a
-matching Parquet hash, and matching stored columns and row count. Sidecars must
-contain a JSON object with string identity fields and SHA-256 hash, a nonnegative
-integer row count, and distinct string lists for stored and feature columns;
-feature columns must be present in the stored columns. A present last-use time
-must be finite and numeric. Malformed metadata, missing files, hash or shape
-mismatches and invalid Parquet content are cache misses, allowing the service
-to recompute and replace the disposable cache entry. The matrix is parsed from
-the same bytes whose hash was verified. Recomputing does not replace source
-market files or immutable dataset versions.
+`ComparisonService` loads one merged dataset after approval and executes each
+candidate independently against fresh decodes of that snapshot. It creates no
+parent performance run or combined portfolio. Individual strategy failures retain
+their reason and allow remaining candidates to run; shared source/data failures
+stop the batch and mark untouched candidates `not_run`. Terminal candidates are
+not replayed. The publisher binds each successful child to its parent, approved
+child manifest and snapshot receipt. Recovery after publication but before ledger
+update verifies the complete registered artifacts before recording success.
 
-Each cache directory has a persistent `.feature-cache.lock` shared by processes.
-It serializes complete writes and eviction, reads through their recency update,
-and key/statistics snapshots, so an in-progress publication cannot be swept as
-an orphan. The default lock wait is 30 seconds; expiration raises a timeout
-instead of reporting a cache miss. Matrix and sidecar publication use unique
-temporary files in the cache directory, with cleanup on success or failure;
-cleanup errors follow the I/O policy below. The lock file is retained and excluded from retention bytes,
-as are temporary files. This lock covers the disposable feature cache only.
-
-Verification reads and cache publication propagate permission and other storage
-I/O failures; these are not reported as misses. Updating recency is best effort
-and logs a warning if it fails, as does an unsuccessful eviction deletion.
-The default retention limits are 256 entries and 512 MiB, counting matrices and
-sidecars. Successful reads update recency; writes sweep incomplete pairs and evict least
-recently used entries. The just-written entry is protected, so a matrix larger
-than the byte budget remains stored and logs a warning. Failed deletions may
-also leave the cache above its limits. These are retention targets, not a hard
-disk quota; feature-cache eviction does not delete the immutable datasets that
-already contain the computed features.
-
-### Trained Models
-
-`models/<model_id>.json` holds schema 1 metadata; the matching `.bin` holds the
-pickled model wrapper. Metadata records model name, framework, kind, effective
-parameters, ordered features, training-row count, available feature importance
-and full blob SHA-256. At build time, the ID is computed as a 16-character
-SHA-256 prefix over name, parameters, ordered features and blob hash. It
-identifies model content, not a training execution or saved validation result.
-
-Save and load verify the blob hash and recompute the ID from its identity fields.
-Loading also checks that the metadata ID matches the requested filename. Framework,
-kind, training-row count and feature importance are not identity fields; changes
-to those fields may still go undetected. Metadata is not compared with the
-serialized estimator, and the ID neither authenticates publishers nor proves all
-metadata unchanged. Prediction checks exact ordered dataset features and unpickles
-the same bytes that passed hash verification.
-
-Writers for one model ID hold `.<model_id>.lock`. A new blob is staged beside its
-destination and atomically published; an existing blob must have the same hash and
-is never truncated or replaced. Metadata is published last by atomic replacement,
-so concurrent readers see complete records and can continue using an existing model
-during repeated training. Temporary files are removed on success and failure; the
-lock file is retained. A failed first publication removes its newly created blob
-if no metadata was published. This is not a crash or power-loss transaction:
-an interrupted, unpublished blob can be recovered by retrying the same content.
-
-The schema 1 filenames remain unchanged. `ModelArtifactStore.load_with_bytes`
-returns the verified metadata and bytes together; `load` returns only metadata.
-Saving no longer accepts an alternate `model_id`, and the unchecked
-`load_model_bytes` helper is removed.
-
-CatBoost removes random `model_guid` and wall-clock `train_finish_time` metadata
-before serialization, avoiding identities driven by those incidental values.
-This does not guarantee identical blobs across dependency versions or environments.
-Pickled wrappers are tied to the training environment, not a portable model
-exchange format. After a Python or ML dependency upgrade, retrain in the new
-environment and use the returned model ID. Schema 1 does not record dependency
-versions or enforce compatibility; a valid blob hash cannot establish that an
-older pickle is loadable in the current environment.
-
-Pickle requires trusted workspace files. Hashing is not authentication or a
-sandbox; a writer able to replace metadata and blob can supply executable code.
-The final artifact fits all dataset rows even when training returns fold scores;
-its ID or predictions on those rows do not establish out-of-sample evidence.
-
-### Recorded Signal Evaluations
-
-MCP `evaluate_signal(model_id, dataset_id, record=True)` generates the complete
-signal from a verified saved model and single-symbol dataset, then records its
-evaluation. Preview pages are not persisted prediction artifacts and are never
-the evaluation's input. The separate Python `MLService.evaluate_signal` accepts
-arrays and requires a verified dataset when recording.
-Whenever `dataset_id` is supplied, including without recording, the signal must
-cover all its rows, the supplied forward returns must exactly match the saved
-`forward_return` values in row order, and an explicit horizon must equal the
-saved horizon; omitting it adopts the saved value. The saved interval endpoints
-must support non-overlapping trades on the simulation grid. Panel datasets are
-refused for evaluation. Non-finite signal or return values are rejected, rather
-than dropped before recording. Without `record=True`, evaluation returns its
-result without a leaderboard write.
-
-`ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
-by ID. Each record preserves finite metrics, observation count, model and dataset
-IDs, a display label, and an evaluation context: symbol or panel symbols,
-timeframe, requested period, horizon, IC window, quantile count, feature set,
-build-time code fingerprint and dataset content hash. Comparison uses the saved
-context; changed data or feature code does not silently inherit an old context.
-
-`leaderboard(dataset_id=...)` verifies and selects one immutable dataset
-version, so models on it can be compared separately from rebuilt versions.
-Records must match its manifest's data context and row count; unknown or invalid
-IDs fail. Other filters combine with this selector. Different IC windows or
-quantile counts require `allow_mixed=True`, which never bypasses dataset
-verification.
-
-The entry ID includes the dataset, evaluation context and model ID.
-With no model ID, it also includes a signal fingerprint computed from a
-canonical JSON array of finite floating-point values; array boundaries and value
-boundaries are preserved. MCP evaluation validates the model that generated its
-signal. Existing records and Python array callers may instead use a
-caller-declared model label: their ID alone does not prove signal origin. The
-stored format has no provenance discriminator, so a leaderboard must not label
-all historical rows as verified-origin. Neither path proves out-of-sample
-evaluation. Repeating a model/dataset/context entry
-replaces its earlier metrics, including when the caller supplies different
-signal values. Distinct unlabelled signals remain separate candidates.
-
-`LeaderboardStore.record` holds `.leaderboard.lock` across its read, update and
-write. It flushes a unique temporary file beside the destination and atomically
-replaces the JSON-lines file. `entries` reads without locking and sees a complete
-old or new file. Temporary files are removed after successful and failed writes, and
-the lock file is retained. Re-recording an entry returns `replaced=True` rather
-than increasing the candidate count. Unreadable records fail the read instead
-of being skipped and silently reducing that count.
+Cancellation and worker-death reconciliation happen only after worker cleanup is
+verified. Parent `done` means all candidates were attempted, not that every one
+succeeded: the compact `comparison` status includes `outcome`, counts, dataset
+identity and every candidate's ID, label, run ID, child hash, status and reason.
+`outcome=no_success` is explicit when none succeeded. Status reads receipt metadata
+without loading the Parquet frame; execution and report creation verify actual
+snapshot bytes. Constructor maps and proposal rationales stay in the confirmation
+and report rather than being repeated on every poll.
 
 ## Execution Manifest
 
-Before spawning a background worker, the service publishes
+For a single execution, before spawning a background worker, the service publishes
 `runs/<job_id>/manifest.json` and records its hash in the job. Publication never
 replaces a different existing manifest. Atomic publication applies to the manifest
 file; file publication and the database job write do not form one transaction.
@@ -350,7 +416,9 @@ Schema version 5 contains:
 - `config`: the effective strategy identity and source hash, backtest settings,
   optional walk-forward settings, parallel policy, seed settings, and data
   requirements with resolved absolute directories and feature paths. Typed
-  execution defaults are materialized and dates are JSON strings.
+  execution defaults are materialized and dates are JSON strings. Guided research
+  also includes the resolved `research` metadata and the saved strategy display
+  name; these are not executable constructor arguments.
 - `strategy_execution`: the strategy kind (`bundled` or `generated`) and
   `constructor_kwargs`. Bundled `config` and optional `fit_config` objects include
   nested model defaults; generated keyword arguments include declared constructor
@@ -371,7 +439,8 @@ Schema version 5 contains:
   job IDs and creation timestamps are not part of the specification.
 
 Typed backtest, walk-forward, parallel, and data defaults have the same digest
-whether implicit or explicit. Strategy identity and non-parameter declarations
+whether implicit or explicit when the rest of the specification, including any
+research provenance, is identical. Strategy identity and non-parameter declarations
 remain bound to the revision. Without an MCP `parameters` override, or with
 `parameters: null`, `config.strategy.parameters` retains the input configuration's
 parameter mapping while constructor defaults are expanded separately into
@@ -412,13 +481,31 @@ Non-finite numbers in execution configuration or search values are rejected inst
 being converted to `null`. Invalid resolved execution settings return
 `invalid_execution_request` for backtest/walk-forward submissions or
 `invalid_optimization_request` for optimization, without creating a job.
-These codes also cover strategy identity mismatches, revision-file read failures
-during binding, and failures of the repeated executable-state check during
-preparation. Failure to select an executable strategy at the start of the request
-instead returns `strategy_not_executable`.
+MCP preflight maps `StrategyNotExecutableError` raised during research preparation
+to `strategy_not_executable`, including initial strategy selection, identity
+mismatches, revision-file read failures during binding, and repeated
+executable-state checks during capture. Caught configuration, type, YAML and I/O
+errors use the invalid-request codes above; execution-mode refusals retain their
+capability-specific codes and guidance.
+
+Direct Python `JobService` and `OptimizationService` preparation methods instead
+return `strategy_not_executable` for failed initial selection and their respective
+invalid-request code for binding or subsequent capture failures. The lower-level
+`BacktestService` direct YAML/config methods raise exceptions rather than returning
+these structured service codes.
 The mode must match the presence of walk-forward
 validation settings. Optimization has its own training/test split and rejects
 configs containing `validation` with `invalid_optimization_request`.
+MCP `prepare_walk_forward` alone accepts `validation_config` to replace the entire
+effective validation mapping before research resolution and manifest capture.
+There is no merge with base validation settings; omitted or `null` input preserves
+them. Active explicit train/test windows use inclusive UTC calendar days and must
+fit within the research period. New settings require `mode: automatic`, `explicit`
+or `purged` and reject fields belonging to another mode. Historical flat settings
+remain readable with their recorded mode precedence; they cannot be submitted as
+new execution inputs. See the [strategy split contract](strategy_contract.md#strategy-walk-forward-settings).
+Failed containment does not change the requested dates or publish a
+plan; the caller must supply suitable windows or automatic-fold settings.
 
 Manifest decoding preserves stored JSON without reapplying today's config defaults.
 Before execution, current runtime models must accept the saved config and effective
@@ -453,34 +540,98 @@ on a later run. Integrity verification assumes the job's expected digest remains
 trusted; it is not a security boundary against someone controlling both the
 database and workspace files.
 
-## Execution Plans and Confirmation Documents
+## Market Data Cache
 
-`ExecutionPlan` schema version 1 binds a unique 32-character `plan_id`, the full
-execution manifest, `original_config_path`, `PreflightReceipt`,
-`ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
-The hash covers canonical JSON of every field except itself. The document and
-preflight hashes must identify the same manifest; the document also identifies
-the same plan. Plans currently expire one hour after preparation. The content
-does not change when approval state changes.
+OHLCV cache v2 uses an exact identity: provider, effective market type, original
+symbol (including case and punctuation), and timeframe. Providers that ignore
+market type use `null` for it. `requirements.market.source` overrides
+`data.source`. Request IDs additionally hash the full UTC start/end instants
+and feature requirements; they identify requests, not immutable data contents.
+Load, cached-only ML reads, sampling, availability and inspection share this
+identity and honor configured raw/processed roots. The inventory tool uses the
+default root; config inspection inventories the configured root.
 
-`PreflightService` runs preparation and sample execution in a supervised child
-with a default 60-second budget, including imports, configuration resolution,
-generated signal-contract checks, sample data acquisition, engine execution and
-result serialization. Process cleanup has its own deadline. Success is returned
-only after verified worker cleanup. The request supplies
-`minimum_history_bars` and `sample_bars` (default 1024, allowed 64–4096), with
-the minimum required history bounded by that total budget. Every actual sample
-window must satisfy the declared history requirement. A split execution needs
-enough total budget for its training and test windows separately.
+Each root contains `cache-v2/<identity-sha256>/`. Raw CSV and processed Parquet
+files use immutable generation IDs; `<year>.json` in the processed directory
+points to the current generation and records identity, successful query bounds
+and acquisition time. These bounds describe the provider query, not the first
+or last returned candle. Empty successful queries have receipts too. Inspection
+exposes query evidence and observed rows separately. `rows` is `null` when no
+generation can be read; otherwise it counts the loaded annual generations,
+including successful empty ones. This count can be partial when other requested
+years are missing or unreadable. Callers must also inspect `exists` and `errors`;
+a known row count does not establish that every requested year was read or that
+the requested interval has complete observations.
 
-The sample uses the selected market-data pipeline and effective settings.
-It searches bounded calendar windows within the requested dates, continuing
-past empty market-closure windows until it reaches the bar budget or end date.
+The application queries each requested UTC year through its end or acquisition
+time, whichever is earlier. A receipt is reusable only if it covers the requested
+year slice and was acquired at least seven days after that slice ended. Recent
+intervals refresh on every load; merely waiting seven days after an earlier
+download does not make it reusable. Future request endpoints fail. Successful
+queries do not prove complete observations or prevent later provider corrections.
+Cached-only reads require reusable evidence and fail without downloading when it
+is absent; empty observations cannot serve as ML input.
+
+A per-identity/year file lock serializes refreshes. The storage adapter stages
+CSV, Parquet and metadata, publishes immutable files, then atomically replaces
+the receipt. Failures leave the previous receipt and generation readable and
+remove unpublished attempt files; older or narrower query evidence cannot
+replace newer evidence. Published generations remain available to concurrent
+readers and are not automatically collected. Lock files may remain after release.
+Legacy flat files are preserved but excluded because their source cannot be
+proven; fetching again creates v2 data without relabeling or deleting them.
+
+## Automatic DVOL Queries
+
+Without an explicit feature `path`, `app/dvol_data.py` manages Deribit DVOL
+queries in the configured raw/processed roots. The cache identity separates
+DVOL from OHLCV and records provider, currency and timeframe. A
+`query-<sha256>.json` receipt hashes the exact UTC start/end instants, so changing
+either bound, including within one year, cannot reuse an unqueried interval.
+Successful empty queries are recorded independently of observed timestamps.
+The same seven-day acquisition rule, future-time rejection, file locks and
+immutable atomic publication used for OHLCV apply here. Failed refreshes preserve
+the previous query and data; old year-only files are retained but not inferred
+to cover any automatic query.
+
+Prepared execution configs retain `path: null` and `raw_path: null` for automatic
+DVOL, using the already resolved data roots. Preparation must not convert an
+automatic query into an unchecked local file. Explicit feature paths remain local
+file inputs when present, with existing exact-join/forward-fill behavior; they
+are not refreshed merely because a requested period changes. Missing explicit
+DVOL files can be downloaded from Deribit to the specified path. A `raw_path`
+requires an explicit `path`; omit both to use managed caching.
+
+All automatic DVOL downloads require `source: deribit`, including pathless
+managed queries and downloads to missing explicit paths. Existing explicit
+local files may use another source label; they are read without downloading.
+
+Inspection exposes `query` and `query_reusable` for managed DVOL. An unqueried
+interval has no path or query, unknown row count and `query_reusable: false`;
+a successful empty query has zero rows and its receipt. Explicit local files
+have `null` query fields because no automatic query evidence is claimed.
+Sampling reuses only a receipt for the original requested interval that satisfies
+the reuse policy. Otherwise it fetches bounded selected timestamps into the
+sample directory, leaving source caches unchanged and publishing no evidence
+that the full research interval was queried.
+
+## Bounded Historical Sampling
+
+`DataService.load_sample` and crawler `fetch_sample` remain independent data
+utilities; MCP confirmation preparation does not call them. Sampling uses the
+selected market-data pipeline and effective settings and searches bounded calendar
+windows within the requested dates, continuing past empty market-closure windows until it reaches the bar budget or end date.
+Market requests normalize their bounds to UTC before selecting reusable cache receipts
+or provider intervals. An offset timestamp near New Year can therefore select
+the preceding or following UTC year. Reversed intervals fail before data access;
+one inclusive instant remains valid for the data utilities.
 Cached Parquet data is read in batches, interpreting timezone-naive timestamps
 as UTC just like ordinary loading. Feature caches project only the timestamp
 and requested value column, retaining exact matches to selected market bars.
 Join cardinality is checked before materializing duplicate-key expansions;
-exact left joins and forward/backward fill keep the ordinary loading semantics.
+Both sampling and ordinary loading use exact left joins followed by forward fill
+from earlier matched values. Leading gaps remain missing; later observations
+never fill earlier bars. Unmatched feature timestamps do not seed the fill.
 Sampling does not rewrite source market or feature caches.
 
 Each crawler implements `fetch_sample(..., max_rows=...)` independently of full
@@ -496,116 +647,16 @@ Each selected CSV is scanned in batches of at most 1024 rows, retaining only
 the earliest requested bars even when stored rows are out of order. Later-date
 archives are not read once the output budget is satisfied. Downloads are limited
 to 16 MiB per archive and 32 MiB per `fetch_sample` call; declared CSV expansion
-is limited to 128 MiB. Exceeding a limit fails preparation.
+is limited to 128 MiB. Exceeding a limit fails the sampling operation.
 An archive is still downloaded in full before parsing, so sample bar counts do
 not imply proportionate network traffic. These are application-level resource
 controls, not an operating-system memory limit or a Python sandbox.
-Backtests sample one window; walk-forward samples one train/test fold;
-optimization samples its first candidate on both training and held-out periods.
-Temporary sample results, data and tool caches live in an independent temporary
-directory, outside regular run history. The child's `TMPDIR`, `TMP` and `TEMP`
-also point inside that directory, containing standard temporary files created
-by third-party model training without changing the parent's environment.
-Successful, failed and timed-out workers
-are stopped and verified before their files are deleted. If process cleanup
-cannot be verified, the directory is retained and the operation reports failure;
-file cleanup failure is also an error. No successful sample publishes a regular
-job or run. This process supervision is not a complete generated-Python sandbox.
 
-The receipt records:
+## Execution Plans and Confirmation Documents
 
-- `manifest_hash`, elapsed seconds, requested/used sample bars and declared
-  minimum history;
-- `data_origin: market_data`, provider ID, and actual `windows` with role,
-  start/end timestamps and row count;
-- `checked_paths`: backend-issued check codes for configuration, signals,
-  actual engine execution and serialization, plus generated signal-contract
-  checks, walk-forward fitting or optimization candidate binding when applicable;
-- observed trade count, optional native execution-record count and whether the
-  sample exercised the trading path;
-- tested/total fold or candidate counts, and explicit coverage warnings.
-
-`market_data` means the configured data pipeline was used. Offline tests may
-substitute the provider; their receipts do not prove live external-market
-verification. Zero trades alone do not fail preparation: the document says the
-engine completed but this sample did not cover the strategy's trade/cost path.
-Optimization additionally requires the first candidate's sampled training
-objective to be available and finite. Otherwise preparation fails with
-`unrankable_sample_objective`, even if another candidate or the full training
-period could yield a rankable value. Enlarge the sample within its allowed budget
-or revise the settings and prepare again. A zero-trade sample can therefore fail
-when the selected objective cannot be calculated without trades.
-The document also states that remaining dates, folds and candidate combinations
-may still fail during full execution. Sample success is not a profitability claim.
-
-`ConfirmationPresentation` accepts only model-authored title, summary and
-`parameter_descriptions`. Description keys are JSON pointers relative to captured
-constructor arguments; each value contains a label, explanation and optional
-unit, never an executable parameter value. Labels must distinguish values and
-cover every scalar, null or empty-container leaf, including nested bundled
-`config`/`fit_config` and the union of effective optimization candidate leaves.
-Candidate presentation and strategy loading share the same pure parameter merge:
-partial objects preserve unnamed captured fields, empty objects preserve an
-existing object, and non-object values replace the complete entry. Each search
-group displays its merged candidate values; it does not present a partial
-override as a complete replacement. Missing or
-extra descriptions return `invalid_confirmation_presentation` with
-`required_parameter_paths`, allowing the model to repair wording without changing
-the source revision. Model units do not rescale captured values.
-
-The backend builds a typed document with fixed strategy, market, parameters,
-execution, validation, optimization, preflight and limitations sections.
-Non-applicable sections remain explicit. Known cost/rate semantics have backend
-formatters; unknown effective setting fields fail preparation rather than being
-silently omitted. Model explanations are labelled separately from backend
-values and successful-check evidence. Parameter/settings keys and YAML are not
-the user interface. Both text and HTML render the same document; technical
-identity and file paths are outside the main explanation, in HTML details and
-machine metadata. The HTML is offline, escapes text and disables scripts.
-
-`execution_plans/<plan_id>/confirmation.txt` and `confirmation.html` preserve the
-reviewable documents. The HTML is registered as `execution_confirmation` under
-`<plan_id>:confirmation_html`, without a run ID. Reads verify plan identity and
-both saved file digests. File publication and SQLite updates are separate
-resources; publication rolls back its new directory on handled failure.
-
-Plan states are `ready`, `awaiting_confirmation`, `submitting`, `submitted`,
-`cancelled`, or `failed`. A retained `.approval.lock` and state comparison
-serialize transitions; only one submission reservation can be active. The plan
-stays `ready` while the user reads it. On approval, the service checks expiry and
-current executable-source integrity before reserving and again before submitting.
-An internal server-owned challenge binds the submission to the same plan content;
-the client is responsible for truthfully relaying user consent. Repeating a
-successful submission returns its original job ID rather than launching twice.
-The deterministic job ID equals the plan ID. If worker launch succeeds but the
-final `submitted` state write fails, the response still identifies that job and
-warns about the pending state update. Plan lookup retains `submitting` and exposes
-the job ID. A later confirmation request can reconcile an existing job only when
-its manifest matches and it has a complete worker-control identity; it records
-`submitted` and returns the same job without another launch. Failed launches or
-queued records lacking that identity remain inspectable through the returned job
-ID but are not reported as successfully started work.
-
-Preparation and lookup return `confirmation_summary` and the complete HTML's
-`html_path`/`artifact_id`. Full confirmation text remains in the saved plan; it is
-not copied into ordinary tool responses. The assistant presents the short summary
-and HTML link, ends the turn and waits for the user to review it. Reading the
-artifact does not submit a job. A local path must be made available through the
-client's file/artifact interface when the user is not on the server's machine.
-
-`submit_execution_decision(plan_id, decision)` relays an explicit later user reply.
-`approve` submits the fixed manifest; `decline` cancels without running;
-`revise` cancels and returns `confirmation_adjustment_requested`, requiring a new
-plan and fresh confirmation after changes. Questions, ambiguous replies and the
-initial task request are not approval. Conversation waiting leaves the plan
-`ready`; there is no five-minute form deadline, but the one-hour plan lifetime
-still applies. A new plan must be prepared after expiry.
-
-The server trusts the assistant to convey the user's decision; it cannot prove
-human consent from a tool argument. Source and effective-setting checks, internal
-submission reservations and duplicate-job prevention remain enforced. The former
-native MCP form tool is removed. CLI commands remain explicit execution requests
-and do not use this conversation workflow.
+See [Execution Plans](execution_plans.md) for offline preparation, saved confirmation
+documents, explicit user decisions, expiry and submission deduplication.
+A plan fixes the manifest; preparing it does not start a formal job or backtest.
 
 ## MCP Lookup
 
@@ -636,11 +687,11 @@ it is `null`; do not treat a first page as the complete inventory.
 | `list_strategies` | `kind`, `strategy_id` | strategy ID, kind, revision ID |
 | `list_runs` | `strategy_id`, `revision_id` | creation time descending, run ID ascending |
 | `list_jobs` | `status`, `job_type`, `strategy_name` | creation time descending, job ID ascending |
-| `list_available_data` | `symbol`, `timeframe` | symbol, timeframe |
+| `list_available_data` | `source`, `market_type`, `symbol`, `timeframe` | source, market type, symbol, timeframe |
 | `list_artifacts` | `run_id`, `artifact_type` | creation time descending, artifact ID ascending |
 
-Filters are exact matches except cached-data symbols, which normalize case and
-remove `/`. Ordering is deterministic for unchanged data; separate page calls
+Filters are exact matches, including symbol case and punctuation.
+Ordering is deterministic for unchanged data; separate page calls
 are not a snapshot across concurrent writes. Restart at offset zero if the
 inventory changes before claiming complete discovery.
 
@@ -682,7 +733,8 @@ artifacts. A server-local path is not a public download URL.
 
 ### Completed Run Files
 
-The generated revision's `config.yaml` holds its base settings;
+The generated revision's `config.yaml` holds its base settings and, for guided
+authoring, research provenance and its human-readable name;
 `runs/<run_id>/config.yaml` holds effective execution settings and includes
 `strategy.revision_id`. Runtime market/date and parameter experiments
 do not rewrite the base revision. Backtest and walk-forward requests may supply
@@ -694,23 +746,26 @@ long signal-contract fixtures check effective generated settings before executio
 The execution manifest additionally fixes runtime overrides and search settings
 without rewriting the base revision.
 
-Each completed background job writes files under `workspace/runs/<run_id>/` and records
-matching SQLite metadata:
+Each successfully published background run, including a comparison child, writes
+files under `workspace/runs/<run_id>/` and records matching SQLite metadata:
 
 - `result.json`: serialized metrics, stored as `result_json`.
 - `performance.json`: all metric values by scope, definitions and calculation
   metadata, stored as `performance_json`.
 - `observations.json`: aligned timestamps, equity, per-bar returns and trade
   records by scope, stored as `observations_json`.
-- `manifest.json`: the specification published at submission, registered after
-  successful result persistence as `execution_manifest`. Its artifact metadata
+- `manifest.json`: the approved execution specification, registered after
+  successful result persistence as `execution_manifest`. For a single job, the
+  file is published at submission; a comparison child's file is published from
+  its approved parent bundle when saving that child's result. Its artifact metadata
   includes `manifest_hash` and `schema_version`. Use `list_artifacts` and
   `get_artifact(include_content=true)` to inspect the JSON after completion.
 - `config.yaml`: effective config snapshot used for the run, stored as
   `config_snapshot` with `config_hash`. It projects the executed manifest config;
   persistence checks the worker's snapshot against that manifest and the job's
   digest rather than reloading a possibly changed YAML file. It includes the
-  start tool's symbol, timeframe, and date range together with resolved defaults.
+  resolved research symbol, timeframe, and date range together with fixed defaults
+  and their recorded origins when available.
   Optimization includes the entire final calendar day; ordinary backtest bounds
   remain timestamps.
 - `strategy.py`: generated or bundled strategy source snapshot when
@@ -722,9 +777,10 @@ matching SQLite metadata:
 - `dataset_fingerprint.json`: dataset id, symbol, timeframe, date range, and a
   fingerprint hash, stored as `dataset_fingerprint`.
 - `pipeline_result.pkl`: full `PipelineResult` for dashboard rendering, stored
-  as `pipeline_result` for completed backtest and walk-forward jobs.
+  as `pipeline_result` for completed backtest and walk-forward runs, including
+  successful ordinary-backtest comparison children.
 
-For background jobs, SQLite `runs.artifact_dir` must match the corresponding
+For background runs, SQLite `runs.artifact_dir` must match the corresponding
 `workspace/runs/<run_id>/` directory. `runs.config_hash` is the SHA-256 of the
 serialized effective config snapshot, not the hash of the immutable revision's
 base config. `runs.random_seed` records only the canonical
@@ -763,6 +819,12 @@ These fingerprints describe the execution inputs; they do not archive immutable
 copies of all data or environment dependencies and do not guarantee full
 reproducibility.
 
+Training trials share the same loaded frame values, column dtypes and index
+metadata, including timezone and timestamp precision. Worker transfer uses
+joblib's DataFrame serialization without a lossy JSON conversion; the first trial
+and subsequent candidates therefore evaluate the same data. Out-of-sample
+evaluation preserves the corresponding loaded test frame as well.
+
 Optimization `result.json` includes the best parameters, training metrics,
 out-of-sample metrics, objective and fixed direction. Its complete numerical
 projection remains in SQLite; `get_run` and completed `get_job_status` select a
@@ -777,132 +839,9 @@ discarding other trials.
 
 ## Performance Scopes and Provenance
 
-`performance.json` schema version 1 records `run_id`, `manifest_hash`,
-`default_scope`, `scopes`, and `definitions`. Each scope contains `values` and
-`metadata`, its engine `mode`, `kind`, `split`, optional fold/trial index, and
-parameter values. Definition snapshots describe unit, provider, meaning,
-applicability, summary selection and optimization direction. They are saved with
-the result; queries do not substitute the current catalog.
-
-| Run type | Scopes | Default |
-| --- | --- | --- |
-| Backtest | `full` | `full` |
-| Walk-forward | `fold/<index>/train`, `fold/<index>/test`, `test_summary` | `test_summary` |
-| Optimization | `trial/<index>/train`, `test` | `test` |
-
-New backtest and walk-forward scopes record the manifest's fixed, effective
-constructor parameters, including defaults, in `parameters`. This includes
-`test_summary`: its parameters describe the initial execution settings, not an
-aggregation of learned fold settings. Generated strategies use their constructor
-arguments; bundled strategies use the constructor's `config` object. Actual
-values reported by `strategy.get_parameters()` are saved separately in
-`metadata.strategy_parameters` for the full backtest or each train/test fold.
-Walk-forward captures each fold's values independently after fitting; later
-folds cannot overwrite earlier snapshots. The summary retains those values in
-`metadata.fold_metadata`.
-
-Optimization keeps its existing meaning: `parameters` contains the trial's
-searched values (or the selected values for `test`), while
-`metadata.strategy_parameters` contains the strategy's complete reported values.
-Previously published artifacts are read unchanged. In older artifacts, full and
-summary parameters may be empty and fold parameters may contain fitted values;
-queries do not infer missing values from current strategy files.
-
-Indices are zero-based. Optimization's `selected_train_scope` identifies the
-winning training trial. A `backtest` scope contains scalar values; the
-`fold_summary` scope contains `mean`, `std`, `min`, `max` and `valid_count` per
-metric. Fold summaries are descriptive distributions, not portfolio returns over
-the concatenated test periods, and have no fabricated observation series.
-
-Metadata records provider versions, annualization and rate settings, daily return
-sampling, bar drawdown sampling, UTC calendar aggregation, cost model, execution
-context, and unavailable-value reasons. Examples include `not_applicable`,
-`missing_annualization`, `missing_timestamps`, `no_trades`, `zero_denominator`,
-`unbounded`, `unsupported_daily_sampling` (bars coarser than daily), and
-`unknown_bar_frequency`. Numeric JSON values remain finite; unavailable values
-use `null`.
-
-New runs use QuantStats for return/risk statistics and retain VectorBT's
-closed-trade statistics. Sharpe uses the configured risk-free rate and Sortino
-uses the separately configured required return, both converted to an observed-day
-rate before calling QuantStats. Negative rates retain the same interpretation.
-The `excess_return_adjustment` setting records this conversion. QuantStats's
-automatic price detection cannot accept some valid nonnegative returns above
-100%, and its drawdown interface requires timestamps. Narrow numerical fallbacks
-preserve the metric definitions in these cases; `metadata.calculation_fallbacks`
-records each affected metric's actual `provider` and `reason`, with its package
-version in `metadata.providers`. Missing dates are never fabricated for these
-calculations. No observed drawdown makes Calmar unavailable, and positive returns
-with no downside make Sortino unbounded, rather than a finite zero. Historical
-Empyrical results retain their original saved definitions, providers and values.
-
-Annualized metrics, `daily_max_drawdown`, and daily/monthly PnL statistics require
-a declared bar frequency of one day or finer. Coarser or unrecognized frequencies
-retain bar observations, total return/PnL, bar drawdown, observed date/month counts
-and trade statistics. Their `return_sampling` and `calmar_drawdown_sampling`
-settings are `unavailable`, and converted per-period rates are `null`. Frequency
-validation does not infer bar duration from missing dates or synthesize daily
-equity. Existing saved results remain snapshots; this correction does not
-recalculate previously published artifacts.
-
-`observations.json` has the same run and manifest identity. Backtest scopes retain
-initial capital, equity, per-bar returns, UTC ISO timestamps and normalized trade
-records. Volume returns and missing timestamps remain `null`. Available equity,
-return and timestamp arrays align by bar; trade indices refer to that scope's
-arrays. Open marks are separate from executed exits. Raw observations are readable
-through artifact lookup without Python pickle.
-
-New signal-mode scopes additionally save `execution_records` and `account_history`.
-Each execution record is one native VectorBT order attempt, including filled,
-ignored and rejected outcomes. A reversal may be one fill closing a position and
-opening the opposite position; it is not split into invented orders. Records keep
-bar index/time, native IDs, requested size/type/direction/price/costs, actual filled
-size/price/fees, original OHLC and cash/position/free-cash/debt/equity before and
-after the attempt. An unlimited requested size is represented by a finite/null
-value plus an explicit kind instead of emitting JSON Infinity. Unfilled attempts
-never carry executed order details. Timestamps identify the bar, not an exact
-intrabar fill or exchange order-book quote.
-
-Before/after equity is cash plus signed position valued at the saved request price
-before slippage. VectorBT's default log value is not updated after every fill;
-the new records do not enable `update_value` or change simulation sizing to obtain
-different log values. End-of-bar `account_history` comes from portfolio accessors
-and contains cash, free cash, signed position, asset value, close price and equity.
-These use VectorBT generic accounting, not exchange wallet, perpetual-contract
-margin, liquidation or funding accounting. A negative position denotes short
-base-asset quantity; it is not a stock share count. Market fields are the original
-bar, so a daily record cannot supply intraday bid/ask prices.
-
-The metadata's `observations` block declares availability and valuation/time
-semantics. Old JSON missing these optional fields loads as `null` (`not_recorded`);
-volume mode remains `null` (`unsupported_volume_accounting`). New signal runs with
-no attempts save `[]`, meaning recorded but empty. No historical field is guessed
-from paired trades. Filled transitions are checked against native orders and
-accounting identities, and saved account/bar/timestamp/equity arrays must align.
-
-`get_run_metrics` defaults to the run's saved default scope; omit `metric_ids` to
-read that scope in full. Unknown scopes and metric IDs produce structured errors
-with discovery information. Summary omission never affects calculation or storage.
-Comparisons retain the requested values and report comparability and reasons;
-differences in mode, definitions, provider versions, sampling, annualization,
-capital or execution context cannot silently become equivalent rankings.
-
-Detailed reads verify supported schema, run/manifest identity and recorded
-artifact digest. Missing or corrupted artifacts are errors rather than a request
-to rerun a strategy. Publication validates and encodes data before writing;
-existing different content is not overwritten. Retrying a background job's same
-result also checks all registered artifact files and hashes before reporting
-success; missing or corrupted files are explicit errors. File publication and SQLite writes
-are not a cross-system transaction. A per-run `.result-publication` marker prevents
-concurrent publishers. Handled exceptions restore the prior files and remove new
-run/artifact records. An externally terminated process can leave the marker;
-queries report the publication as busy instead of treating incomplete output as
-legacy data. The reader does not delete the marker or repair stored data.
-
-Historical runs without performance artifacts remain readable through ordinary
-run lookup, marked as lacking detailed provenance. `get_run_metrics` reports
-`performance_artifact_unavailable`; reads never migrate, unpickle or recompute
-those results. Historical values are not asserted to follow the new definitions.
+See [Performance Artifacts](performance_artifacts.md) for scope identities, saved
+metric definitions and units, observations, unavailable values and publication
+integrity. Historical reads use saved evidence rather than rerunning strategies.
 
 ## Historical Observation Queries
 
@@ -942,220 +881,18 @@ date rules, returning availability, accounting and valuation/time semantics.
 unavailable status with zero rows, never reconstructed history. Records remain
 aligned to their original bar indices after filtering and paging.
 
+## Research Notes and Archives
+
+Editable research summaries live in the SQLite `research_notes` table. Versioned
+exports live under `research_archives/`; they do not modify runs or execution
+evidence. See the [notebook contract](reports.md#research-notebooks-and-archives)
+for schemas, capacity, publication integrity and HTTP/stdio download behavior.
+
 ## Composable Offline Reports
 
-`get_report_sections` returns built-in section IDs and optional `standard`,
-`comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
-accepts one to eight distinct runs. Omitted/null sections select standard;
-an explicit ordered list chooses visible sections and their order within the detail
-view. When selected, `overview` always belongs to the first navigation level.
-With `[]`, no optional sections
-are rendered; fixed report/source identity metadata and any supplied commentary
-remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/text notes
-(20000 characters total) are escaped and labelled LLM commentary. They cannot
-replace computed values or inject HTML. The client selects information and writes
-interpretation; the server renders tables, charts and document structure.
-
-Report schema 2 / template 17 uses two navigation levels within one offline HTML
-file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
-or `trades`) is selected. The overview compares every loaded run/scope, including
-effective parameters,
-date coverage, train/test role and principal saved metrics. A result link opens
-the matching detail view (`#result-<run-index>-<scope-index>`); a return link brings
-the reader back to the overview. This keeps all optimization training trials and
-the selected parameter's test result distinct. A report is generated explicitly
-after completed or historical result inspection, not automatically by execution.
-MCP instructions request a standard report when completing an execution with
-performance/risk interpretation, unless the user asks for summary/metrics only
-or opts out. This is a client workflow requirement, not an automatic worker step.
-The final user-facing response must deliver the returned report link, identify
-the runs/scopes and explain the selected detail views. Tool success and an
-intermediate link do not establish delivery. Reports and their source runs remain
-workspace artifacts after server shutdown; shutdown does not authorize cleanup.
-If report generation or delivery fails, the client should preserve those sources
-and retry reporting instead of running the strategy again.
-Without `overview`, a result chooser links to the selected detail sections.
-Without any detail sections, result links and result switching are absent;
-selected `provenance` and `limitations` sections appear directly in the main view.
-The overview, if selected, stays first; other sections keep their requested order.
-Unknown result hashes leave the main view visible rather than opening empty details.
-The standard recipe is `overview`, `settings`, `metrics`, `equity`, `ledger`,
-`trades`, `limitations`, `provenance`; comparison is `overview`, `metrics`, `equity`,
-`provenance`; trades is `overview`, `ledger`, `trades`, `provenance`.
-The old `executions` and `account_history` section IDs are invalid, with no alias
-or compatibility shim. Their MCP history query tools and saved observations are
-unchanged. Existing reports retain their original versions and remain untouched.
-
-Section selection determines the visible presentation without pruning the loaded
-or embedded data. Every HTML report embeds the complete loaded payload as JSON,
-including all scopes of the requested runs, saved metrics, trades, equity and
-execution configuration, even for `sections=[]`.
-Omitting a section does not remove its underlying data from the HTML; recipients
-of the file can still read that embedded data.
-
-Selecting `metrics` also derives a native QuantStats HTML tear sheet for every
-eligible scalar scope. It uses saved bar returns grouped by observed UTC date,
-preserves the first return, does not fill missing dates and does not fetch market
-or benchmark data. Each scope remains independent. The adapter records its
-version, calculation/rendering package versions, saved settings, source artifact
-hashes, input/daily-return digests and native calculation conventions. The native
-HTML and metadata participate in report identity; `manifest.derived_analytics`
-contains the metadata and explicit unavailable reasons, without duplicating HTML.
-Original `performance.json` values and definitions are never replaced.
-
-Native performance tables are rendered directly in the main HTML for text readers
-without JavaScript, with percentage units written in headers instead of relying
-on native CSS pseudo-elements. All scopes are expanded when JavaScript is disabled.
-The full chart report is loaded from embedded JSON into a
-sandboxed iframe when its scope is selected. A local download preserves the native
-report together with a source banner and escaped JSON evidence. QuantStats' native
-metric/chart names remain English; the surrounding explanation and saved metrics
-are Traditional Chinese. Period win rates and profit factors are distinct from
-closed-trade statistics. Native table Sharpe/Sortino use the saved risk-free rate;
-native rolling Sharpe/Sortino charts use zero, while the saved Sortino metric uses
-the separate configured required return. The native EOY table's `Return` sums daily
-returns within each year; `Cumulative` compounds within each year, not across years.
-Both columns use percentage units. These differences are disclosed.
-
-Known unsupported data (including volume, fold summaries, missing dates/settings,
-nonpositive capital, ambiguous large daily returns and negative risk-free rates
-ignored by the native provider) produce explicit unavailable messages while saved
-metrics remain readable. Unknown provider exceptions become `QuantStatsReportError`
-and fail generation with `report_generation_failed`; process interrupts propagate.
-The renderer
-fixes SVG identifiers, removes generation dates and the external favicon, restores
-plot state, and removes temporary output/new figures on success or failure. It
-does not close pre-existing figures or silently substitute another HTML provider.
-
-The `ledger` section combines saved order attempts and end-of-bar account states
-into one chronological event table. Within a bar, original execution order comes
-before the closing valuation. Each row identifies its event type and original
-record; closing valuations never masquerade as orders or fills. Missing streams
-show their reason, while `[]` means a recorded empty stream. No missing ledger is
-reconstructed from paired trades. The manifest preserves each source stream's
-original count, including null versus zero.
-
-Bokeh widgets and tables provide filled/ignored/rejected/valuation filtering and
-column visibility checkboxes. The runtime is bundled in the HTML for offline use.
-The same ledger rows and column definitions produce the interactive view, a complete
-static HTML table and full-precision CSV/JSON downloads. Static content is readable
-without executing JavaScript; LLM consumers can instead use embedded JSON or the
-original MCP history queries. Filters, sorting and column visibility affect only
-the interactive presentation, never the exported records or columns.
-
-Ledger columns begin with time, event sequence, bar index, event type and execution
-status. They expose market OHLC, requested size and its unit/type, request reference
-price, filled asset quantity and price, requested fee/slippage rates, charged fees,
-and account before/change/after values. Cash flows and signed position changes are
-kept distinct from fees and notional size. A percentage or value request is not
-labelled as an asset quantity; an all-available request is not converted to an
-invented fixed size. Closing rows carry the saved close mark and account valuation,
-leaving unrecorded order/fill fields empty. Prices are saved bar references rather
-than bid/ask quotes or order-book data. Valuation basis remains explicit: execution
-snapshots use the request reference price, while closing states use the bar close.
-Before/change/after valuation rows identify whether their prior state is the last
-execution in the same bar or the preceding saved close. Without a prior state the
-change stays unavailable. Arithmetic checks use complete precision and documented
-tolerance to compare cash, position, fees, slippage and equity where the inputs are
-recorded. A matching check does not validate the strategy, market quotes or exchange
-accounting, and close records do not invent missing debt values.
-The `trades` section is supplementary paired-trade PnL rather than the reconciliation
-ledger; a reversal can close one paired trade and open another in a single fill.
-
-All saved scopes are validated, including sources of omitted sections. Scalar
-observations and aggregate fold statistics remain distinct. Missing or corrupt
-sources fail generation. The report names selected/omitted sections rather than
-claiming every suggested section is present. Included record tables expose all
-records and local CSV export; SVG equity and drawdown charts
-and scripts are embedded for offline use. UTC times, units, unavailable reasons,
-provenance and known overlap/interpretation limits are supplied by the backend.
-Static record tables are embedded as semantic HTML inside `noscript` elements.
-With JavaScript enabled, their DOM is materialized only when expanded, printed or
-needed after a Bokeh loading failure. With JavaScript disabled they render directly.
-This retains complete source-readable tables without eagerly creating every scope's cells.
-Overview, settings, metrics, provenance and record tables use Traditional Chinese
-field names, known metric names, units and enum explanations. Saved metric definitions
-remain authoritative and are expandable in their original form; current display
-labels never replace saved units or descriptions. Unknown codes remain visible with
-an explicit fallback, and strategy-defined parameters retain their original names.
-Paired-trade tables keep distinct closing and end-of-period valuation fields.
-The unified ledger identifies before/change/after and closing balances explicitly.
-These remain generic engine accounting, not exchange margin wallets.
-Prices are quote currency
-per asset unit; quantities are asset units, and PnL/fees are quote currency amounts.
-Numeric displays default to two decimal places; each overview, ledger and paired-trade
-table has one full-precision checkbox shared by its interactive and static views.
-The renderer supplies source decimal strings before browser number parsing; percent
-text shifts decimal places exactly rather than multiplying a browser float. The switch
-retains filters, sorting and column visibility, including lazy loading and printing.
-Notional value is visible by default and included in the cash/position preset.
-Readers must enable full precision before recalculating from quantities and prices.
-Fractional rates and returns display as percentages; identifiers and integer counts
-retain exact integer form. Columns containing integers outside the JavaScript safe
-range disable sorting to avoid ordering rounded values. Nullable numeric parameters
-keep numeric formatting; truly mixed-type parameter columns use backend text for
-all non-null values, preserving exact values in both interactive and static views. Fold statistics show
-labelled mean/std/min/max and valid-fold counts instead of a raw JSON cell. Precision
-notes accompany the tables; supported numeric sorting uses original values even when
-displays are equal. Precision controls require JavaScript; static numeric cells also
-carry full-value attributes and tooltips, and downloads always preserve original values.
-CSV exports use Traditional Chinese headers with units and translated known enums.
-Record columns follow a defined reading order rather than code-name sorting or
-object insertion order: time/sequence, direction/status, prices/quantities, costs/PnL
-and account balances. Ledger HTML/CSV share the same column definitions and preserve
-before/change/after balance groups. Overview comparison, ledger and paired-trade
-tables each provide CSV and JSON downloads. JSON contains the full table specification:
-`columns`, `rows`, `full_precision_values` and applicable navigation, filtering and
-presentation metadata. It uses stable code keys and full numeric precision, rather
-than exporting only an array of raw ledger records; raw observations remain
-separately embedded.
-Paired-trade HTML and CSV begin with a display sequence and separate entry, closing
-and valuation timestamps. Both then show direction/status, prices/quantities and
-costs before PnL; source indices and original record JSON remain available later in
-the same column order. Consumers relying on positional CSV columns must adjust.
-All rows and columns remain present in export order, independent of screen filtering,
-sorting or visibility; numeric values retain full precision. Rates remain
-fractions (1 = 100%), timestamp displays/exports are normalized to UTC, and
-missing values are empty cells. Ledger nested source fields are flattened with
-distinct headers; original records retain source fields and timestamps. Paired-trade
-closing time/price are empty for open trades, whose final mark uses separate valuation
-columns; the source exit index still identifies that final valuation bar.
-The renderer prepares UTF-8 BOM CSV bytes with CRLF records and quoted fields;
-formula-leading text is prefixed with an apostrophe. Browsers download these embedded
-bytes directly without parsing or rounding numeric values. Programs consuming old
-code-based CSV headers must update their mappings for newly generated reports.
-Expandable raw records and embedded observations retain original field names and
-values. Presentation changes create a new template version and report
-identity without modifying earlier reports or backtest results.
-
-The content digest includes source snapshots, template version, section order and
-commentary. `reports/<report_id>/report.html` and `manifest.json` are registered as
-`research_report_html` and `research_report_manifest` with IDs
-`report:<report_id>:html` and `report:<report_id>:manifest`. A single-run report
-is registered to that run; a multi-run report has no single `run_id` binding.
-The response gives path, artifact IDs
-and HTML SHA-256 without placing an unbounded document into the MCP response.
-`get_artifact` can retrieve the files; local paths are not public URLs.
-
-Publication prevents overwriting different content. Identical requests reuse an
-intact registered report; missing/modified files for a registered report are errors.
-Identical unregistered files may be registered on retry; conflicting registrations
-are rejected rather than overwritten.
-A per-report busy marker coordinates publishers. Handled write/registration
-failures roll back newly created files and rows; files and SQLite are not a single
-cross-resource transaction, and an external kill can leave a busy marker. Reads
-do not repair old output or delete the marker. CLI and dashboard use the same
-application service; LLM prose and report recipes require no new Python/HTML.
-
-Dashboard sessions retain the generated report ID and expected HTML SHA-256.
-On every rerun, `ReportService.get_report_download(report_id, expected_sha256=...)`
-validates the registered HTML type, fixed report path and stored hash, then reads
-and hashes the same bytes supplied to the download button. This in-process
-interface returns HTML bytes on success, or an error without content; it does not
-add document bytes to MCP responses. Missing, modified or unreadable files remove
-the download from the dashboard and display an error. A failed generation also
-clears the previous download, so an integrity error cannot fall back to a stale
-file. Reads do not repair or regenerate the report.
+See [Reports](reports.md) for section selection, detail navigation, complete exports
+and immutable HTML publication. Report delivery includes the link and instructions
+for opening the selected results; tool success alone does not establish delivery.
 
 ## JSON Values
 

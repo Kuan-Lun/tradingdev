@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -9,6 +10,7 @@ import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,11 +46,19 @@ def test_get_contract_enumerates_the_full_vocabulary(service: MLService) -> None
 
 def test_get_contract_model_defaults_are_json_safe(service: MLService) -> None:
     contract = service.get_contract()
+    assert contract["model_kinds"]
     for kind in contract["model_kinds"]:
         params = kind["default_parameters"]
         assert isinstance(params, dict)
         assert "n_estimators" in params
         assert "learning_rate" in params
+        assert json.loads(json.dumps(params, allow_nan=False)) == params
+
+
+def test_report_guidance_retains_unknown_sample_provenance(service: MLService) -> None:
+    guidance = service.get_contract()["guidance"]["reports"]
+    assert ML_SAMPLE_PROVENANCE_NOTE in guidance
+    assert "無法判定" in guidance and "樣本內或樣本外" in guidance
 
 
 def test_evaluate_signal_on_a_perfectly_monotonic_signal(service: MLService) -> None:

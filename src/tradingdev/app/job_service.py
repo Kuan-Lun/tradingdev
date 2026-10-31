@@ -16,20 +16,26 @@ from tradingdev.adapters.execution.process_runner import (
     request_worker_stop,
 )
 from tradingdev.app.backtest_service import BacktestService
+from tradingdev.app.comparison_service import ComparisonService
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.jobs import JobState, JobSummary
 from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
-    PreparedExecution,
 )
 from tradingdev.app.job_config import (
     apply_backtest_overrides,
     apply_run_overrides,
     bind_strategy_revision,
 )
-from tradingdev.app.job_store import JobStore, get_default_job_store
+from tradingdev.app.job_store import (
+    ACTIVE_JOB_STATUSES,
+    TERMINAL_JOB_STATUSES,
+    JobStore,
+    get_default_job_store,
+)
 from tradingdev.app.pagination import paginate
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
@@ -50,15 +56,8 @@ if TYPE_CHECKING:
 class JobService:
     """Create and query background jobs."""
 
-    _ACTIVE_STATUSES = {
-        "queued",
-        "downloading_data",
-        "running_backtest",
-        "estimating",
-        "optimizing",
-        "testing_oos",
-    }
-    _TERMINAL_STATUSES = {"done", "failed", "cancelled", "estimation_timeout"}
+    _ACTIVE_STATUSES = ACTIVE_JOB_STATUSES
+    _TERMINAL_STATUSES = TERMINAL_JOB_STATUSES
 
     def __init__(
         self,
@@ -266,22 +265,65 @@ class JobService:
             }
 
         status = str(job["status"])
+        cleanup_error: dict[str, Any] | None = None
         if (
             status in self._ACTIVE_STATUSES
             and (status != "queued" or job.get("pid") is not None)
             and not self._is_process_alive(job)
         ):
-            status = "failed"
-            failure = {
-                "status": status,
-                "error": "Worker process terminated unexpectedly.",
-                "ended_at": datetime.now(UTC).isoformat(),
-            }
-            self._job_store.update_job(job_id, **failure)
-            job.update(failure)
+            latest = self._job_store.get_job(job_id)
+            if latest is not None and latest["status"] in self._TERMINAL_STATUSES:
+                return self.get_job_status(job_id)
+            if job.get("job_type") == "comparison":
+                handle = WorkerHandle.from_job(job)
+                try:
+                    if handle is None:
+                        raise RuntimeError("Worker control identity is unavailable")
+                    request_worker_stop(self._job_store.workspace.root, handle)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    cleanup_error = {
+                        "success": False,
+                        "code": "worker_cleanup_failed",
+                        "error": f"Worker cleanup could not be confirmed: {exc}",
+                    }
+                if cleanup_error is None:
+                    latest = self._job_store.get_job(job_id)
+                    if (
+                        latest is not None
+                        and latest["status"] in self._TERMINAL_STATUSES
+                    ):
+                        # The worker may finish between the first read and its
+                        # supervisor's exit. Preserve that completed lifecycle.
+                        return self.get_job_status(job_id)
+                    try:
+                        ComparisonService(job_store=self._job_store).reconcile(
+                            job_id, reason="Worker process terminated unexpectedly."
+                        )
+                    except (OSError, TypeError, ValueError) as exc:
+                        cleanup_error = {
+                            "success": False,
+                            "code": "execution_manifest_invalid",
+                            "error": str(exc),
+                        }
+            if (
+                cleanup_error is None
+                or cleanup_error["code"] == "execution_manifest_invalid"
+            ):
+                status = "failed"
+                failure = {
+                    "status": status,
+                    "error": "Worker process terminated unexpectedly.",
+                    "ended_at": datetime.now(UTC).isoformat(),
+                }
+                latest = self._job_store.update_job(job_id, **failure)
+                if latest is not None:
+                    job = latest
+                    status = str(job["status"])
 
-        created_at = datetime.fromisoformat(str(job["created_at"]))
-        elapsed = round((datetime.now(UTC) - created_at).total_seconds(), 1)
+        # A cleanup attempt can fail after the worker commits its final state.
+        # Preserve that state while still reporting the cleanup diagnostic.
+        job = self._job_store.get_job(job_id) or job
+        status = str(job["status"])
         response: dict[str, Any] = {
             "status": status,
             "job_type": job.get("job_type", "backtest"),
@@ -292,11 +334,29 @@ class JobService:
             "timeframe": job.get("timeframe"),
             "start_date": job.get("start_date"),
             "end_date": job.get("end_date"),
-            "elapsed_seconds": elapsed,
+            **_elapsed_fields(job, datetime.now(UTC)),
+            "ended_at": job.get("ended_at"),
         }
 
+        if job.get("job_type") == "comparison":
+            response["data_downloaded"] = job.get("data_downloaded", False)
+            if job.get("error"):
+                response["error"] = job["error"]
+            try:
+                response["comparison"] = ComparisonService(
+                    job_store=self._job_store
+                ).summary(job_id)
+            except (OSError, TypeError, ValueError) as exc:
+                response["detail_error"] = {
+                    "success": False,
+                    "code": "execution_manifest_invalid",
+                    "error": str(exc),
+                }
+            if cleanup_error is not None:
+                response["detail_error"] = cleanup_error
+            return response
+
         if status == "done":
-            response["ended_at"] = job.get("ended_at")
             run_response = self._runs.get_run(job_id)
             run = run_response.get("run")
             if run is not None:
@@ -392,7 +452,7 @@ class JobService:
             and (strategy_name is None or job.get("strategy_name") == strategy_name)
         ]
         rows.sort(key=lambda row: str(row["job_id"]))
-        rows.sort(key=lambda row: str(row["created_at"]), reverse=True)
+        rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
         now = datetime.now(UTC)
         return paginate(
             rows,
@@ -405,7 +465,6 @@ class JobService:
 
     @staticmethod
     def _summarize_job(job: dict[str, Any], now: datetime) -> dict[str, Any]:
-        created_at = datetime.fromisoformat(str(job["created_at"]))
         summary: dict[str, Any] = {
             "job_id": job["job_id"],
             "job_type": job.get("job_type", "backtest"),
@@ -417,7 +476,7 @@ class JobService:
             "timeframe": job.get("timeframe"),
             "start_date": job.get("start_date"),
             "end_date": job.get("end_date"),
-            "elapsed_seconds": round((now - created_at).total_seconds(), 1),
+            **_elapsed_fields(job, now),
             "data_downloaded": job.get("data_downloaded", False),
         }
         if job.get("job_type") == "optimization":
@@ -427,6 +486,13 @@ class JobService:
 
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued or running background job."""
+        job = self._job_store.get_job(job_id)
+        if job is not None and job.get("job_type") == "comparison":
+            with self._job_store.submission_lock(job_id):
+                return self._cancel_job(job_id)
+        return self._cancel_job(job_id)
+
+    def _cancel_job(self, job_id: str) -> dict[str, Any]:
         job = self._job_store.get_job(job_id)
         if job is None:
             return {
@@ -471,20 +537,57 @@ class JobService:
                     self._job_store.workspace.root, handle
                 )
             except (OSError, ValueError, RuntimeError) as exc:
+                cleanup_job = self._job_store.get_job(job_id) or job
                 return {
                     "success": False,
                     "error": f"Worker cleanup could not be confirmed: {exc}",
                     "code": "worker_cleanup_failed",
-                    "status": status,
+                    "status": cleanup_job["status"],
                     "pid": handle.pid,
                 }
 
-        self._job_store.update_job(
+        latest = self._job_store.get_job(job_id)
+        if latest is not None and latest["status"] in self._TERMINAL_STATUSES:
+            return {
+                "success": False,
+                "code": "invalid_job_state",
+                "error": "Job finished before cancellation was recorded.",
+                "status": latest["status"],
+            }
+
+        if job.get("job_type") == "comparison":
+            try:
+                ComparisonService(job_store=self._job_store).reconcile(
+                    job_id,
+                    reason="Cancelled by user.",
+                    active_status="cancelled",
+                )
+            except (OSError, TypeError, ValueError) as exc:
+                latest = self._job_store.update_job(
+                    job_id,
+                    status="failed",
+                    error=str(exc),
+                )
+                return {
+                    "success": False,
+                    "error": f"Comparison evidence could not be finalized: {exc}",
+                    "code": "execution_manifest_invalid",
+                    "status": latest["status"] if latest else status,
+                }
+
+        latest = self._job_store.update_job(
             job_id,
             status="cancelled",
             error="Cancelled by user.",
             ended_at=datetime.now(UTC).isoformat(),
         )
+        if latest is None or latest["status"] != "cancelled":
+            return {
+                "success": False,
+                "code": "invalid_job_state",
+                "error": "Job finished before cancellation was recorded.",
+                "status": latest["status"] if latest else status,
+            }
         return {
             "success": True,
             "job_id": job_id,
@@ -519,11 +622,11 @@ class JobService:
                 end_date=end_date,
             )
             apply_backtest_overrides(effective_config, backtest_overrides)
-            manifest = BacktestService(
+            checked = BacktestService(
                 data_service=self._data_service,
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
-            ).prepare_execution(effective_config, kind=kind, parameters=parameters)
+            ).capture_execution(effective_config, kind=kind, parameters=parameters)
         except (
             OSError,
             TypeError,
@@ -533,7 +636,9 @@ class JobService:
         ) as exc:
             return self._invalid_execution_request(exc)
 
-        return PreparedExecution(manifest, config_path)
+        return PreparedExecution(
+            checked.manifest, config_path, checked.synthetic_fixture_rows
+        )
 
     def _submit_prepared(
         self, prepared: PreparedExecution | dict[str, Any]
@@ -546,12 +651,13 @@ class JobService:
             backtest["timeframe"],
             backtest["start_date"],
             backtest["end_date"],
+            raw_config=prepared.manifest.config_copy(),
         )
         submitted = self._submission.submit(prepared)
         data_msg = (
-            "Data already cached locally."
+            "A reusable market query is cached locally; observations may have gaps."
             if data_available
-            else "Data not fully cached; worker will download it automatically."
+            else "No reusable market query; worker will query the provider."
         )
         return {
             **submitted,
@@ -630,3 +736,25 @@ def _saved_metric_summary(detail: dict[str, Any]) -> dict[str, Any]:
         if detail["definitions"][key]["summary"]
         and detail["mode"] in detail["definitions"][key]["modes"]
     }
+
+
+def _elapsed_fields(job: dict[str, Any], now: datetime) -> dict[str, Any]:
+    """Duration from creation to the saved terminal time, or current active age."""
+    try:
+        created = datetime.fromisoformat(str(job["created_at"]))
+        end = (
+            datetime.fromisoformat(str(job.get("ended_at")))
+            if job["status"] in TERMINAL_JOB_STATUSES
+            else now
+        )
+        if created.utcoffset() is None or end.utcoffset() is None or end < created:
+            raise ValueError("Invalid lifecycle timestamps")
+        return {
+            "elapsed_seconds": round((end - created).total_seconds(), 1),
+            "elapsed_unavailable_reason": None,
+        }
+    except KeyError, TypeError, ValueError, OverflowError:
+        return {
+            "elapsed_seconds": None,
+            "elapsed_unavailable_reason": "missing_or_invalid_timestamps",
+        }

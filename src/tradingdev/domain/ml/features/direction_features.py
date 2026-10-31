@@ -87,7 +87,8 @@ class DirectionFeatureEngineer:
         Returns:
             DataFrame with original columns + feature columns + target.
             DVOL changes remain unknown when either comparison endpoint is missing.
-            Rows with NaN features are dropped.
+            Rows with NaN features are dropped; retained source indices identify
+            their original rows and are never model input features.
         """
         close = df["close"].astype(float)
         high = df["high"].astype(float)
@@ -186,13 +187,20 @@ class DirectionFeatureEngineer:
         if include_target:
             h = self._prediction_horizon
             fwd_return = close.shift(-h) / close - 1
-            features["target"] = (fwd_return > 0).astype(int)
+            # The last ``h`` rows have no realised outcome yet. Keep them
+            # unlabelled so the shared ``dropna`` removes them; ``NaN > 0``
+            # would otherwise read as a down move.
+            features["target"] = (
+                (fwd_return > 0).astype(float).where(fwd_return.notna())
+            )
 
         result = pd.concat(
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
-        result = result.dropna().reset_index(drop=True)
+        result = result.dropna()
+        if include_target:
+            result["target"] = result["target"].astype(int)
 
         self._feature_names = [c for c in result.columns if c not in _EXCLUDE_COLS]
         return result

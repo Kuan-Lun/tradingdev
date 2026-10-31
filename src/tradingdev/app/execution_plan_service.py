@@ -12,10 +12,12 @@ from uuid import uuid4
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_html,
+    render_confirmation_link,
     render_confirmation_summary,
     render_confirmation_text,
 )
 from tradingdev.adapters.storage.execution_plans import ExecutionPlanStore
+from tradingdev.adapters.storage.submitted_research import SubmittedResearchStore
 from tradingdev.app.contracts.plans import (
     ExecutionDecision,
     PlanRejected,
@@ -24,17 +26,30 @@ from tradingdev.app.contracts.plans import (
 )
 from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
-    PreparedExecution,
 )
 from tradingdev.app.job_config import bind_strategy_revision
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.preflight_service import PreflightError, PreflightService
+from tradingdev.app.prepared_execution import PreparedComparison, PreparedExecution
+from tradingdev.app.research_evidence_service import ResearchEvidenceService
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.approved_research import ApprovedResearch
+from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution_plan import ExecutionPlan
+from tradingdev.domain.preflight import ComparisonPreflightReceipt, PreflightReceipt
+from tradingdev.domain.presentation.comparison_confirmation import (
+    build_comparison_confirmation,
+)
 from tradingdev.domain.presentation.confirmation import (
-    ConfirmationPresentation,
     ConfirmationPresentationError,
     build_confirmation_document,
+)
+from tradingdev.domain.presentation.research_confirmation import (
+    enrich_research_confirmation,
+)
+from tradingdev.domain.research_evidence import (
+    ParameterBindingTarget,
+    ResearchEvidenceBindingError,
 )
 
 if TYPE_CHECKING:
@@ -71,29 +86,56 @@ class ExecutionPlanService:
         self.jobs = job_store or JobStore(workspace=workspace)
         self.plans = ExecutionPlanStore(workspace, self.jobs.store)
         self.preflight = preflight or PreflightService(workspace)
+        self.evidence = ResearchEvidenceService(workspace)
         self.submission = ExecutionSubmissionService(
             self.jobs, process_runner or ProcessRunner(workspace=workspace)
         )
         self.strategies = StrategyService(workspace, store=self.jobs.store)
 
     def prepare(
-        self, request: PreflightRequest, presentation: ConfirmationPresentation
+        self, request: PreflightRequest, evidence_id: str
     ) -> PlanResponse | PlanRejected:
-        """Return a ready document only after bounded end-to-end trial success."""
+        """Return a ready document after bounded program checks, without market data."""
+        try:
+            record = self.evidence.load(evidence_id)
+        except (OSError, ValueError) as exc:
+            return PlanRejected(
+                success=False, code="research_evidence_invalid", error=str(exc)
+            )
         try:
             checked = self.preflight.prepare(request)
             plan_id = uuid4().hex
             manifest = checked.prepared.manifest
-            document = build_confirmation_document(
-                manifest, presentation, checked.receipt, plan_id=plan_id
+            research_evidence = ApprovedResearch.create(record, manifest)
+            SubmittedResearchStore.validate_publication_size(
+                manifest, research_evidence
+            )
+            presentation = research_evidence.research.record.draft.presentation
+            if isinstance(manifest, ComparisonManifest):
+                if not isinstance(checked.receipt, ComparisonPreflightReceipt):
+                    raise ValueError(
+                        "Comparison requires every candidate's program receipt"
+                    )
+                document = build_comparison_confirmation(
+                    manifest, presentation, checked.receipt, plan_id=plan_id
+                )
+            else:
+                if not isinstance(checked.receipt, PreflightReceipt):
+                    raise ValueError("Single execution requires its program receipt")
+                document = build_confirmation_document(
+                    manifest, presentation, checked.receipt, plan_id=plan_id
+                )
+            document = enrich_research_confirmation(
+                document, research_evidence.research
             )
             created = datetime.now(UTC)
             payload = {
-                "schema_version": 1,
+                "schema_version": 3,
                 "plan_id": plan_id,
                 "manifest": manifest.model_dump(mode="json"),
                 "original_config_path": str(checked.prepared.original_config_path),
                 "preflight": checked.receipt.model_dump(mode="json"),
+                "research_evidence": research_evidence.model_dump(mode="json"),
                 "document": document.model_dump(mode="json"),
                 "created_at": created.isoformat().replace("+00:00", "Z"),
                 "expires_at": (created + timedelta(hours=1))
@@ -106,6 +148,17 @@ class ExecutionPlanService:
             text = render_confirmation_text(document)
             self.plans.publish(plan, text, render_confirmation_html(document))
             return self._response(plan, {"state": "ready", "job_id": None})
+        except ResearchEvidenceBindingError as exc:
+            return PlanRejected(
+                success=False,
+                code="research_evidence_binding_invalid",
+                error=str(exc),
+                required_parameter_paths=exc.required_parameter_paths,
+                required_parameter_bindings=[
+                    ParameterBindingTarget.model_validate(target)
+                    for target in exc.required_parameter_bindings
+                ],
+            )
         except ConfirmationPresentationError as exc:
             return PlanRejected(
                 success=False,
@@ -184,7 +237,7 @@ class ExecutionPlanService:
                 else "confirmation_declined",
                 error=(
                     "使用者要求修改設定，原計畫已取消，正式回測未啟動。"
-                    "請收集修改內容，重新準備、試跑並等待使用者確認新計畫。"
+                    "請收集修改內容，重新準備、檢查程式並等待使用者確認新計畫。"
                     if decision == "revise"
                     else "使用者未同意，計畫已取消，正式回測未啟動。"
                 ),
@@ -229,12 +282,30 @@ class ExecutionPlanService:
                     raise
                 self.plans.transition(plan_id, "awaiting_confirmation", "submitting")
                 try:
-                    self.submission.submit(
-                        PreparedExecution(
-                            plan.manifest, Path(plan.original_config_path)
-                        ),
-                        job_id=plan_id,
-                    )
+                    if isinstance(plan.manifest, ComparisonManifest):
+                        if not isinstance(plan.preflight, ComparisonPreflightReceipt):
+                            raise ValueError("Comparison requires candidate receipts")
+                        prepared = PreparedComparison(
+                            plan.manifest,
+                            Path(plan.original_config_path),
+                            {
+                                checked.candidate_id: tuple(
+                                    checked.receipt.synthetic_fixture_rows
+                                )
+                                for checked in plan.preflight.candidates
+                            },
+                            research_evidence=plan.research_evidence,
+                        )
+                        self.submission.submit(prepared, job_id=plan_id)
+                    else:
+                        self.submission.submit(
+                            PreparedExecution(
+                                plan.manifest,
+                                Path(plan.original_config_path),
+                                research_evidence=plan.research_evidence,
+                            ),
+                            job_id=plan_id,
+                        )
                 except BaseException as exc:
                     self.plans.transition(
                         plan_id, "submitting", "failed", error=str(exc)
@@ -272,14 +343,23 @@ class ExecutionPlanService:
 
     def _verify_ready(self, plan: ExecutionPlan) -> None:
         plan.verify()
+        plan.research_evidence.verify_current_policy(plan.manifest)
         if datetime.now(UTC) >= plan.expires_at:
-            raise PlanOperationError("plan_expired", "計畫已過期，請重新準備與試跑。")
-        config = plan.manifest.config_for_execution()
-        strategy = config["strategy"]
-        selected = self.strategies.resolve_executable(
-            strategy["id"], strategy.get("revision_id")
+            raise PlanOperationError(
+                "plan_expired", "計畫已過期，請重新準備與檢查程式。"
+            )
+        manifests = (
+            [candidate.manifest for candidate in plan.manifest.candidates]
+            if isinstance(plan.manifest, ComparisonManifest)
+            else [plan.manifest]
         )
-        bind_strategy_revision(config, selected)
+        for manifest in manifests:
+            config = manifest.config_for_execution()
+            strategy = config["strategy"]
+            selected = self.strategies.resolve_executable(
+                strategy["id"], strategy.get("revision_id")
+            )
+            bind_strategy_revision(config, selected)
 
     def _response(self, plan: ExecutionPlan, record: dict[str, Any]) -> PlanResponse:
         job_id = record.get("job_id")
@@ -287,15 +367,22 @@ class ExecutionPlanService:
             job = self._bound_job(plan)
             if job is not None:
                 job_id = plan.plan_id
+        html_path = str(self.plans.directory(plan.plan_id) / "confirmation.html")
+        config = (
+            plan.manifest.common_config()
+            if isinstance(plan.manifest, ComparisonManifest)
+            else plan.manifest.config_copy()
+        )
         return PlanResponse(
             plan_id=plan.plan_id,
             status=record["state"],
             manifest_hash=plan.manifest.manifest_hash,
             expires_at=plan.expires_at.isoformat(),
             confirmation_summary=render_confirmation_summary(
-                plan.document, mode=plan.manifest.config_copy()["backtest"]["mode"]
+                plan.document, mode=config["backtest"]["mode"]
             ),
-            html_path=str(self.plans.directory(plan.plan_id) / "confirmation.html"),
+            confirmation_link=render_confirmation_link(html_path),
+            html_path=html_path,
             artifact_id=f"{plan.plan_id}:confirmation_html",
             preflight=plan.preflight,
             job_id=job_id,

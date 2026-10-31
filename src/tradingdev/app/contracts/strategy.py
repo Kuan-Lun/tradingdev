@@ -1,24 +1,65 @@
 """Public response contracts for strategy discovery and lifecycle operations."""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import JsonValue, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
+from tradingdev.domain.research_evidence import ResearchEvidenceDraft
 from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.schemas import StrategyStatus
+from tradingdev.domain.strategies.templates import StrategyContractTopic
+
+type IndicatorSelection = Annotated[
+    str, Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+]
 
 
 class StrategyContractSection(ContractModel):
     """Discoverable purpose of one complete contract section."""
 
-    id: Literal["core", "example", "configuration"]
+    id: StrategyContractTopic
     description: str
+
+
+class StrategyStaticPolicyContract(ContractModel):
+    """Exact rules exported by the static validator, not security isolation."""
+
+    allowed_import_roots: list[str]
+    blocked_import_roots: list[str]
+    blocked_call_names: list[str]
+    blocked_attribute_calls: list[str]
+
+
+class IndicatorAPISummary(ContractModel):
+    name: str
+    signature: str
+    summary: str
+
+
+class IndicatorSource(ContractModel):
+    name: str
+    source: str
+
+
+class IndicatorAPIDetail(IndicatorAPISummary):
+    documentation: str
+    source: str
+    supporting_source: list[IndicatorSource]
+    result_fields: list[str]
+
+
+class StrategyIndicatorContract(ContractModel):
+    namespace: str
+    module_contract: str
+    catalog: list[IndicatorAPISummary]
+    selected: IndicatorAPIDetail | None
 
 
 class StrategyCoreContract(ContractModel):
     """Required authoring and lifecycle rules, without optional examples."""
 
+    static_policy: StrategyStaticPolicyContract
     base_strategy_source: str
     requirements: list[str]
     lifecycle: list[str]
@@ -38,19 +79,44 @@ class StrategyConfigurationContract(ContractModel):
     notes: list[str]
 
 
+class StrategyResearchContract(ContractModel):
+    """Required research choices and the shared simulation policy."""
+
+    research_schema: dict[str, JsonValue]
+    policy: dict[str, JsonValue]
+    notes: list[str]
+
+
+class StrategyEvidenceContract(ContractModel):
+    """Parameter selection, truthful provenance and an executable-schema example."""
+
+    selection: list[str]
+    recording: list[str]
+    confirmation_and_results: list[str]
+    unsourced_single_execution_example: ResearchEvidenceDraft
+
+
 class StrategyContractResponse(ContractModel):
     """A selected section, with references to the remaining contract material."""
 
-    section: Literal["core", "example", "configuration"]
+    section: StrategyContractTopic
     available_sections: list[StrategyContractSection]
     content: (
-        StrategyCoreContract | StrategyExampleContract | StrategyConfigurationContract
+        StrategyCoreContract
+        | StrategyResearchContract
+        | StrategyEvidenceContract
+        | StrategyExampleContract
+        | StrategyConfigurationContract
+        | StrategyIndicatorContract
     )
 
     @model_validator(mode="after")
     def validate_section_content(self) -> Self:
         expected = {
             "core": StrategyCoreContract,
+            "indicators": StrategyIndicatorContract,
+            "research": StrategyResearchContract,
+            "evidence": StrategyEvidenceContract,
             "example": StrategyExampleContract,
             "configuration": StrategyConfigurationContract,
         }
@@ -218,6 +284,13 @@ class StrategySaveFailure(ErrorResponse):
         "syntax_error",
         "invalid_yaml",
         "invalid_strategy_config",
+        "invalid_revision_request",
+        "invalid_research_spec",
+        "strategy_id_exists",
+        "strategy_revision_conflict",
+        "strategy_revision_invalid",
+        "strategy_save_failed",
+        "strategy_id_generation_failed",
     ]
     message: Literal[""]
     strategy_id: str

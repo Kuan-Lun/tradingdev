@@ -66,6 +66,12 @@ _REASON_LABELS = {
     "unknown_bar_frequency": "無法識別 K 棒週期",
     "unsupported_volume_accounting": "名目金額回測模式未提供此帳戶資料流",
     "not_recorded": "此保存結果未記錄資料",
+    "undefined_asset_class": "此資產類別未定義 benchmark",
+    "benchmark_data_unavailable": "基準行情無法取得",
+    "invalid_benchmark_prices": "基準收盤價不是有限正數",
+    "no_shared_observations": "基準與回測 K 線沒有共同的時間戳",
+    "invalid_benchmark_cost_settings": "回測的成本設定無法套用到基準",
+    "benchmark_metrics_failed": "基準權益無法換算成績效指標",
 }
 
 _ENUM_LABELS = {
@@ -119,56 +125,20 @@ _ENUM_LABELS = {
         "volume": "名目金額回測模式",
     },
     "split": {"full": "完整區間", "train": "訓練區間", "test": "測試區間"},
+    "benchmark_status": {
+        "available": "已保存基準",
+        "unavailable": "基準無法建立",
+        "undefined": "此資產類別未定義基準",
+    },
+    "capital_basis": {
+        "run_init_cash": "使用本次回測的初始本金",
+        "normalized_unit": "以 1 個報價貨幣單位計算（回測未設定初始本金）",
+    },
     "parameter_provenance": {
         "scope_snapshot": "保存範圍的參數快照",
         "execution_manifest": "固定執行清單的建構參數",
         "execution_manifest_and_trial": "固定執行清單參數加上本次試驗參數",
         "aggregate_scope_snapshot": "摘要範圍的參數快照",
-    },
-}
-
-
-RECORD_LABELS = {
-    "execution_id": "執行紀錄編號",
-    "order_id": "成交單編號",
-    "bar_index": "K 線索引（從 0 起算）",
-    "status": "執行狀態",
-    "status_info": "狀態原因",
-    "side": "買賣方向",
-    "timestamp": "K 線時間（UTC）",
-    "market.open": "市場開盤價",
-    "market.high": "市場最高價",
-    "market.low": "市場最低價",
-    "market.close": "市場收盤價",
-    "requested_price": "委託價格",
-    "filled_price": "成交價格",
-    "filled_size": "成交數量（標的單位）",
-    "fees": "成交手續費（報價貨幣）",
-    "valuation_price": "執行時權益估值價格",
-    "requested_size": "委託規模（依規模類型）",
-    "requested_size_kind": "委託規模數值類別",
-    "requested_size_type": "委託規模類型",
-    "requested_direction": "允許的持倉方向",
-    "requested_fee_rate": "單邊手續費率",
-    "requested_fixed_fees": "每次固定費用（報價貨幣）",
-    "requested_slippage": "滑價率",
-    "mark_price": "收盤估值價格",
-    "cash": "現金（報價貨幣）",
-    "free_cash": "可用現金（引擎帳本，報價貨幣）",
-    "position": "總持倉數量（標的單位）",
-    "asset_value": "持倉市值（報價貨幣）",
-    "equity": "帳戶權益（報價貨幣）",
-    "raw": "原始資料",
-    **{
-        f"{phase}.{key}": f"{phase_label}{label}（{unit}）"
-        for phase, phase_label in (("before", "執行前"), ("after", "執行後"))
-        for key, label, unit in (
-            ("cash", "現金", "報價貨幣"),
-            ("position", "總持倉", "標的單位"),
-            ("equity", "帳戶權益", "報價貨幣"),
-            ("free_cash", "可用現金", "引擎帳本，報價貨幣"),
-            ("debt", "空單負債", "引擎帳本，報價貨幣"),
-        )
     },
 }
 

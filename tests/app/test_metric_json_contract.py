@@ -159,7 +159,7 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
                     "end_date": "2024-02-01",
                     "init_cash": 10000,
                 },
-                "validation": {},
+                "validation": {"mode": "automatic"},
             },
         )
         ArtifactService(workspace=workspace, store=store).cache_pipeline_result(
@@ -251,6 +251,8 @@ def test_invalid_metrics_leave_no_result_artifacts_or_run_records(
                 artifact_dir=tmp_path,
                 metrics={"nested": {"bad": object()}},
             )
-    assert not (workspace.runs / "invalid").exists()
+    assert {path.name for path in (workspace.runs / "invalid").iterdir()} == {
+        ".submission.lock"
+    }
     assert store.get_run("invalid") is None
     assert store.list_artifacts("invalid") == []

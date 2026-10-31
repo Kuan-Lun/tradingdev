@@ -18,6 +18,10 @@
   - safe=0: 即使選對方向也會虧損超過門檻
 - **決策**: `P(safe) >= risk_threshold` → 允許進場
 - **特徵**: 波動率（多 horizon）、ATR、布林帶寬度、ADX、成交量異常、K 線結構、收益率偏度/峰度
+- **時間戳**: 評分資料必須有時間戳且依時間排序；可接受的輸入、例外與空白資料的處理見
+  [訓練契約](../strategy_contract.md#training-before-scoring)。
+- **缺少特徵**: 當根無法計算風險特徵時，使用中性值 `P(safe)=0.5`，不沿用前一根的預測；
+  是否進出場仍依風險門檻與持倉規則判定，不保證自動平倉。
 
 ### Layer 2: Direction (SMA Crossover)
 
@@ -91,6 +95,22 @@ FLAT ──(safe + direction)──► LONG/SHORT
 | `lookback_candidates` | [360, 720, 1440] | 搜尋最佳特徵 lookback |
 | `retrain_interval` | 720 | 每 720 根 bar（12h @1m）重訓模型 |
 | `validation_ratio` | 0.2 | 驗證集比例 |
+| `rolling_gen` | 見下節 | 宣告式滾動視窗；預設關閉 |
+
+### 宣告式滾動視窗（`rolling_gen`）
+
+預設關閉。未啟用時，Risk Gate 沿用原本的滾動重訓迴圈；啟用後改由具名的視窗
+幾何決定訓練窗與重訓節奏。兩個方案的差異、可選欄位與因果邊界統一寫在
+[ML 研究契約](../ml_research.md#rolling-retraining-schemes)，此處只列本策略的
+最小設定：
+
+```yaml
+strategy:
+  parameters:
+    rolling_gen:
+      enabled: true
+      scheme: roll_ex
+```
 
 ### Position & Volume
 
@@ -149,6 +169,8 @@ backtest:
   stop_loss: 0.03             # 3% 緊急 SL
 
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"
@@ -170,10 +192,14 @@ data:
 uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/safety_volume_strategy/config.yaml --walk-forward
 ```
 
-透過 MCP 操作時，先使用 `get_strategy` 與 `inspect_dataset(config_path)`
-確認設定及 workspace 或 `TRADINGDEV_DATA_ROOT` 的行情，再呼叫
-`prepare_walk_forward`。一般回測或最佳化的拒絕回覆會引導至此工具；仍須滿足
-設定與資料需求才能完成準備。執行契約見
+透過 MCP 操作時，先使用 `get_strategy` 確認設定，再呼叫
+`prepare_walk_forward` 並提供[研究需求](../strategy_contract.md#research-inputs-and-simulation-policy)。
+內建範例日期不能代替使用者選擇。一般回測或最佳化的拒絕回覆會引導至此工具。準備階段
+只離線檢查設定與執行模式，不讀取行情或特徵、不訓練模型，也不建立驗證分段；
+實際行情、特徵與可用訓練區間在使用者同意後的正式執行中檢查。
+若使用者另外要求檢視既有資料，可用 `inspect_dataset(config_path)` 檢查
+workspace 或 `TRADINGDEV_DATA_ROOT` 的本機快取，不會下載資料；這不是準備
+確認單的必要步驟，也不代表訓練必定成功。執行契約見
 [Training Before Scoring](../strategy_contract.md#training-before-scoring)。
 
 ## 與 XGBoost Direction Strategy 的比較

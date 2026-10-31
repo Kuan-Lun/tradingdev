@@ -18,10 +18,15 @@ from tests.e2e.codex_app_server import CodexAppServer
 from tests.integration.mcp_harness import MCPWorkspace
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import psutil
 
     from tests.e2e.codex_app_server import ElicitationCallback
     from tests.e2e.conversation import UserReply
+    from tests.e2e.llm_client import ToolCall
+
+CODEX_REASONING_EFFORT = "xhigh"
 
 LIFECYCLE_TOOLS = [
     "list_strategies",
@@ -31,6 +36,7 @@ LIFECYCLE_TOOLS = [
     "save_strategy",
     "validate_strategy",
     "dry_run_strategy",
+    "save_research_evidence",
     "prepare_backtest",
     "prepare_walk_forward",
     "prepare_optimization",
@@ -74,8 +80,9 @@ def _command(root: Path, model: str | None = None) -> list[str]:
         "features.multi_agent": False,
         "features.code_mode": False,
         "features.js_repl": False,
+        "features.skip_host_skill_discovery": True,
+        "model_reasoning_effort": CODEX_REASONING_EFFORT,
         "web_search": "disabled",
-        "skip_host_skill_discovery": True,
         "notify": [],
         "developer_instructions": "",
         "project_doc_max_bytes": 0,
@@ -137,6 +144,7 @@ async def run_codex(
     user_reply: UserReply | None = None,
     max_turns: int = 8,
     tool_names: list[str] | None = None,
+    on_tool_call: Callable[[ToolCall], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Run an MCP-only conversation with one thread and reap its process tree."""
     from tests.e2e.conversation import ModelTurn
@@ -144,6 +152,11 @@ async def run_codex(
 
     enabled_tools = LIFECYCLE_TOOLS if tool_names is None else tool_names
     turn_number = 0
+
+    def observe_tool(event: dict[str, Any]) -> None:
+        assert on_tool_call is not None
+        for call in codex_calls([event]):
+            on_tool_call(call)
 
     async def respond_to_turn(events: list[dict[str, Any]]) -> str | None:
         nonlocal turn_number
@@ -179,6 +192,7 @@ async def run_codex(
             max_tool_calls=max_tool_calls,
             elicitation_callback=elicitation_callback,
             observe_processes=observe_processes,
+            on_completed_tool=observe_tool if on_tool_call is not None else None,
         )
         try:
             async with asyncio.timeout(timeout_seconds):
@@ -205,6 +219,7 @@ async def run_codex(
                         ),
                     },
                     mcp_config=_mcp_config(root, enabled_tools),
+                    expected_reasoning_effort=CODEX_REASONING_EFFORT,
                     user_reply=respond_to_turn if user_reply is not None else None,
                     max_turns=max_turns,
                 )
@@ -275,8 +290,8 @@ def verify_generated_strategy(
             process.communicate(timeout=3)
 
 
-def successful_mcp_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Extract completed MCP invocations from native app-server notifications."""
+def completed_mcp_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Retain terminal tool responses, including errors the model can repair."""
     return [
         event["params"]["item"]
         for event in events
@@ -284,5 +299,6 @@ def successful_mcp_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         and isinstance(event.get("params"), dict)
         and isinstance(event["params"].get("item"), dict)
         and event["params"]["item"].get("type") == "mcpToolCall"
-        and event["params"]["item"].get("status") == "completed"
+        and event["params"]["item"].get("status") in {"completed", "failed"}
+        and isinstance(event["params"]["item"].get("result"), dict)
     ]

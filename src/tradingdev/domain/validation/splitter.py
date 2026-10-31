@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tradingdev.domain.validation.config import (
+    AutomaticWalkForwardConfig,
+    ExplicitWalkForwardConfig,
+)
 from tradingdev.domain.validation.date_windows import (
     WalkForwardSplitError,
     inclusive_day_window,
@@ -14,8 +19,6 @@ from tradingdev.domain.validation.date_windows import (
 if TYPE_CHECKING:
     import numpy.typing as npt
     import pandas as pd
-
-    from tradingdev.domain.backtest.schemas import WalkForwardConfig
 
 
 class DataSplitter:
@@ -27,29 +30,28 @@ class DataSplitter:
         - Expanding windows with growing train size.
     """
 
-    def __init__(self, config: WalkForwardConfig) -> None:
+    def __init__(
+        self, config: AutomaticWalkForwardConfig | ExplicitWalkForwardConfig
+    ) -> None:
+        if not isinstance(
+            config, (AutomaticWalkForwardConfig, ExplicitWalkForwardConfig)
+        ):
+            raise TypeError("DataSplitter requires automatic or explicit configuration")
         self._config = config
 
     def split(self, df: pd.DataFrame) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
         """Generate train/test splits from the DataFrame."""
-        cfg = self._config
-
-        if (
-            cfg.train_start is not None
-            and cfg.train_end is not None
-            and cfg.test_start is not None
-            and cfg.test_end is not None
-        ):
-            return self._explicit_split(df)
-
-        return self._auto_split(df)
+        return [
+            (df.iloc[train[0] : train[1]].copy(), df.iloc[test[0] : test[1]].copy())
+            for train, test in self.split_windows(df)
+        ]
 
     def split_windows(
         self, df: pd.DataFrame
     ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """Positional ``[start, end)`` train/test windows, one per fold.
 
-        Mirrors :meth:`split` but reports integer geometry instead of frames,
+        Reports the integer geometry used by :meth:`split`,
         so callers can audit fold boundaries (purge/embargo) without
         re-deriving positions from the returned DataFrames. Both derive from
         :meth:`_explicit_masks` or the same auto geometry, so the audited
@@ -57,12 +59,7 @@ class DataSplitter:
         """
         cfg = self._config
 
-        if (
-            cfg.train_start is not None
-            and cfg.train_end is not None
-            and cfg.test_start is not None
-            and cfg.test_end is not None
-        ):
+        if isinstance(cfg, ExplicitWalkForwardConfig):
             return self._explicit_windows(df)
 
         return self._auto_windows(df)
@@ -78,14 +75,7 @@ class DataSplitter:
         test timestamp.
         """
         cfg = self._config
-        if (
-            cfg.train_start is None
-            or cfg.train_end is None
-            or cfg.test_start is None
-            or cfg.test_end is None
-        ):
-            msg = "Explicit split requires all four dates"
-            raise WalkForwardSplitError(msg)
+        assert isinstance(cfg, ExplicitWalkForwardConfig)
 
         ts = df["timestamp"]
         if not ts.is_monotonic_increasing:
@@ -136,66 +126,34 @@ class DataSplitter:
     def _auto_windows(
         self, df: pd.DataFrame
     ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
-        """Rolling or expanding window geometry, mirroring ``_auto_split``."""
+        """Rolling or expanding window geometry shared by splitting and auditing."""
         cfg = self._config
+        assert isinstance(cfg, AutomaticWalkForwardConfig)
         n = len(df)
-        total_per_split = n // cfg.n_splits
-        train_size = int(total_per_split * cfg.train_ratio)
-        test_size = total_per_split - train_size
+        # Solve T / (T + S) = ratio with T + n_splits * S = n.
+        # Round the initial training size down, then distribute every remaining
+        # row over contiguous test windows whose sizes differ by at most one.
+        # Interpret the decimal value persisted in JSON, without binary-rounding
+        # errors crossing an integer boundary before floor.
+        ratio = Fraction(str(cfg.train_ratio))
+        train_size = int(n * ratio / (ratio + cfg.n_splits * (1 - ratio)))
+        remaining = n - train_size
+        if train_size < 1 or remaining < cfg.n_splits:
+            raise WalkForwardSplitError(
+                "Automatic walk-forward needs nonempty train and test windows; "
+                f"received {n} rows for {cfg.n_splits} folds "
+                f"and ratio {cfg.train_ratio}"
+            )
 
         windows: list[tuple[tuple[int, int], tuple[int, int]]] = []
         for i in range(cfg.n_splits):
-            if cfg.expanding:
-                train_start_idx = 0
-                train_end_idx = train_size + i * test_size
-            else:
-                train_start_idx = i * test_size
-                train_end_idx = train_start_idx + train_size
-            test_start_idx = train_end_idx
-            test_end_idx = test_start_idx + test_size
-
-            if test_end_idx > n:
-                break
+            test_start_idx = train_size + remaining * i // cfg.n_splits
+            test_end_idx = train_size + remaining * (i + 1) // cfg.n_splits
+            train_end_idx = test_start_idx
+            train_start_idx = 0 if cfg.expanding else train_end_idx - train_size
 
             windows.append(
                 ((train_start_idx, train_end_idx), (test_start_idx, test_end_idx))
             )
 
         return windows
-
-    def _explicit_split(
-        self, df: pd.DataFrame
-    ) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
-        """Single split using explicit date boundaries."""
-        train_mask, test_mask = self._explicit_masks(df)
-        return [(df[train_mask].copy(), df[test_mask].copy())]
-
-    def _auto_split(self, df: pd.DataFrame) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
-        """Rolling or expanding window splits."""
-        cfg = self._config
-        n = len(df)
-        total_per_split = n // cfg.n_splits
-        train_size = int(total_per_split * cfg.train_ratio)
-        test_size = total_per_split - train_size
-
-        splits: list[tuple[pd.DataFrame, pd.DataFrame]] = []
-        for i in range(cfg.n_splits):
-            if cfg.expanding:
-                train_end_idx = train_size + i * test_size
-                test_start_idx = train_end_idx
-                test_end_idx = test_start_idx + test_size
-                train_df = df.iloc[:train_end_idx].copy()
-            else:
-                train_start_idx = i * test_size
-                train_end_idx = train_start_idx + train_size
-                test_start_idx = train_end_idx
-                test_end_idx = test_start_idx + test_size
-                train_df = df.iloc[train_start_idx:train_end_idx].copy()
-
-            if test_end_idx > n:
-                break
-
-            test_df = df.iloc[test_start_idx:test_end_idx].copy()
-            splits.append((train_df, test_df))
-
-        return splits

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
+from tradingdev.domain.backtest.execution_policy import DEFAULT_VOLUME_POSITION_SIZE
 from tradingdev.domain.backtest.metrics import (
     calculate_metrics_from_simulation,
     timestamp_index,
@@ -26,15 +27,18 @@ class VolumeBacktestEngine(BaseBacktestEngine):
 
     An optional **monthly circuit breaker** (``monthly_max_loss``)
     force-closes any open position and halts trading for the remainder
-    of the calendar month once the monthly cumulative loss exceeds the
-    threshold.  Trading resumes at the start of the next month.
+    of the UTC calendar month once the monthly cumulative loss reaches the
+    threshold. Monthly P&L is equity minus the previous observed month's last
+    close equity (zero for the first month), including costs and unrealised P&L.
+    Trading resumes on the first available bar of a new month.
 
     Behaviour flags (inherited from ``BaseBacktestEngine``):
 
     * ``re_entry_after_sl`` (default ``True``): After every SL/TP
       exit the simulator immediately re-enters in the direction
       indicated by the current signal.  Set to ``False`` to go flat
-      after a stop-out and wait for the next signal change.
+      after a stop-out, skip the rest of that bar, and wait for a later shifted
+      signal to differ from the stop-out bar's signal, including a change to zero.
     * ``signal_as_position`` (default ``False``): When ``True``,
       ``signal=0`` is interpreted as "go flat" (close any open
       position).  When ``False`` (legacy), ``signal=0`` means
@@ -97,7 +101,11 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         if not np.all(np.isfinite(prices)) or np.any(prices <= 0):
             raise ValueError("Prices must be finite and positive")
         n = len(close)
-        size_quote = self._position_size or 200.0
+        size_quote = (
+            DEFAULT_VOLUME_POSITION_SIZE
+            if self._position_size is None
+            else self._position_size
+        )
 
         # Dynamic position sizing: per-bar weight if available
         if "size_weight" in df.columns:
@@ -119,9 +127,10 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         entry_price = 0.0
         entry_idx = 0
         pos_qty = 0.0
+        blocked_signal: int | None = None
 
         # Monthly circuit breaker state
-        monthly_pnl = 0.0
+        month_start_equity = 0.0
         current_month: tuple[int, int] | None = None
         circuit_breaker_active = False
 
@@ -149,12 +158,18 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             h = float(high[i])
             lo = float(low[i])
 
+            if blocked_signal is not None and sig != blocked_signal:
+                blocked_signal = None
+
             # --- Month boundary check ---
             if has_timestamps:
                 ts = pd.Timestamp(timestamps_arr[i])  # type: ignore[index]
                 bar_month = (ts.year, ts.month)
                 if current_month is not None and bar_month != current_month:
-                    monthly_pnl = 0.0
+                    # Carry forward the last observed close, even across missing
+                    # months. This assigns the gap and only this month's change
+                    # in a carried position to the new month.
+                    month_start_equity = float(equity[i - 1])
                     circuit_breaker_active = False
                 current_month = bar_month
 
@@ -188,16 +203,16 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     cash += (
                         trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
                     )
-                    monthly_pnl += (
-                        trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                    )
                     pos_dir = 0
                     pos_qty = 0.0
 
                     # Check circuit breaker before re-entry
-                    if has_timestamps and monthly_pnl <= -self._monthly_max_loss:
+                    if (
+                        has_timestamps
+                        and cash - month_start_equity <= -self._monthly_max_loss
+                    ):
                         circuit_breaker_active = True
-                    elif re_entry and sig != 0:
+                    elif re_entry and sig != 0 and size_quote != 0:
                         # Re-entry after SL happens intra-bar; use
                         # close as best estimate of the re-entry fill.
                         eff = size_quote * weights[i]
@@ -205,8 +220,14 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                         pos_qty = eff / c
                         entry_idx = i
                         cash -= eff * fee_rate
-                        monthly_pnl -= eff * fee_rate
                         pos_dir = sig
+
+                    if not re_entry:
+                        # The stop used this bar's high/low. Never travel back to
+                        # its open to create a new position, even on a reversal.
+                        blocked_signal = sig
+                        equity[i] = cash
+                        continue
 
             if circuit_breaker_active:
                 equity[i] = cash
@@ -226,9 +247,6 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 )
                 trades.append(trade)
                 cash += trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                monthly_pnl += (
-                    trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                )
                 pos_dir = 0
                 pos_qty = 0.0
 
@@ -246,25 +264,22 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 )
                 trades.append(trade)
                 cash += trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                monthly_pnl += (
-                    trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                )
                 eff = size_quote * weights[i]
                 entry_price = o
                 pos_qty = eff / o
                 entry_idx = i
                 cash -= eff * fee_rate
-                monthly_pnl -= eff * fee_rate
                 pos_dir = sig
 
             # --- new entry from flat at open ---
-            elif pos_dir == 0 and sig != 0:
+            elif (
+                pos_dir == 0 and sig != 0 and blocked_signal is None and size_quote != 0
+            ):
                 eff = size_quote * weights[i]
                 entry_price = o
                 pos_qty = eff / o
                 entry_idx = i
                 cash -= eff * fee_rate
-                monthly_pnl -= eff * fee_rate
                 pos_dir = sig
 
             # --- mark-to-market at close ---
@@ -275,11 +290,9 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 equity[i] = cash
 
             # --- Circuit breaker check after trading ---
-            # Include unrealised P&L so open losing positions
-            # also trigger the breaker.
-            effective_monthly = monthly_pnl
-            if pos_dir != 0:
-                effective_monthly += pos_dir * pos_qty * (c - entry_price)
+            # Use the same equity ledger for realised and unrealised changes;
+            # closing a carried position must not count its prior-month P&L again.
+            effective_monthly = equity[i] - month_start_equity
             if (
                 has_timestamps
                 and not circuit_breaker_active
@@ -299,9 +312,6 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     )
                     trades.append(trade)
                     cash += (
-                        trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                    )
-                    monthly_pnl += (
                         trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
                     )
                     pos_dir = 0

@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
+from tests.data_cache import cached_market_path, seed_market_cache
 from tests.mcp.ml_fixtures import model_pair
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -41,11 +42,7 @@ def _write_bars(workspace: WorkspacePaths, symbol: str) -> None:
             "volume": np.full(_ROWS, 10.0),
         }
     )
-    path = workspace.processed_data / (
-        symbol.lower().replace("/", "") + "_1h_2024.parquet"
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
+    seed_market_cache(workspace.processed_data, frame, symbol=symbol)
 
 
 @pytest.fixture
@@ -245,7 +242,7 @@ def test_leaderboard_can_query_old_and_rebuilt_dataset_versions(
     records: dict[str, str] = {}
     for version in (1, 2):
         if version == 2:
-            source = workspace.processed_data / "btcusdt_1h_2024.parquet"
+            source = cached_market_path(workspace.processed_data)
             frame = pd.read_parquet(source)
             frame["close"] *= np.linspace(1.0, 1.2, len(frame))
             frame.to_parquet(source, index=False)
@@ -380,3 +377,29 @@ def test_large_mixed_leaderboard_bounds_success_and_rejection(
     assert filtered.n_candidates == filtered.n_ranked == 1
     assert filtered.next_offset is None
     assert filtered.ranked[0].entry_id == entries[0].entry_id
+
+
+def test_parameter_surface_opt_in_reaches_service_and_preserves_row_metadata(
+    mcp: MCPServer,
+    workspace: WorkspacePaths,
+    recorded: str,
+) -> None:
+    frame = pd.read_parquet(workspace.ml_datasets / recorded / "dataset.parquet")
+    realized = frame["forward_return"].astype(float).tolist()
+    MLService(workspace=workspace).evaluate_signal(
+        realized,
+        realized,
+        dataset_id=recorded,
+        window=30,
+        record=True,
+    )
+    args = {"metric": "ic_mean", "dataset_id": recorded}
+    assert _dispatch(mcp, "leaderboard", args)["success"] is False
+    board = LeaderboardPageResponse.model_validate(
+        _dispatch(mcp, "leaderboard", {**args, "allow_parameter_axes": True})
+    )
+    assert board.parameter_axes["window"] == [20, 30]
+    assert board.n_candidates == 3
+    assert {row.window for row in board.ranked} == {20, 30}
+    assert all(row.signal_fingerprint for row in board.ranked)
+    assert any("surface" in text for text in board.caveats)

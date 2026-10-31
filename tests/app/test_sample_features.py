@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pyarrow.dataset as arrow_dataset
 import pytest
+from tests.data_cache import cached_market_path, seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.data_service import DataService
+from tradingdev.app.dvol_data import DVOLData
 from tradingdev.domain.backtest.schemas import BacktestConfig
 
 if TYPE_CHECKING:
@@ -30,9 +33,7 @@ def _service(
             **dict.fromkeys(("open", "high", "low", "close", "volume"), 100.0),
         }
     )
-    frame.to_parquet(
-        root / "workspace/data/processed/btcusdt_1h_2024.parquet", index=False
-    )
+    seed_market_cache(root / "workspace/data/processed", frame)
 
     class Crawler:
         def fetch(self, *_args: Any, **_kwargs: Any) -> pd.DataFrame:
@@ -154,11 +155,22 @@ def test_dvol_uses_original_range_default_cache_and_column_precedence(
 ) -> None:
     timestamps = pd.date_range("2024-01-01", periods=4, freq="h", tz="UTC")
     service, config = _service(tmp_path, monkeypatch, timestamps, end="2025-12-31")
-    path = tmp_path / "workspace/data/processed/btc_dvol_1h_2024_2025.parquet"
     frame = pd.DataFrame({"timestamp": timestamps, "dvol_close": 51.0})
     if preferred_column:
         frame["volatility"] = 42.0
-    frame.to_parquet(path, index=False)
+    request = service._request_from_backtest(config)
+    managed = DVOLData(service.data_config({}), request)
+    with managed.cache.lock(managed.key):
+        receipt = managed.cache.publish(
+            managed.key,
+            raw=frame,
+            frame=frame,
+            query_start=request.start_date,
+            query_end=request.end_date,
+            fetched_at=datetime(2026, 1, 8, tzinfo=UTC),
+            save_raw=lambda data, target: data.to_csv(target, index=False),
+        )
+    path = managed.cache.processed_path(receipt)
     before = path.read_bytes()
     result = service.load_sample(
         _raw([{"type": "dvol", "source": "deribit", "column": "volatility"}]),
@@ -171,12 +183,24 @@ def test_dvol_uses_original_range_default_cache_and_column_precedence(
     assert path.read_bytes() == before
 
 
-def test_feature_sampling_preserves_exact_join_and_fill_with_unmatched_rows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("sample", [False, True])
+@pytest.mark.parametrize(
+    ("feature_type", "stored_column"),
+    [
+        ("custom", "value"),
+        ("funding_rate", "value"),
+        ("dvol", "value"),
+        ("dvol", "dvol_close"),
+    ],
+)
+def test_feature_loading_only_fills_from_earlier_matching_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sample: bool,
+    feature_type: str,
+    stored_column: str,
 ) -> None:
-    timestamps = pd.DatetimeIndex(
-        ["2024-01-01", "2024-01-01 02:00", "2024-01-01 05:00"], tz="UTC"
-    )
+    timestamps = pd.date_range("2024-01-01", periods=6, freq="h", tz="UTC")
     service, config = _service(tmp_path, monkeypatch, timestamps)
     path = tmp_path / "feature.parquet"
     pd.DataFrame(
@@ -184,28 +208,41 @@ def test_feature_sampling_preserves_exact_join_and_fill_with_unmatched_rows(
             "timestamp": [
                 timestamps[0] - pd.Timedelta(hours=1),
                 timestamps[1],
-                *([timestamps[0] + pd.Timedelta(hours=1)] * 1000),
+                timestamps[3],
+                timestamps[4],
+                *([timestamps[0] + pd.Timedelta(minutes=30)] * 1000),
                 timestamps[-1] + pd.Timedelta(hours=1),
             ],
-            "value": [999.0, 42.0, *([999.0] * 1000), 999.0],
+            stored_column: [999.0, 42.0, None, 43.0, *([999.0] * 1000), 999.0],
         }
-    ).to_parquet(path, index=False, row_group_size=7)
-    result = service.load_sample(
-        _raw(
-            [
-                {
-                    "type": "custom",
-                    "source": "local",
-                    "column": "value",
-                    "path": str(path),
-                }
-            ]
-        ),
-        config,
-        max_rows=3,
-        output_dir=tmp_path / "sample",
+    ).sample(frac=1, random_state=42).to_parquet(path, index=False, row_group_size=7)
+    market_path = cached_market_path(tmp_path / "workspace/data/processed")
+    before = {source: source.read_bytes() for source in (path, market_path)}
+    raw = _raw(
+        [
+            {
+                "type": feature_type,
+                "source": "local",
+                "column": "value",
+                "path": str(path),
+            }
+        ]
     )
-    assert result.frame["value"].tolist() == [42.0, 42.0, 42.0]
+    result = (
+        service.load_sample(raw, config, max_rows=6, output_dir=tmp_path / "sample")
+        if sample
+        else service.load(raw, config)
+    )
+    pd.testing.assert_series_equal(
+        result.frame["value"],
+        pd.Series([float("nan"), 42.0, 42.0, 42.0, 43.0, 43.0], name="value"),
+    )
+    assert result.frame["timestamp"].tolist() == timestamps.tolist()
+    assert {source: source.read_bytes() for source in before} == before
+    if sample:
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(result.processed_path), result.frame
+        )
 
 
 @pytest.mark.parametrize("empty_file", [False, True])

@@ -12,7 +12,10 @@ from typing import Any
 
 import pytest
 from mcp_types import CallToolResult
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import (
+    research_arguments,
+    save_execution_evidence,
+)
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tests.mcp.execution_fixtures import plan_context
 
@@ -35,7 +38,7 @@ def test_real_mcp_preflight_returns_training_guidance_without_market_or_jobs(
                         "strategy_id": strategy_id,
                         "symbol": "BTC/USDT",
                         "timeframe": "1h",
-                        **execution_options({}),
+                        "evidence_id": await save_execution_evidence(client, {}),
                     }
                     if tool == "prepare_optimization":
                         arguments.update(
@@ -48,7 +51,7 @@ def test_real_mcp_preflight_returns_training_guidance_without_market_or_jobs(
                         )
                     else:
                         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
-                    response = await client.call(tool, **arguments)
+                    response = await client.call(tool, **research_arguments(arguments))
                     assert response["success"] is False
                     assert response["code"] == "strategy_requires_training"
                     assert response["next_tool"] == "prepare_walk_forward"
@@ -77,7 +80,7 @@ def test_nontraining_rejection_keeps_its_code_without_training_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail(_request: object) -> None:
-        raise PreflightError("preflight_timeout", "sample timed out")
+        raise PreflightError("preflight_timeout", "program checks timed out")
 
     with TemporaryDirectory(prefix="mcp-guidance-", dir=tmp_path) as directory:
         root = Path(directory)
@@ -91,7 +94,7 @@ def test_nontraining_rejection_keeps_its_code_without_training_recovery(
         payload = result.structured_content["result"]
         assert payload["success"] is False
         assert payload["code"] == "preflight_timeout"
-        assert payload["error"] == "sample timed out"
+        assert payload["error"] == "program checks timed out"
         assert payload["next_tool"] is None
         assert payload["execution_guidance"] is None
         text = next(block.text for block in result.content if block.type == "text")

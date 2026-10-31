@@ -10,6 +10,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.scoring_history import align_scoring_history
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -53,12 +54,17 @@ class RollingRetrainer:
 
         Returns:
             Array of signal values (1, -1, 0).
-        """
-        window_size = max(self._lookback * 10, len(train_data))
-        combined = pd.concat([train_data, test_df], ignore_index=True)
-        test_offset = len(train_data)
 
-        total_bars = len(test_df)
+        Raises:
+            ValueError: If the frames have no usable time identity, because the
+                overlap with the training history cannot be detected without it.
+        """
+        history, scored = align_scoring_history(train_data, test_df)
+        window_size = max(self._lookback * 10, len(history))
+        combined = pd.concat([history, scored], ignore_index=True)
+        test_offset = len(history)
+
+        total_bars = len(scored)
         signals = np.zeros(total_bars, dtype=int)
         current_model = model
         last_trade_bar = -self._cooldown
@@ -159,10 +165,10 @@ class RollingRetrainer:
         ctx = combined.iloc[ctx_start : combined_idx + 1].copy()
         feat_pred = fe.transform(ctx, include_target=False)
 
-        if len(feat_pred) == 0:
+        if combined_idx not in feat_pred.index:
             return 0
 
-        proba = model.predict_proba(feat_pred.iloc[[-1]])
+        proba = model.predict_proba(feat_pred.loc[[combined_idx]])
         p_long = float(proba[1].iloc[0]) if 1 in proba.columns else 0.0
         p_short = float(proba[-1].iloc[0]) if -1 in proba.columns else 0.0
 

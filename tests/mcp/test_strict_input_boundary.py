@@ -12,7 +12,6 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context  # noqa: TC002 — SDK resolves tool annotations.
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, TextContent
-from tests.integration.execution_fixtures import execution_options
 from tests.mcp.execution_fixtures import plan_context
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
@@ -27,11 +26,15 @@ if TYPE_CHECKING:
 
 _START_ARGUMENTS = {
     "strategy_id": "kd_crossover",
-    "symbol": "BTC/USDT",
-    "timeframe": "1h",
-    "start_date": "2024-01-01",
-    "end_date": "2024-01-03",
-    **execution_options({}),
+    "research": {
+        "kind": "new",
+        "strategy_outline": "測試 KD 指標交叉的買賣規則",
+        "symbol": "BTC/USDT",
+        "timeframe": "1h",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-03",
+    },
+    "evidence_id": "e" * 32,
 }
 
 
@@ -52,11 +55,11 @@ def test_revision_typo_is_protocol_error_before_job_or_worker_creation(
     async def check() -> None:
         async with Client(server, mode=protocol_mode) as client:
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+            validator = Draft202012Validator(tools["prepare_backtest"].input_schema)
+            validator.validate(_START_ARGUMENTS)
             arguments = _START_ARGUMENTS | {"revisions_id": "wrong-spelling"}
             with pytest.raises(ValidationError, match="revisions_id"):
-                Draft202012Validator(tools["prepare_backtest"].input_schema).validate(
-                    arguments
-                )
+                validator.validate(arguments)
             result = await client.call_tool("prepare_backtest", arguments)
             assert result.is_error
             text = " ".join(

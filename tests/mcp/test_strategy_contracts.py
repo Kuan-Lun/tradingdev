@@ -12,6 +12,8 @@ import yaml
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
 from pydantic import ValidationError
+from tests.integration.execution_fixtures import research_input
+from tests.research_fixtures import research_for_config
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.strategy import (
@@ -50,12 +52,14 @@ def _call(
     return payload
 
 
-def _save(service: StrategyService) -> None:
+def _save(service: StrategyService, *, expected_revision_id: str | None = None) -> None:
     contract = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     assert service.save_draft(
-        "contract_strategy",
         contract["example_strategy_code"],
         contract["example_yaml_config"],
+        research_for_config(contract["example_yaml_config"]),
+        strategy_id="contract_strategy",
+        expected_revision_id=expected_revision_id,
     ).success
 
 
@@ -72,13 +76,30 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
         "core",
         "example",
         "configuration",
+        "research",
+        "evidence",
+        "indicators",
     }
     content = contract["content"]
-    assert set(content) == {"base_strategy_source", "requirements", "lifecycle"}
+    assert set(content) == {
+        "base_strategy_source",
+        "requirements",
+        "lifecycle",
+        "static_policy",
+    }
     assert "class BaseStrategy" in content["base_strategy_source"]
     assert "get_numpy_rng()" in " ".join(content["requirements"])
     assert "effective_config" in " ".join(content["lifecycle"])
     assert "security sandbox" in " ".join(content["requirements"])
+    assert "-1 means short, never sell-only" in " ".join(content["requirements"])
+    base_source = content["base_strategy_source"]
+    assert 'In ``mode="signal"``, each row specifies a position state' in base_source
+    assert "``signal_as_position`` has no effect in this mode" in base_source
+    assert "Zero closes an existing position when ``signal_as_position=True``" in (
+        base_source
+    )
+    assert "zero prevents new entries but retains an" in base_source
+    assert "Both modes shift signals by one bar" in base_source
 
     sections = {}
     for item in contract["available_sections"]:
@@ -97,10 +118,36 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
     assert "random_seed" in schema["properties"]
     assert "random_seed" not in schema["$defs"]["BacktestConfig"]["properties"]
     assert schema["$defs"]["BacktestConfig"]["additionalProperties"] is False
+    position_flag = schema["$defs"]["BacktestConfig"]["properties"][
+        "signal_as_position"
+    ]
+    assert position_flag["default"] is False
+    assert "Volume mode only" in position_flag["description"]
+    assert "Signal mode always uses position states" in position_flag["description"]
+    monthly_limit = schema["$defs"]["BacktestConfig"]["properties"]["monthly_max_loss"]
+    assert monthly_limit["default"] == 1500.0
+    for rule in (
+        "UTC calendar month",
+        "previous observed month's last close equity",
+        "zero in the first month",
+        "Missing months are not filled",
+        "not prior-month P&L or entry costs again",
+        "Trade records retain whole-trade P&L and costs",
+    ):
+        assert rule in monthly_limit["description"]
     assert set(sections["configuration"]) == {"config_schema", "notes"}
+    configuration_notes = " ".join(sections["configuration"]["notes"])
+    assert "consecutive test folds through the final loaded row" in configuration_notes
+    assert "test sizes differ by at most one" in configuration_notes
     example = sections["example"]
     assert set(example) == {"example_strategy_code", "example_yaml_config"}
     assert yaml.safe_load(example["example_yaml_config"])["random_seed"] == 42
+    research_notes = " ".join(sections["research"]["notes"])
+    assert "start_date <= timestamp <= end_date" in research_notes
+    assert "including both endpoints" in research_notes
+    assert "Date-only values mean 00:00:00 UTC, not the whole final day" in (
+        research_notes
+    )
 
 
 def test_contract_rejects_unknown_sections_and_mismatched_payloads(
@@ -136,9 +183,9 @@ def test_invalid_config_guidance_leads_to_the_configuration_schema(
     example = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     config = yaml.safe_load(example["example_yaml_config"])
     config["backtest"]["random_seed"] = 42
-    assert service.save_draft(
-        "invalid_config", example["example_strategy_code"], yaml.safe_dump(config)
-    ).success
+    service._revisions.create(
+        "invalid_config", example["example_strategy_code"], config
+    )
 
     def quality_diagnostics(_path: Path) -> list[StrategyDiagnostic]:
         return []
@@ -202,7 +249,7 @@ def test_strategy_discovery_validates_bundled_and_generated_metadata(
         },
     ],
 )
-def test_draft_discovery_preserves_incomplete_requirements_for_repair(
+def test_draft_research_completes_market_fields_and_rejects_invalid_features(
     tmp_path: Path, requirements: dict[str, object]
 ) -> None:
     repaired: dict[str, object] = {
@@ -215,22 +262,35 @@ def test_draft_discovery_preserves_incomplete_requirements_for_repair(
     }
     with TemporaryDirectory(dir=tmp_path) as directory:
         server, _service = _server(Path(directory))
+        expected_revision_id = None
         for current in (requirements, repaired):
             saved = _call(
                 server,
                 "save_strategy",
                 {
                     "strategy_id": "repairable_draft",
+                    "expected_revision_id": expected_revision_id,
+                    "research": research_input(),
                     "code": "class DraftStrategy: pass\n",
                     "yaml_config": yaml.safe_dump(
                         {
                             "strategy": {"class_name": "DraftStrategy"},
-                            "data": {"requirements": current},
+                            "data": {
+                                "source": "binance_vision",
+                                "market_type": "spot",
+                                "requirements": current,
+                            },
                         }
                     ),
                 },
             )
-            assert saved["success"] is True
+            if current.get("features"):
+                assert saved["success"] is False
+                assert saved["code"] == "invalid_research_spec"
+                assert _service.load("repairable_draft") is None
+                continue
+            assert saved["success"] is True, saved
+            expected_revision_id = saved["revision_id"]
             listed = asyncio.run(server.call_tool("list_strategies", {}))
             assert isinstance(listed, CallToolResult)
             assert listed.structured_content is not None
@@ -249,7 +309,10 @@ def test_draft_discovery_preserves_incomplete_requirements_for_repair(
             assert retrieved["success"] is True
             yaml_config = retrieved["yaml_config"]
             assert isinstance(yaml_config, str)
-            assert yaml.safe_load(yaml_config)["data"]["requirements"] == current
+            resolved = yaml.safe_load(yaml_config)["data"]["requirements"]
+            assert resolved["market"] == repaired["market"]
+            if "features" in current:
+                assert resolved["features"] == current["features"]
 
 
 def test_generated_strategy_rejects_undeclared_nested_metadata(
@@ -303,7 +366,12 @@ def test_save_rejections_preserve_context_and_report_specific_codes(
     result = _call(
         server,
         "save_strategy",
-        {"strategy_id": strategy_id, "code": code, "yaml_config": yaml_config},
+        {
+            "strategy_id": strategy_id,
+            "code": code,
+            "yaml_config": yaml_config,
+            "research": research_input(),
+        },
     )
 
     assert result["success"] is False
@@ -317,9 +385,10 @@ def test_validation_diagnostics_remain_a_completed_check_result(tmp_path: Path) 
     server, service = _server(tmp_path)
     contract = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     saved = service.save_draft(
-        "contract_strategy",
         "import os\n",
         contract["example_yaml_config"],
+        research_for_config(contract["example_yaml_config"]),
+        strategy_id="contract_strategy",
     )
     assert saved.success
 
@@ -332,6 +401,44 @@ def test_validation_diagnostics_remain_a_completed_check_result(tmp_path: Path) 
     assert response.revision_id == saved.revision_id
     assert "error" not in result
     assert "code" not in result
+
+
+@pytest.mark.parametrize(
+    ("replacement", "expected_code"),
+    [
+        (
+            '        result["signal"] = np.nan\n        return result',
+            "invalid_signal_values",
+        ),
+        ("        return result.iloc[:-1].copy()", "signal_row_count_mismatch"),
+        (
+            "        result.index = result.index + 1000\n        return result",
+            "signal_index_mismatch",
+        ),
+    ],
+)
+def test_invalid_frame_diagnostics_survive_typed_mcp_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement: str,
+    expected_code: str,
+) -> None:
+    server, service = _server(tmp_path)
+    example = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
+    saved = service.save_draft(
+        example["example_strategy_code"].replace("        return result", replacement),
+        example["example_yaml_config"],
+        research_for_config(example["example_yaml_config"]),
+        strategy_id="contract_strategy",
+    )
+    assert saved.success
+    monkeypatch.setattr(service, "_quality_gate_diagnostics", lambda _path: [])
+    result = _call(server, "validate_strategy", {"strategy_id": "contract_strategy"})
+    response = StrategyValidationFailure.model_validate(result)
+    assert not response.success and response.status == "draft"
+    assert expected_code in {item.code for item in response.diagnostics}
+    assert response.revision_id == saved.revision_id
+    assert "error" not in result
 
 
 def test_typed_lifecycle_returns_signal_evidence_and_rejects_wrong_state(
@@ -452,10 +559,14 @@ def test_checking_an_older_revision_does_not_approve_current(
             "strategy_id": "contract_strategy",
             "code": contract["example_strategy_code"],
             "yaml_config": contract["example_yaml_config"],
+            "research": research_for_config(contract["example_yaml_config"]).model_dump(
+                mode="json", exclude_unset=True
+            ),
         },
     )
+    assert saved["success"], saved
     old = {"strategy_id": "contract_strategy", "revision_id": saved["revision_id"]}
-    _save(service)
+    _save(service, expected_revision_id=str(saved["revision_id"]))
 
     def quality_diagnostics(_path: Path) -> list[StrategyDiagnostic]:
         return []
@@ -477,3 +588,67 @@ def test_checking_an_older_revision_does_not_approve_current(
     assert checked.metadata.dry_run is not None
     assert checked.metadata.validation.revision_id == saved["revision_id"]
     assert checked.metadata.dry_run.revision_id == saved["revision_id"]
+
+
+def test_remote_indicator_catalog_resolves_one_complete_api(tmp_path: Path) -> None:
+    server, _service = _server(tmp_path)
+    catalog = asyncio.run(
+        server.call_tool("get_strategy_contract", {"section": "indicators"})
+    )
+    assert isinstance(catalog, CallToolResult)
+    assert catalog.structured_content is not None
+    content = catalog.structured_content["content"]
+    assert content["selected"] is None
+    assert any(row["name"] == "bollinger_bands" for row in content["catalog"])
+    response = asyncio.run(
+        server.call_tool(
+            "get_strategy_contract",
+            {"section": "indicators", "indicator": "bollinger_bands"},
+        )
+    )
+    assert isinstance(response, CallToolResult)
+    assert response.structured_content is not None
+    selected = response.structured_content["content"]["selected"]
+    assert selected["result_fields"] == ["lower", "middle", "upper"]
+    assert "0 <= std <= 3e37" in selected["source"]
+    assert "_validate_period" in {
+        item["name"] for item in selected["supporting_source"]
+    }
+
+
+@pytest.mark.parametrize(
+    "section", ["core", "research", "evidence", "example", "configuration"]
+)
+def test_indicator_selection_cannot_be_silently_ignored(
+    tmp_path: Path, section: str
+) -> None:
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    server, _service = _server(tmp_path)
+    with pytest.raises(ToolError, match="only valid"):
+        asyncio.run(
+            server.call_tool(
+                "get_strategy_contract", {"section": section, "indicator": "macd"}
+            )
+        )
+
+
+def test_core_import_policy_agrees_with_actual_static_validator(tmp_path: Path) -> None:
+    from tradingdev.domain.strategies.validator import StrategyValidator
+
+    policy = strategy_contract_payload(_PACKAGE_ROOT)["content"]["static_policy"]
+    checker = StrategyValidator()
+    source = tmp_path / "imports.py"
+    for name in policy["allowed_import_roots"]:
+        source.write_text(f"import {name}\n")
+        assert checker.static_policy_scan(source) == []
+    for name in policy["blocked_import_roots"]:
+        source.write_text(f"import {name}\n")
+        assert [item.code for item in checker.static_policy_scan(source)] == [
+            "banned_import"
+        ]
+    source.write_text("import nonexistent_indicator_package\n")
+    diagnostics = checker.static_policy_scan(source)
+    assert diagnostics[0].code == "import_not_allowed"
+    assert diagnostics[0].fix is not None
+    assert ", ".join(policy["allowed_import_roots"]) in diagnostics[0].fix

@@ -1,13 +1,13 @@
-"""Isolated strategy and market fixtures for preflight boundary tests."""
+"""Isolated strategy fixtures for offline preparation boundary tests."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-import pandas as pd
 import yaml
 
+from tests.integration.execution_fixtures import research_arguments
+from tests.research_fixtures import research_for_config
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest
@@ -65,7 +65,7 @@ def make_preflight_fixture(
         )
         code = code.replace(
             "        result = df.copy()",
-            "        if self.engine is not None:\n"
+            "        if self.threshold == 9999.0:\n"
             f"            {statement}\n        result = df.copy()",
         )
     config: dict[str, Any] = {
@@ -75,6 +75,7 @@ def make_preflight_fixture(
             "parameters": {"threshold": threshold},
         },
         "random_seed": 42,
+        "data": {"source": "binance_vision", "market_type": "futures/um"},
         "backtest": {
             "symbol": "BTC/USDT",
             "timeframe": "1h",
@@ -85,24 +86,20 @@ def make_preflight_fixture(
         },
     }
     if kind == "walk_forward":
-        config["validation"] = validation or {"n_splits": 2, "train_ratio": 0.5}
-    saved = strategies.save_draft("sample_strategy", code, yaml.safe_dump(config))
+        config["validation"] = validation or {
+            "mode": "automatic",
+            "n_splits": 2,
+            "train_ratio": 0.5,
+        }
+    saved = strategies.save_draft(
+        code,
+        yaml.safe_dump(config),
+        research_for_config(config),
+        strategy_id="sample_strategy",
+    )
     assert saved.success
     assert strategies.validate("sample_strategy")["success"]
     assert strategies.dry_run("sample_strategy")["success"]
-    rows = 768
-    prices = 500 + np.sin(np.arange(rows) / 4)
-    frame = pd.DataFrame(
-        {
-            "timestamp": pd.date_range("2024-01-01", periods=rows, freq="h", tz="UTC"),
-            "open": prices,
-            "high": prices + 1,
-            "low": prices - 1,
-            "close": prices,
-            "volume": np.full(rows, 1000.0),
-        }
-    )
-    frame.to_parquet(workspace.processed_data / "btcusdt_1h_2024.parquet", index=False)
     arguments: dict[str, Any] = {
         "strategy_id": "sample_strategy",
         "symbol": "BTC/USDT",
@@ -120,11 +117,13 @@ def make_preflight_fixture(
         )
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-02-01")
+    if failure is not None:
+        arguments["parameters"] = {"threshold": 9999.0}
+        if kind == "optimization":
+            arguments["param_ranges"] = {"threshold": [9999.0]}
     return workspace, PreflightRequest.model_validate(
         {
             "kind": kind,
-            "arguments": arguments,
-            "minimum_history_bars": 8,
-            "sample_bars": 128,
+            "arguments": research_arguments(arguments),
         }
     )

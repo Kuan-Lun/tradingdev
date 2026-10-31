@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import validate
@@ -28,6 +29,7 @@ class CodexAppServer:
         max_tool_calls: int,
         elicitation_callback: ElicitationCallback | None,
         observe_processes: Callable[[], None],
+        on_completed_tool: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.reader = reader
         self.writer = writer
@@ -35,6 +37,7 @@ class CodexAppServer:
         self.max_tool_calls = max_tool_calls
         self.elicitation_callback = elicitation_callback
         self.observe_processes = observe_processes
+        self.on_completed_tool = on_completed_tool
         self.events: list[dict[str, Any]] = []
         self.seen_calls: set[str] = set()
         self.request_ids: set[str | int] = set()
@@ -121,9 +124,20 @@ class CodexAppServer:
                     f"Codex exceeded {self.max_tool_calls} MCP tool calls"
                 )
                 if method == "item/completed":
-                    assert item.get("status") == "completed", (
-                        f"Codex MCP call failed: {item}"
+                    result = item.get("result")
+                    returned_error = (
+                        item.get("status") == "failed"
+                        and item.get("error") is None
+                        and isinstance(result, dict)
+                        and bool(
+                            result.get("content") or result.get("structuredContent")
+                        )
                     )
+                    assert item.get("status") == "completed" or returned_error, (
+                        f"Codex MCP call failed without a tool response: {item}"
+                    )
+                    if self.on_completed_tool is not None:
+                        self.on_completed_tool(deepcopy(message))
                     print(f"[codex] {item['tool']} completed", flush=True)
         elif method == "turn/completed":
             turn = params["turn"]
@@ -190,6 +204,7 @@ class CodexAppServer:
         thread_params: dict[str, Any],
         *,
         mcp_config: dict[str, Any],
+        expected_reasoning_effort: str | None = None,
         user_reply: TurnCallback | None = None,
         max_turns: int = 8,
     ) -> list[dict[str, Any]]:
@@ -223,9 +238,18 @@ class CodexAppServer:
             assert started.get("model") == requested_model, (
                 f"Codex selected {started.get('model')!r}, expected {requested_model!r}"
             )
+        if expected_reasoning_effort is not None:
+            assert started.get("reasoningEffort") == expected_reasoning_effort, (
+                f"Codex reasoning effort {started.get('reasoningEffort')!r}, "
+                f"expected {expected_reasoning_effort!r}"
+            )
         self.thread_id = started["thread"]["id"]
         assert isinstance(self.thread_id, str) and self.thread_id
-        print(f"[codex] thread started with model {started.get('model')}", flush=True)
+        print(
+            f"[codex] thread started with model {started.get('model')}, "
+            f"reasoning effort {started.get('reasoningEffort')}",
+            flush=True,
+        )
         turn_ids: set[str] = set()
         for turn_number in range(1, max_turns + 1):
             self.turn_started = True

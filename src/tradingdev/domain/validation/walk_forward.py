@@ -6,6 +6,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from tradingdev.domain.strategies.signals import generate_checked_signals
+from tradingdev.domain.validation.config import PurgedWalkForwardConfig
 from tradingdev.domain.validation.leakage_gate import (
     WalkForwardLeakageError,
     audit_fold_windows,
@@ -23,10 +25,25 @@ if TYPE_CHECKING:
         BaseBacktestEngine,
     )
     from tradingdev.domain.backtest.result import BacktestResult
-    from tradingdev.domain.backtest.schemas import WalkForwardConfig
     from tradingdev.domain.strategies.base import BaseStrategy
+    from tradingdev.domain.validation.config import WalkForwardConfig
 
 logger = setup_logger(__name__)
+
+
+def _attach_rolling_trace(
+    strategy: BaseStrategy,
+    result: BacktestResult,
+) -> None:
+    """Store a strategy's rolling provenance beside the run's other metadata.
+
+    The trace describes the signals just generated, so it is read before the next
+    frame replaces it. A strategy without a rolling schedule returns ``None`` and
+    leaves the result untouched.
+    """
+    trace = strategy.rolling_trace()
+    if trace is not None:
+        result.metric_metadata["rolling_trace"] = deepcopy(trace)
 
 
 @dataclass
@@ -56,7 +73,9 @@ class WalkForwardValidator:
         self._config = config
         self._engine = engine
         self._splitter: DataSplitter | PurgedDataSplitter = (
-            PurgedDataSplitter(config) if config.purged_split else DataSplitter(config)
+            PurgedDataSplitter(config)
+            if isinstance(config, PurgedWalkForwardConfig)
+            else DataSplitter(config)
         )
 
     def validate(
@@ -91,7 +110,7 @@ class WalkForwardValidator:
     def _check_leakage(self, df: pd.DataFrame) -> None:
         """Block the run when training bars can see their own test window.
 
-        Non-positive ``label_horizon`` disables this audit; it does not
+        Zero ``label_horizon`` disables this audit; it does not
         establish that the strategy has no forward-looking labels.
         """
         horizon = self._config.label_horizon
@@ -136,13 +155,17 @@ class WalkForwardValidator:
 
         strategy.fit(train_df)
 
-        train_signals = strategy.generate_signals(train_df)
+        train_signals = generate_checked_signals(strategy, train_df)
         train_result = self._engine.run(train_signals)
         train_metrics = train_result.metrics
+        # Captured per frame, before the next call replaces it: the trace belongs
+        # to the signals that were just generated, not to the fold as a whole.
+        _attach_rolling_trace(strategy, train_result)
 
-        test_signals = strategy.generate_signals(test_df)
+        test_signals = generate_checked_signals(strategy, test_df)
         test_result = self._engine.run(test_signals)
         test_metrics = test_result.metrics
+        _attach_rolling_trace(strategy, test_result)
 
         logger.info(
             "Fold %d: train %s=%s, test %s=%s",

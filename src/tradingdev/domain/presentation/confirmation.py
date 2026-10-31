@@ -8,8 +8,16 @@ from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from tradingdev.domain.backtest.execution_policy import DEFAULT_VOLUME_POSITION_SIZE
+from tradingdev.domain.execution_assumptions import (
+    resolve_execution_assumptions,
+    summarize_execution_assumptions,
+)
+from tradingdev.domain.parameter_values import effective_candidates, parameter_leaves
+from tradingdev.domain.performance.sampling import daily_observation_unavailable_reason
 from tradingdev.domain.preflight import PreflightReceipt
-from tradingdev.domain.strategies.execution import merge_strategy_parameters
+from tradingdev.domain.research import ResearchMetadata
+from tradingdev.domain.validation.config import parse_walk_forward_config
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 
 if TYPE_CHECKING:
@@ -18,6 +26,15 @@ if TYPE_CHECKING:
 type NonemptyText = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1)
 ]
+type PresentationLabel = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)
+]
+type PresentationExplanation = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)
+]
+type PresentationPath = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+MAX_PRESENTATION_PARAMETER_DESCRIPTIONS = 4096
+
 type SectionId = Literal[
     "strategy",
     "market",
@@ -36,7 +53,7 @@ SECTION_TITLES: dict[SectionId, str] = {
     "execution": "資金、交易成本與執行設定",
     "validation": "分段驗證方式",
     "optimization": "參數搜尋方式",
-    "preflight": "確認前的試跑結果",
+    "preflight": "確認前的程式檢查",
     "limitations": "限制與待確認事項",
 }
 
@@ -48,24 +65,25 @@ class _ConfirmationModel(BaseModel):
 class ParameterDescription(_ConfirmationModel):
     """Model-authored wording for a parameter, never its executable value."""
 
-    label: NonemptyText
-    description: NonemptyText
-    unit: NonemptyText | None = None
+    label: PresentationLabel
+    description: PresentationExplanation
+    unit: PresentationLabel | None = None
 
 
 class ConfirmationPresentation(_ConfirmationModel):
     """Plain-language metadata bound to the exact constructor in an execution plan."""
 
-    title: NonemptyText
-    summary: NonemptyText
-    parameter_descriptions: dict[str, ParameterDescription] = Field(
+    title: PresentationLabel
+    summary: PresentationExplanation
+    parameter_descriptions: dict[PresentationPath, ParameterDescription] = Field(
+        max_length=MAX_PRESENTATION_PARAMETER_DESCRIPTIONS,
         description=(
             "Human labels, meanings and units for every effective constructor "
             "parameter, including defaults; never executable values. Keys are JSON "
             "pointers into constructor arguments: /fast_period for generated "
             "strategies, /config/k_period or /fit_config/... for bundled strategies. "
             "Preparation returns required_parameter_paths for missing descriptions."
-        )
+        ),
     )
 
 
@@ -87,6 +105,7 @@ class ConfirmationSection(_ConfirmationModel):
     title: NonemptyText
     fields: tuple[ConfirmationField, ...] = ()
     paragraphs: tuple[str, ...] = ()
+    summary_paragraphs: tuple[str, ...] = ()
 
 
 class ConfirmationIdentity(_ConfirmationModel):
@@ -100,7 +119,7 @@ class ConfirmationIdentity(_ConfirmationModel):
 class ConfirmationDocument(_ConfirmationModel):
     """The complete built-in template, without caller-selected omissions."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     title: NonemptyText
     summary: NonemptyText
     sections: tuple[ConfirmationSection, ...]
@@ -129,48 +148,10 @@ class ConfirmationPresentationError(ValueError):
 def parameter_paths(manifest: ExecutionManifest) -> list[str]:
     """Return exact JSON pointers relative to the captured constructor arguments."""
     manifest.verify()
-    paths = set(_parameter_leaves(manifest.strategy_execution.constructor_kwargs))
-    for _group, _candidate, pointer, value in _effective_candidates(manifest):
-        paths.update(_parameter_leaves(value, pointer))
+    paths = set(parameter_leaves(manifest.strategy_execution.constructor_kwargs))
+    for _group, _candidate, pointer, value in effective_candidates(manifest):
+        paths.update(parameter_leaves(value, pointer))
     return sorted(paths)
-
-
-def _effective_candidates(
-    manifest: ExecutionManifest,
-) -> list[tuple[int, int, str, object]]:
-    """Resolve each search-group candidate exactly as execution merges its values."""
-    if manifest.optimization is None:
-        return []
-    kwargs = manifest.strategy_execution.constructor_kwargs
-    bundled = manifest.strategy_execution.kind == "bundled"
-    captured = kwargs.get("config") if bundled else kwargs
-    if not isinstance(captured, dict):
-        raise ValueError("Strategy does not expose searchable parameters")
-    result: list[tuple[int, int, str, object]] = []
-    for group, (name, candidates) in enumerate(
-        manifest.optimization.param_ranges.items(), 1
-    ):
-        token = name.replace("~", "~0").replace("/", "~1")
-        pointer = ("/config" if bundled else "") + "/" + token
-        for candidate_index, candidate in enumerate(candidates, 1):
-            effective = merge_strategy_parameters(captured, {name: candidate})
-            result.append((group, candidate_index, pointer, effective[name]))
-    return result
-
-
-def _parameter_leaves(value: object, pointer: str = "") -> dict[str, object]:
-    if isinstance(value, dict) and value:
-        result: dict[str, object] = {}
-        for key in sorted(value):
-            token = str(key).replace("~", "~0").replace("/", "~1")
-            result.update(_parameter_leaves(value[key], pointer + "/" + token))
-        return result
-    if isinstance(value, list) and value:
-        result = {}
-        for index, item in enumerate(value):
-            result.update(_parameter_leaves(item, f"{pointer}/{index}"))
-        return result
-    return {pointer: value} if pointer else {}
 
 
 def validate_presentation(
@@ -355,7 +336,13 @@ def _market_fields(
         _field("回測 K 線週期", _timeframe(backtest["timeframe"])),
         _field("回測開始", backtest["start_date"]),
         _field("回測結束", backtest["end_date"]),
-        _field("時間基準", "UTC（世界協調時間）", "未附時區的時間依 UTC 解讀。"),
+        _field("時間邊界", "依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）"),
+        _field(
+            "時間基準",
+            "UTC（世界協調時間）",
+            "未附時區的時間依 UTC 解讀；純日期代表當日 00:00:00，"
+            "結束日期不自動延伸至當日最後一刻。",
+        ),
         _field("本次行情來源", _source(market["source"])),
         _field("行情商品", market["symbol"], detail=True),
         _field("行情 K 線週期", _timeframe(market["timeframe"]), detail=True),
@@ -449,43 +436,26 @@ def _execution_fields(
         _field(
             "單次投入金額",
             backtest["position_size"],
-            "策略若提供部位權重，會依每根 K 線調整投入金額。"
-            if volume
-            else "未指定固定金額時，依回測引擎預設資金配置。",
             unit="報價貨幣",
-            missing="200（引擎預設）" if volume else "未指定固定金額",
+            missing=f"{DEFAULT_VOLUME_POSITION_SIZE:g}（執行政策預設）"
+            if volume
+            else "未指定固定金額",
         ),
-        _field("手續費率", _percentage(backtest["fees"]), "每次進場、出場分別計入。"),
-        _field(
-            "滑價率",
-            _percentage(backtest["slippage"]),
-            "逐筆另計滑價成本。" if volume else "滑價反映於成交價格。",
-        ),
+        _field("手續費率", _percentage(backtest["fees"])),
+        _field("滑價率", _percentage(backtest["slippage"])),
         _field("停損幅度", _percentage(backtest["stop_loss"])),
         _field("停利幅度", _percentage(backtest["take_profit"])),
     ]
-    for key, label, description in (
-        (
-            "signal_as_position",
-            "沒有持倉訊號時平倉",
-            "啟用時，零訊號會平倉；未啟用時等待反向訊號或停損停利。",
-        ),
-        (
-            "re_entry_after_sl",
-            "停損停利後允許重新進場",
-            "依仍有效的持倉訊號，允許再次進場。",
-        ),
-        (
-            "monthly_max_loss",
-            "每月最大虧損門檻",
-            "達門檻後暫停當月新倉；須有時間資料才能按月計算。",
-        ),
+    for key, label in (
+        ("signal_as_position", "沒有持倉訊號時平倉"),
+        ("re_entry_after_sl", "停損停利後允許重新進場"),
+        ("monthly_max_loss", "每月最大虧損門檻"),
     ):
         fields.append(
             _field(
                 label,
                 backtest[key],
-                description if volume else "此計算方式不使用這項設定。",
+                "" if volume else "此計算方式不使用這項設定。",
                 detail=True,
                 unit="報價貨幣" if key == "monthly_max_loss" else None,
             )
@@ -495,7 +465,6 @@ def _execution_fields(
             _field(
                 "年化計算的每年日數",
                 backtest["periods_per_year"],
-                "未設定時，年化績效不可用。",
                 detail=True,
                 unit="天",
             ),
@@ -534,10 +503,6 @@ def _execution_fields(
             ),
         ]
     )
-    if volume and backtest["position_size"] == 0:
-        fields[2] = fields[2].model_copy(
-            update={"value_text": "200（設定為零時使用引擎預設）"}
-        )
     return fields
 
 
@@ -545,53 +510,19 @@ def _validation_section(value: object) -> ConfirmationSection:
     if value is None:
         return _section("validation", paragraphs=("本次不採用分段訓練與驗證。",))
     values = _object(value, "validation")
-    _known_fields(
-        values,
-        {
-            "train_start",
-            "train_end",
-            "test_start",
-            "test_end",
-            "n_splits",
-            "train_ratio",
-            "expanding",
-            "target_metric",
-            "label_horizon",
-            "embargo_bars",
-            "purged_split",
-        },
-        "validation",
-    )
+    config = parse_walk_forward_config(values)
+    common = {"mode", "target_metric", "label_horizon"}
     dates = ("train_start", "train_end", "test_start", "test_end")
-    purged = values["purged_split"] is True
-    explicit = not purged and all(values[key] is not None for key in dates)
-    horizon = values["label_horizon"]
-    if not isinstance(horizon, int) or (purged and horizon < 1):
-        raise ValueError("Purged validation requires a positive label horizon")
-    if purged:
-        mode = "淨化分段：固定起點、逐次擴大訓練區間"
-        date_description = "淨化分段不使用指定日期；區間由資料筆數與分段組數決定。"
-        ratio_description = (
-            "淨化分段不使用此比例；訓練使用測試段之前的資料並扣除隔離區間。"
-        )
-        expanding_description = (
-            f"淨化分段固定逐次擴大；此欄設定值（{_text(values['expanding'])}）不使用。"
-        )
-    else:
-        mode = "使用指定日期的一組訓練／測試區間" if explicit else "依資料筆數自動分段"
-        date_description = (
-            "日期先轉為 UTC（無時區視為 UTC），再忽略時分秒；包含起訖 UTC 整日。"
-            if explicit
-            else "未指定日期，由自動分段決定。"
-        )
-        ratio_description = (
-            "指定日期模式不使用此設定。" if explicit else "每組資料中用於訓練的比例。"
-        )
-        expanding_description = (
-            "指定日期模式不使用此設定。" if explicit else "啟用時保留更早的訓練資料。"
-        )
-    date_values = {key: values[key] for key in dates}
-    if explicit:
+    mode_fields = {
+        "automatic": {"n_splits", "train_ratio", "expanding"},
+        "explicit": set(dates),
+        "purged": {"n_splits", "embargo_bars"},
+    }
+    _known_fields(values, common | mode_fields[config.mode], "validation")
+    fields = []
+    if config.mode == "explicit":
+        fields.append(_field("分段方式", "使用指定日期的一組訓練／測試區間"))
+        date_values = {}
         for start_key, end_key in (
             ("train_start", "train_end"),
             ("test_start", "test_end"),
@@ -602,69 +533,84 @@ def _validation_section(value: object) -> ConfirmationSection:
             )
             date_values[start_key] = f"{lower:%Y-%m-%d %H:%M:%S} UTC（含）"
             date_values[end_key] = f"{upper:%Y-%m-%d %H:%M:%S} UTC（不含）"
-    fields = [
-        _field("分段方式", mode),
-        *[
+        fields.extend(
             _field(
                 label,
                 date_values[key],
-                f"{date_description} 原始設定：{values[key]}。"
-                if explicit
-                else date_description,
-                missing="不使用" if purged else "由自動分段決定",
+                "日期先轉為 UTC（無時區視為 UTC），再忽略時分秒；包含起訖 UTC 整日。"
+                f" 原始設定：{values[key]}。",
             )
             for key, label in zip(
                 dates, ("訓練開始", "訓練結束", "測試開始", "測試結束"), strict=True
             )
-        ],
-        _field(
-            "預定分段組數",
-            1 if explicit else values["n_splits"],
-            f"指定日期模式固定為一組，此設定不使用（設定值：{values['n_splits']}）。"
-            if explicit
-            else (
-                "額外保留第一段作為訓練；後續每段依序測試，資料不足時會拒絕執行。"
-                if purged
-                else "實際可完成組數取決於資料量。"
+        )
+        fields.append(_field("預定分段組數", 1))
+    else:
+        fields.extend(
+            [
+                _field(
+                    "分段方式",
+                    "依資料筆數自動分段"
+                    if config.mode == "automatic"
+                    else "淨化分段：固定起點、逐次擴大訓練區間",
+                ),
+                _field(
+                    "預定分段組數",
+                    config.n_splits,
+                    "實際資料須能形成完整分段；資料不足時會拒絕執行。",
+                ),
+            ]
+        )
+        if config.mode == "automatic":
+            fields.extend(
+                [
+                    _field(
+                        "自動分段的訓練比例",
+                        _percentage(config.train_ratio),
+                        "每組資料中用於訓練的比例。",
+                    ),
+                    _field(
+                        "訓練區間逐次擴大",
+                        config.expanding,
+                        "啟用時保留更早的訓練資料。",
+                    ),
+                ]
+            )
+        else:
+            fields.extend(
+                [
+                    _field(
+                        "訓練區間逐次擴大",
+                        True,
+                        "額外保留第一段作為訓練；每組訓練區間先扣除標籤前視與隔離根數。",
+                    ),
+                    _field(
+                        "額外隔離根數",
+                        config.embargo_bars,
+                        "淨化之外再多移除的 K 線。",
+                        unit="根 K 線",
+                        detail=True,
+                    ),
+                ]
+            )
+    horizon = config.label_horizon
+    fields.extend(
+        [
+            _field(
+                "驗證紀錄重點指標",
+                _metric(config.target_metric),
+                "用於驗證紀錄；策略如何訓練另依其策略設定。",
             ),
-        ),
-        _field(
-            "自動分段的訓練比例",
-            _percentage(values["train_ratio"]),
-            ratio_description,
-        ),
-        _field(
-            "訓練區間逐次擴大",
-            True if purged else values["expanding"],
-            expanding_description,
-        ),
-        _field(
-            "驗證紀錄重點指標",
-            _metric(values["target_metric"]),
-            "用於驗證紀錄；策略如何訓練另依其策略設定。",
-        ),
-        _field(
-            "標籤前視根數",
-            horizon if horizon > 0 else f"未啟用檢查（設定值：{horizon}）",
-            "大於 0 時正式執行會先檢查標籤區間重疊；未啟用不代表標籤安全，"
-            "也不代表策略沒有使用未來資料。",
-            unit="根 K 線" if horizon > 0 else None,
-            detail=True,
-        ),
-        _field(
-            "淨化分段",
-            values["purged_split"],
-            "啟用時每組訓練區間會先移除與測試區間重疊的資料；需要前視根數大於 0。",
-            detail=True,
-        ),
-        _field(
-            "額外隔離根數",
-            values["embargo_bars"],
-            "淨化之外再多移除的 K 線；只有啟用淨化分段時才會生效。",
-            unit="根 K 線",
-            detail=True,
-        ),
-    ]
+            _field(
+                "標籤前視根數",
+                horizon if horizon > 0 else "未啟用檢查（設定值：0）",
+                "大於 0 時正式執行會先檢查標籤區間重疊；未啟用不代表標籤安全，"
+                "也不代表策略沒有使用未來資料。",
+                unit="根 K 線" if horizon > 0 else None,
+                detail=True,
+            ),
+        ]
+    )
     return _section("validation", fields)
 
 
@@ -725,7 +671,7 @@ def _optimization_section(
             detail=True,
         ),
     ]
-    for group_index, candidate_index, pointer, candidate in _effective_candidates(
+    for group_index, candidate_index, pointer, candidate in effective_candidates(
         manifest
     ):
         fields.extend(
@@ -735,7 +681,7 @@ def _optimization_section(
                 presentation,
                 prefix=f"搜尋組 {group_index}／候選 {candidate_index}：",
             )
-            for leaf, value in _parameter_leaves(candidate, pointer).items()
+            for leaf, value in parameter_leaves(candidate, pointer).items()
         )
     return _section(
         "optimization",
@@ -749,145 +695,155 @@ def _optimization_section(
 
 _CHECK_NAMES = {
     "configuration": "完整設定解析",
-    "signal_contract": "策略訊號契約檢查",
-    "signals": "以本次設定產生訊號",
-    "fit": "策略訓練流程",
-    "engine": "實際回測引擎執行",
-    "serialization": "結果資料序列化",
-    "candidate_binding": "搜尋候選與執行設定綁定",
+    "execution_capabilities": "執行模式與訓練需求檢查",
+    "parameter_binding": "策略參數綁定",
+    "manifest_serialization": "固定執行設定序列化",
+    "signal_contract": "合成資料的訊號契約檢查",
+    "candidate_binding": "搜尋候選參數綁定",
 }
-_WARNING_TEXT = {
-    "no_trades_observed": (
-        "試跑沒有觀察到交易；已完成執行流程，"
-        "但尚未驗證此策略在樣本中的成交與交易成本路徑。"
-    ),
-    "partial_historical_sample": (
-        "試跑只涵蓋受限的歷史資料樣本，完整期間仍可能遇到樣本未涵蓋的資料或執行情況。"
-    ),
-    "single_fold_only": "試跑未涵蓋所有驗證分段；其餘分段會在正式回測執行。",
-    "single_candidate_only": "試跑未涵蓋全部參數組合；其餘候選會在正式參數搜尋執行。",
+_NOT_CHECKED_TEXT = {
+    "historical_data": "尚未取得或檢查真實行情；實際可用日期、筆數與資料缺口尚未驗證。",
+    "backtest_engine": "尚未執行回測引擎，成交、成本與停損停利路徑尚未驗證。",
+    "training": "尚未訓練模型或執行驗證分段；訓練與訓練後訊號可能在正式執行時失敗。",
+    "performance": "尚未計算績效；程式檢查通過不代表策略會獲利。",
 }
 
 
 def _preflight_sections(
-    manifest: ExecutionManifest, preflight: PreflightReceipt
+    manifest: ExecutionManifest,
+    preflight: PreflightReceipt,
+    *,
+    comparison_candidate: bool = False,
 ) -> tuple[ConfirmationSection, ConfirmationSection]:
-    manifest.verify(expected_hash=preflight.manifest_hash)
-    checked = set(preflight.checked_paths)
-    required = {
-        "configuration",
-        "signals",
-        "engine",
-        "serialization",
-    }
-    if manifest.strategy_execution.kind == "generated":
-        required.add("signal_contract")
-    if manifest.kind == "walk_forward":
-        required.add("fit")
-    if manifest.kind == "optimization":
-        required.add("candidate_binding")
-    if checked != required or len(checked) != len(preflight.checked_paths):
-        raise ValueError("Preflight evidence differs from the required execution paths")
-    roles = tuple(window.role for window in preflight.windows)
-    expected_roles = ("full",) if manifest.kind == "backtest" else ("train", "test")
-    if roles != expected_roles:
-        raise ValueError("Preflight windows do not cover the selected execution path")
-    config = manifest.config_copy()
-    if preflight.data_source != config["data"]["requirements"]["market"]["source"]:
-        raise ValueError("Preflight data source differs from the manifest")
-    if manifest.optimization is not None:
-        if preflight.total_candidates != manifest.optimization.total_combinations:
-            raise ValueError("Preflight candidate coverage differs from the manifest")
-    elif preflight.total_candidates is not None:
-        raise ValueError("Non-optimization preflight cannot claim candidate coverage")
-    if manifest.kind == "walk_forward":
-        validation = config["validation"]
-        explicit = not validation["purged_split"] and all(
-            validation[key] is not None
-            for key in ("train_start", "train_end", "test_start", "test_end")
-        )
-        expected_folds = 1 if explicit else validation["n_splits"]
-        if preflight.total_fold_count != expected_folds:
-            raise ValueError("Preflight fold coverage differs from the manifest")
-    if manifest.kind != "walk_forward" and preflight.total_fold_count is not None:
-        raise ValueError("Non-validation preflight cannot claim fold coverage")
+    preflight.verify_manifest(manifest, comparison_candidate=comparison_candidate)
     fields = [
-        _field("試跑狀態", "已完成必要檢查，可供使用者確認"),
-        _field("試跑耗時", preflight.elapsed_seconds, unit="秒"),
+        _field("程式檢查狀態", "已完成必要檢查，可供使用者確認"),
+        _field("程式檢查耗時", preflight.elapsed_seconds, unit="秒"),
         _field(
-            "試跑資料管道",
-            "本次設定的行情資料管道",
-            "此項不代表已向外部資料供應商驗證完整行情。",
+            "訊號檢查範圍",
+            {
+                "synthetic_contract_passed": "已通過固定合成資料的訊號契約檢查",
+                "deferred_until_training": "此策略須先訓練；本次只檢查設定與執行模式",
+                "bundled_not_executed": "內建策略只檢查設定與執行模式，未執行訊號",
+            }[preflight.signal_check],
+            "合成測資不是歷史行情，不能據此宣稱已驗證策略的所有交易規則。",
         ),
-        _field("試跑資料來源", _source(preflight.data_source)),
-        _field("試跑資料上限", preflight.sample_bars_requested, unit="根 K 線"),
-        _field("實際使用資料", preflight.sample_bars_used, unit="根 K 線"),
-        _field(
-            "宣告的最低歷史資料需求",
-            preflight.minimum_history_bars,
-            "每個試跑區間均達此需求；此需求由策略準備階段宣告。",
-            unit="根 K 線",
-        ),
-        _field("觀察到的交易", preflight.trade_count, unit="筆"),
-        _field(
-            "保存的執行紀錄",
-            preflight.execution_record_count,
-            missing="此引擎未提供",
-            unit="筆",
-        ),
-        _field("樣本觸發交易路徑", preflight.trading_path_exercised),
     ]
+    if preflight.synthetic_fixture_rows:
+        fields.append(
+            _field(
+                "合成訊號檢查筆數",
+                "、".join(str(rows) for rows in preflight.synthetic_fixture_rows),
+                "分別檢查兩段固定合成測資，不代表歷史暖機或行情覆蓋量。",
+                unit="根 K 線",
+            )
+        )
     fields.extend(
         _field(_CHECK_NAMES[check], "通過") for check in preflight.checked_paths
     )
-    for index, window in enumerate(preflight.windows, 1):
-        role = {"full": "策略樣本", "train": "訓練樣本", "test": "測試樣本"}[
-            window.role
-        ]
-        fields.extend(
-            [
-                _field(f"區間 {index}（{role}）開始", window.start),
-                _field(f"區間 {index}（{role}）結束", window.end),
-                _field(f"區間 {index}（{role}）筆數", window.rows, unit="根 K 線"),
-            ]
+    if preflight.parameter_combinations_checked is not None:
+        fields.append(
+            _field(
+                "已檢查參數綁定的組合數",
+                preflight.parameter_combinations_checked,
+                "只檢查參數合法性，不代表已執行候選的歷史回測或比較績效。",
+                unit="組",
+            )
         )
-    warnings = set(preflight.warnings)
-    warnings.add("partial_historical_sample")
-    if preflight.trade_count == 0:
-        warnings.add("no_trades_observed")
-    for tested, total, label, warning in (
-        (
-            preflight.tested_fold_count,
-            preflight.total_fold_count,
-            "已試跑的驗證分段",
-            "single_fold_only",
-        ),
-        (
-            preflight.tested_candidates,
-            preflight.total_candidates,
-            "已試跑的參數組合",
-            "single_candidate_only",
-        ),
-    ):
-        if tested is not None and total is not None:
-            fields.append(_field(label, f"{tested} / {total}"))
-            if tested < total:
-                warnings.add(warning)
-            else:
-                warnings.discard(warning)
-    if warnings - _WARNING_TEXT.keys():
-        raise ValueError("Preflight warning lacks a built-in confirmation description")
-    limitations = tuple(
-        _WARNING_TEXT[warning] for warning in _WARNING_TEXT if warning in warnings
-    ) + (
-        "試跑通過不代表策略會獲利，也不能保證完整回測不會出錯。",
-        "策略名稱、摘要與參數解釋由模型提供；參數值、執行設定與試跑結果由後端固定。",
-        "確認後只執行這個版本。若程式或有效設定需要修改，必須重新試跑並再次確認；暫時性錯誤可在相同設定下重試。",
-        "請選擇開始正式回測、要求調整設定，或取消。確認前不會啟動完整回測。",
+    limitations = tuple(_NOT_CHECKED_TEXT[check] for check in preflight.not_checked) + (
+        "程式檢查不保證完整回測成功，也不是程式安全隔離。",
+        "策略名稱、摘要與參數解釋由模型提供；參數值、執行設定與程式檢查結果由後端固定。",
+        "確認後只執行這個版本。若程式或有效設定需要修改，必須重新檢查並再次確認。",
+        "請選擇開始正式回測、要求調整設定，或取消。確認前不取得真實行情、不訓練模型、不執行回測。",
     )
     return _section("preflight", fields), _section(
         "limitations", paragraphs=limitations
     )
+
+
+def _research_presentation(
+    value: object,
+    market_fields: list[ConfirmationField],
+    execution_fields: list[ConfirmationField],
+    backtest: dict[str, object],
+) -> tuple[list[ConfirmationField], list[ConfirmationField]]:
+    """Annotate origins without claiming to verify human input."""
+    if value is None:
+        return [], [_field("研究設定來源", "未保存研究需求來源")]
+    metadata = ResearchMetadata.model_validate(value)
+    labels = {
+        "request": "本次輸入",
+        "project_default": f"專案模擬預設（{metadata.policy_version}）",
+        "selected_revision": "沿用所選策略版本",
+    }
+    paths = {
+        "回測商品": "/backtest/symbol",
+        "回測 K 線週期": "/backtest/timeframe",
+        "回測開始": "/backtest/start_date",
+        "回測結束": "/backtest/end_date",
+        "初始資金": "/backtest/init_cash",
+        "手續費率": "/backtest/fees",
+        "滑價率": "/backtest/slippage",
+        "年化計算的每年日數": "/backtest/periods_per_year",
+    }
+    for fields in (market_fields, execution_fields):
+        for index, field in enumerate(fields):
+            if field.label in paths:
+                source = labels[metadata.field_sources[paths[field.label]]]
+                description = f"{field.description} 設定來源：{source}。".strip()
+                fields[index] = field.model_copy(update={"description": description})
+    cost_names = {"init_cash": "本金", "fees": "手續費", "slippage": "滑價"}
+    if backtest["mode"] == "volume":
+        cost_names.pop("init_cash")
+    execution_fields.append(
+        _field(
+            "本金與成本來源",
+            "；".join(
+                f"{label}：{labels[metadata.field_sources[f'/backtest/{name}']]}"
+                for name, label in cost_names.items()
+            ),
+            "這些是模擬設定，不代表交易所即時費率。",
+        )
+    )
+    sampling_reason = daily_observation_unavailable_reason(str(backtest["timeframe"]))
+    execution_fields.append(
+        _field(
+            "年化統計取樣",
+            "此計算方式不提供本金報酬年化"
+            if backtest["mode"] == "volume"
+            else "此 K 棒頻率不支援每日統計"
+            if sampling_reason is not None
+            else "有觀測值的 UTC 每日帳戶報酬；缺日不補零",
+            "每年日數與 K 棒頻率分開；設定日數不代表已驗證歷史資料覆蓋。",
+        )
+    )
+    strategy_fields = [
+        _field(
+            "研究構想",
+            metadata.strategy_outline,
+            "保存本次輸入或所選版本的構想，不代表後端已證明程式符合全部敘述。",
+        )
+    ]
+    technical = [
+        _field("研究政策版本", metadata.policy_version),
+        _field("研究來源格式版本", metadata.schema_version),
+        _field("年化政策判定", metadata.annualization_reason),
+        _field(
+            "研究構想來源",
+            labels[metadata.field_sources["/research/strategy_outline"]],
+            "來源標籤記錄解析路徑，不證明輸入來自真人或已獲批准。",
+        ),
+    ]
+    if metadata.selected_revision is not None:
+        identity = metadata.selected_revision
+        technical.extend(
+            (
+                _field("沿用設定的策略識別碼", identity.strategy_id),
+                _field("沿用設定的修訂版本", identity.revision_id),
+                _field("沿用設定的 YAML 摘要", identity.config_hash, missing="未保存"),
+            )
+        )
+    return strategy_fields, technical
 
 
 def build_confirmation_document(
@@ -896,14 +852,24 @@ def build_confirmation_document(
     preflight: PreflightReceipt,
     *,
     plan_id: str | None = None,
+    comparison_candidate: bool = False,
 ) -> ConfirmationDocument:
-    """Project every effective setting and verified sample into the fixed template."""
+    """Project effective settings and program evidence into the fixed template."""
     preflight = PreflightReceipt.model_validate(preflight.model_dump(mode="python"))
     validate_presentation(manifest, presentation)
     config = _object(manifest.config_for_execution(), "execution")
+    config.setdefault("research", None)
     _known_fields(
         config,
-        {"strategy", "backtest", "data", "validation", "parallel", "random_seed"},
+        {
+            "strategy",
+            "backtest",
+            "data",
+            "validation",
+            "parallel",
+            "random_seed",
+            "research",
+        },
         "execution",
     )
     strategy = _object(config["strategy"], "strategy")
@@ -915,6 +881,7 @@ def build_confirmation_document(
             "version",
             "class_name",
             "description",
+            "display_name",
             "source_path",
             "source_hash",
             "parameters",
@@ -929,7 +896,13 @@ def build_confirmation_document(
     execution_fields = _execution_fields(
         backtest, _object(config["parallel"], "parallel"), config["random_seed"]
     )
+    assumptions = resolve_execution_assumptions(manifest)
+    research_fields, research_identity = _research_presentation(
+        config["research"], market_fields, execution_fields, backtest
+    )
+    technical.extend(research_identity)
     for key, label in (
+        ("display_name", "策略名稱"),
         ("id", "策略識別碼"),
         ("revision_id", "策略修訂版本"),
         ("version", "策略標示版本"),
@@ -947,11 +920,13 @@ def build_confirmation_document(
     )
     parameters = [
         _parameter_field(pointer, value, presentation)
-        for pointer, value in _parameter_leaves(
+        for pointer, value in parameter_leaves(
             manifest.strategy_execution.constructor_kwargs
         ).items()
     ]
-    preflight_section, limitations_section = _preflight_sections(manifest, preflight)
+    preflight_section, limitations_section = _preflight_sections(
+        manifest, preflight, comparison_candidate=comparison_candidate
+    )
     return ConfirmationDocument(
         title=presentation.title,
         summary=presentation.summary,
@@ -966,7 +941,8 @@ def build_confirmation_document(
                             "walk_forward": "分段訓練與驗證",
                             "optimization": "參數搜尋與保留區間測試",
                         }[manifest.kind],
-                    )
+                    ),
+                    *research_fields,
                 ],
             ),
             _section("market", market_fields),
@@ -977,7 +953,15 @@ def build_confirmation_document(
                 if parameters
                 else ("此策略沒有可調整的建構參數。",),
             ),
-            _section("execution", execution_fields),
+            _section(
+                "execution",
+                execution_fields,
+                tuple(f"{item.label}：{item.value}" for item in assumptions.items),
+            ).model_copy(
+                update={
+                    "summary_paragraphs": summarize_execution_assumptions(assumptions)
+                }
+            ),
             _validation_section(config["validation"]),
             _optimization_section(manifest, presentation),
             preflight_section,

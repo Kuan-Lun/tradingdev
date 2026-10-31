@@ -27,6 +27,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.performance.artifacts import (
+    BenchmarkScope,
     FoldStats,
     MetricDefinitionSnapshot,
     ObservationsBundle,
@@ -86,6 +87,7 @@ def _save(
     ),
     trades: list[dict[str, Any]] | None = None,
     definitions: dict[str, MetricDefinitionSnapshot] | None = None,
+    benchmarks: dict[str, BenchmarkScope] | None = None,
 ) -> None:
     workspace, store, _ = context
     scopes = scopes or {"full": _scope()}
@@ -132,6 +134,12 @@ def _save(
         for scope in scopes.values()
         for key in scope.values
     }
+    for benchmark in (benchmarks or {}).values():
+        for key in benchmark.values:
+            definitions.setdefault(
+                key,
+                MetricDefinitionSnapshot.model_validate(asdict(METRIC_CATALOG[key])),
+            )
     observations = ScopeObservations(
         init_cash=None if volume else 100.0,
         equity_curve=[100.0, 90.0, 125.0],
@@ -161,6 +169,7 @@ def _save(
                 scopes=scopes,
                 definitions=definitions,
                 selected_train_scope=selected_train,
+                benchmarks=benchmarks or {},
             ),
             observations=ObservationsBundle(
                 run_id=run_id,
@@ -654,7 +663,9 @@ def test_csv_downloads_bind_every_run_and_scope_to_its_own_complete_records(
     assert "atob(button.dataset.json)" in path.read_text()
 
 
-@pytest.mark.parametrize("previous_version", ["6", "7", "8", "9", "10", "11", "12"])
+@pytest.mark.parametrize(
+    "previous_version", ["6", "7", "8", "9", "10", "11", "12", "17"]
+)
 def test_template_upgrade_publishes_new_report_and_keeps_previous_report(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
     monkeypatch: pytest.MonkeyPatch,
@@ -862,6 +873,8 @@ def test_reports_without_details_keep_selected_sections_in_main_view(
     assert re.findall(r"<section data-section='([^']+)'>", main) == expected
     if "overview" in sections:
         assert "本報告未選取單組詳情章節" in main
+        assert "class='table-navigation'" not in main
+        assert "查看明細 →</a>" not in main
         encoded = re.search(r"data-table-json='comparison' data-json='([^']+)'", main)
         assert encoded is not None
         assert json.loads(base64.b64decode(encoded[1])) == comparison
@@ -893,6 +906,20 @@ def test_selected_detail_sections_have_unique_destinations(
         target[1:] for target in targets
     ]
     assert set(re.findall(r"href='(#result-\d+-\d+)'", text)) == set(targets)
+    if include_overview:
+        overview = text.split("<div id='overview-view'>", 1)[1].split(
+            "<div id='result-view' hidden>", 1
+        )[0]
+        assert "<strong>如何查看詳細結果：</strong>" in overview
+        assert "交易紀錄" not in overview
+        assert re.findall(
+            r"<a href='(#result-\d+-\d+)' aria-label='查看結果 (\d+) 的明細'>"
+            r"\d+ · 查看明細 →</a>",
+            overview,
+        ) == [(target, str(index)) for index, target in enumerate(targets, 1)]
+        first_column = comparison["columns"][0]
+        assert first_column["field"] == "sequence" and first_column["visible"]
+        assert "明細" in first_column["title"]
     details = text.split("<div id='result-view' hidden>", 1)[1].split("<footer>", 1)[0]
     assert re.findall(r"<section data-section='([^']+)'>", details) == [
         "provenance",
@@ -1067,9 +1094,14 @@ def test_catalog_titles_and_recipes_match_the_rendered_document(
     _save(context)
     catalog = service.get_report_sections()
     section_ids = [section["id"] for section in catalog["sections"]]
-    assert catalog["templates"]["standard"] == section_ids
+    assert catalog["templates"]["standard"] == [
+        key for key in section_ids if key != "ml"
+    ]
     for selected in catalog["templates"].values():
         report = service.generate_report(["run"], sections=selected)
+        if "ml" in selected:
+            assert report["code"] == "invalid_report_ml_selection"
+            continue
         assert report["success"], report
         content = Path(report["path"]).read_text()
         for section in catalog["sections"]:
@@ -1595,3 +1627,140 @@ def test_registered_manifest_identity_and_byte_hash_are_checked_before_reporting
         "run"
     )
     assert history["code"] == "execution_manifest_invalid"
+
+
+@pytest.mark.parametrize(
+    ("sections", "details"),
+    [
+        (["overview", "trades"], True),
+        (["settings"], True),
+        (["research"], False),
+        ([], False),
+    ],
+)
+def test_report_delivery_guide_matches_html_and_selected_details(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    sections: list[str],
+    details: bool,
+) -> None:
+    _, _, service = context
+    _save(context)
+    response = service.generate_report(["run"], sections)
+    assert response["success"], response
+    path = Path(response["path"])
+    guide = response["navigation_instructions"]
+    assert guide in path.read_text()
+    assert _payload(path)["navigation_instructions"] == guide
+    assert (
+        json.loads(path.with_name("manifest.json").read_text())[
+            "navigation_instructions"
+        ]
+        == guide
+    )
+    assert ("點選總覽表格或結果清單中的結果列" in guide) is details
+    assert ("配對交易損益" in guide) is ("trades" in sections)
+    assert ("設定與資料覆蓋" in guide) is ("settings" in sections)
+    assert "委託、成交與帳戶核對" not in guide
+
+
+def _benchmark(**changes: Any) -> BenchmarkScope:
+    return BenchmarkScope.model_validate(
+        {
+            "status": "available",
+            "asset_class": "crypto",
+            "definition": {
+                "id": "crypto_btc_buy_and_hold",
+                "asset_class": "crypto",
+                "symbol": "BTC/USDT",
+                "label": "BTC/USDT 買進持有",
+                "weighting": "buy_and_hold",
+                "rationale": "加密貨幣策略的機會成本基準是持有比特幣。",
+            },
+            "source": "binance_vision",
+            "market_type": "futures/um",
+            "dataset_id": "BTC/USDT:1d:2024-01-01:2024-01-31",
+            "reused_run_frame": True,
+            "init_cash": 100.0,
+            "capital_basis": "run_init_cash",
+            "fees": 0.0004,
+            "slippage": 0.0,
+            "coverage": {
+                "scope_bars": 3,
+                "aligned_bars": 3,
+                "missing_bars": 0,
+                "complete": True,
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-01-03T00:00:00Z",
+            },
+            "timestamps": [
+                "2024-01-01T00:00:00Z",
+                "2024-01-02T00:00:00Z",
+                "2024-01-03T00:00:00Z",
+            ],
+            "equity_curve": [100.0, 101.0, 110.0],
+            "returns": [0.0, 0.01, 0.0891089108910891],
+            "values": {"total_return": 0.1, "max_drawdown": 0.02},
+            "metadata": {"unavailable": {}, "settings": {"initial_cash": 100.0}},
+            **changes,
+        }
+    )
+
+
+def test_benchmark_section_compares_the_saved_baseline_with_the_strategy(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    workspace, _, service = context
+    _save(context, benchmarks={"full": _benchmark()})
+    response = service.generate_report(["run"], sections=["overview", "benchmark"])
+    assert response["success"], response
+    path = Path(response["path"])
+    payload = _payload(path)
+    scope = payload["runs"][0]["scopes"][0]
+    assert scope["benchmark"]["status"] == "available"
+    assert scope["benchmark"]["definition"]["symbol"] == "BTC/USDT"
+    text = path.read_text()
+    assert "基準：BTC/USDT 買進持有" in text
+    assert "策略與基準對照" in text
+    # Overview columns carry the baseline return and the strategy's excess.
+    assert "基準報酬（買進持有）" in text
+    assert "超額報酬（策略−基準）" in text
+    assert "15.00%" in text
+    manifest = json.loads(path.with_name("manifest.json").read_text())
+    assert manifest["benchmarks"]["run"]["full"]["symbol"] == "BTC/USDT"
+    assert manifest["benchmarks"]["run"]["full"]["status"] == "available"
+    assert manifest["sections"] == ["overview", "benchmark"]
+
+
+def test_report_states_when_a_result_has_no_saved_benchmark(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    _save(context)
+    response = service.generate_report(["run"], sections=["benchmark"])
+    assert response["success"], response
+    text = Path(response["path"]).read_text()
+    assert "此結果沒有保存 benchmark 證據" in text
+    assert "策略與基準對照" not in text
+
+
+def test_undefined_asset_class_is_reported_instead_of_a_zero_baseline(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    _save(
+        context,
+        benchmarks={
+            "full": BenchmarkScope.model_validate(
+                {
+                    "status": "undefined",
+                    "asset_class": "us_equity",
+                    "reason": "undefined_asset_class",
+                }
+            )
+        },
+    )
+    response = service.generate_report(["run"], sections=["benchmark"])
+    assert response["success"], response
+    text = Path(response["path"]).read_text()
+    assert "沒有定義 benchmark" in text
+    assert "不以其他市場的指數代替" in text

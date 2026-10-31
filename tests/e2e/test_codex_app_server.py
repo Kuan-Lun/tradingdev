@@ -14,6 +14,8 @@ from mcp_types import ElicitResult
 from tests.e2e.codex_app_server import CodexAppServer
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from mcp_types import ElicitRequestParams
 
     from tests.e2e.codex_app_server import ElicitationCallback
@@ -84,6 +86,7 @@ class _Peer:
         rpc_failure: str | None = None,
         servers: dict[str, Any] | None = None,
         returned_model: str | None = "specified-model",
+        returned_reasoning_effort: str | None = "xhigh",
         turns: list[list[dict[str, Any]]] | None = None,
     ) -> None:
         self.reader = asyncio.StreamReader()
@@ -95,6 +98,7 @@ class _Peer:
         self.rpc_failure = rpc_failure
         self.servers = servers or {}
         self.returned_model = returned_model
+        self.returned_reasoning_effort = returned_reasoning_effort
         self.observations = 0
 
     def _feed(self, message: dict[str, Any]) -> None:
@@ -124,6 +128,7 @@ class _Peer:
                     "result": {
                         "thread": {"id": "thread-1"},
                         "model": self.returned_model,
+                        "reasoningEffort": self.returned_reasoning_effort,
                     },
                 }
             )
@@ -152,6 +157,7 @@ class _Peer:
         callback: ElicitationCallback | None = None,
         *,
         max_tool_calls: int = 2,
+        on_completed_tool: Callable[[dict[str, Any]], None] | None = None,
     ) -> CodexAppServer:
         return CodexAppServer(
             self.reader,
@@ -160,6 +166,7 @@ class _Peer:
             max_tool_calls=max_tool_calls,
             elicitation_callback=callback,
             observe_processes=self.observe,
+            on_completed_tool=on_completed_tool,
         )
 
 
@@ -307,6 +314,35 @@ def test_explicit_model_must_match_thread_before_starting_turn(
                     "prompt", {"model": "gpt-5.6-luna"}, mcp_config=_MCP_CONFIG
                 )
             assert peer.sent[-1]["method"] == "thread/start"
+            assert not any(
+                message.get("method") == "turn/start" for message in peer.sent
+            )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("returned_effort", ["xhigh", "ultra", "high", None])
+def test_reasoning_effort_must_match_thread_before_starting_turn(
+    returned_effort: str | None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def run() -> None:
+        peer = _Peer([_completed()], returned_reasoning_effort=returned_effort)
+        if returned_effort == "xhigh":
+            assert await peer.client().run(
+                "prompt",
+                {},
+                mcp_config=_MCP_CONFIG,
+                expected_reasoning_effort="xhigh",
+            ) == [_completed()]
+            assert "reasoning effort xhigh" in capsys.readouterr().out
+        else:
+            with pytest.raises(AssertionError, match="expected 'xhigh'"):
+                await peer.client().run(
+                    "prompt",
+                    {},
+                    mcp_config=_MCP_CONFIG,
+                    expected_reasoning_effort="xhigh",
+                )
             assert not any(
                 message.get("method") == "turn/start" for message in peer.sent
             )
@@ -550,21 +586,60 @@ def test_eof_without_completed_turn_is_rejected() -> None:
     [
         ({"type": "commandExecution"}, "bypassed MCP"),
         ({"type": "fileChange"}, "bypassed MCP"),
+        ({"type": "subAgentActivity"}, "bypassed MCP"),
         ({"server": "foreign-server"}, "foreign-server"),
         ({"tool": "unapproved_tool"}, "unapproved_tool"),
-        ({"status": "failed"}, "MCP call failed"),
+        ({"status": "failed", "result": None}, "MCP call failed"),
     ],
 )
 def test_tool_failures_and_bypass_are_rejected(
     overrides: dict[str, Any], error: str
 ) -> None:
     async def run() -> None:
+        observed: list[dict[str, Any]] = []
         with pytest.raises(AssertionError, match=error):
             await (
                 _Peer([_tool(**overrides)])
-                .client()
+                .client(on_completed_tool=observed.append)
                 .run("prompt", {}, mcp_config=_MCP_CONFIG)
             )
+        assert observed == []
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("early_events", [False, True])
+def test_completed_tool_observer_gets_one_isolated_event_before_turn_finishes(
+    early_events: bool,
+) -> None:
+    async def run() -> None:
+        completed = _tool()
+        peer = _Peer(
+            [_tool("item/started"), completed, _completed()], early_events=early_events
+        )
+        observed: list[dict[str, Any]] = []
+
+        def observe(event: dict[str, Any]) -> None:
+            observed.append(deepcopy(event))
+            event["params"]["item"]["result"]["structuredContent"]["success"] = False
+
+        client = peer.client(on_completed_tool=observe)
+        events = await client.run("prompt", {}, mcp_config=_MCP_CONFIG)
+        assert observed == [completed]
+        assert events == [_tool("item/started"), completed, _completed()]
+
+    asyncio.run(run())
+
+
+def test_started_tool_without_completion_does_not_notify_observer() -> None:
+    async def run() -> None:
+        observed: list[dict[str, Any]] = []
+        peer = _Peer([_tool("item/started")])
+        with pytest.raises(AssertionError, match="closed before completing"):
+            await peer.client(on_completed_tool=observed.append).run(
+                "prompt", {}, mcp_config=_MCP_CONFIG
+            )
+        assert observed == []
 
     asyncio.run(run())
 

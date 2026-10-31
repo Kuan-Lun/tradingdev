@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import pickle
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,12 +15,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tests.app.test_run_metrics import _publish, _scope
+from tests.data_cache import seed_market_cache
 from tests.e2e.codex_harness import run_codex
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
+from tests.e2e.ml_report_evidence import (
+    ML_REPORT_REQUEST,
+    seed_ml_report_candidates,
+    verify_ml_report_outcome,
+)
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
+from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.run_service import RunService
+from tradingdev.domain.ml.leaderboard import signal_fingerprint
 from tradingdev.domain.ml.registry.artifact_store import ModelArtifactStore
 from tradingdev.domain.ml.registry.leaderboard_store import LeaderboardStore
 
@@ -42,6 +53,8 @@ DATASET_ARGUMENTS = {
     "end_date": "2024-01-10",
     "feature_set": "returns",
     "horizon": 1,
+    "source": "binance_vision",
+    "market_type": "spot",
 }
 MODEL_PARAMETERS = {"n_estimators": 12, "max_depth": 3, "n_jobs": 1, "random_state": 42}
 TRAINING_ARGUMENTS = {
@@ -192,6 +205,10 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert row["dataset_id"] == dataset_id and row["model_id"] == model["model_id"]
     assert row["n_observations"] == dataset["rows"]
     assert row["value"] == evaluation["metrics"]["hit_rate"]
+    assert row["parameters"] == model["parameters"]
+    assert row["signal_fingerprint"] == prediction["signal_fingerprint"]
+    assert row["signal_fingerprint"] == evaluation["signal_fingerprint"]
+    assert row["signal_fingerprint"] == evaluation["recorded"]["signal_fingerprint"]
     return MLEvidence(dataset, model, prediction, evaluation, leaderboard)
 
 
@@ -201,6 +218,8 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     dataset = evidence.dataset
     frame, manifest = MLDatasetStore(paths.ml_datasets).load(dataset["dataset_id"])
     assert manifest["content_hash"] == dataset["content_hash"]
+    assert manifest["source"] == "binance_vision"
+    assert manifest["market_type"] == "spot"
     parquet = Path(dataset["path"])
     assert parquet.is_relative_to(paths.ml_datasets)
     assert hashlib.sha256(parquet.read_bytes()).hexdigest() == dataset["content_hash"]
@@ -233,7 +252,20 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     assert entry.n_observations == len(frame)
     assert entry.metric("hit_rate") == pytest.approx(hit_rate)
     assert entry.context.data_fingerprint == dataset["content_hash"]
+    assert entry.parameters == artifact.parameters
+    assert entry.signal_fingerprint == signal_fingerprint(signal.tolist())
+    assert entry.signal_fingerprint == evidence.prediction["signal_fingerprint"]
     assert not list(paths.runs.glob("*/manifest.json")), "ML research must not backtest"
+
+
+def seed_ml_markets(workspace: MCPWorkspace) -> None:
+    """Provide selected spot prices alongside a different default futures market."""
+    seed_market_cache(
+        workspace.data_root / "processed", ml_market_frame(), market_type="spot"
+    )
+    other_market = ml_market_frame()
+    other_market["close"] *= 2
+    workspace.seed_market(other_market)
 
 
 @pytest.mark.live_llm
@@ -241,7 +273,7 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
     with temporary_mcp_workspace() as workspace:
-        workspace.seed_market(ml_market_frame())
+        seed_ml_markets(workspace)
         turns: list[ModelTurn] = []
 
         async def observe_final(turn: ModelTurn) -> None:
@@ -294,3 +326,181 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
                 f"Incomplete {provider}/ML workflow: {error}\n"
                 + json.dumps(transcript, ensure_ascii=False)
             )
+
+
+@pytest.mark.live_llm
+def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) -> None:
+    provider = pytestconfig.getoption("llm_provider")
+    assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
+    with temporary_mcp_workspace() as workspace:
+        entries = seed_ml_report_candidates(WorkspacePaths(workspace.workspace))
+        turns: list[ModelTurn] = []
+
+        async def observe_final(turn: ModelTurn) -> None:
+            turns.append(turn)
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "model": pytestconfig.getoption("llm_model"),
+                "user_reply": observe_final,
+                "max_tool_calls": 18,
+            }
+            async with workspace.connect() as client:
+                names = list(client.output_schemas)
+                assert all(name not in ML_REPORT_REQUEST for name in names), (
+                    "Natural user request must not supply tool names"
+                )
+                print(
+                    f"[ml-report] Complete product tool set: {len(names)}",
+                    flush=True,
+                )
+                options["tool_names"] = names
+                if provider == "local":
+                    return await run_local_model(
+                        client,
+                        ML_REPORT_REQUEST,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
+                        **options,
+                    )
+            return codex_calls(
+                await run_codex(workspace.root, ML_REPORT_REQUEST, **options)
+            )
+
+        calls = asyncio.run(run())
+        transcript = {
+            "calls": [asdict(call) for call in calls],
+            "turns": [asdict(turn) for turn in turns],
+        }
+        (workspace.root / "ml-report-transcript.json").write_text(
+            json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        try:
+            assert len(turns) == 1, "Saved research already provides report inputs"
+            verify_ml_report_outcome(workspace, calls, turns[0], entries)
+        except (AssertionError, KeyError, ValueError, IndexError) as error:
+            pytest.fail(
+                f"Incomplete {provider}/ML report discovery: {error}\n"
+                + json.dumps(transcript, ensure_ascii=False)
+            )
+    assert not workspace.root.exists()
+
+
+@pytest.mark.live_llm
+def test_natural_request_discovers_rolling_evidence(
+    pytestconfig: pytest.Config,
+) -> None:
+    """Discover both the scheme menu and saved per-roll evidence without a script."""
+    request = (
+        "請說明這套系統的滾動重訓有哪些視窗方案，固定長度與持續擴大有何差別。"
+        "另外請查已保存的結果 rolling_saved，解釋實際嘗試與成功重訓幾次、"
+        "第 2 次嘗試用了多少筆已標記樣本，並說明完整證據保存在哪裡。"
+        "只查已有資料，不要重新訓練、回測或修改策略。"
+    )
+    with temporary_mcp_workspace() as workspace:
+        paths = WorkspacePaths(workspace.workspace)
+        store = SQLiteStore(paths)
+        trace = {
+            "scheme": "roll_ex",
+            "rtype": "ROLL_EX",
+            "step": 5,
+            "window_size": None,
+            "min_train_bars": 55,
+            "predict_lookback": 24,
+            "label_horizon": 1,
+            "bars": 17,
+            "bars_scored": 12,
+            "initial_model_available": False,
+            "unscored_bars": list(range(5)),
+            "rolls": [
+                {
+                    "index": i,
+                    "retrain_bar": 5 * i,
+                    "train_start": 0,
+                    "train_end": 53 + 5 * i,
+                    "test_start": 5 * i,
+                    "test_end": min(17, 5 * (i + 1)),
+                    "n_train_rows": 52 + 5 * i,
+                    "trained": i > 0,
+                    "bars_scored": 0 if i == 0 else min(5, 17 - 5 * i),
+                }
+                for i in range(4)
+            ],
+        }
+        _publish(
+            (paths, store, RunService(workspace=paths, store=store)),
+            "rolling_saved",
+            scopes={
+                "fold/0/test": _scope(split="test", metadata={"rolling_trace": trace})
+            },
+            default_scope="fold/0/test",
+        )
+        turns: list[ModelTurn] = []
+        readonly_tools: set[str] = set()
+
+        async def observe_final(turn: ModelTurn) -> None:
+            turns.append(turn)
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "model": pytestconfig.getoption("llm_model"),
+                "user_reply": observe_final,
+            }
+            async with workspace.connect() as client:
+                tools = (await client.session.list_tools()).tools
+                names = [tool.name for tool in tools]
+                readonly_tools.update(
+                    tool.name
+                    for tool in tools
+                    if tool.annotations is not None
+                    and tool.annotations.read_only_hint is True
+                )
+                assert all(name not in request for name in names)
+                options["tool_names"] = names
+                if pytestconfig.getoption("llm_provider") == "local":
+                    return await run_local_model(
+                        client,
+                        request,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
+                        **options,
+                    )
+            return codex_calls(await run_codex(workspace.root, request, **options))
+
+        attempted = asyncio.run(run())
+        assert all(call.name in readonly_tools for call in attempted), attempted
+        calls = effective_workflow_calls(attempted)
+        assert any(
+            c.name == "get_ml_contract" and c.result.get("success") for c in calls
+        )
+        summaries = [
+            c.result
+            for c in calls
+            if c.name == "get_run_metrics" and c.result.get("success")
+        ]
+        assert (
+            summaries and summaries[-1]["metadata"]["rolling_trace"]["roll_count"] == 4
+        )
+        evidence = [
+            c.result
+            for c in calls
+            if c.name == "get_artifact"
+            and c.result.get("success")
+            and c.arguments.get("artifact_id") == "rolling_saved:performance_json"
+            and "content" in c.result
+            and "content_page" in c.result
+        ]
+        assert evidence and any(
+            re.search(r'"n_train_rows"\s*:\s*57\b', page["content"])
+            for page in evidence
+        )
+        assert turns and "57" in turns[-1].text
+        print(
+            "[rolling-evidence] Final reply for semantic review:\n" + turns[-1].text,
+            flush=True,
+        )
+    assert not workspace.root.exists()

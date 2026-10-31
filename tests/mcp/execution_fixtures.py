@@ -1,24 +1,24 @@
-"""Real plan storage and MCP dispatch with an explicitly substituted sample worker."""
+"""Real plan storage and MCP dispatch with substituted offline validation."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import research_arguments
+from tests.research_evidence_fixtures import save_research_evidence
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.execution_plan_service import ExecutionPlanService
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.preflight_service import PreflightResult, PreflightService
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.domain.preflight import (
     PreflightCheck,
     PreflightReceipt,
     PreflightRequest,
-    PreflightWindow,
 )
 from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import execution
@@ -37,7 +37,7 @@ class RecordingRunner(ProcessRunner):
 
 
 class FixedPreflight(PreflightService):
-    """Protocol tests do not claim to execute a real sample engine."""
+    """Protocol tests substitute code checks and never claim historical execution."""
 
     def __init__(self, prepared: PreparedExecution) -> None:
         self.prepared = prepared
@@ -47,35 +47,30 @@ class FixedPreflight(PreflightService):
         self.requests.append(request)
         checked_paths: list[PreflightCheck] = [
             "configuration",
-            "signals",
-            "engine",
-            "serialization",
+            "execution_capabilities",
+            "parameter_binding",
+            "manifest_serialization",
         ]
-        if self.prepared.manifest.strategy_execution.kind == "generated":
+        generated = self.prepared.manifest.strategy_execution.kind == "generated"
+        if generated:
             checked_paths.append("signal_contract")
         return PreflightResult(
             self.prepared,
             PreflightReceipt(
                 manifest_hash=self.prepared.manifest.manifest_hash,
                 elapsed_seconds=0.5,
-                sample_bars_requested=request.sample_bars,
-                sample_bars_used=128,
-                minimum_history_bars=request.minimum_history_bars,
-                data_source=self.prepared.manifest.config_copy()["data"][
-                    "requirements"
-                ]["market"]["source"],
-                windows=[
-                    PreflightWindow(
-                        role="full",
-                        start="2024-01-01",
-                        end="2024-01-06",
-                        rows=128,
-                    )
-                ],
                 checked_paths=checked_paths,
-                trade_count=1,
-                execution_record_count=2,
-                trading_path_exercised=True,
+                synthetic_fixture_rows=[80, 240] if generated else [],
+                signal_check=(
+                    "synthetic_contract_passed" if generated else "bundled_not_executed"
+                ),
+                training_requirement="unknown" if generated else "optional",
+                not_checked=[
+                    "historical_data",
+                    "backtest_engine",
+                    "training",
+                    "performance",
+                ],
             ),
         )
 
@@ -117,9 +112,7 @@ def plan_context(root: Path) -> PlanContext:
         runner,
         preflight,
         {
-            **arguments,
-            **execution_options(
-                prepared.manifest.strategy_execution.constructor_kwargs
-            ),
+            **research_arguments(arguments),
+            "evidence_id": save_research_evidence(service.evidence, prepared.manifest),
         },
     )

@@ -34,9 +34,12 @@ strategy-created threads or processes must explicitly initialize their own strea
 `get_strategy_contract(section="core")` returns the required Python/signal rules,
 base interface and revision lifecycle. Each reply identifies its selected section
 and lists `available_sections` with their purposes. The `content` object contains
-only that complete section: request `section="example"` for the Python/YAML pair,
+only that complete section: request `section="research"` for the research-input
+schema and shared simulation policy, `section="evidence"` for parameter proposals,
+source claims and formula recording, `section="example"` for the Python/YAML pair,
 or `section="configuration"` for the executable YAML schema and financial-setting
-notes. Unknown sections fail; a missing core reference does not produce an empty
+notes. Research schema and policy are projected from their domain definitions.
+Unknown sections fail; a missing core reference does not produce an empty
 or partial contract. The default no longer embeds examples and the entire schema.
 
 `get_strategy_contract(section="configuration").content.config_schema` describes
@@ -46,13 +49,22 @@ Validation and dry-run validate this same run configuration before strategy code
 executes and return `effective_config` for checking the request against defaults.
 A valid configuration does not by itself prove that every natural-language
 requirement has been fulfilled.
+`parallel.overhead_multiplier` defaults to `3.0` and must be finite and strictly
+positive. Invalid values fail configuration validation before training or search;
+direct calls to the worker-count estimator enforce the same numeric restriction.
 
 `list_data_sources` returns registered source descriptions, including asset classes,
 symbol examples, local timeframe choices, applicable `data.market_type` values and
 coverage limitations. Choose a name for `data.requirements.market.source` from that
 catalog. A `null` timeframe list means the adapter does not advertise an exhaustive
-local list, not that every interval is supported; sample preparation still checks
-availability. Discovery does not construct a crawler or download market data.
+local list, not that every interval is supported. Preparation rejects unknown
+source names and choices excluded by an explicit local timeframe or market-type
+list, without constructing a crawler. Actual availability is checked when the
+approved execution obtains its data. Discovery and plan preparation do not
+download market data.
+The market requirement's symbol and timeframe must match the backtest fields,
+which determine the actual data request. Direct CLI/Python preparation rejects
+contradictory declarations; MCP request overrides update both together.
 
 Generated code must:
 
@@ -62,9 +74,66 @@ Generated code must:
   execution context;
 - implement `generate_signals(df)` and return a new pandas DataFrame;
 - preserve the input DataFrame without mutation;
-- include a `signal` column containing only `1`, `-1`, or `0`;
+- preserve every input row in order, the exact index (including its metadata),
+  and the original timestamp/OHLCV columns; use separate columns for features;
+- return uniquely named columns and a `signal` value on every row: finite real
+  `1`, `-1`, or `0`; warm-up rows use zero, not missing values or dropped rows;
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
+
+`BaseStrategy` also offers an optional `rolling_trace()` hook whose default
+returns `None`. After `generate_signals`, a simple backtest, each walk-forward
+fold frame and each optimization run call it and, when it returns a mapping,
+store an independent deep snapshot as run metadata beside `strategy_parameters`. A fold calls
+`generate_signals` for its training replay and its evaluation frame in turn, so
+each frame's result carries the trace of the signals it actually scored.
+Returning `None` — the default, and what every strategy without a declared
+retraining schedule should do — means there is no rolling provenance to record.
+The payload and where it is stored are described in the
+[ML research contract](ml_research.md#rolling-retraining-schemes) and
+[performance artifacts](performance_artifacts.md); implementing the hook is
+optional.
+
+The shared frame checker enforces these structural rules on synthetic fixtures
+and the actual frames used by simple backtests, fixed comparisons, optimization
+trials and both sides of walk-forward folds. Invalid frames fail before their
+engine call. Execution supplies a copy so ordinary DataFrame mutation by a failed
+candidate cannot alter the captured market data for later candidates. Indicator
+columns may still contain warm-up NaNs. These checks do not prove the absence of
+future-data use, agreement with a prose strategy, or safe Python execution.
+
+In signal mode, each row specifies a position state: `1` long, `-1` short,
+`0` flat. Repeat the state while it should persist. An entry pulse followed by
+zero closes the position on the next signal change. `signal_as_position` has no
+effect in this mode. In either mode, `-1` selects a short position; it is not a
+sell-only instruction to close a long. Both modes shift signals by one bar and
+execute signal-driven entries and exits at the following bar's open, falling back
+to close when open is absent. Stop-loss and take-profit rules are separate.
+
+Signal execution explicitly fixes the critical vectorbt 1.2.0 sizing, reversal,
+order-cost and stop defaults under the versioned execution policy. An omitted
+`position_size` uses available capital after execution costs; a specified amount
+requests that quote-currency notional, with partial fills allowed when cash is
+insufficient. Zero opens no positions. Repeated same-direction signals do not
+add to a position. Fixed-notional shorts do not lock cash, so this is not a
+guarantee of unleveraged exposure. Neither mode models complete margin,
+liquidation, borrowing or funding-payment rules, or provides a leverage setting.
+
+Signal stops use the entry bar's **close** as their reference and, on later bars,
+inspect only the range between **open and close**, not the market `high`/`low`
+columns. Stop-loss takes priority over take-profit and ordinary signals. A gap
+across a threshold fills at open; otherwise the threshold price is used. The
+fixed `stoplimit` policy applies no exit slippage to these stop orders, while
+commission still applies. A zero stop is a zero-distance threshold, not disabled.
+Stops do not execute on the entry bar; after a stop exit, a later signal-state
+change is needed for another entry. `re_entry_after_sl` does not affect signal
+mode. These are historical simulation assumptions, not exchange execution
+guarantees or isolation from every possible global vectorbt setting.
+
+The published SMA example is explicitly long-only: emit `1` on every row where
+both averages are finite and the fast average exceeds the slow average, otherwise
+emit `0`, including equality and warm-up. Adapt this example to the user's actual
+direction, entry, holding and exit rules rather than inheriting its trading intent.
 
 Backtest execution requires finite, strictly positive prices. Signal mode checks
 `close` and any supplied `open` across all bars, using `close` for execution when
@@ -81,8 +150,46 @@ nonmissing, unique, increasing timestamps; they are normalized to UTC.
 
 Volume mode applies optional `size_weight` values to the following bar with
 `shift(1).fillna(1.0)`. The resulting weights must be finite and strictly positive;
-zero is not a trade-suppression flag. Emit `signal=0` to prevent new entries; set
-`signal_as_position: true` if zero should also close an existing position.
+zero is not a trade-suppression flag. The weight multiplies the base notional
+only when opening a new position, including reversal and stop re-entry; changes
+while holding do not rebalance the existing position. An omitted or null
+`position_size` uses 200 quote-currency units; explicit zero opens no positions
+and creates no zero-quantity trades. Emit `signal=0` to prevent new entries; set
+`signal_as_position: true` if zero should also close an existing position. With
+the default `false`, zero retains an existing position. An opposite nonzero
+signal closes the current position and opens one in the opposite direction.
+
+Volume stops first check an existing position against the current bar's high/low,
+using entry price as the reference; stop-loss wins if both thresholds are hit,
+and fills use the threshold price. A zero stop disables it. New positions are
+not checked for stops on their entry bar. With `re_entry_after_sl: true`, a
+nonzero shifted signal re-enters at the stop bar's close unless the monthly loss
+breaker has triggered. With `false`, no new position opens on that bar; the
+simulator stays flat until a later shifted signal differs from the stop bar's
+signal, including a change to zero. An opposite signal on the stop bar itself
+does not open a position and becomes the signal that must subsequently change.
+A new month resets the monthly breaker but does not clear this signal wait;
+signal changes during a monthly pause can clear the wait, while the monthly
+pause still prevents entry. Fees and separate notional slippage charges apply
+on each entry and exit, including a final close at the last bar's close.
+
+Volume's `monthly_max_loss` measures the change in cumulative P&L equity during
+each UTC calendar month, including costs already charged and unrealised P&L
+changes. The baseline is zero for the first observed month, then the last close
+equity of the previous observed month. Missing months are not filled; price gaps
+and changes in carried positions belong to the next observed month. Closing or
+reversing a carried position does not charge its prior-month P&L or entry costs
+again, while trade records still retain the entire trade's P&L and costs.
+The breaker checks after a stop exit before re-entry, and after ordinary trading
+at the bar's close. A loss reaching the threshold closes any remaining position
+at that close and pauses trading until the next observed month. Exit costs can
+increase the final loss beyond the threshold; this is not a guaranteed loss cap.
+Without timestamps, the monthly breaker is unavailable.
+
+The confirmation text, chat summary and HTML show the same backend-resolved
+execution assumptions. They describe simulator policy, not proof that strategy
+code or an ML model implements the requested idea, avoids look-ahead, or passed
+preflight checks; completed checks are recorded separately.
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
@@ -103,19 +210,19 @@ strategy. Generated code must express configurable values as constructor
 parameters rather than derive hidden defaults from environment state. This
 captures declared arguments, not arbitrary Python behavior or dependency versions.
 
-Allowed import roots for generated strategies are intentionally small:
+The static validator is the maintained source for allowed imports and blocked
+calls. MCP `get_strategy_contract(section="core")` returns its exact `static_policy`
+lists; these are static restrictions, not a Python security sandbox.
 
-- Python standard library: `__future__`, `collections`, `dataclasses`,
-  `datetime`, `enum`, `math`, `statistics`, `typing`.
-- Runtime libraries: `numpy`, `pandas`, `talib`, `typing_extensions`.
-- Project APIs: `tradingdev`.
-
-Prefer `tradingdev.domain.indicators` (`sma`, `ema`, `rsi`, `macd`,
-`bollinger_bands`, `atr`, `adx`, `stochastic`) for standard indicators. This
-facade calls the official TA-Lib Python wrapper, preserves the input index,
-and exposes named result fields for indicators with multiple outputs. Bundled
-strategies and feature engineering must use this facade rather than call
-TA-Lib directly. Bollinger Bands use population standard deviation.
+Prefer the public `tradingdev.domain.indicators` facade for standard indicators.
+Bundled strategies and feature engineering must use it rather than call TA-Lib
+directly. Discover its installed exports with
+`get_strategy_contract(section="indicators")`, then supply `indicator="macd"`
+(or another catalog name) for its actual signature, named result fields,
+implementation and transitive local input/parameter checks. This is read-only
+reference material, not strategy execution. Missing source fails instead of
+returning an incomplete reference; resolve it before authoring. The catalog does
+not recommend profitable parameters or replace research confirmation.
 
 The facade preserves TA-Lib's native warm-up NaNs and NaN propagation, including
 NaNs that can extend to the end of the output after an interior missing value.
@@ -126,29 +233,13 @@ unavailable indicator values. OHLC inputs must have identical indexes and
 lengths, and infinite input values are rejected. Empty inputs produce empty
 float64 outputs with the same index.
 
-Periods must be integers other than booleans and at most 100,000. SMA, EMA,
-RSI, ADX, Bollinger Bands, and MACD fast/slow periods require at least 2 bars;
-ATR, MACD signal, and Stochastic periods allow 1. Bollinger Bands expose only
-population standard deviation: the previous `ddof` parameter is removed.
-The `std` argument to `bollinger_bands` must be finite and in the inclusive
-range `0 <= std <= 3e37`. Negative values, values above `3e37`, NaN, and
-positive or negative infinity raise `ValueError`.
-
-Generated strategies may also import `talib` directly. Use its Function API
-with float64 NumPy arrays, unpack multi-output tuples, and restore the input
-index when constructing pandas Series. The output order is `line, signal,
-histogram` for `MACD`, `upper, middle, lower` for `BBANDS`, and `k, d` for
-`STOCH`; these are not pandas-ta DataFrames with parameter-encoded column names.
-The same warm-up and missing-value rules apply. The import allowlist rejects
-`pandas_ta`; existing generated strategies using it must be revised and
-validated again. Static validation does not enforce the numerical rules above.
-
-The public `indicator_column` helper has also been removed. Remove its imports
-and calls, replacing pandas-ta column-name lookups with the facade's named
-result fields, such as `macd(close).histogram` or `bollinger_bands(close).upper`.
-When calling `talib` directly, unpack its output tuples in the order described
-above instead. The facade's result objects expose named fields and are not
-tuples to unpack.
+Numerical limits and warm-up details are available in each selected API reference,
+derived from its implementation rather than a second handwritten parameter table.
+Generated strategies may use the direct TA-Lib Function API when permitted by the
+current import policy, but must manage dtype, tuple outputs and index restoration
+themselves. Prefer the facade's named result fields; they are not tuples. For old
+or unknown APIs, discover the installed catalog rather than guessing replacement
+names. Source/type checks alone do not establish numerical or trading correctness.
 
 Ruff treats `tradingdev` as first-party code. Separate its imports from
 third-party `numpy`, `pandas`, and `talib` imports with a blank line.
@@ -176,7 +267,7 @@ or `unknown`. `supported_execution_modes` is `["walk_forward"]` for required
 training, all three modes (`backtest`, `walk_forward`, `optimization`) for optional
 training, and `null` for unknown capabilities. These describe intrinsic support,
 not model readiness, configuration validity, lifecycle permission or successful
-trial evidence. A supported walk-forward mode still requires valid `validation`
+validation evidence. A supported walk-forward mode still requires valid `validation`
 settings; bundled strategies may provide a separate `walkforward_config.yaml`.
 Conversely, a config with `validation` still cannot be used for a simple backtest
 or optimization just because its strategy intrinsically supports those modes.
@@ -210,16 +301,161 @@ training job, or using the separate ML `train_model` tool does not prepare this
 strategy instance. Other preparation errors retain their own codes.
 
 As a final strategy-level guard, bundled `QuantileStrategy.generate_signals()`
-raises `RuntimeError` when
-its regime model or feature engineer is absent. Its `fit(train_df)` requires an
-injected backtest engine; calling it without one skips training and does not
-satisfy model readiness. This guard checks readiness, not the correctness of all
+raises `RuntimeError` when its regime model, feature engineer, or training history
+is absent. Its `fit(train_df)` requires an injected backtest engine; calling it
+without one skips training and does not satisfy model readiness. This guard
+checks readiness, not the correctness of all
 training windows or predictions. Use the walk-forward execution path for this
 strategy; the simple-backtest and optimization paths do not fit it before scoring.
+
+Scoring a window that overlaps the training history must not duplicate that
+history or replay future bars into it. `QuantileStrategy.generate_signals()`,
+`XGBoostStrategy.generate_signals()` (through `RollingRetrainer`) and the
+SafetyVolume Risk Gate loop keep only the training rows that strictly precede
+the scored frame. Scoring the training frame itself therefore contributes no
+history, so its prediction contexts stay chronological instead of continuing
+from the tail of one copy into the head of the next.
+
+This context correction does not make training-frame scores out-of-sample:
+the initial model has already been fitted on that training window. Walk-forward
+`train_metrics` remain in-sample diagnostics; use the held-out `test_metrics`
+to assess generalization.
+
+Whether the two frames overlap can only be decided from timestamps, so a scoring
+request with a non-empty scored frame requires a time identity, whether or not
+the frames overlap: that frame, and any non-empty training history, must carry a
+`timestamp` column or a `DatetimeIndex` with non-missing, unique and strictly
+increasing values. Either representation can be used independently for each
+frame. Internal scoring copies carry a UTC `timestamp` column, including when
+the input uses a `DatetimeIndex`; the original frames are unchanged. Naive
+values are interpreted as UTC. A frame with no
+identity, or with duplicated or decreasing timestamps, raises `ValueError`.
+
+An empty scored frame produces no signals. `RollingRetrainer` and the
+SafetyVolume Risk Gate return before validating either frame, while
+`QuantileStrategy.generate_signals()` validates both frames before returning an
+empty result.
+
+When warm-up or immature horizon labels leave a rolling training slice with no
+usable observations, scoring retains the fitted model until observations mature.
+The optional `rolling_gen` engine is stricter during overlapping replay: it
+discards the initial model and waits for a successful refit on preceding rows.
+If none becomes available it fails explicitly. Full-fold parameter selection
+still makes training replay an in-sample diagnostic; see
+[rolling retraining](ml_research.md#rolling-retraining-schemes).
+
+Quantile predictions are mapped back by source row. Its feature warm-up and
+missing indicator values may remove rows; recursive indicators can also leave subsequent rows
+unavailable. A bar without
+features emits `signal=0` and resets the position, holding count, entry price,
+and size weight. Once features become available, entry conditions are evaluated
+again. A single state machine processes every input row, including unscorable
+rows and chunk boundaries; output length and index match the input.
+Quantile parameter-search evaluation uses the same gap handling on the full
+source frame.
+Its scoring features omit targets, so a missing future label does not prevent
+prediction on an otherwise usable tail bar.
+Quantile model probability arrays must contain one finite four-class vector per
+scored feature row; malformed model output is rejected instead of treated as missing
+features. Float32 and float64 model outputs are normalized to float64.
+`QuantileFeatureEngineer.transform()` always preserves surviving input index
+labels; callers that need positional mapping supply a positional index.
+
 See the [Quantile guide](strategies/quantile_strategy.md#running) for commands,
 data prerequisites and execution-mode restrictions.
 
+## Research Inputs and Simulation Policy
+
+MCP `save_strategy`, `prepare_backtest`, `prepare_comparison`, `prepare_walk_forward`, and
+`prepare_optimization` require `research: ResearchSpec`. The assistant must obtain
+four user choices: strategy outline, instrument, period, and bar timeframe. A vague
+outline is acceptable; missing choices must be requested rather than copied from
+examples or inferred from available data. The period occupies two input fields.
+The backend enforces completeness and revision binding, not whether a human
+actually supplied those choices.
+
+For new research, send `kind: "new"` and all five fields:
+
+```json
+{
+  "kind": "new",
+  "strategy_outline": "Buy after a fast moving average crosses above a slow one; exit on the reverse crossing.",
+  "symbol": "BTC/USDT",
+  "timeframe": "1h",
+  "start_date": "2024-01-01T00:00:00Z",
+  "end_date": "2024-07-01T00:00:00Z"
+}
+```
+
+Text must be nonempty. Dates accept ISO dates or timestamps, normalize to UTC,
+and interpret a missing timezone as UTC. A date without a time means midnight;
+ordinary backtest bounds do not automatically expand to cover the final day.
+Rows are selected by candle timestamp with `start_date <= timestamp <= end_date`,
+including either endpoint when matching data exists; this does not define the
+final candle's close or execution time.
+`end_date` must follow `start_date`. Unknown fields and explicit `null` choices
+are rejected. Optional fields must be omitted to request their defaults.
+
+The shared `research-v1` simulation policy supplies omitted `init_cash: 10000.0`,
+`fees: 0.0006`, and `slippage: 0.0005`. Capital is in quote currency; fees and
+slippage are decimal rates. These are simulation assumptions, not live exchange
+fees. Explicit finite values take priority; capital must be positive and costs
+nonnegative, including zero. Numeric strings and booleans are rejected. Volume
+mode has no capital-return basis: omitted capital stays `null`, and an explicit
+capital value does not change that engine's semantics. The resolver does not
+synchronize similarly named strategy parameters with backtest execution costs.
+
+`annualization` accepts `"market"` (the new-research default), `"unavailable"`,
+or a positive finite factor for observed UTC daily returns. Market policy chooses
+365 only when the selected provider's registered asset classes are exclusively
+crypto. Mixed providers, including Yahoo Finance even for a crypto symbol, require
+an explicit factor or `"unavailable"`; symbol spelling does not identify a trading
+calendar. The latter saves `backtest.periods_per_year: null`. A factor does not
+enable daily statistics for weekly, monthly or unrecognized bar frequencies.
+
+Data configuration must explicitly select `data.source` or
+`data.requirements.market.source`. Providers with market-type choices also require
+an explicit supported `data.market_type`; research preparation does not silently
+select Binance or its futures market. Source capabilities come from
+`list_data_sources`, without downloading data. Bundled YAML includes its source
+and market type as template settings, not as evidence of user-selected research
+dates or costs.
+
+`kind: "inherit_selected_revision"` enables inheritance only from an explicitly
+selected immutable generated revision. Preparation requires its
+`revision_id`; saving a revision requires its `strategy_id` and
+`expected_revision_id`. Bundled strategies and implicit current selection cannot
+supply inheritance. An older revision without a saved outline requires an explicit
+`strategy_outline`. An omitted annualization choice can retain the selected
+factor or unavailable setting when symbol, provider and market type match; after a market change, the
+resolver requires an applicable market policy or an explicit new choice.
+
+Saving uses the shared builder to produce a complete YAML from authoring settings
+and research choices. Research owns its outline, symbol, timeframe, dates, capital,
+costs and annualization factor; duplicate owned fields in authoring YAML must
+agree. Strategy parameters, feature requirements, validation and other engine
+controls remain authoring settings. Execution preparation uses the same resolver
+to replace template research values without modifying the base revision.
+`backtest_overrides` is for other engine controls; research-owned keys are rejected
+there, even when their values agree. Put those choices in `research` instead.
+An existing YAML cost is not an implicit request
+to inherit it. Resolved values and their origins are frozen in the config;
+[artifact provenance](run_artifacts.md#research-settings-and-provenance) records the
+policy and selected revision without duplicating the effective values.
+
+The old top-level `symbol`, `timeframe`, `start_date`, and `end_date` arguments are
+not accepted by MCP preparation tools. Optimization still requires its separate
+training/test calendar dates, and the resolved research period must equal
+`train_start` at 00:00:00 UTC through `test_end` at 23:59:59.999999 UTC. A mismatch
+is rejected, not silently expanded. CLI and direct Python execution with a complete
+YAML remain separate explicit execution interfaces; they do not require an MCP
+intake session or automatically reconstruct research provenance.
+
 ## YAML Contract
+
+The following is a complete execution example. MCP authoring may omit the
+research-owned fields that the builder supplies; if included, they must agree
+with the required `research` input.
 
 ```yaml
 strategy:
@@ -242,16 +478,17 @@ backtest:
   mode: "signal"
 
 data:
-  # market_type defaults to "futures/um" (binance_vision only); "spot" for spot
+  source: "binance_vision"
+  market_type: "futures/um"  # explicitly choose "spot" for spot data
   requirements:
     market:
       # source selects the market data crawler registered in
       # domain/data/crawlers/registry.py:
-      #   "binance_vision" (default) - crypto, data.binance.vision
+      #   "binance_vision"          - crypto, data.binance.vision
       #   "binance_api"              - crypto, ccxt
       #   "yahoo_finance"            - stocks/ETFs/futures/indices/FX,
       #                                Yahoo symbols ("AAPL", "ES=F", "^GSPC")
-      # omitted -> inherits legacy top-level data.source
+      # omitted -> uses the explicitly selected top-level data.source
       source: "binance_vision"
       symbol: "BTC/USDT"
       timeframe: "1h"
@@ -262,12 +499,19 @@ data:
 `strategy.source_path` to the saved revision. These identity fields are managed
 by the service; callers need not supply them. `strategy.version` remains optional
 descriptive configuration, not the execution revision identifier.
+`strategy.display_name` is an optional human-readable name, separate from the
+internal ID; generated saves supply it from an explicit name or the outline.
+The saved config also contains resolved `research` provenance. Neither field is a
+constructor parameter, and changing a generated strategy's display name requires
+a new revision.
 
 Performance analysis uses QuantStats for return/risk metrics and VectorBT for
 closed-trade statistics. `periods_per_year` is the explicit annualization factor
 for observed UTC **daily returns**, independent of the strategy's bar timeframe:
 365 for this continuously traded crypto example, or an appropriate trading-day
-count for another market. Omitting it leaves annualized metrics unavailable.
+count for another market. In a direct execution config, omitting it leaves annualized
+metrics unavailable. The guided research resolver supplies or explicitly disables
+it according to the preceding policy before execution.
 `risk_free_rate` and `required_return` are annual decimal rates, converted to
 daily rates using that factor. Calendar aggregation uses observed dates; missing
 market data is not silently filled with zero returns. Maximum drawdown retains
@@ -315,304 +559,127 @@ data:
         path: "workspace/data/processed/btc_funding_rate_2025.parquet"
 ```
 
+Feature values join market bars on exact timestamps. Earlier matched values may
+fill subsequent gaps, but leading gaps remain missing rather than using later
+observations. Strategies must handle these missing values without backfilling
+from the future; unmatched feature timestamps do not seed the fill.
+
+For automatically managed DVOL, use `source: deribit` and omit both `path` and
+`raw_path`. Exact UTC query bounds and acquisition time determine reuse; changing
+the research period cannot reuse an unqueried range. A `raw_path` requires an
+explicit `path`. Existing explicit local files retain the join behavior above
+and do not automatically refresh when the period changes. See
+[Automatic DVOL Queries](run_artifacts.md#automatic-dvol-queries).
+
 ### Strategy Walk-Forward Settings
 
 The top-level YAML `validation` mapping configures strategy backtests through
 `WalkForwardConfig` and `WalkForwardValidator`. It is separate from the ML
-`train_model(validation=...)` tool described below: it does not select an ML
-scheme by name or infer a label horizon from an ML dataset.
+[`train_model(validation=...)` contract](ml_research.md#fold-validation-and-signal-interpretation):
+it does not select an ML scheme by name or infer a label horizon from an ML dataset.
 
-| Setting | Default | Effect |
+Only MCP `prepare_walk_forward` accepts optional
+`validation_config: WalkForwardConfig`. When supplied, it replaces the complete
+validation mapping for that execution, using schema defaults for omitted settings;
+it does not merge with the selected configuration. Omission or `null` preserves
+the selected validation settings, including a bundled walk-forward template where
+applicable. `prepare_backtest` and `prepare_optimization` reject this argument.
+The effective mapping is captured in the manifest without modifying the source
+revision, its validation evidence or current pointer.
+
+The mapping requires an explicit `mode`. Each mode accepts only its own fields;
+unused settings (even `null` or default-valued settings) are rejected rather than
+silently ignored. Obtain the generated `configuration` contract for the full schema.
+
+| Mode | Fields and defaults | Behavior |
 | --- | --- | --- |
-| `label_horizon` | `0` | A positive value declares how many source rows a training label looks ahead and enables the pre-fold label-overlap audit. Values below 1 leave that audit disabled with the plain splitter. |
-| `purged_split` | `false` | Selects the opt-in anchored purged splitter when true; it requires `label_horizon >= 1`. |
-| `embargo_bars` | `0` | Extra rows removed before each test window in addition to the label-horizon purge; used only when `purged_split` is true. |
-| `n_splits` | `1` | Number of automatic test folds; use a positive integer and enough data for nonempty windows. |
+| `automatic` | `n_splits: 1`, `train_ratio: 0.8`, `expanding: false` | Rolling or expanding windows from the loaded row count. |
+| `explicit` | Required `train_start`, `train_end`, `test_start`, `test_end` | Exactly one training/test pair of inclusive UTC calendar days. |
+| `purged` | `n_splits: 1`, required positive `label_horizon`, `embargo_bars: 0` | Anchored expanding windows with a label-horizon purge and optional extra gap. |
 
-With `purged_split: false`, all four `train_start`, `train_end`, `test_start`
-and `test_end` values select one explicit date split. Otherwise the plain
-splitter uses automatic windows with `train_ratio: 0.8` and `expanding: false`
-by default. Each boundary is an inclusive UTC calendar day, so the four dates
-are converted to UTC first (naive values are treated as UTC), then their time
-of day is discarded. Their UTC days must satisfy
-`train_start <= train_end < test_start <= test_end`: a train
-window ending on the day the test window starts would train on bars the test
-set also scores, so it is rejected. Supplying only some of the four fields is
-rejected as well, instead of silently falling back to automatic windows. The
-splitter re-checks the loaded frame, raising `WalkForwardSplitError` when the
-timestamps are not ascending, a window selects no rows, or the selected train
-and test rows share a bar.
-A positive `label_horizon` checks the selected windows before any fold's
-strategy fitting or backtest runs. If training labels reach the test window,
-the full validation raises `WalkForwardLeakageError`; this audit detects the
-problem without changing the windows. Thus setting only a positive horizon on
-adjacent plain train/test windows will block them rather than purge them.
-`embargo_bars` has no effect in this plain mode, including with explicit dates.
+All modes accept `target_metric: sharpe_ratio` for fold logging/summary, not as a
+strategy training objective. `automatic` and `explicit` also accept
+`label_horizon: 0`; zero disables the overlap audit, while a positive value declares
+how many source rows a training label looks ahead. Counts/horizons/embargo are
+integers (not booleans), counts are positive, horizons/embargo cannot be negative,
+and automatic `train_ratio` must be finite and strictly between zero and one.
+`purged_split` is removed: new YAML and MCP inputs must select `mode` explicitly.
+Previously saved result manifests remain readable without rewriting their settings
+or hashes; executing an old configuration requires preparing valid new settings.
 
-To remove overlapping training labels automatically, add this mapping at the
-root of a strategy YAML whose loaded history is long enough for all folds:
+Automatic `train_ratio` means the initial training window divided by that window
+plus one test window, before integer rounding. For `n` rows, `k` folds and ratio
+`r`, the initial training size is `floor(n * r / (r + k * (1 - r)))`, evaluated
+exactly from the decimal ratio saved in JSON before flooring. The remaining
+rows form `k` consecutive, nonoverlapping test windows through the last loaded
+row; boundaries divide those rows proportionally with integer floor, so test
+sizes differ by at most one. Rolling windows retain the initial training size;
+expanding windows retain training start at row zero. Each training window ends
+immediately before its test window. If any training or test window would be
+empty, splitting fails rather than dropping folds or unused tail rows.
+For 100 rows, 5 folds and ratio 0.8, training initially uses rows `[0, 44)` and
+tests cover `[44, 55)`, `[55, 66)`, `[66, 77)`, `[77, 88)`, `[88, 100)`.
+Re-running automatic configurations may change results compared with older
+versions that omitted the tail or rounded an integer boundary incorrectly;
+saved historical results are not rewritten.
+
+Explicit dates are converted to UTC (naive dates mean UTC), then their time of day
+is discarded. Their UTC days must satisfy
+`train_start <= train_end < test_start <= test_end`. All four dates are required.
+The complete UTC days must fit inside the requested research period; preparation
+rejects rather than clips or extends them. Bundled examples therefore end their
+backtest period at `23:59:59.999999`; a date-only research end still means midnight.
+The loaded frame must have ascending timestamps, nonempty windows and no shared
+train/test bars. Invalid data-dependent windows raise `WalkForwardSplitError`.
+
+A positive horizon audits all selected windows before fitting or scoring any fold.
+Overlapping labels raise `WalkForwardLeakageError`; automatic and explicit modes
+check without changing their windows. Adjacent windows with forward labels will
+therefore fail. To remove overlapping training labels automatically:
 
 ```yaml
 validation:
+  mode: purged
   n_splits: 3
   label_horizon: 5
   embargo_bars: 2
-  purged_split: true
   target_metric: "sharpe_ratio"
 ```
 
-The purged splitter divides the loaded rows into `n_splits + 1` contiguous,
-near-equal blocks. The first is training-only; each later block is tested once,
-using all preceding blocks as anchored training history after removing the
-`label_horizon + embargo_bars` gap immediately before its test window. In this
-full-validation splitter, explicit train/test dates, `train_ratio` and `expanding` do not control
-folds, even if present in the YAML. The schema still parses supplied dates as
-datetimes, but does not require all four or validate their order in purged mode.
-Omit those inactive settings to keep the
-request clear. The backtest's data bounds still determine the history supplied
-to the splitter.
+Purged mode divides the loaded rows into `n_splits + 1` contiguous near-equal blocks.
+The first is training-only; later blocks are tested once, with all preceding blocks
+as training history after removing `label_horizon + embargo_bars` rows immediately
+before the test window. It rejects explicit dates, `train_ratio` and `expanding`.
+The backtest's data bounds still determine the supplied history. Insufficient data,
+too many blocks or a gap leaving no training rows fail during formal execution.
+Schema validation cannot establish data-dependent coverage.
 
-`purged_split: true` with a missing, zero or negative horizon fails when the
-validator constructs its splitter. Purged splitting also rejects a nonpositive
-fold count, a negative embargo, a horizon at least as long as the input, too
-many blocks, or a gap that leaves no training rows. The YAML schema rejects
-unknown field names but does not enforce every numerical range or fold geometry;
-successful YAML parsing alone does not establish a usable validation run.
-The plain splitter's `label_horizon: 0` default is an audit opt-out, not evidence
-that a strategy's labels are safe. Declare the actual forward horizon when the
-strategy uses such labels. This gate audits row-window geometry, not arbitrary
-feature code or a strategy's independently constructed labels.
+Confirmation preparation checks code and configuration without loading historical
+data, building data-dependent folds, training or backtesting. The confirmation
+shows only the selected mode's effective settings. After approval, formal execution
+performs the complete pre-fold audit. Zero horizon is an audit opt-out, not proof
+that labels are safe. The audit checks row-window geometry, not arbitrary feature
+code or independently constructed labels. Declare the actual forward horizon.
 
-The MCP confirmation preflight uses the selected splitter on a bounded sample
-and runs only its first fold through `run_fold`. Purged mode ignores explicit
-dates, `train_ratio` and `expanding` here as in formal execution; it reports
-one tested fold out of `n_splits`, with a `single_fold_only` warning when more
-than one is configured. Plain explicit-date mode samples one train/test pair;
-plain automatic mode retains its ratio and expanding-window settings.
-The confirmation shows the effective mode and identifies inactive settings.
-
-Sample boundaries depend on the sampled history and need not equal full-run
-boundaries. Preflight does not execute the complete validator's pre-fold audit
-or establish that every formal fold can run. The full strategy walk-forward
-execution applies that gate before running its folds. A nonpositive horizon
-means the audit is disabled, not that labels are safe. This differs from the
-ML tool's timestamp/label-interval validation described below.
+This differs from the ML tool's
+[timestamp/label-interval validation](ml_research.md#fold-validation-and-signal-interpretation).
 
 ## ML Research Contract
 
-The ML MCP tools are a separate synchronous research interface. They select
-registered feature builders and estimators without generating a strategy,
-preparing an execution plan or starting a backtest worker. A saved model is not
-a runnable strategy revision and does not bypass the Python signal contract or
-strategy lifecycle. User workflow is documented in the
-[README](../README.md#研究機器學習訊號); file identities and persistence rules are in
-[ML Research Artifacts](run_artifacts.md#ml-research-artifacts).
-
-`get_ml_contract` returns schema version 1 discovery information: named feature
-sets with ordered columns, model kinds with default parameters, validation
-schemes, processor types, IC methods, quantile limits, calendar modes, missing
-policies and rankable metrics. Use these returned names rather than constructing
-arbitrary model classes. `processor_types` advertises domain building blocks
-only: `build_dataset`, `build_panel` and `train_model` do not accept or execute a
-processor pipeline. In particular, training does not implicitly fit a scaler
-because its name appears in discovery.
-
-### Dataset and Model Inputs
-
-`build_dataset` reads existing yearly OHLCV files for the requested symbol and
-timeframe, selecting available rows within the requested period. Missing yearly
-files or an empty selected period fail the request; success does not establish
-complete bar-by-bar coverage. Use `ensure_data` separately when a download is
-needed. Building a dataset does not download, refresh an old partial-year market
-cache or remove market files. The feature builder preserves rows and emits unavailable values
-during warm-up. The service computes `forward_return = close[t+horizon] /
-close[t] - 1` and `target = sign(forward_return)`, then drops incomplete feature
-or label rows and reports their count. `horizon` is a positive number of source
-bars, not elapsed calendar days. OHLCV and bookkeeping columns are not added to
-the model's declared feature list.
-
-Both `build_dataset` and `build_panel` pass their date bounds to
-`DataService.load_cached`. Bounds without a timezone are interpreted as UTC;
-bounds with an offset are converted to UTC. Rows are selected with
-`start_date <= timestamp <= end_date`, including both endpoints. A date-only
-`end_date: "2024-01-31"` therefore stops at `2024-01-31T00:00:00Z`, not at the
-end of January 31. For all hourly bars dated within January, use explicit bounds,
-for example these `build_dataset` arguments:
-
-```json
-{
-  "symbol": "BTC/USDT",
-  "timeframe": "1h",
-  "start_date": "2024-01-01T00:00:00Z",
-  "end_date": "2024-01-31T23:59:59.999999Z",
-  "feature_set": "returns",
-  "horizon": 1
-}
-```
-
-The selected end bounds the source bars, so trailing rows whose forward label
-needs later prices are still dropped. Reversed bounds fail; the loader does not
-extend them to obtain missing labels. This timestamp contract differs from a
-strategy walk-forward's explicit date split and optimization's inclusive UTC
-calendar-day bounds. Explicit walk-forward dates first convert offsets to UTC,
-then discard the time of day; the range is
-`UTC midnight of start day <= timestamp < UTC midnight after end day`.
-For example, `2024-01-02T03:00:00+08:00` names the entire January 1 UTC day.
-The confirmation document displays these effective UTC boundaries, including
-the exclusive upper bound, alongside the original settings.
-Do not copy the ML timestamp example into optimization, which accepts only
-`YYYY-MM-DD` boundaries.
-
-`build_panel` requires at least two distinct symbols. It sorts symbol identity,
-builds each symbol's features and labels independently, then aligns the labelled
-frames. `intersection` keeps common timestamps. `union` uses `missing_policy`:
-`drop` removes dates that any symbol cannot supply, `error` rejects gaps, and
-`forward_fill` carries prior observations up to `max_staleness` shared calendar
-positions (`null` leaves that carry unbounded). Leading gaps cannot be filled
-from future observations. Read the returned calendar coverage, dropped dates
-and filled-row counts; filled rows are carried observations, not new trades.
-`calendar.dropped_dates` and each `calendar.coverage[].missing` list contain at
-most the first 50 dates; `n_dropped_dates` and each `n_missing` remain exact.
-The saved manifest uses the same bounded calendar summary.
-
-`train_model(dataset_id, model_kind, parameters, validation, ...)` resolves
-effective model defaults plus declared parameter overrides; unknown parameter
-names are rejected. It trains only the dataset's ordered feature columns plus
-`target`. Standalone ML training uses the model's `random_state` parameter,
-independently of the top-level strategy YAML `random_seed`.
-Feature importance is sorted descending using each estimator's native
-`feature_importances_` values. It is not a common cross-framework scale or a
-universal gain measure.
-
-The final persisted artifact is fitted on every dataset row, and
-`in_sample_accuracy` evaluates those same training rows. Optional validation
-fits additional models for its folds; it does not replace the artifact with a
-fold model or persist an out-of-fold prediction stream. Preserve the returned
-validation evidence if it is needed later.
-
-MCP `predict` verifies the saved dataset and model blob, requires an exact ordered
-feature-column match, then returns one page of `signal` and `forward_returns` in
-dataset row order with their `model_id`, `dataset_id` and horizon. `offset` starts
-at zero; `limit` defaults to 100 and accepts 1–500. `n_rows` is the complete
-dataset count, not the page length; `next_offset=null` marks the final page.
-`MLService.predict` retains complete arrays for backend and Python callers.
-MCP evaluation does not require retrieving every preview page. Prediction does not establish
-whether the requested data or its label interval was used for fitting or
-parameter selection. Evaluating the final artifact on its training dataset is
-in-sample even when the training response includes validation scores. A separate
-test dataset must be reserved before selection, with training label intervals
-ending before that test period, to support a chronological out-of-sample claim.
-
-### Fold Validation and Signal Interpretation
-
-Omitting `validation` skips fold validation. A supplied scheme uses the saved
-label horizon for purging and an optional nonnegative `embargo` gap; callers
-cannot replace the dataset's horizon with a more convenient value.
-`n_folds` and `min_train_bars` must leave usable training and test data after
-exclusions; unsupported schemes or insufficient data fail the request.
-
-Folds are built on sorted distinct timestamps, not the panel's physical row
-order. Every symbol on one timestamp shares the same training/test role.
-`min_train_bars` counts distinct training timestamps, whereas returned
-`train_bars`, `test_bars`, `purged_bars` and `embargoed_bars` count dataset rows.
-The service retains each label's original `label_start` and `label_end` before
-feature-row removal or calendar alignment. In addition to the horizon-based
-gap, it excludes training dates whose label intervals touch the test interval;
-one symbol's overlap excludes that date for all symbols. This also checks test
-labels extending into the training window on the right in K-fold validation.
-Datasets without the label intervals must be rebuilt before validation.
-
-A panel containing forward-filled observations is rejected for fold validation:
-its carried label describes the original observation, not a new sample at the
-filled timestamp. Rebuild with `intersection` or `missing_policy="drop"` for
-validation. Such panels can still be fitted without validation and passed to
-`predict`; this is not evidence of an out-of-sample test.
-
-- `purged_walk_forward` expands training through dates before each test window.
-- `purged_kfold` trains on retained data outside each test window: later data for
-  the first fold, earlier data for the last, and available data on either side
-  for interior folds. This is retrospective cross-validation, not predictions
-  that could have been made at the test date.
-
-The response reports each fold's retained training/test rows, purged and
-embargoed rows, accuracy, IC, Rank IC and hit rate, plus the mean of available
-fold scores. Panel fold metrics are calculated separately in timestamp order
-for each symbol, then averaged across symbols with available values; rolling
-IC windows never cross from one symbol into another. Unavailable scores remain
-`null`. `artifact_trained_on: all_bars`
-distinguishes the final artifact from the fold models. `leakage_audit_clean`
-describes the implemented split and label-overlap checks only; it cannot prove
-that features, research choices or external inputs are free of future knowledge.
-
-MCP `evaluate_signal(model_id, dataset_id, window=60, n_quantiles=5, record=False)`
-evaluates a verified saved model on the complete single-symbol dataset. The
-backend produces the signal, obtains saved forward returns in the same row
-order and adopts the dataset horizon; the MCP input does not accept arrays or
-a caller-selected horizon. A preview's `offset` or `limit` never restricts
-evaluation. There must be enough observations for the chosen IC `window` and
-`n_quantiles` (2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
-prediction strata and simplified return summaries. These signal statistics are
-separate from backtest performance metrics and do not model transaction costs,
-slippage or order execution. Full-sample strata and their quantile means are
-descriptive comparisons, not fitted trading thresholds or out-of-sample evidence.
-Ties can reduce the actual number of strata; do not infer their count from the
-requested `n_bins` alone.
-
-The simplified long/short and long-only streams use thresholds computed only
-from earlier signals. The first `n_quantiles` observations are warm-up, and at
-least two distinct past signal values are needed. With few distinct signals,
-historical minimum/maximum select the tails; otherwise expanding quantiles do.
-Only original positions `0, horizon, 2*horizon, ...` can open a trade, so the
-holding intervals do not overlap. Other rows contribute zero. Cumulative values
-compound these holding-interval returns; means include the inactive rows.
-Returns are indexed by decision row, not realization time, and do not form a
-mark-to-market equity curve. A constant signal cannot form a long/short book and
-is rejected.
-
-The separate Python `MLService.evaluate_signal` accepts equal-length, finite
-numeric signal and forward-return arrays. Without a dataset ID, that caller is
-responsible for chronological single-asset alignment and the correct horizon;
-omission defaults to one bar. Whenever `dataset_id` is supplied, including by
-the MCP backend, evaluation requires a single-symbol dataset,
-all of its rows, exact saved forward returns in order, and a matching horizon
-(or omission to adopt the saved value), including when `record=False`.
-Dataset rows must be strictly chronological, and saved label end times must
-show non-overlapping holding intervals on the simulation grid. Datasets without
-label intervals must be rebuilt for evaluation.
-Panel evaluation is rejected; build a single-symbol dataset for evaluation.
-Do not concatenate different assets into one time series. `record=True`
-additionally requires the dataset ID for Python array callers.
-The MCP path verifies which saved model produced the signal; it does not prove
-a held-out evaluation. Python array callers and existing records may use a
-caller-declared `model_id` label. Recording and candidate-replacement semantics are defined in the
-[artifact contract](run_artifacts.md#recorded-signal-evaluations).
-`leaderboard` ranks only a metric with a declared direction and, by default,
-only matching measurement contexts. Its optional `dataset_id` filter selects a
-verified dataset version and checks that recorded data context matches its
-manifest; differences in evaluation settings still require compatible context.
-`allow_mixed=True` opts into incomparable
-contexts and must not be presented as a controlled comparison. Retain its
-`caveats`, skipped entries and candidate counts when interpreting the winner;
-trying more candidates increases selection bias.
-
-MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
-`top_k`. The complete filtered candidate set is compared and ranked before
-paging. `ranked` and `skipped` each return at most `limit` entries at the same
-offset; `n_ranked` and `n_skipped` describe their complete counts. Follow the
-shared `next_offset` until `null`, even if one list has no entries on a page.
-Mixed-context rejection reports the full context count, limited examples and
-filter guidance, not every context's text.
-
-Model prediction unpickles trusted Python objects. Generated-strategy import
-checks do not apply to those objects, and a matching hash is not a sandbox or
-proof of a trustworthy publisher. Do not load model files from an untrusted
-workspace.
+Standalone ML research has its own [input, validation and storage contract](ml_research.md).
+A saved model is not an executable strategy revision; strategy training
+prerequisites remain in [Training Before Scoring](#training-before-scoring).
 
 ## Lifecycle
 
-1. `save_strategy`: writes a new draft source/config revision and metadata,
-   returns its `revision_id`, and updates the current pointer. Even an identical
-   save creates a new revision; it does not inherit validation evidence.
+1. `save_strategy(code, yaml_config, research, strategy_id=None,
+   expected_revision_id=None, display_name=None)`: saves a new draft after resolving
+   research and checking config consistency. Omit `strategy_id` to allocate
+   `strategy_<uuid>` automatically. A supplied ID without an expected revision also
+   means creation and must have an unused namespace. Revising requires both IDs and
+   a matching current revision under the lifecycle lock. Successful saves return
+   `strategy_id` and `revision_id` and update that strategy's current pointer.
+   Even identical content creates a new revision without validation evidence.
 2. `validate_strategy`: runs syntax, static policy, restricted import checks,
    ruff, mypy, inheritance, constructor, and the shared signal-contract gate on
    a short fixture for the selected revision. It returns that `revision_id` and
@@ -623,19 +690,27 @@ workspace.
    marks the strategy runnable when it passes.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
-5. `prepare_backtest` / `prepare_walk_forward` / `prepare_optimization`: capture
-   an execution manifest, perform a bounded sample run, and prepare a plain-language
-   confirmation and HTML artifact. Only runnable or promoted generated strategies,
-   and promoted bundled strategies, are eligible. Preparation creates a plan,
+5. `save_research_evidence`: save the checked trading rules/formulas, parameter
+   descriptions, proposal origins and limitations. Use the host's actual web
+   capability for primary references; record only sources actually retrieved or
+   supplied. Without retrieval, label proposals unverified and clarify unsupported
+   ranges. A fixed set of alternatives does not authorize return optimization.
+6. `prepare_backtest` / `prepare_comparison` / `prepare_walk_forward` / `prepare_optimization`: resolve
+   the required research input, capture an execution manifest, check code and
+   configuration offline, and prepare a
+   plain-language confirmation and HTML artifact using the saved `evidence_id`.
+   Every effective parameter must have an origin; missing bindings return exact
+   targets and values for correction through a new record. Only runnable or promoted
+   generated strategies, and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
-6. Present `confirmation_summary` and a clickable link to the complete HTML,
+7. Present `confirmation_summary` and a clickable link to the complete HTML,
    then end the conversation turn. Wait for the user to read it and explicitly
    approve, decline or request changes in a later turn. Do not paste the full
-   settings, search grid or trial evidence into the conversation.
-7. `submit_execution_decision(plan_id, decision)` relays that decision:
+   settings, search grid or validation evidence into the conversation.
+8. `submit_execution_decision(plan_id, decision)` relays that decision:
    `approve` submits the captured manifest, `decline` cancels, and `revise` cancels
    with `confirmation_adjustment_requested`. Edits require a new plan, a fresh
-   trial and another user confirmation. Initial task instructions, silence,
+   code check and another user confirmation. Initial task instructions, silence,
    questions or ambiguous replies must not be treated as approval.
 
 The backend trusts the caller to relay the user's actual decision. It cannot
@@ -650,9 +725,32 @@ The lifecycle gate is enforced again at execution time inside `BacktestService`,
 so the CLI and subprocess workers cannot bypass it, and the config's `source_path`
 must match the selected revision's source.
 
+Strategy naming is optional. Supply a name through `display_name` or the YAML's
+`strategy.display_name`; if both are supplied, they must agree. When neither is
+supplied, saving uses the first line of the resolved outline, truncated to 80
+characters. The name is stored once in `strategy.display_name`, covered by the
+config hash and
+available in HTML technical details. Presentation titles remain model-authored
+page titles. `request_summary` is no longer a save input; metadata projects it
+from the resolved outline.
+
+Existing namespaces include immutable revisions, incomplete directories and legacy
+source, metadata or config files. Explicit creation collisions return
+`strategy_id_exists`; bundled IDs return `reserved_strategy_id`. Anonymous
+creation retries up to eight candidate IDs while checking each under its lifecycle
+lock, then returns `strategy_id_generation_failed`. None of these collisions
+revises the existing strategy. A stale expected revision returns
+`strategy_revision_conflict`; invalid revision contents or IDs return
+`strategy_revision_invalid`. Supplying an expected revision without a strategy ID
+returns `invalid_revision_request`. Research/config resolution errors return
+`invalid_research_spec`; syntax and YAML errors keep their specific save codes.
+Successful saving is not code validation: subsequent checks still return repairable
+diagnostics and determine executable status.
+
 Pass the `revision_id` returned by saving to get, validate, dry-run, promote,
-and execution tools. Omitting it selects current once at the start of that
-operation. Validation and dry-run persist evidence to that selected revision,
+and execution tools. Except for explicit research inheritance and revision saves,
+omitting it selects current once at the start of that operation. Validation and
+dry-run persist evidence to that selected revision,
 even if another save changes current while checks are running. A new draft B
 does not revoke revision A's evidence, and B cannot inherit it.
 
@@ -711,6 +809,10 @@ and checking a new revision, even if identity and parameters are unchanged.
 The comparison excludes the execution-managed `source_hash` and separately
 verifies that `source_path` resolves to the selected revision's source. Copy the
 saved config and apply market/date/cost changes outside the `strategy` section.
+Direct Python `apply_run_overrides` and supplied `apply_backtest_overrides` remove
+research provenance from the effective config because they do not resolve the
+new settings through research intake. The saved revision and its metadata remain
+unchanged; missing origins must not be presented as inherited user choices.
 MCP `prepare_backtest`, `prepare_walk_forward`, and `prepare_optimization` accept
 a `parameters` mapping;
 overrides apply to the captured effective base parameters, including constructor
@@ -725,6 +827,19 @@ their complete experiment parameters, which must satisfy constructor binding
 and the execution checks.
 The base source, YAML, lifecycle evidence and current pointer remain unchanged.
 Each run stores its own fixed parameters and constructor settings in its manifest.
+`prepare_comparison` instead accepts `candidates`: one to eight distinct ordered
+sets, each with `label`, `rationale` and a `parameters` override mapping. Labels
+are stripped of leading and trailing whitespace and must remain nonempty and
+unique across the comparison; outer whitespace cannot distinguish two labels.
+It has no global `parameters` argument. Research, selected revision, data, costs and seed
+are shared; each candidate freezes its complete effective constructor. All
+candidates pass the two synthetic contract fixtures before the whole bundle is
+presented for one approval. After approval, they use fresh strategies/engines and
+independent capital against one saved dataset snapshot. Fixed comparison performs
+no adaptive search or automatic winner selection. It supports ordinary backtest
+strategies only; training-required or walk-forward research uses its existing
+workflow. The report selector `comparison_job_id` retains all candidates and their
+outcomes, including failures or candidates that were never run.
 Short and long signal-contract fixtures check the effective generated execution
 settings at submission and execution, including when MCP `parameters` is omitted
 or `null`; a failure rejects the experiment without changing the revision's
@@ -745,23 +860,54 @@ dependencies, the engine environment, market data, or RNG state, and therefore
 does not guarantee fully reproducible results. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
 
-Every preparation requires `presentation` and `minimum_history_bars`; `sample_bars`
-defaults to 1024 and is bounded from 64 to 4096. Presentation has a `title`, `summary`,
+All four MCP preparation tools require an `evidence_id` returned by
+`save_research_evidence`;
+callers do not supply historical sample budgets or minimum-history declarations.
+The saved draft contains `presentation` with a `title`, `summary`,
 and `parameter_descriptions`, which maps the union of captured constructor and
 effective candidate leaves to a distinct readable `label`, a `description`, and
 optional `unit`. Keys are
 JSON pointers relative to `strategy_execution.constructor_kwargs`: for example,
 `/fast_period` for a generated strategy or `/config/k_period` for a bundled strategy.
-The confirmation builder rejects missing or extra descriptions. The assistant
-supplies this technical mapping; the user reviews readable names, values and units.
-Optional `backtest_overrides` capture execution costs and settings in the same plan.
+Research binding rejects missing or extra descriptions and incomplete provenance
+with `research_evidence_binding_invalid`. Save corrected evidence and prepare
+again using the new ID. The assistant supplies this technical mapping; the user
+reviews readable names, values and units.
 
-The preflight receipt records sampled date windows, checked paths, candidate/fold
-coverage, trade and execution-record counts, and limitations. Each sampled window
-must meet the declared minimum history. A zero-trade sample may pass its signal and
-engine checks, but the receipt says that the trading path was not exercised.
-Walk-forward and optimization samples cover only the reported fold and candidate;
-they do not establish that all later runs will pass. `get_execution_plan` reads the
+Evidence capacity is checked both when saving and after binding. The canonical
+JSON draft must fit within 512 KiB. Preparation allows at most 1,024 targets
+(optimization counts the base plus every search-axis option, not Cartesian
+trials) and 4,096 parameter bindings summed across targets. The complete expanded
+`BoundResearchEvidence`, including the saved record, resolved values and origins,
+must independently fit within 512 KiB. A draft can therefore save successfully
+but fail preparation. Reduce the proposed candidate/search options or the
+strategy's parameter structure, or shorten explanations to fit; retain complete
+descriptions and origins for every effective parameter. Never omit required
+bindings or silently split the user's requested comparison to evade these limits.
+Each captured parameter value and reference claim value must also be finite,
+acyclic JSON with at most 4,096 value nodes and depth 16 (root depth zero).
+Strings are limited to 4,000 characters and object keys to 512 characters.
+These checks apply independently of the overall byte/binding budgets; simplify
+an affected value or the strategy parameter structure before preparing again.
+The tool schema specifies additional field lengths, list counts and identifiers.
+
+Optional `backtest_overrides` capture other engine settings in the same plan;
+research supplies capital, costs and annualization choices.
+The short conversation summary uses `summary`, not `title` or the saved name,
+and includes resolved capital/cost sources and the annualization basis. HTML
+retains the title, saved name, complete settings, policy and inheritance details.
+The surrounding research draft also contains trading conditions, formulas, variable
+units, source claims and limitations. These client-authored explanations do not
+prove equivalence to the strategy's Python or ML implementation.
+
+The preflight receipt records offline code/configuration checks and the fixed
+synthetic signal fixtures used for generated strategies. It does not contain market
+windows, trades or performance. Preparation neither loads real market data nor
+runs the backtest engine or model training. Outside fixed comparisons, bundled strategies receive configuration,
+execution-mode and parameter checks without calling `fit` or `generate_signals`;
+training-dependent signal checks are explicitly deferred. The confirmation lists
+market availability, data-dependent fold geometry, training and trade/performance
+behavior as unverified until formal execution. `get_execution_plan` reads the
 fixed confirmation, while `cancel_execution_plan` cancels an unsubmitted plan.
 Changing requested parameters requires a new preparation and approval.
 
@@ -776,11 +922,15 @@ legacy metadata or blocking bundled/current strategies. These entries have
 paths or trust lifecycle evidence from legacy metadata. Missing, unreadable,
 non-UTF-8, or symlinked source/config files return `strategy_revision_invalid`;
 their legacy entry remains discoverable. Restore the files or provide replacement
-content to `save_strategy`, then validate/dry-run the newly returned revision.
+content to `save_strategy` with the required research input and a new identity
+(omit `strategy_id`, or choose another unused ID), then validate/dry-run the newly
+returned revision. The legacy namespace cannot be reused by a new save.
 Validate, dry-run, and promote reject legacy entries with
 `strategy_revision_required`; execution still rejects them as non-executable.
-A saved current revision supersedes its legacy discovery entry, leaving the old
-files untouched. Explicit revision lookups never fall back to legacy files.
+Recovery preserves the legacy files and discovery entry. If a workspace already
+has a current revision under a legacy ID, discovery uses that current revision;
+this does not authorize a new save to bypass namespace checks. Explicit revision
+lookups never fall back to legacy files.
 If a legacy entry shares a bundled ID, discovery lists both kinds and default
 source lookup/execution selects bundled. Read the legacy source explicitly with
 `get_strategy(strategy_id, legacy=true)` and save it under a different,
@@ -800,29 +950,40 @@ Static-policy or quality-gate errors stop validation before generated code is
 imported or executed.
 
 This is not a full process sandbox. `validate_strategy` and `dry_run_strategy`
-still import and execute generated Python to check class loading, constructor
-behavior, BaseStrategy inheritance, input immutability, signal values, and smoke
-dataframe output.
+import and execute generated Python in a supervised subprocess to check class
+loading, constructor behavior, BaseStrategy inheritance, input immutability,
+signal values, and smoke dataframe output. Each runtime check has a 60-second
+budget, excluding earlier static/quality checks and subsequent process cleanup;
+direct application callers may set `StrategyService(contract_timeout_seconds=...)`.
+An exception, abnormal exit such as `SystemExit`, or timeout produces failure
+diagnostics instead of ending or indefinitely blocking the calling service.
+Successful evidence must match the selected revision and fixture request.
+Temporary files are removed only after the supervisor's owned process group stops;
+unverified cleanup retains the directory and reports its path. Cleanup failure
+never produces passing validation/dry-run evidence. As with MCP preparation, this
+POSIX process-group guarantee excludes descendants that create a separate session
+and external forced termination of the supervisor; it is not an OS isolation boundary.
 
 Preparation is another code-execution boundary. MCP preparation runs under a
 supervised subprocess with a 60-second budget covering imports, constructor/default
-capture, generated signal-contract checks, sample engine execution and serialization.
-`StrategyLoader.resolve_execution` and `BacktestService.prepare_execution` load
+capture, generated signal-contract checks, parameter binding and manifest serialization.
+`StrategyLoader.resolve_execution` and `BacktestService.capture_execution` load
 generated module-level Python and create strategy instances. Generated strategies
 also run 80-row and 240-row contract fixtures with the captured settings, including
-when `parameters` is omitted or `null`. Optimization checks the captured base and
-the sampled candidate. Module-level code can execute more than once. These actions
+when `parameters` is omitted or `null`. Optimization checks signals for the captured
+base and validates every candidate's parameter binding; it does not run candidate
+signals, engines or performance calculations. Module-level code can execute more than once. These actions
 can have effects even when preparation fails without creating a formal job.
 
-The supervised timeout and process cleanup bound the sample attempt; they do not
-isolate filesystem or network access. Validation, dry-run, and direct Python/CLI
-preparation continue to execute generated Python in their calling process. A
+The supervised timeout and process cleanup bound the program checks; they do not
+isolate filesystem or network access. Direct Python/CLI preparation continues
+to execute generated Python in its calling process. A
 workspace path is an output location, not a security boundary.
 
 For scheduled jobs, workers later repeat the generated execution-contract checks,
 then construct and execute the strategy using the captured settings; generated
 optimization candidates also undergo these checks before their trial runs.
-These execution steps are separate from validation, dry-run and sample checks.
+These execution steps are separate from validation, dry-run and plan preparation.
 The approval gate controls formal submission; it does not make earlier generated
 code execution safe. None of these checks provides a process sandbox. Generated
 strategies must therefore be reviewed as runtime code at all of these boundaries

@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 import pytest
+import yaml
 from pydantic import create_model
+from tests.research_fixtures import research_for_config, with_fixture_market_source
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
@@ -189,6 +191,34 @@ def test_run_raw_config_simple_backtest_serializes_metrics(tmp_path: Path) -> No
     manifest.verify()
 
 
+@pytest.mark.parametrize(
+    ("actual_timeframe", "declared_timeframe", "declared_symbol"),
+    [("3h", "1h", "BTC/USDT"), ("1h", "3h", "BTC/USDT"), ("1h", "1h", "AAPL")],
+)
+def test_direct_run_rejects_market_declarations_that_differ_from_actual_request(
+    tmp_path: Path,
+    actual_timeframe: str,
+    declared_timeframe: str,
+    declared_symbol: str,
+) -> None:
+    service, data_service, _loader, _strategy = _service(tmp_path)
+    config = _raw_config(
+        data={
+            "requirements": {
+                "market": {
+                    "source": "yahoo_finance",
+                    "symbol": declared_symbol,
+                    "timeframe": declared_timeframe,
+                }
+            }
+        }
+    )
+    config["backtest"]["timeframe"] = actual_timeframe
+    with pytest.raises(ValueError, match="symbol/timeframe must match backtest"):
+        service.run_raw_config(config)
+    assert data_service.loads == []
+
+
 def test_serialization_retains_metrics_outside_the_summary(tmp_path: Path) -> None:
     service, _data, _loader, _strategy = _service(tmp_path)
     metrics = {
@@ -210,6 +240,7 @@ def test_run_raw_config_walk_forward_uses_validation_section(tmp_path: Path) -> 
     service, _data_service, _strategy_loader, strategy = _service(tmp_path, rows=40)
     raw_config = _raw_config(
         validation={
+            "mode": "automatic",
             "n_splits": 2,
             "train_ratio": 0.5,
             "target_metric": "total_return",
@@ -222,7 +253,15 @@ def test_run_raw_config_walk_forward_uses_validation_section(tmp_path: Path) -> 
     assert run.pipeline.mode == "walk_forward"
     assert len(run.pipeline.fold_results) == 2
     assert run.metrics["n_folds"] == 2
-    assert strategy.fit_lengths == [10, 10]
+    # Forty rows split into an initial 13-row train and 13/14-row test windows.
+    assert strategy.fit_lengths == [13, 13]
+    assert [fold.test_start for fold in run.pipeline.fold_results] == [
+        pd.Timestamp("2024-01-01 13:00", tz="UTC"),
+        pd.Timestamp("2024-01-02 02:00", tz="UTC"),
+    ]
+    assert run.pipeline.fold_results[-1].test_end == pd.Timestamp(
+        "2024-01-02 15:00", tz="UTC"
+    )
 
 
 def _gate_service(tmp_path: Path) -> StrategyService:
@@ -254,10 +293,12 @@ def test_run_raw_config_rejects_unknown_strategy(tmp_path: Path) -> None:
 
 def test_run_raw_config_rejects_draft_generated_strategy(tmp_path: Path) -> None:
     strategy_service = _gate_service(tmp_path)
+    config = _raw_config(strategy={"id": "fixture", "class_name": "Fixture"})
     saved = strategy_service.save_draft(
-        "fixture",
         "class Fixture:\n    pass\n",
-        "strategy:\n  class_name: Fixture\n",
+        with_fixture_market_source(yaml.safe_dump(config)),
+        research_for_config(config),
+        strategy_id="fixture",
     )
     assert saved.success is True
     service = _stub_backtest_service(tmp_path, strategy_service)
@@ -296,7 +337,7 @@ def test_run_manifest_uses_captured_defaults_in_real_strategy(
     )
     config = _raw_config(strategy={"id": "kd_crossover", "parameters": {}})
     if walk_forward:
-        config["validation"] = {"n_splits": 2, "train_ratio": 0.5}
+        config["validation"] = {"mode": "automatic", "n_splits": 2, "train_ratio": 0.5}
     manifest = service.prepare_execution(
         config, kind="walk_forward" if walk_forward else "backtest"
     )
@@ -349,6 +390,7 @@ backtest:
   end_date: "2024-01-02"
   init_cash: 10000.0
 validation:
+  mode: automatic
   n_splits: 1
 """,
         encoding="utf-8",
@@ -405,7 +447,7 @@ def test_walk_forward_manifest_fixes_mode_and_validation_defaults(
     tmp_path: Path,
 ) -> None:
     service, _data, _loader, _strategy = _service(tmp_path, rows=40)
-    config = _raw_config(validation={"n_splits": 2})
+    config = _raw_config(validation={"mode": "automatic", "n_splits": 2})
     manifest = service.prepare_execution(config, kind="walk_forward")
     config.pop("validation")
 
@@ -473,12 +515,10 @@ def test_prepared_manifest_resolves_data_locations_before_environment_changes(
     assert data["raw_dir"] == str(tmp_path / "relative" / "raw")
     assert data["processed_dir"] == str(tmp_path / "relative" / "processed")
     dvol, custom = data["requirements"]["features"]
-    assert dvol["path"] == str(
-        tmp_path / "initial-data" / "processed" / "btc_dvol_1h_2024_2024.parquet"
-    )
-    assert dvol["raw_path"] == str(
-        tmp_path / "initial-data" / "processed" / "btc_dvol_1h_2024_2024.csv"
-    )
+    # Automatic feature queries use the already fixed data roots, retaining
+    # automatic coverage checks instead of becoming an unchecked local file.
+    assert dvol["path"] is None
+    assert dvol["raw_path"] is None
     assert custom["path"] == str(tmp_path / "features" / "sentiment.parquet")
 
 

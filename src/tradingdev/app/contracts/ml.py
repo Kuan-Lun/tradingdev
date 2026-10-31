@@ -39,6 +39,22 @@ class ValidationSchemeSummary(ContractModel):
     description: str
 
 
+class RollingSchemeSummary(ContractModel):
+    """A rolling retraining geometry a bundled strategy may enable by name.
+
+    Listed whether or not any strategy enables it: the menu describes what can
+    be declared, while the strategy's own ``rolling_gen.enabled`` decides
+    whether the classic retraining loop is replaced.
+    """
+
+    name: str
+    description: str
+    rtype: str
+    """``ROLL_SD`` slides a fixed-length window; ``ROLL_EX`` expands one."""
+    default_step: int | None
+    """Cadence when the strategy declares none; null follows its own interval."""
+
+
 class MlContractResponse(ContractModel):
     """The full enumerable ML vocabulary; the menu for LLM-driven selection."""
 
@@ -47,6 +63,7 @@ class MlContractResponse(ContractModel):
     feature_sets: list[FeatureSetSummary]
     model_kinds: list[ModelKindSummary]
     validation_schemes: list[ValidationSchemeSummary]
+    rolling_schemes: list[RollingSchemeSummary]
     processor_types: list[str]
     ic_methods: list[str]
     n_quantiles_range: list[int]
@@ -90,6 +107,8 @@ class RecordedEvaluation(ContractModel):
     context: str
     n_candidates: int
     """How many candidates are now recorded; the size of the comparison."""
+    signal_fingerprint: str
+    """Hash of the evaluated signal; compare it with a re-run to check reproduction."""
 
 
 class SignalEvaluationResponse(ContractModel):
@@ -97,6 +116,12 @@ class SignalEvaluationResponse(ContractModel):
 
     success: Literal[True]
     evaluation_id: str
+    signal_fingerprint: str
+    """Hash of the evaluated signal values in dataset row order.
+
+    Stored separately from entry identity for modelled candidates. Ad-hoc
+    candidates without a model ID also include it in their entry identity.
+    """
     n_observations: int
     horizon: int
     window: int
@@ -120,18 +145,37 @@ class PredictionEvaluationResponse(SignalEvaluationResponse):
 
 
 class LeaderboardRow(ContractModel):
-    """One placed candidate and the headline numbers behind its rank."""
+    """One placed candidate and the headline numbers behind its rank.
+
+    The row is self-describing: the evaluation settings it was measured under,
+    the candidate's own hyperparameters and the hash of its signal all travel
+    with the metric, so a parameter surface or a reproduction check needs no
+    second lookup.
+    """
 
     rank: int
     entry_id: str
     label: str
     model_id: str
     dataset_id: str
+    horizon: int
+    window: int
+    n_quantiles: int
+    parameters: dict[str, JsonValue]
+    """Fitted hyperparameters when available; empty does not imply defaults."""
+    signal_fingerprint: str
+    """Hash of the signal this row was measured on; empty on older records."""
     value: float
     tied: int
     """How many entries share this rank."""
     n_observations: int
-    summary: dict[str, float]
+    summary: dict[str, float | None]
+    """Headline metrics; ``None`` marks an unavailable or non-finite score.
+
+    The ranked metric is finite by definition, but the same candidate can have
+    failed on another one. Keeping that key with a null says so; dropping it
+    would hide the failure behind a shorter list.
+    """
 
 
 class LeaderboardSkipped(ContractModel):
@@ -140,6 +184,15 @@ class LeaderboardSkipped(ContractModel):
     entry_id: str
     label: str
     reason: str
+    horizon: int
+    window: int
+    n_quantiles: int
+    """The settings this candidate was measured under.
+
+    Reported so a failed run keeps its coordinates on the parameter grid.
+    Without them the surviving points look adjacent, and a slope or flatness
+    computed over them would be wrong.
+    """
 
 
 class LeaderboardResponse(ContractModel):
@@ -158,6 +211,12 @@ class LeaderboardResponse(ContractModel):
     n_ranked: int
     """Candidates actually placed; the size of the comparison that decided."""
     context: str
+    parameter_axes: dict[str, list[int]]
+    """Every observed value of horizon, window and n_quantiles.
+
+    The grid coordinates behind the ranking: when an axis holds more than one
+    value the rows span a parameter surface rather than one measurement.
+    """
     ranked: list[LeaderboardRow]
     skipped: list[LeaderboardSkipped]
     caveats: list[str]
@@ -215,6 +274,8 @@ class PanelSummary(ContractModel):
     """A built multi-symbol panel dataset and the calendar behind it."""
 
     dataset_id: str
+    source: str
+    market_type: str | None
     symbols: list[str]
     timeframe: str
     start_date: str
@@ -254,6 +315,8 @@ class DatasetSummary(ContractModel):
     """A built, labelled feature dataset and how it was produced."""
 
     dataset_id: str
+    source: str
+    market_type: str | None
     symbol: str
     timeframe: str
     start_date: str
@@ -375,6 +438,8 @@ class PredictionSummary(ContractModel):
     signal: list[float]
     forward_returns: list[float]
     """Preview returns aligned with signal; evaluate_signal uses all saved rows."""
+    signal_fingerprint: str
+    """Hash of the complete signal, not only the returned page."""
 
 
 class PredictionResponse(ContractModel):

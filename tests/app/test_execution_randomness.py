@@ -52,7 +52,7 @@ def test_service_replays_seeded_constructor_fit_and_signals(
     )
     config = _raw_config(random_seed=42)
     if walk_forward:
-        config["validation"] = {"n_splits": 2, "train_ratio": 0.5}
+        config["validation"] = {"mode": "automatic", "n_splits": 2, "train_ratio": 0.5}
     service.run_raw_config(config, walk_forward=walk_forward)
     first = events.copy()
     assert first[0][0] == "constructor"
@@ -128,7 +128,7 @@ def test_trial_streams_do_not_depend_on_prior_trials_or_execution_transport(
         strategy,
         execution,
         config.model_dump(),
-        data.dataset.frame.to_json(orient="split"),
+        data.dataset.frame,
         {},
         "total_return",
         ParallelConfig().model_dump(),

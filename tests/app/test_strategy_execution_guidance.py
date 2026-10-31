@@ -8,16 +8,17 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from tests.integration.execution_fixtures import research_arguments
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.preflight_service import PreflightError, PreflightService
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.strategies.capabilities import StrategyExecutionModeError
@@ -51,6 +52,8 @@ def _arguments(strategy_id: str, kind: str) -> dict[str, Any]:
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif kind == "walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
     return arguments
@@ -210,9 +213,7 @@ def test_preflight_rejects_malformed_execution_guidance_and_cleans_files(
     monkeypatch.setattr(ProcessRunner, "run_module", run)
     request = PreflightRequest(
         kind="backtest",
-        arguments=_arguments("quantile_volume", "backtest"),
-        minimum_history_bars=20,
-        sample_bars=128,
+        arguments=research_arguments(_arguments("quantile_volume", "backtest")),
     )
     with pytest.raises(PreflightError) as caught:
         PreflightService(workspace).prepare(request)

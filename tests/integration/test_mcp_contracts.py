@@ -8,7 +8,10 @@ import pytest
 from jsonschema import Draft202012Validator, ValidationError, validate
 from mcp import ClientSession
 
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import (
+    research_arguments,
+    research_input,
+)
 
 if TYPE_CHECKING:
     from mcp_types import ListToolsResult, PaginatedRequestParams
@@ -36,6 +39,9 @@ _READ_ONLY_TOOLS = {
     "get_run_executions",
     "get_run_account_history",
     "get_report_sections",
+    "get_research_notes",
+    "get_research_archive",
+    "get_run_diagnostics",
     "compare_runs",
     "list_artifacts",
     "get_artifact",
@@ -49,12 +55,14 @@ _READ_ONLY_TOOLS = {
 # intentionally independent of the server's annotation helper.
 _MUTATING_HINTS = {
     "save_strategy": (False, True, False, False),
+    "save_research_evidence": (False, False, False, False),
     "validate_strategy": (False, True, False, True),
     "dry_run_strategy": (False, True, False, True),
     "promote_strategy": (False, True, True, False),
     "cleanup_strategy_drafts": (False, True, True, False),
     "ensure_data": (False, True, False, True),
     "prepare_backtest": (False, False, False, True),
+    "prepare_comparison": (False, False, False, True),
     "prepare_walk_forward": (False, False, False, True),
     "prepare_optimization": (False, False, False, True),
     "get_job_status": (False, True, True, False),
@@ -63,6 +71,8 @@ _MUTATING_HINTS = {
     "cancel_job": (False, True, True, False),
     "record_feature_request": (False, False, False, False),
     "generate_report": (False, False, True, False),
+    "save_research_note": (False, True, False, False),
+    "export_research_note": (False, False, True, False),
     # Recording can replace an evaluation; dataset/panel builds can evict
     # feature caches, and training rewrites stored model artifacts. Stable
     # identities do not remove these operations' destructive side effects.
@@ -187,7 +197,7 @@ async def test_application_errors_follow_advertised_output_schemas(
         "timeframe": "1h",
         "start_date": "2024-01-01",
         "end_date": "2024-01-08",
-        **execution_options({}),
+        "evidence_id": "0" * 32,
     }
     failures: list[tuple[str, dict[str, Any], str, object]] = [
         (name, missing_strategy, "success", False)
@@ -229,21 +239,25 @@ async def test_application_errors_follow_advertised_output_schemas(
                 "success",
                 False,
             ),
-            ("prepare_backtest", run_arguments, "success", False),
-            ("prepare_walk_forward", run_arguments, "success", False),
+            ("prepare_backtest", research_arguments(run_arguments), "success", False),
+            (
+                "prepare_walk_forward",
+                research_arguments(run_arguments),
+                "success",
+                False,
+            ),
             (
                 "prepare_optimization",
                 {
                     **missing_strategy,
-                    "symbol": "BTC/USDT",
-                    "timeframe": "1h",
+                    "research": research_input(end_date="2024-01-08T23:59:59.999999"),
                     "param_ranges": {"fast_period": [3, 5]},
                     "optimization_metric": "sharpe_ratio",
                     "train_start": "2024-01-01",
                     "train_end": "2024-01-03",
                     "test_start": "2024-01-04",
                     "test_end": "2024-01-08",
-                    **execution_options({}),
+                    "evidence_id": "0" * 32,
                 },
                 "success",
                 False,
@@ -254,6 +268,7 @@ async def test_application_errors_follow_advertised_output_schemas(
                     "strategy_id": "invalid_strategy",
                     "code": "def broken(:",
                     "yaml_config": "strategy: {}",
+                    "research": research_input(),
                 },
                 "success",
                 False,
@@ -299,10 +314,16 @@ async def test_cleanup_previews_then_deletes_only_explicit_unused_drafts(
         arguments = {
             "strategy_id": "cleanup_fixture",
             "code": "class Fixture: pass\n",
-            "yaml_config": "strategy:\n  class_name: Fixture\n",
+            "yaml_config": (
+                "strategy:\n  class_name: Fixture\n"
+                "data:\n  source: binance_vision\n  market_type: futures/um\n"
+            ),
+            "research": research_input(),
         }
         first = await client.call("save_strategy", **arguments)
-        current = await client.call("save_strategy", **arguments)
+        current = await client.call(
+            "save_strategy", **arguments, expected_revision_id=first["revision_id"]
+        )
         assert first["success"] and current["success"]
         preview = await client.call(
             "cleanup_strategy_drafts", strategy_id="cleanup_fixture"

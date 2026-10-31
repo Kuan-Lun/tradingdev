@@ -17,6 +17,11 @@ from tradingdev.adapters.execution.process_runner import (
 )
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.preflight_service import PreflightError, PreflightService
+from tradingdev.domain.preflight import (
+    ComparisonPreflightReceipt,
+    PreflightReceipt,
+    PreflightRequest,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -88,11 +93,14 @@ def test_bounded_runner_stops_group_on_success_failure_and_timeout(
         ("success", "backtest"),
         ("success", "walk_forward"),
         ("success", "optimization"),
+        ("success", "comparison"),
         ("exception", "backtest"),
+        ("exception", "comparison"),
         ("timeout", "backtest"),
+        ("timeout", "comparison"),
     ],
 )
-def test_real_preflight_parent_removes_sample_workspace_after_worker_exit(
+def test_real_preflight_parent_removes_validation_workspace_after_worker_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     outcome: str,
@@ -101,9 +109,21 @@ def test_real_preflight_parent_removes_sample_workspace_after_worker_exit(
     workspace, request = make_preflight_fixture(
         tmp_path,
         monkeypatch,
-        kind=kind,
+        kind="backtest" if kind == "comparison" else kind,
         failure=None if outcome == "success" else outcome,
     )
+    if kind == "comparison":
+        arguments = request.model_dump(mode="json")["arguments"]
+        parameters = arguments.pop("parameters", {"threshold": 0.01})
+        arguments["candidates"] = [
+            {"label": "Base", "rationale": "Reference", "parameters": {}},
+            {
+                "label": "Second",
+                "rationale": "Fixed proposal",
+                "parameters": parameters,
+            },
+        ]
+        request = PreflightRequest(kind="comparison", arguments=arguments)
     temporary = tmp_path / "preflight"
     temporary.mkdir()
     monkeypatch.setattr(
@@ -114,13 +134,22 @@ def test_real_preflight_parent_removes_sample_workspace_after_worker_exit(
     )
     if outcome == "success":
         result = service.prepare(request)
-        assert 1 <= result.receipt.sample_bars_used <= 128
+        if kind == "comparison":
+            assert isinstance(result.receipt, ComparisonPreflightReceipt)
+            assert len(result.receipt.candidates) == 2
+            assert all(
+                child.receipt.synthetic_fixture_rows == [80, 240]
+                for child in result.receipt.candidates
+            )
+        else:
+            assert isinstance(result.receipt, PreflightReceipt)
+            assert result.receipt.synthetic_fixture_rows == [80, 240]
         assert result.prepared.manifest.manifest_hash == result.receipt.manifest_hash
     else:
         with pytest.raises(PreflightError) as caught:
             service.prepare(request)
         assert caught.value.code == (
-            "preflight_timeout" if outcome == "timeout" else "preflight_failed"
+            "preflight_timeout" if outcome == "timeout" else "invalid_execution_request"
         )
     assert not temporary.exists()
     assert list(workspace.runs.iterdir()) == []

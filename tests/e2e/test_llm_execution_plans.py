@@ -10,6 +10,7 @@ external market-data access or a real human interface.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
@@ -23,13 +24,24 @@ from tests.e2e.codex_harness import run_codex
 from tests.e2e.conversation import ModelTurn
 from tests.e2e.conversation_user import ObservedPlanUser, review_text
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
+from tests.e2e.research_evidence import assert_saved_research
 from tests.e2e.strategy_scenarios import market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
-from tests.integration.execution_fixtures import execution_options
+from tests.e2e.workflow_research import (
+    assert_research_matches_config,
+    research_values,
+)
+from tests.integration.execution_fixtures import (
+    confirmation_presentation,
+    execution_evidence_draft,
+)
 from tests.integration.mcp_harness import temporary_mcp_workspace
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
+from tests.research_fixtures import research_for_config
 from tradingdev.domain.execution import ExecutionManifest
+from tradingdev.domain.preflight import PreflightReceipt
+from tradingdev.domain.research import NewResearchSpec, research_payload
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
+from tradingdev.domain.validation.config import parse_walk_forward_config
 
 if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPClient, MCPWorkspace
@@ -43,13 +55,7 @@ _WF_VALIDATION = {
     "n_splits": 2,
     "label_horizon": 5,
     "embargo_bars": 2,
-    "purged_split": True,
-    "train_start": "2024-01-06",
-    "train_end": "2024-01-05",
-    "test_start": "2024-01-05",
-    "test_end": "2024-01-03",
-    "train_ratio": 0.6,
-    "expanding": False,
+    "mode": "purged",
 }
 
 
@@ -61,10 +67,24 @@ def _arguments(kind: PlanKind, revision_id: str | None) -> dict[str, Any]:
     args: dict[str, Any] = {
         "strategy_id": _strategy_id(kind),
         "revision_id": revision_id,
-        "backtest_overrides": _COSTS,
-        **_MARKET,
+        "research": {"kind": "inherit_selected_revision"},
     }
     if kind == "optimization":
+        args["research"] = research_payload(
+            NewResearchSpec.model_validate(
+                {
+                    "kind": "new",
+                    "strategy_outline": "比較 KD 指標不同週期的買賣規則",
+                    **_MARKET,
+                    "start_date": "2024-01-01",
+                    "end_date": "2024-01-08T23:59:59.999999Z",
+                    "init_cash": 10000,
+                    "fees": 0,
+                    "slippage": 0,
+                    "annualization": 365,
+                }
+            )
+        )
         args.update(
             param_ranges={"k_period": [9, 14]},
             optimization_metric="total_return",
@@ -73,12 +93,12 @@ def _arguments(kind: PlanKind, revision_id: str | None) -> dict[str, Any]:
             test_start="2024-01-04",
             test_end="2024-01-08",
         )
-    else:
-        args.update(start_date="2024-01-01", end_date="2024-01-08")
     return args
 
 
-async def _seed_walk_forward(client: MCPClient) -> str:
+async def _seed_walk_forward(
+    client: MCPClient, *, validation: dict[str, Any] | None = None
+) -> str:
     """Persist a genuinely validated/runnable fixture before involving the model."""
     contract = (await client.call("get_strategy_contract", section="example"))[
         "content"
@@ -88,14 +108,20 @@ async def _seed_walk_forward(client: MCPClient) -> str:
     config["backtest"].update(
         **_MARKET, **_COSTS, start_date="2024-01-01", end_date="2024-01-08"
     )
-    config["validation"] = _WF_VALIDATION.copy()
+    config["validation"] = (
+        _WF_VALIDATION.copy() if validation is None else validation.copy()
+    )
     config["random_seed"] = 42
     saved = await client.call(
         "save_strategy",
         strategy_id=_WF_STRATEGY,
         code=contract["example_strategy_code"],
         yaml_config=yaml.safe_dump(config),
-        request_summary="已驗證的雙分段 SMA 測試策略。",
+        research=research_payload(
+            research_for_config(
+                config, strategy_outline="已驗證的雙分段 SMA 測試策略。"
+            )
+        ),
     )
     assert saved["success"], saved
     revision_id = str(saved["revision_id"])
@@ -118,8 +144,8 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
         "樣本外測試 2024-01-04 至 2024-01-08。"
         if kind == "optimization"
         else "已完成驗證與 dry-run 的生成 SMA 策略，執行 walk-forward。"
-        "保持現有 validation：purged_split=true、n_splits=2、label_horizon=5、"
-        "embargo_bars=2，以及不生效的指定日期、train_ratio、expanding 設定；"
+        "保持現有 validation：mode=purged、n_splits=2、label_horizon=5、"
+        "embargo_bars=2；"
         "策略參數與 random_seed=42 也保持原值，"
         "整體期間 2024-01-01 至 2024-01-08。"
     )
@@ -133,9 +159,12 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
     return f"""透過 TradingDev MCP 完成{description}
 策略 strategy_id={_strategy_id(kind)}，revision_id={revision_id!r}。
 先 get_strategy 讀取目前策略原始碼與 YAML；不要 save 或修改策略。
-使用 prepare_{kind}，BTC/USDT、1h，backtest_overrides={json.dumps(_COSTS)}。
-minimum_history_bars=20、sample_bars=128；全部行情已在快取，不需下載。
-presentation 提供繁體中文 title、summary、parameter_descriptions。
+使用 prepare_{kind}，research如下：
+{json.dumps(_arguments(kind, revision_id)["research"], ensure_ascii=False)}
+成本只透過 research 設定，不放進 backtest_overrides；修改費用時也在 research 明示。
+確認前只做離線程式驗證；正式執行所需行情已在快取，不需下載。
+先依 evidence 契約保存研究說明，再以 evidence_id 準備計畫。
+研究說明中的 presentation 提供繁體中文 title、summary、parameter_descriptions。
 每個有效建構子參數含預設值都要白話 label、description、unit。
 參數鍵為 JSON pointer：內建 KD 用 /config/k_period 等 /config/*；
 生成 SMA 用 /fast_period、/slow_period。請依讀到的設定自行完整撰寫說明。
@@ -143,8 +172,8 @@ presentation 提供繁體中文 title、summary、parameter_descriptions。
 取得 success=true/status=ready 後，將 confirmation_summary 逐行原文引用，
 建議每行加 > 作為 Markdown 引用；只可調整排版，
 不可改寫、刪除欄名、值、單位或訓練／測試角色。
-摘要已由後端完成，不要再摘要。引用外另行用 [閱讀確認單](<FULL_HTML_PATH>) 提供連結，
-把 FULL_HTML_PATH 替換為工具回覆 html_path 的實際完整值；角括號可保留空白路徑。
+摘要已由後端完成，不要再摘要。引用外另行逐字貼上工具回覆的 confirmation_link，
+核對連結目的地為 html_path；不要自行組合或改寫識別碼與路徑。
 連結放在一般 Markdown 文字行，不放 code block，不加 file:// 或自行創造其他 URI 前綴。
 然後結束本回合等待我回覆。一般解釋及回答問題可用自己的表達方式。
 目前尚未同意正式執行，不可在第一回合呼叫 submit_execution_decision。
@@ -153,7 +182,8 @@ presentation 提供繁體中文 title、summary、parameter_descriptions。
 再次結束回合等待確認。模糊回覆須澄清，不可當成同意。
 持續 get_job_status 直到 done，再 get_run 查同一 run_id。
 {queries}
-最後 list_artifacts。必須取得全部結果才結束，只回覆「完成」與 run_id。
+最後以同一 run_id 呼叫 list_artifacts(run_id=該結果的 run_id)，確認該結果的產物。
+必須取得全部結果才結束，只回覆「完成」與 run_id。
 只用 MCP 工具，不用 shell、不直接改檔。不建立第二次正式執行。
 """
 
@@ -168,13 +198,77 @@ def _successful(calls: list[ToolCall], name: str) -> list[tuple[int, ToolCall]]:
     ]
 
 
+def _assert_selected_research(
+    calls: list[ToolCall],
+    prepare_index: int,
+    approval: ObservedPlanUser,
+    revision_id: str | None,
+) -> None:
+    """Bind reused values to the actual fixture revision, not the prepared request."""
+    assert isinstance(revision_id, str) and revision_id
+    directory = (
+        approval.workspace.workspace
+        / "generated_strategies"
+        / _WF_STRATEGY
+        / "revisions"
+        / revision_id
+    )
+    config_text = (directory / "config.yaml").read_text()
+    metadata = json.loads((directory / "metadata.json").read_text())
+    assert metadata["strategy_id"] == _WF_STRATEGY
+    assert metadata["revision_id"] == revision_id
+    assert hashlib.sha256(config_text.encode()).hexdigest() == metadata["config_hash"]
+    assert any(
+        index < prepare_index
+        and call.arguments.get("strategy_id") == _WF_STRATEGY
+        and call.result.get("strategy_id") == _WF_STRATEGY
+        and call.result.get("revision_id") == revision_id
+        and call.result.get("yaml_config") == config_text
+        for index, call in _successful(calls, "get_strategy")
+    ), "The model must read the selected revision's exact saved configuration"
+    selected_config = yaml.safe_load(config_text)
+    expected = research_values(selected_config, context="Selected revision YAML")
+    for phase in ("validation", "dry_run"):
+        checked = metadata[phase]
+        assert checked["success"] and checked["revision_id"] == revision_id
+        assert (
+            research_values(checked.get("effective_config"), context=phase) == expected
+        ), "Selected source conflicts with its saved validation evidence"
+    if len(approval.plans) > 1:
+        selected_config["backtest"]["fees"] = approval.revised_fees
+        assert calls[prepare_index].arguments["research"].get("fees") == (
+            approval.revised_fees
+        ), "The revised request must explicitly include the authorized fee change"
+        expected["fees"] = approval.revised_fees
+    assert_research_matches_config(
+        calls[prepare_index].arguments.get("research"), selected_config
+    )
+    selected_manifest = approval.plans[-1].manifest
+    assert isinstance(selected_manifest, ExecutionManifest)
+    config = selected_manifest.config_copy()
+    assert research_values(config, context="Prepared manifest") == expected, (
+        "Prepared research settings differ from the selected source and user decision"
+    )
+    assert config["research"]["selected_revision"]["revision_id"] == revision_id
+    assert (
+        config["research"]["selected_revision"]["config_hash"]
+        == (metadata["config_hash"])
+    )
+
+
 def _assert_evidence(
-    calls: list[ToolCall], kind: PlanKind, approval: ObservedPlanUser
+    calls: list[ToolCall],
+    kind: PlanKind,
+    approval: ObservedPlanUser,
+    *,
+    selected_revision_id: str | None,
 ) -> None:
     calls = effective_workflow_calls(calls)
     approval.assert_complete()
     plan = approval.plans[-1]
     manifest = plan.manifest
+    assert isinstance(manifest, ExecutionManifest)
+    assert isinstance(plan.preflight, PreflightReceipt)
     prepared = _successful(calls, f"prepare_{kind}")
     assert len(prepared) == len(approval.plans), prepared
     prepare_index, prepare_call = prepared[-1]
@@ -195,21 +289,38 @@ def _assert_evidence(
     assert prepare_call.result["confirmation_summary"]
     assert prepare_call.result["artifact_id"]
     revision_id = manifest.config_copy()["strategy"].get("revision_id")
+    assert revision_id == selected_revision_id, (
+        "Execution must use the fixture's selected immutable revision"
+    )
     expected_arguments = _arguments(kind, revision_id)
     if len(approval.plans) > 1:
-        expected_arguments["backtest_overrides"] = {
-            **_COSTS,
-            "fees": approval.revised_fees,
-        }
+        expected_arguments["research"]["fees"] = approval.revised_fees
     for name, value in expected_arguments.items():
+        if name == "research" and kind == "walk_forward":
+            continue
         assert prepare_call.arguments.get(name) == value
-    assert plan.preflight.minimum_history_bars == 20
-    assert plan.preflight.sample_bars_requested == 128
-    assert plan.preflight.sample_bars_used <= 128
-    assert {"configuration", "signals", "engine", "serialization"} <= set(
-        plan.preflight.checked_paths
+    if kind == "walk_forward":
+        _assert_selected_research(calls, prepare_index, approval, selected_revision_id)
+    assert plan.preflight.schema_version == 2
+    assert {
+        "configuration",
+        "execution_capabilities",
+        "parameter_binding",
+        "manifest_serialization",
+    } <= set(plan.preflight.checked_paths)
+    assert set(plan.preflight.not_checked) == {
+        "historical_data",
+        "backtest_engine",
+        "training",
+        "performance",
+    }
+    draft = assert_saved_research(calls, prepare_index)
+    assert draft == plan.research_evidence.research.record.draft
+    assert (
+        prepare_call.arguments["evidence_id"]
+        == plan.research_evidence.research.record.evidence_id
     )
-    descriptions = prepare_call.arguments["presentation"]["parameter_descriptions"]
+    descriptions = draft.presentation.model_dump(mode="json")["parameter_descriptions"]
     expected_parameters: dict[str, Any] = (
         {"config": KDStrategyConfig().model_dump(), "fit_config": None}
         if kind == "optimization"
@@ -226,7 +337,11 @@ def _assert_evidence(
         assert description["label"] != pointer.rsplit("/", 1)[-1]
         assert description["description"]
         assert description.get("unit") is None or description["unit"]
-    for name, value in expected_arguments["backtest_overrides"].items():
+    expected_costs = {
+        **_COSTS,
+        "fees": approval.revised_fees if len(approval.plans) > 1 else 0,
+    }
+    for name, value in expected_costs.items():
         assert manifest.config_copy()["backtest"][name] == value
     confirmations = [
         (index, call)
@@ -263,8 +378,10 @@ def _assert_evidence(
     assert run["strategy_id"] == _strategy_id(kind)
     assert run["revision_id"] == revision_id
     if kind == "optimization":
-        assert plan.preflight.tested_candidates == 1
-        assert plan.preflight.total_candidates == 2
+        assert plan.preflight.parameter_combinations_checked == 2
+        assert "candidate_binding" in plan.preflight.checked_paths
+        assert plan.preflight.signal_check == "bundled_not_executed"
+        assert plan.preflight.synthetic_fixture_rows == []
         assert manifest.optimization is not None
         assert manifest.optimization.param_ranges == {"k_period": [9, 14]}
         assert manifest.optimization.optimization_metric == "total_return"
@@ -278,37 +395,41 @@ def _assert_evidence(
         scopes = {run["selected_train_scope"], "test"}
         assert run["default_scope"] == "test"
     else:
-        assert plan.preflight.tested_fold_count == 1
-        assert plan.preflight.total_fold_count == 2
-        assert "single_fold_only" in plan.preflight.warnings
-        assert "fit" in plan.preflight.checked_paths
+        assert plan.preflight.parameter_combinations_checked is None
+        assert plan.preflight.signal_check == "synthetic_contract_passed"
+        assert plan.preflight.synthetic_fixture_rows == [80, 240]
+        assert "signal_contract" in plan.preflight.checked_paths
         assert manifest.config_copy()["random_seed"] == 42
-        assert manifest.config_copy()["validation"] == WalkForwardConfig.model_validate(
+        assert manifest.config_copy()["validation"] == parse_walk_forward_config(
             _WF_VALIDATION
         ).model_dump(mode="json")
         for _, read in _successful(calls, "get_strategy"):
             source_config = yaml.safe_load(read.result["yaml_config"])
-            assert source_config["validation"] == _WF_VALIDATION
+            assert parse_walk_forward_config(
+                source_config["validation"]
+            ) == parse_walk_forward_config(_WF_VALIDATION)
             assert source_config["random_seed"] == 42
         confirmation = (
             Path(prepare_call.result["html_path"])
             .with_name("confirmation.txt")
             .read_text()
         )
-        assert "已試跑的驗證分段：1 / 2" in confirmation
+        assert "已試跑的驗證分段" not in confirmation
         assert "固定起點、逐次擴大訓練區間" in confirmation
-        assert "淨化分段不使用指定日期" in confirmation
-        assert "訓練開始：2024-01-06" in confirmation
-        assert "訓練結束：2024-01-05" in confirmation
-        assert "淨化分段不使用此比例" in confirmation
-        assert "此欄設定值（否）不使用" in confirmation
-        origin = pd.Timestamp("2024-01-01", tz="UTC")
-        for window, (start, end) in zip(
-            plan.preflight.windows, ((0, 36), (43, 86)), strict=True
-        ):
-            assert window.rows == end - start
-            assert pd.Timestamp(window.start) == origin + pd.Timedelta(hours=start)
-            assert pd.Timestamp(window.end) == origin + pd.Timedelta(hours=end - 1)
+        section = next(
+            item for item in plan.document.sections if item.id == "validation"
+        )
+        assert {field.label for field in section.fields} == {
+            "分段方式",
+            "預定分段組數",
+            "訓練區間逐次擴大",
+            "額外隔離根數",
+            "驗證紀錄重點指標",
+            "標籤前視根數",
+        }
+        assert "預定分段組數：2" in confirmation
+        assert "標籤前視根數：5 根 K 線" in confirmation
+        assert "額外隔離根數：2 根 K 線" in confirmation
         assert set(run["available_scopes"]) == {
             "fold/0/train",
             "fold/0/test",
@@ -358,6 +479,13 @@ def _assert_evidence(
         and isinstance(call.result, dict)
         and call.result.get("items")
         for index, call in enumerate(calls)
+    ), json.dumps(
+        [
+            {"arguments": call.arguments, "result": call.result}
+            for call in calls
+            if call.name == "list_artifacts"
+        ],
+        ensure_ascii=False,
     )
 
 
@@ -378,12 +506,28 @@ async def _direct_workflow(
         if kind == "optimization"
         else {"fast_period": 3, "slow_period": 8}
     )
+    paths = list(confirmation_presentation(parameters)["parameter_descriptions"])
+    target_paths = {"base": paths}
+    if kind == "optimization":
+        target_paths.update(
+            {
+                "search_1_1": ["/config/k_period"],
+                "search_1_2": ["/config/k_period"],
+            }
+        )
+    saved = await call(
+        "save_research_evidence",
+        draft=json.dumps(
+            execution_evidence_draft(parameters, target_paths=target_paths)
+        ),
+    )
+    assert saved["success"], saved
     prepared = await call(
         f"prepare_{kind}",
         **{
             name: json.dumps(value) if isinstance(value, dict | int) else value
             for name, value in (
-                _arguments(kind, revision_id) | execution_options(parameters)
+                _arguments(kind, revision_id) | {"evidence_id": saved["evidence_id"]}
             ).items()
         },
     )
@@ -418,26 +562,137 @@ def test_execution_plan_live_fixtures_without_model(kind: PlanKind) -> None:
         workspace.seed_market(market_frame())
         approval = ObservedPlanUser(workspace)
 
-        async def run() -> list[ToolCall]:
+        async def run() -> tuple[list[ToolCall], str | None]:
             async with workspace.connect() as client:
                 revision_id = (
                     await _seed_walk_forward(client) if kind == "walk_forward" else None
                 )
-                return await _direct_workflow(client, kind, revision_id, approval)
+                calls = await _direct_workflow(client, kind, revision_id, approval)
+                return calls, revision_id
 
-        calls = asyncio.run(run())
+        calls, revision_id = asyncio.run(run())
         original = deepcopy(calls)
-        _assert_evidence(calls, kind, approval)
-        _assert_evidence(effective_workflow_calls(calls), kind, approval)
+        _assert_evidence(calls, kind, approval, selected_revision_id=revision_id)
+        _assert_evidence(
+            effective_workflow_calls(calls),
+            kind,
+            approval,
+            selected_revision_id=revision_id,
+        )
         assert calls == original, "The verifier must retain raw model arguments"
         prepare_index = next(
             index for index, call in enumerate(calls) if call.name == f"prepare_{kind}"
         )
         for invalid in ("not JSON", "[]", "null", "{}"):
             broken = deepcopy(calls)
-            broken[prepare_index].arguments["presentation"] = invalid
-            with pytest.raises(AssertionError, match="presentation"):
-                _assert_evidence(broken, kind, approval)
+            saved_call = next(
+                call for call in broken if call.name == "save_research_evidence"
+            )
+            saved_call.arguments["draft"] = invalid
+            with pytest.raises(AssertionError, match="draft"):
+                _assert_evidence(
+                    broken, kind, approval, selected_revision_id=revision_id
+                )
+        if kind == "walk_forward":
+            _check_reused_research_regressions(
+                calls, prepare_index, approval, revision_id
+            )
+
+
+def _check_reused_research_regressions(
+    calls: list[ToolCall],
+    prepare_index: int,
+    approval: ObservedPlanUser,
+    revision_id: str | None,
+) -> None:
+    """Corrupt evidence after one real execution instead of repeating the worker."""
+    normalized = effective_workflow_calls(calls)
+    repeated = {
+        "kind": "inherit_selected_revision",
+        "start_date": "2024-01-01T08:00:00+08:00",
+        "end_date": "2024-01-08T00:00:00Z",
+        "fees": 0,
+        "slippage": 0,
+    }
+    for research in (
+        repeated,
+        {
+            **repeated,
+            "strategy_outline": "已驗證的雙分段 SMA 測試策略。",
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "init_cash": 10000,
+            "annualization": 365,
+        },
+    ):
+        accepted = deepcopy(normalized)
+        accepted[prepare_index].arguments["research"] = json.dumps(research)
+        original = deepcopy(accepted)
+        _assert_evidence(
+            accepted, "walk_forward", approval, selected_revision_id=revision_id
+        )
+        assert accepted == original, "Repeated research must preserve raw evidence"
+    for field, value in (
+        ("start_date", "2024-01-01T01:00:00Z"),
+        ("end_date", "2024-01-08T01:00:00Z"),
+        ("fees", 0.0006),
+        ("slippage", 0.0005),
+        ("strategy_outline", "Different rules"),
+        ("annualization", "market"),
+    ):
+        broken = deepcopy(normalized)
+        broken[prepare_index].arguments["research"] = {**repeated, field: value}
+        with pytest.raises(AssertionError, match="research changes|reselect"):
+            _assert_evidence(
+                broken, "walk_forward", approval, selected_revision_id=revision_id
+            )
+    broken = deepcopy(normalized)
+    broken[prepare_index].arguments["revision_id"] = "another_revision"
+    with pytest.raises(AssertionError):
+        _assert_evidence(
+            broken, "walk_forward", approval, selected_revision_id=revision_id
+        )
+    with pytest.raises(AssertionError, match="selected immutable revision"):
+        _assert_evidence(
+            normalized, "walk_forward", approval, selected_revision_id="other"
+        )
+    read_index = next(
+        index for index, call in enumerate(normalized) if call.name == "get_strategy"
+    )
+    for field, value in (
+        ("revision_id", "another_revision"),
+        ("yaml_config", "backtest: {fees: 0.001}"),
+    ):
+        broken = deepcopy(normalized)
+        broken[read_index].result[field] = value
+        with pytest.raises(AssertionError, match="exact saved configuration"):
+            _assert_evidence(
+                broken, "walk_forward", approval, selected_revision_id=revision_id
+            )
+    assert isinstance(revision_id, str)
+    metadata_path = (
+        approval.workspace.workspace
+        / "generated_strategies"
+        / _WF_STRATEGY
+        / "revisions"
+        / revision_id
+        / "metadata.json"
+    )
+    original_metadata = metadata_path.read_bytes()
+    for phase in ("validation", "dry_run"):
+        metadata = json.loads(original_metadata)
+        metadata[phase]["effective_config"]["backtest"]["fees"] = 0.001
+        try:
+            metadata_path.write_text(json.dumps(metadata))
+            with pytest.raises(AssertionError, match="conflicts.*validation evidence"):
+                _assert_evidence(
+                    normalized,
+                    "walk_forward",
+                    approval,
+                    selected_revision_id=revision_id,
+                )
+        finally:
+            metadata_path.write_bytes(original_metadata)
 
 
 async def _model_workflow(
@@ -445,7 +700,7 @@ async def _model_workflow(
     pytestconfig: pytest.Config,
     kind: PlanKind,
     approval: ObservedPlanUser,
-) -> list[ToolCall]:
+) -> tuple[list[ToolCall], str | None]:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
     if provider == "codex":
@@ -453,7 +708,7 @@ async def _model_workflow(
         if kind == "walk_forward":
             async with workspace.connect() as client:
                 revision_id = await _seed_walk_forward(client)
-        return codex_calls(
+        calls = codex_calls(
             await run_codex(
                 workspace.root,
                 _prompt(kind, revision_id),
@@ -462,11 +717,12 @@ async def _model_workflow(
                 timeout_seconds=pytestconfig.getoption("llm_timeout"),
             )
         )
+        return calls, revision_id
     async with workspace.connect() as client:
         revision_id = (
             await _seed_walk_forward(client) if kind == "walk_forward" else None
         )
-        return await run_local_model(
+        calls = await run_local_model(
             client,
             _prompt(kind, revision_id),
             model=pytestconfig.getoption("llm_model"),
@@ -476,6 +732,7 @@ async def _model_workflow(
             reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
             user_reply=approval,
         )
+        return calls, revision_id
 
 
 @pytest.mark.live_llm
@@ -486,8 +743,10 @@ def test_llm_prepares_confirms_and_queries_execution_plan(
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())
         approval = ObservedPlanUser(workspace)
-        calls = asyncio.run(_model_workflow(workspace, pytestconfig, kind, approval))
-        _assert_evidence(calls, kind, approval)
+        calls, revision_id = asyncio.run(
+            _model_workflow(workspace, pytestconfig, kind, approval)
+        )
+        _assert_evidence(calls, kind, approval, selected_revision_id=revision_id)
 
 
 @pytest.mark.live_llm
@@ -497,13 +756,16 @@ def test_llm_revises_plan_then_waits_for_explicit_user_approval(
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())
         approval = ObservedPlanUser(workspace, decisions=("revise", "approve"))
-        calls = asyncio.run(
+        calls, revision_id = asyncio.run(
             _model_workflow(workspace, pytestconfig, "optimization", approval)
         )
-        _assert_evidence(calls, "optimization", approval)
+        _assert_evidence(
+            calls, "optimization", approval, selected_revision_id=revision_id
+        )
         assert len(approval.turns) == 3
-        assert approval.plans[0].manifest.config_copy()["backtest"]["fees"] == 0
-        assert approval.plans[1].manifest.config_copy()["backtest"]["fees"] == 0.001
+        for plan, expected_fees in zip(approval.plans, (0, 0.001), strict=True):
+            assert isinstance(plan.manifest, ExecutionManifest)
+            assert plan.manifest.config_copy()["backtest"]["fees"] == expected_fees
 
 
 @pytest.mark.live_llm
@@ -513,7 +775,7 @@ def test_llm_clarifies_ambiguous_reply_then_honors_decline(
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())
         user = ObservedPlanUser(workspace, decisions=("ambiguous", "decline"))
-        calls = asyncio.run(
+        calls, _revision_id = asyncio.run(
             _model_workflow(workspace, pytestconfig, "optimization", user)
         )
         user.assert_complete()

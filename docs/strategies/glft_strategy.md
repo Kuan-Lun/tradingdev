@@ -95,6 +95,7 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 
 - **高波動 → 寬 spread → 減少交易** (自我調節)
 - **低波動 → 窄 spread → 更多交易** (增加流動性)
+- **波動率缺值**：不視為極低波動，也不開新倉；既有持倉仍依原有出場規則管理。
 - **價格水平無關**：純 %-space 公式確保 spread 只隨 σ 變化
 - **止損控制尾部風險**：避免持有到 max_hold 的大額虧損
 - **利潤目標鎖定收益**：不再過早出場切割利潤
@@ -119,6 +120,11 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 ### Implied Volatility (DVOL)
 
 當 `vol_type: "implied"` 時，策略使用 DataFrame 中的 `dvol` 欄位作為波動度來源，而非從歷史價格估計。DVOL 檔案路徑由 `data.requirements.features` 宣告，策略參數不保存資料路徑。
+
+省略 `path` 時，由資料服務依完整研究期間管理自動快取；指定已存在的本機
+`path` 檔案時直接讀取，不會因延長研究期間自動更新。`raw_path` 須搭配
+`path` 指定。查詢證據與重用限制見
+[自動 DVOL 查詢](../run_artifacts.md#automatic-dvol-queries)。
 
 **DVOL 簡介**：
 
@@ -378,6 +384,7 @@ strategy:
     min_monthly_pnl: -1500
 
 validation:
+  mode: explicit
   train_start: "2024-01-01"
   train_end: "2024-12-31"
   test_start: "2025-01-01"
@@ -393,6 +400,8 @@ backtest:
   mode: "volume"
 
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"

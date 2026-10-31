@@ -23,6 +23,7 @@ from tradingdev.domain.optimization.grid_search import (
     tuple_grid,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
@@ -82,7 +83,7 @@ def _evaluate_glft_combo(
     trial._best_signal_agg_minutes = sig_agg
     trial._best_edge_for_full_size = efs
 
-    signals = trial.generate_signals(df)
+    signals = generate_checked_signals(trial, df)
     result = engine.run(signals)
     return params, result.metrics
 
@@ -452,12 +453,8 @@ class GLFTStrategy(BaseStrategy):
             log_ret = np.concatenate([[0.0], log_ret])
             sigma = pd.Series(log_ret).rolling(window, min_periods=1).std().values
 
-        # Replace NaN/zero with a tiny positive value
-        sigma = np.where(
-            np.isnan(sigma) | (sigma <= 0),
-            1e-10,
-            sigma,
-        )
+        # Keep unknown volatility missing; only floor nonpositive observations.
+        sigma = np.where(sigma <= 0, 1e-10, sigma)
         return np.asarray(sigma, dtype=np.float64)
 
     # ------------------------------------------------------------------

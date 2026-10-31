@@ -26,7 +26,6 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from io import StringIO
 from typing import TYPE_CHECKING, Any
 
 from joblib import Parallel, delayed
@@ -35,7 +34,9 @@ from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
+from tradingdev.app.execution_submission import verify_submission_research
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
+from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.optimization.grid_search import (
     GridSearchResult,
     best_result,
@@ -45,10 +46,13 @@ from tradingdev.domain.optimization.grid_search import (
 from tradingdev.domain.performance.artifacts import build_artifacts, scope_from_backtest
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from tradingdev.domain.backtest.result import BacktestResult
     from tradingdev.domain.performance.artifacts import PerformanceArtifacts
     from tradingdev.domain.strategies.execution import StrategyExecution
@@ -107,7 +111,7 @@ def _evaluate_combo(
     strategy_cfg: dict[str, Any],
     strategy_execution: StrategyExecution,
     bt_cfg_dict: dict[str, Any],
-    df_json: str,
+    df: pd.DataFrame,
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg_dict: dict[str, Any],
@@ -122,7 +126,7 @@ def _evaluate_combo(
         strategy_cfg: Strategy config section.
         strategy_execution: Captured constructor arguments, including defaults.
         bt_cfg_dict: BacktestConfig fields as a plain dict.
-        df_json: Training DataFrame serialised as JSON string.
+        df: Training DataFrame transferred losslessly by joblib.
         param_dict: Parameter combination to evaluate.
         metric_name: Target metric to extract.
         parallel_cfg_dict: Fixed parallel resource policy from the manifest.
@@ -131,9 +135,6 @@ def _evaluate_combo(
     Returns:
         Complete backtest result, parameters, and objective identifier.
     """
-    import pandas as pd
-
-    df = pd.read_json(StringIO(df_json), orient="split")
     return _run_single_combo(
         strategy_cfg,
         strategy_execution,
@@ -150,7 +151,7 @@ def _run_single_combo(
     strategy_cfg: dict[str, Any],
     strategy_execution: StrategyExecution,
     bt_cfg: BacktestConfig,
-    df: Any,
+    df: pd.DataFrame,
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg: ParallelConfig,
@@ -179,7 +180,7 @@ def _run_single_combo(
             parameter_overrides=param_dict,
         )
 
-        signals_df = strategy.generate_signals(df)
+        signals_df = generate_checked_signals(strategy, df)
         result = engine.run(signals_df)
 
         result.metric_metadata["execution_context"] = {
@@ -189,6 +190,9 @@ def _run_single_combo(
         result.metric_metadata["strategy_parameters"] = deepcopy(
             strategy.get_parameters()
         )
+        rolling_trace = strategy.rolling_trace()
+        if rolling_trace is not None:
+            result.metric_metadata["rolling_trace"] = deepcopy(rolling_trace)
 
     return ComboEvaluation(deepcopy(param_dict), metric_name, result)
 
@@ -250,10 +254,13 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     # --- Phase 2: verify and load the sole execution specification ---
     try:
         manifest = job_store.load_manifest(job_id)
+        if not isinstance(manifest, ExecutionManifest):
+            raise ManifestError("Comparison requires the comparison worker")
         optimization = manifest.optimization
         if manifest.kind != "optimization" or optimization is None:
             msg = "Job requires an optimization execution manifest"
             raise ValueError(msg)
+        verify_submission_research(job_store.get_default_job_store(), job_id, manifest)
         raw_config = manifest.config_for_execution()
         BacktestService().prepare_strategy(raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
@@ -416,9 +423,6 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     remaining_combos = all_combos[1:]
     optimization_start = time.monotonic()
 
-    # Serialise train_df once for joblib workers
-    train_df_json = train_df.to_json(orient="split", date_format="iso")
-
     batch_size = max(n_jobs * 2, 10)
     for batch_start in range(0, len(remaining_combos), batch_size):
         batch = remaining_combos[batch_start : batch_start + batch_size]
@@ -429,7 +433,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
                     strategy_cfg,
                     strategy_execution,
                     train_bt_cfg.model_dump(),
-                    train_df_json,
+                    train_df,
                     combo,
                     optimization_metric,
                     parallel_cfg.model_dump(),

@@ -12,6 +12,7 @@ from sklearn.metrics import roc_auc_score
 from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.scoring_history import align_scoring_history
 from tradingdev.domain.optimization.grid_search import finite_metric_value
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from tradingdev.domain.backtest.base_engine import (
         BaseBacktestEngine,
     )
+    from tradingdev.domain.ml.features.features import FeatureEngineer
     from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
         SafetyVolumeStrategyConfig,
     )
@@ -59,7 +61,9 @@ class SafetyVolumeStrategy(BaseStrategy):
 
         # Optional ML direction model
         self._dir_model: XGBoostDirectionModel | None = None
-        self._dir_fe: Any = None  # FeatureEngineer (lazy import)
+        self._dir_fe: FeatureEngineer | None = None
+
+        self._rolling_trace: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     # BaseStrategy interface
@@ -291,23 +295,32 @@ class SafetyVolumeStrategy(BaseStrategy):
         self,
         df: pd.DataFrame,
     ) -> npt.NDArray[np.floating[Any]]:
-        """Predict P(safe) for each bar with periodic retraining."""
+        """Predict P(safe) for each bar with periodic retraining.
+
+        Raises:
+            ValueError: If the frames have no usable time identity, because the
+                overlap with the training history cannot be detected without it.
+        """
         assert self._risk_fe is not None
         assert self._risk_model is not None
         assert self._train_data is not None
+
+        if self._config.rolling_gen.enabled:
+            return self._predict_risk_with_scheme(df)
 
         lookback = self._best_lookback or 720
         retrain_interval = self._config.retrain_interval
         model_cfg = self._config.risk_model
 
+        history, scored = align_scoring_history(self._train_data, df)
         combined = pd.concat(
-            [self._train_data, df],
+            [history, scored],
             ignore_index=True,
         )
-        test_offset = len(self._train_data)
-        window_size = max(lookback * 10, len(self._train_data))
+        test_offset = len(history)
+        window_size = max(lookback * 10, len(history))
 
-        total_bars = len(df)
+        total_bars = len(scored)
         p_safe_arr = np.full(total_bars, 0.5)
         current_model = self._risk_model
 
@@ -359,9 +372,9 @@ class SafetyVolumeStrategy(BaseStrategy):
                 ctx,
                 include_target=False,
             )
-            if len(feat_pred) > 0:
+            if combined_idx in feat_pred.index:
                 proba = current_model.predict_proba(
-                    feat_pred.iloc[[-1]],
+                    feat_pred.loc[[combined_idx]],
                 )
                 if 1 in proba.columns:
                     p_safe_arr[i] = np.float64(
@@ -394,6 +407,43 @@ class SafetyVolumeStrategy(BaseStrategy):
             total_bars / elapsed if elapsed > 0 else 0,
         )
         return p_safe_arr
+
+    def _predict_risk_with_scheme(
+        self,
+        df: pd.DataFrame,
+    ) -> npt.NDArray[np.floating[Any]]:
+        """Predict P(safe) with the declared rolling scheme.
+
+        Reached only when ``rolling_gen`` is enabled.  A bar whose features are
+        missing keeps the neutral 0.5 the classic loop starts from, so the Risk
+        Gate never borrows a neighbouring bar's score.
+        """
+        assert self._risk_fe is not None
+        assert self._risk_model is not None
+        assert self._train_data is not None
+
+        # Imported here so that a defect in the optional engine cannot stop the
+        # classic loop above from loading and running.
+        from tradingdev.domain.ml.rolling_gen import rolling_outcome, trace_payload
+
+        lookback = self._best_lookback or 720
+        outcome = rolling_outcome(
+            self._train_data,
+            df,
+            self._config.rolling_gen.resolve(),
+            model=self._risk_model,
+            model_config=self._config.risk_model,
+            fe=self._risk_fe,
+            lookback=lookback,
+            retrain_interval=self._config.retrain_interval,
+            label_horizon=self._config.target_holding_bars,
+        )
+        self._rolling_trace = trace_payload(outcome)
+        return outcome.probabilities["p_long"].fillna(0.5).to_numpy(dtype=np.float64)
+
+    def rolling_trace(self) -> dict[str, Any] | None:
+        """Return the rolls that scored the last run, if the switch was on."""
+        return self._rolling_trace
 
     # ------------------------------------------------------------------
     # Direction signal
@@ -434,9 +484,7 @@ class SafetyVolumeStrategy(BaseStrategy):
             return out
         # Preserve source positions through dropna, including interior gaps.
         # The copied RangeIndex is metadata, never an input feature for the model.
-        feat = self._dir_fe.transform(
-            df.reset_index(drop=True), include_target=False, preserve_index=True
-        )
+        feat = self._dir_fe.transform(df.reset_index(drop=True), include_target=False)
         if feat.empty:
             return out
         preds = self._dir_model.predict(feat)
@@ -479,7 +527,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         threshold: float,
         min_hold: int = 5,
         max_hold: int = 30,
-    ) -> npt.NDArray[np.floating[Any]]:
+    ) -> npt.NDArray[np.int_]:
         """State machine that produces position-state signals.
 
         Returns an array of (1, -1, 0) where:
@@ -488,7 +536,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         - 0 = flat (no position)
         """
         n = len(risk_scores)
-        signals = np.zeros(n, dtype=int)
+        signals: npt.NDArray[np.int_] = np.zeros(n, dtype=int)
         state = 0
         bars_in_pos = 0
 
@@ -523,7 +571,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         self,
         risk_scores: npt.NDArray[np.floating[Any]],
         directions: npt.NDArray[np.floating[Any]],
-    ) -> npt.NDArray[np.floating[Any]]:
+    ) -> npt.NDArray[np.int_]:
         """Run the state machine with configured parameters."""
         return self._run_state_machine_with_threshold(
             risk_scores,

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import Any
 
 import pytest
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
 from tests.e2e.test_llm_workflows import assert_workflow
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import (
+    execution_evidence_draft,
+    synthetic_preflight_receipt,
+)
 
 
 @pytest.fixture
@@ -17,11 +21,24 @@ def legacy_calls() -> list[ToolCall]:
     strategy_id = SCENARIOS["legacy"].strategy_id
     identity = {"strategy_id": strategy_id, "revision_id": "new-revision"}
     legacy = {
-        "strategy_id": strategy_id,
+        "strategy_id": SCENARIOS["legacy"].legacy_strategy_id,
         "revision_id": None,
         "kind": "legacy",
         "status": "revision_required",
         "code": "strategy_revision_required",
+    }
+    config: dict[str, dict[str, Any]] = {
+        "research": {"strategy_outline": "Saved legacy moving-average rules."},
+        "backtest": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01T00:00:00Z",
+            "end_date": "2024-01-08T00:00:00Z",
+            "init_cash": 10000.0,
+            "fees": 0.0,
+            "slippage": 0.0,
+            "periods_per_year": 365.0,
+        },
     }
     return [
         ToolCall("get_strategy_contract", {}, {"example_strategy_code": "source"}),
@@ -38,7 +55,7 @@ def legacy_calls() -> list[ToolCall]:
         ),
         ToolCall(
             "get_strategy",
-            {"strategy_id": strategy_id},
+            {"strategy_id": SCENARIOS["legacy"].legacy_strategy_id},
             {
                 **legacy,
                 "success": True,
@@ -48,28 +65,46 @@ def legacy_calls() -> list[ToolCall]:
         ),
         ToolCall(
             "save_strategy",
-            {"strategy_id": strategy_id},
+            {
+                "strategy_id": strategy_id,
+                "research": {
+                    **SCENARIOS["legacy"].research,
+                    "strategy_outline": config["research"]["strategy_outline"],
+                },
+            },
             {**identity, "success": True, "status": "draft"},
         ),
         ToolCall(
             "validate_strategy",
             identity,
-            {**identity, "success": True, "status": "validated"},
+            {
+                **identity,
+                "success": True,
+                "status": "validated",
+                "effective_config": deepcopy(config),
+            },
         ),
         ToolCall(
             "dry_run_strategy",
             identity,
-            {**identity, "success": True, "status": "runnable"},
+            {
+                **identity,
+                "success": True,
+                "status": "runnable",
+                "effective_config": deepcopy(config),
+            },
+        ),
+        ToolCall(
+            "save_research_evidence",
+            {"draft": execution_evidence_draft(SCENARIOS["legacy"].parameters)},
+            {"success": True, "evidence_id": "e" * 32},
         ),
         ToolCall(
             "prepare_backtest",
             {
                 **identity,
-                "symbol": "BTC/USDT",
-                "timeframe": "1h",
-                "start_date": "2024-01-01",
-                "end_date": "2024-01-08",
-                **execution_options(SCENARIOS["legacy"].parameters),
+                "research": {"kind": "inherit_selected_revision"},
+                "evidence_id": "e" * 32,
             },
             {
                 "success": True,
@@ -79,7 +114,7 @@ def legacy_calls() -> list[ToolCall]:
                 "confirmation_summary": "確認本次歷史研究設定。",
                 "html_path": "/fixture/confirmation.html",
                 "artifact_id": "plan:confirmation",
-                "preflight": {"status": "passed"},
+                "preflight": synthetic_preflight_receipt("a" * 64),
             },
         ),
         ToolCall(
@@ -207,4 +242,12 @@ def test_legacy_evidence_rejects_inheriting_runnable_status(
 ) -> None:
     legacy_calls[3].result["status"] = "runnable"
     with pytest.raises(AssertionError, match="without inherited evidence"):
+        assert_workflow(legacy_calls, SCENARIOS["legacy"])
+
+
+def test_legacy_recovery_cannot_overwrite_the_occupied_source_namespace(
+    legacy_calls: list[ToolCall],
+) -> None:
+    legacy_calls[3].arguments["strategy_id"] = SCENARIOS["legacy"].legacy_strategy_id
+    with pytest.raises(AssertionError, match="save_strategy"):
         assert_workflow(legacy_calls, SCENARIOS["legacy"])

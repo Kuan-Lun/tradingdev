@@ -11,8 +11,14 @@ from typing import TYPE_CHECKING
 import anyio
 import psutil
 import pytest
+import yaml
 
-from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.execution_fixtures import (
+    confirm_prepared,
+    research_from_config,
+    research_input,
+    save_execution_evidence,
+)
 from tests.integration.mcp_harness import (
     temporary_mcp_workspace,
     worker_is_alive,
@@ -56,6 +62,9 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
                     strategy_id="cleanup_strategy",
                     code=contract["example_strategy_code"],
                     yaml_config=contract["example_yaml_config"],
+                    research=research_from_config(
+                        yaml.safe_load(contract["example_yaml_config"])
+                    ),
                 )
                 assert saved["success"], saved
                 for tool in ("validate_strategy", "dry_run_strategy"):
@@ -64,15 +73,22 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
                 prepared = await client.call(
                     "prepare_optimization",
                     strategy_id="cleanup_strategy",
-                    symbol="BTC/USDT",
-                    timeframe="1h",
+                    research=research_input(end_date="2024-01-07T23:59:59.999999"),
                     param_ranges={"fast_period": [3], "slow_period": [8]},
                     optimization_metric="total_return",
                     train_start="2024-01-01",
                     train_end="2024-01-03",
                     test_start="2024-01-04",
                     test_end="2024-01-07",
-                    **execution_options({"fast_period": 10, "slow_period": 30}),
+                    evidence_id=await save_execution_evidence(
+                        client,
+                        {"fast_period": 10, "slow_period": 30},
+                        target_paths={
+                            "base": ["/fast_period", "/slow_period"],
+                            "search_1_1": ["/fast_period"],
+                            "search_2_1": ["/slow_period"],
+                        },
+                    ),
                 )
                 assert prepared["success"], prepared
                 # Keep the formal worker alive deterministically, independently

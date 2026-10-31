@@ -202,6 +202,7 @@ def test_history_tool_schemas_and_real_paginated_queries(
             "get_run_executions",
             "get_run_account_history",
             "get_report_sections",
+            "get_run_diagnostics",
             "generate_report",
         }
         for name, tool in tools.items():
@@ -356,19 +357,24 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         )
         assert [section.id for section in catalog.sections] == [
             "overview",
+            "research",
             "settings",
             "metrics",
+            "benchmark",
             "equity",
             "ledger",
             "trades",
             "limitations",
             "provenance",
+            "ml",
         ]
         assert catalog.templates["standard"] == [
-            section.id for section in catalog.sections
+            section.id for section in catalog.sections if section.id != "ml"
         ]
+        assert catalog.templates["ml_research"] == ["ml"]
         assert catalog.templates["trades"] == [
             "overview",
+            "research",
             "ledger",
             "trades",
             "provenance",

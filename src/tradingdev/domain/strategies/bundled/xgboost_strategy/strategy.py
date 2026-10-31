@@ -44,6 +44,7 @@ class XGBoostStrategy(BaseStrategy):
         self._best_lookback: int | None = None
         self._best_threshold: float = config.signal_threshold
         self._train_data: pd.DataFrame | None = None
+        self._rolling_trace: dict[str, Any] | None = None
 
     def fit(self, df: pd.DataFrame) -> None:
         """Optimise lookback and train the XGBoost model."""
@@ -63,8 +64,6 @@ class XGBoostStrategy(BaseStrategy):
         # Threshold search (volume-maximisation mode)
         if (
             self._config.signal_threshold_candidates
-            and best_model is not None
-            and best_fe is not None
             and self._backtest_engine is not None
         ):
             optimizer = ThresholdOptimizer(
@@ -97,12 +96,12 @@ class XGBoostStrategy(BaseStrategy):
         val_df: pd.DataFrame,
     ) -> tuple[
         int,
-        XGBoostDirectionModel | None,
-        FeatureEngineer | None,
+        XGBoostDirectionModel,
+        FeatureEngineer,
     ]:
         """Find the best lookback by validation accuracy."""
         best_score = -1.0
-        best_lb = self._config.lookback_candidates[0]
+        best_lb: int | None = None
         best_model: XGBoostDirectionModel | None = None
         best_fe: FeatureEngineer | None = None
 
@@ -134,6 +133,13 @@ class XGBoostStrategy(BaseStrategy):
                 best_model = model
                 best_fe = fe
 
+        if best_lb is None or best_model is None or best_fe is None:
+            raise ValueError(
+                "No lookback candidate has sufficient mature training and validation "
+                "samples: at least 10 training rows and 5 validation rows are required "
+                f"after feature and label filtering (target_horizon="
+                f"{self._config.target_horizon})"
+            )
         return best_lb, best_model, best_fe
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -146,6 +152,36 @@ class XGBoostStrategy(BaseStrategy):
         ):
             msg = "Strategy not fitted. Call fit() first."
             raise RuntimeError(msg)
+
+        if self._config.rolling_gen.enabled:
+            # Imported here so that a defect in the optional engine cannot stop
+            # the classic path below from loading and running.
+            from tradingdev.domain.ml.rolling_gen import (
+                rolling_outcome,
+                signals_from_probabilities,
+                trace_payload,
+            )
+
+            outcome = rolling_outcome(
+                self._train_data,
+                df,
+                self._config.rolling_gen.resolve(),
+                model=self._model,
+                model_config=self._config.model,
+                fe=self._feature_engineer,
+                lookback=self._best_lookback,
+                retrain_interval=self._config.retrain_interval,
+                label_horizon=self._config.target_horizon,
+            )
+            self._rolling_trace = trace_payload(outcome)
+            signals = signals_from_probabilities(
+                outcome.probabilities,
+                threshold=self._best_threshold,
+                cooldown=self._config.min_bars_between_trades,
+            )
+            result = df.copy()
+            result["signal"] = signals
+            return result
 
         retrainer = RollingRetrainer(
             model_config=self._config.model,
@@ -171,3 +207,7 @@ class XGBoostStrategy(BaseStrategy):
         params["best_lookback"] = self._best_lookback
         params["best_threshold"] = self._best_threshold
         return params
+
+    def rolling_trace(self) -> dict[str, Any] | None:
+        """Return the rolls that scored the last run, if the switch was on."""
+        return self._rolling_trace

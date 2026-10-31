@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from tradingdev.adapters.storage.data_cache import DataCache
 from tradingdev.adapters.storage.feature_samples import read_feature_sample
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
@@ -19,13 +20,16 @@ from tradingdev.adapters.storage.filesystem import (
 )
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.data import CachedDataset
+from tradingdev.app.data_manager import DataManager
+from tradingdev.app.dvol_data import DVOLData
 from tradingdev.app.market_sample import load_market_sample
 from tradingdev.app.pagination import paginate
 from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.data.cache import CacheReceipt, DataIdentity
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
-from tradingdev.domain.data.crawlers.registry import create_crawler
-from tradingdev.domain.data.data_manager import DataManager, market_data_filename
+from tradingdev.domain.data.crawlers.registry import create_crawler, describe_sources
 from tradingdev.domain.data.loader import DataLoader
+from tradingdev.domain.data.processor import DataProcessor
 from tradingdev.domain.data.requirements import (
     DataRequirement,
     FeatureSpec,
@@ -47,8 +51,6 @@ class LoadedDataset:
 class DataService:
     """Load market data from explicit data requirements."""
 
-    _DATA_FILE = re.compile(r"^([a-z0-9]+)_([a-z0-9]+)_(\d{4})(_partial)?\.parquet$")
-
     def __init__(self, workspace: WorkspacePaths | None = None) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._workspace.ensure()
@@ -61,6 +63,11 @@ class DataService:
         raw_dir, processed_dir = self._data_dirs()
         data.setdefault("raw_dir", str(raw_dir))
         data.setdefault("processed_dir", str(processed_dir))
+        requirements = data.get("requirements", {})
+        if isinstance(requirements, dict):
+            market = requirements.get("market", {})
+            if isinstance(market, dict) and "source" in market:
+                data["source"] = market["source"]
         return DataConfig(**data)
 
     def requirements(
@@ -102,17 +109,19 @@ class DataService:
         for key in ("raw_dir", "processed_dir"):
             data[key] = str(self._resolve_data_path(data[key]))
         requirements = self.requirements(raw_config, backtest_config)
-        request = self._request_from_backtest(backtest_config)
+        if (
+            requirements.market.symbol != backtest_config.symbol
+            or requirements.market.timeframe != backtest_config.timeframe
+        ):
+            raise ValueError(
+                "data.requirements.market symbol/timeframe must match backtest; "
+                "the backtest fields determine the actual data request"
+            )
+        self._check_market_settings(requirements.market, str(data["market_type"]))
         features = []
         for feature in requirements.features:
             resolved = feature.model_dump(mode="json")
-            path = (
-                self._resolve_data_path(feature.path)
-                if feature.path
-                else self._default_dvol_path(request)
-                if feature.type == "dvol"
-                else None
-            )
+            path = self._resolve_data_path(feature.path) if feature.path else None
             resolved["path"] = str(path) if path is not None else None
             raw_path = (
                 self._resolve_data_path(feature.raw_path)
@@ -128,6 +137,29 @@ class DataService:
             "features": features,
         }
         return data
+
+    @staticmethod
+    def _check_market_settings(market: MarketDataSpec, market_type: str) -> None:
+        """Reject known configuration errors without constructing any provider."""
+        sources = {item["source"]: item for item in describe_sources()}
+        details = sources.get(market.source)
+        if details is None:
+            raise ValueError(
+                f"Unknown data source {market.source!r}. "
+                f"Known sources: {', '.join(sorted(sources))}"
+            )
+        timeframes = details["timeframes"]
+        if timeframes is not None and market.timeframe not in timeframes:
+            raise ValueError(
+                f"Data source {market.source!r} does not support "
+                f"timeframe {market.timeframe!r}. Supported: {', '.join(timeframes)}"
+            )
+        market_types = details["market_types"]
+        if market_types and market_type not in market_types:
+            raise ValueError(
+                f"Data source {market.source!r} does not support "
+                f"market_type {market_type!r}. Supported: {', '.join(market_types)}"
+            )
 
     def load(
         self,
@@ -145,9 +177,11 @@ class DataService:
         )
 
         for feature in requirements.features:
-            frame = self._merge_feature(frame, feature, request)
+            frame = self._merge_feature(
+                frame, feature, request, data_config=data_config
+            )
 
-        dataset_id = self._dataset_id(request, requirements)
+        dataset_id = self._dataset_id(request, requirements, data_config)
         return LoadedDataset(
             frame=frame, processed_path=processed_path, dataset_id=dataset_id
         )
@@ -160,6 +194,7 @@ class DataService:
         start_date: str,
         end_date: str,
         source: str = "binance_vision",
+        market_type: str = "futures/um",
     ) -> LoadedDataset:
         """Ensure OHLCV data for the requested range is cached locally."""
         request = MarketDataRequest(
@@ -168,7 +203,9 @@ class DataService:
             start_date=start_date,
             end_date=end_date,
         )
-        data_config = self.data_config({"data": {"source": source}})
+        data_config = self.data_config(
+            {"data": {"source": source, "market_type": market_type}}
+        )
         frame, processed_path = self._load_market(request, data_config, source)
         requirements = DataRequirement(
             market=MarketDataSpec(source=source, symbol=symbol, timeframe=timeframe),
@@ -177,8 +214,36 @@ class DataService:
         return LoadedDataset(
             frame=frame,
             processed_path=processed_path,
-            dataset_id=self._dataset_id(request, requirements),
+            dataset_id=self._dataset_id(request, requirements, data_config),
         )
+
+    def fetch_market(
+        self,
+        raw_config: dict[str, Any],
+        backtest_config: BacktestConfig,
+    ) -> pd.DataFrame:
+        """Fetch supplementary OHLCV without reading or publishing cache files.
+
+        Only the declared market is fetched; strategy feature sources are not
+        merged. The response stays in memory, so cancellation leaves no temporary
+        raw or processed dataset behind.
+        """
+        config = self.data_config(raw_config)
+        market = self.requirements(raw_config, backtest_config).market
+        self._check_market_settings(market, config.market_type)
+        request = self._request_from_backtest(backtest_config)
+        crawler = create_crawler(market.source, config)
+        raw = crawler.fetch(
+            symbol=request.symbol,
+            timeframe=request.timeframe,
+            start=request.start_date,
+            end=request.end_date,
+        ).copy()
+        raw["timestamp"] = pd.to_datetime(raw["timestamp"], utc=True)
+        frame = DataProcessor().process(raw)
+        return frame.loc[
+            frame["timestamp"].between(request.start_date, request.end_date)
+        ].reset_index(drop=True)
 
     def load_cached(
         self,
@@ -188,6 +253,8 @@ class DataService:
         start_date: str,
         end_date: str,
         source: str = "binance_vision",
+        market_type: str = "futures/um",
+        raw_config: dict[str, Any] | None = None,
     ) -> LoadedDataset:
         """Read existing yearly files without fetching, replacing or deleting any."""
         request = MarketDataRequest(
@@ -196,32 +263,30 @@ class DataService:
             start_date=start_date,
             end_date=end_date,
         )
-        # Validate the provider name, but never invoke its fetch methods.
-        create_crawler(source, self.data_config({"data": {"source": source}}))
-        start = pd.Timestamp(request.start_date)
-        end = pd.Timestamp(request.end_date)
-        start = (
-            start.tz_localize("UTC")
-            if start.tzinfo is None
-            else start.tz_convert("UTC")
+        data_config = self.data_config(
+            raw_config
+            if raw_config is not None
+            else {"data": {"source": source, "market_type": market_type}}
         )
-        end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
-        if start > end:
-            raise ValueError("start_date must not follow end_date")
+        cache = self._market_cache(request, data_config)
+        start, end = pd.Timestamp(request.start_date), pd.Timestamp(request.end_date)
         paths: list[Path] = []
         frames: list[pd.DataFrame] = []
         for year in range(start.year, end.year + 1):
-            directory = self._processed_data_dir()
-            path = directory / market_data_filename(symbol, timeframe, year)
-            if not path.is_file():
-                path = directory / market_data_filename(
-                    symbol, timeframe, year, partial=True
-                )
-            if not path.is_file():
+            receipt = cache.receipt(str(year))
+            lower, upper = self._year_bounds(request, year)
+            if receipt is None or not receipt.covers(lower, upper):
                 raise ValueError(
-                    f"no cached market data for {symbol} {timeframe} in {year}; "
+                    "no cached market query covers the requested interval; "
                     "run ensure_data first"
                 )
+            if not receipt.reusable(lower, upper):
+                raise ValueError(
+                    "cached-only loading requires a query acquired at least seven "
+                    "days after the requested interval ended; for recent intervals, "
+                    "wait until that boundary before fetching again"
+                )
+            path = cache.processed_path(receipt)
             paths.append(path)
             frames.append(self._loader.load_parquet(path))
         frame = pd.concat(frames, ignore_index=True).sort_values("timestamp")
@@ -235,10 +300,14 @@ class DataService:
         if frame["timestamp"].duplicated().any():
             raise ValueError("cached market data has duplicate timestamps")
         requirements = DataRequirement(
-            market=MarketDataSpec(source=source, symbol=symbol, timeframe=timeframe),
+            market=MarketDataSpec(
+                source=data_config.source, symbol=symbol, timeframe=timeframe
+            ),
             features=[],
         )
-        return LoadedDataset(frame, paths[0], self._dataset_id(request, requirements))
+        return LoadedDataset(
+            frame, paths[0], self._dataset_id(request, requirements, data_config)
+        )
 
     def load_sample(
         self,
@@ -268,12 +337,14 @@ class DataService:
         # Check that boundary here too, without calling its network fetch.
         crawler = create_crawler(requirements.market.source, sample_config)
         frame = load_market_sample(request, data_config, crawler, max_rows=max_rows)
-        features = [
-            feature.model_copy(update={"path": str(self._default_dvol_path(request))})
-            if feature.type == "dvol" and not feature.path
-            else feature
-            for feature in requirements.features
-        ]
+        features = []
+        for feature in requirements.features:
+            selected = feature
+            if feature.type == "dvol" and not feature.path:
+                path = self._managed_dvol(feature, request, data_config).reusable_path()
+                if path is not None:
+                    selected = feature.model_copy(update={"path": str(path)})
+            features.append(selected)
         request = request.model_copy(
             update={
                 "start_date": frame["timestamp"].iloc[0],
@@ -300,47 +371,53 @@ class DataService:
         # This identity describes the exact sample, not the full requested data.
         return LoadedDataset(frame, processed_path, sha256_file(processed_path))
 
-    def list_available_data(self) -> list[dict[str, Any]]:
-        """List cached OHLCV parquet files from the workspace data root."""
-        processed_dir = self._processed_data_dir()
-        if not processed_dir.exists():
-            return []
-
-        grouped: dict[tuple[str, str], set[int]] = {}
-        for path in sorted(processed_dir.glob("*.parquet")):
-            match = self._DATA_FILE.match(path.name)
-            if not match:
-                continue
-            symbol, timeframe = match.group(1), match.group(2)
-            grouped.setdefault((symbol, timeframe), set()).add(int(match.group(3)))
-        return [
-            {
-                "symbol": symbol.upper(),
-                "timeframe": timeframe,
-                "years_available": sorted(years),
-            }
-            for (symbol, timeframe), years in sorted(grouped.items())
-        ]
+    def list_available_data(
+        self, raw_config: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Inventory identified cache receipts, reading no candle data."""
+        directory = Path(self.data_config(raw_config or {}).processed_dir)
+        grouped: dict[str, dict[str, Any]] = {}
+        for path in sorted(directory.glob("cache-v2/*/[0-9][0-9][0-9][0-9].json")):
+            receipt = CacheReceipt.model_validate_json(path.read_bytes())
+            identity = receipt.identity
+            if identity.kind != "ohlcv" or path.parent.name != identity.key:
+                raise ValueError(f"Invalid market cache identity: {path}")
+            if not (path.parent / f"{receipt.generation}.parquet").is_file():
+                raise ValueError(f"Missing market cache generation: {path}")
+            entry = grouped.setdefault(
+                identity.key,
+                {**identity.model_dump(exclude={"kind"}), "years_available": []},
+            )
+            entry["years_available"].append(int(path.stem))
+        return list(grouped.values())
 
     def list_available_data_page(
         self,
         *,
         symbol: str | None = None,
         timeframe: str | None = None,
+        source: str | None = None,
+        market_type: str | None = None,
         offset: int = 0,
         limit: int = DEFAULT_PAGE_LIMIT,
     ) -> Page[CachedDataset]:
-        """Page cache identities in symbol/timeframe order without opening files."""
-        selected_symbol = (
-            symbol.upper().replace("/", "") if symbol is not None else None
-        )
+        """Filter exact identities; inspect configs to inventory custom roots."""
         rows = [
             row
             for row in self.list_available_data()
-            if (selected_symbol is None or row["symbol"] == selected_symbol)
+            if (symbol is None or row["symbol"] == symbol)
             and (timeframe is None or row["timeframe"] == timeframe)
+            and (source is None or row["source"] == source)
+            and (market_type is None or row["market_type"] == market_type)
         ]
-        rows.sort(key=lambda row: (str(row["symbol"]), str(row["timeframe"])))
+        rows.sort(
+            key=lambda row: (
+                str(row["source"]),
+                str(row["market_type"]),
+                str(row["symbol"]),
+                str(row["timeframe"]),
+            )
+        )
         return paginate(
             rows, project=CachedDataset.model_validate, offset=offset, limit=limit
         )
@@ -351,33 +428,40 @@ class DataService:
         timeframe: str,
         start_date: str,
         end_date: str,
+        *,
+        raw_config: dict[str, Any] | None = None,
     ) -> bool:
-        """Return whether yearly processed parquet files are already cached."""
-        processed_dir = self._processed_data_dir()
-        if not processed_dir.exists():
-            return False
+        """Whether successful query evidence permits reuse for this exact request."""
         try:
-            start_year = int(start_date[:4])
-            end_year = int(end_date[:4])
-        except ValueError, IndexError:
-            return False
-        for year in range(start_year, end_year + 1):
-            complete = processed_dir / market_data_filename(symbol, timeframe, year)
-            partial = processed_dir / market_data_filename(
-                symbol, timeframe, year, partial=True
+            request = MarketDataRequest(
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
             )
-            if not complete.exists() and not partial.exists():
-                return False
-        return True
+            cache = self._market_cache(request, self.data_config(raw_config or {}))
+            for year in range(request.start_date.year, request.end_date.year + 1):
+                receipt = cache.receipt(str(year))
+                lower, upper = self._year_bounds(request, year)
+                if receipt is None or not receipt.reusable(lower, upper):
+                    return False
+            return True
+        except OSError, TypeError, ValueError:
+            return False
 
     def inspect_dataset(self, config_path: Path | None = None) -> dict[str, Any]:
         """Return cached data plus feature-source status for an optional config."""
-        raw_dir, processed_dir = self._data_dirs()
+        raw_config = load_config(config_path) if config_path is not None else {}
+        data_config = self.data_config(raw_config)
+        raw_dir, processed_dir = (
+            Path(data_config.raw_dir),
+            Path(data_config.processed_dir),
+        )
         response: dict[str, Any] = {
             "data_root": str(raw_dir.parent),
             "raw_dir": str(raw_dir),
             "processed_dir": str(processed_dir),
-            "datasets": self.list_available_data(),
+            "datasets": self.list_available_data(raw_config),
             "requirements": None,
             "market_available": None,
             "market": None,
@@ -387,7 +471,6 @@ class DataService:
         if config_path is None:
             return response
 
-        raw_config = load_config(config_path)
         backtest_config = BacktestConfig(**raw_config["backtest"])
         request = self._request_from_backtest(backtest_config)
         requirements = self.requirements(raw_config, backtest_config)
@@ -395,17 +478,20 @@ class DataService:
         response["market_available"] = self.data_available(
             request.symbol,
             request.timeframe,
-            request.start_date.date().isoformat(),
-            request.end_date.date().isoformat(),
+            request.start_date.isoformat(),
+            request.end_date.isoformat(),
+            raw_config=raw_config,
         )
-        response["market"] = self._inspect_market(request)
+        response["market"] = self._inspect_market(request, data_config)
         response["dataset_fingerprint"] = self._dataset_fingerprint_report(
             request,
             requirements,
             response["market"],
+            data_config,
         )
         response["features"] = [
-            self._inspect_feature(feature, request) for feature in requirements.features
+            self._inspect_feature(feature, request, data_config)
+            for feature in requirements.features
         ]
         return response
 
@@ -427,7 +513,9 @@ class DataService:
         source: str,
     ) -> tuple[pd.DataFrame, Path]:
         crawler = create_crawler(source, data_config)
-        manager = DataManager(data_config, request, crawler=crawler)
+        manager = DataManager(
+            data_config.model_copy(update={"source": source}), request, crawler=crawler
+        )
         return manager.load()
 
     def _merge_feature(
@@ -436,6 +524,7 @@ class DataService:
         feature: FeatureSpec,
         request: MarketDataRequest,
         *,
+        data_config: DataConfig | None = None,
         sample_max_rows: int | None = None,
     ) -> pd.DataFrame:
         path = self._resolve_data_path(feature.path) if feature.path else None
@@ -451,6 +540,7 @@ class DataService:
             feature_df = self._load_or_fetch_dvol(
                 feature,
                 request,
+                data_config=data_config,
                 sample_max_rows=sample_max_rows,
                 sample_timestamps=pd.DatetimeIndex(frame["timestamp"].unique())
                 if sample_max_rows is not None
@@ -486,7 +576,8 @@ class DataService:
             if expected_rows > sample_max_rows:
                 raise ValueError("Feature joins exceeded the sample row budget")
         result = frame.merge(merged, on="timestamp", how="left")
-        result[feature.column] = result[feature.column].ffill().bfill()
+        # Leading gaps are unknown; later observations cannot fill earlier bars.
+        result[feature.column] = result[feature.column].ffill()
         return result
 
     def _load_or_fetch_dvol(
@@ -494,14 +585,17 @@ class DataService:
         feature: FeatureSpec,
         request: MarketDataRequest,
         *,
+        data_config: DataConfig | None = None,
         sample_max_rows: int | None = None,
         sample_timestamps: pd.DatetimeIndex | None = None,
     ) -> pd.DataFrame:
-        processed_path = (
-            self._resolve_data_path(feature.path)
-            if feature.path
-            else self._default_dvol_path(request)
-        )
+        if not feature.path:
+            if sample_max_rows is not None:
+                raise ValueError("Sample DVOL requires an isolated output path")
+            return self._managed_dvol(
+                feature, request, data_config or self.data_config({})
+            ).load(DeribitDVOLCrawler)
+        processed_path = self._resolve_data_path(feature.path)
         if processed_path.exists():
             if sample_max_rows is not None and sample_timestamps is not None:
                 return read_feature_sample(
@@ -513,6 +607,8 @@ class DataService:
                 )
             return self._loader.load_parquet(processed_path)
 
+        if feature.source != "deribit":
+            raise ValueError("Automatic DVOL downloads require source='deribit'")
         crawler = DeribitDVOLCrawler()
         currency = request.symbol.split("/")[0]
         if sample_max_rows is None:
@@ -545,13 +641,13 @@ class DataService:
         raw.to_parquet(processed_path, index=False)
         return raw
 
-    def _default_dvol_path(self, request: MarketDataRequest) -> Path:
-        symbol = request.symbol.split("/")[0].lower()
-        start_year = request.start_date.year
-        end_year = request.end_date.year
-        return self._processed_data_dir() / (
-            f"{symbol}_dvol_{request.timeframe}_{start_year}_{end_year}.parquet"
-        )
+    @staticmethod
+    def _managed_dvol(
+        feature: FeatureSpec, request: MarketDataRequest, config: DataConfig
+    ) -> DVOLData:
+        if feature.source != "deribit":
+            raise ValueError("Automatic DVOL downloads require source='deribit'")
+        return DVOLData(config, request)
 
     def _data_dirs(self) -> tuple[Path, Path]:
         data_root = os.environ.get("TRADINGDEV_DATA_ROOT")
@@ -560,18 +656,24 @@ class DataService:
             return root / "raw", root / "processed"
         return self._workspace.raw_data, self._workspace.processed_data
 
-    def _processed_data_dir(self) -> Path:
-        return self._data_dirs()[1]
+    @staticmethod
+    def _market_cache(request: MarketDataRequest, config: DataConfig) -> DataCache:
+        return DataCache(
+            Path(config.raw_dir),
+            Path(config.processed_dir),
+            DataIdentity.market(config, request),
+        )
 
-    def _market_paths(self, request: MarketDataRequest) -> list[Path]:
-        return [
-            self._processed_data_dir()
-            / market_data_filename(request.symbol, request.timeframe, year)
-            for year in range(
-                request.start_date.year,
-                request.end_date.year + 1,
-            )
-        ]
+    @staticmethod
+    def _year_bounds(
+        request: MarketDataRequest, year: int
+    ) -> tuple[datetime, datetime]:
+        return (
+            max(request.start_date, datetime(year, 1, 1, tzinfo=UTC)),
+            min(
+                request.end_date, datetime(year, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+            ),
+        )
 
     def _resolve_data_path(self, value: str | None) -> Path:
         if not value:
@@ -582,20 +684,40 @@ class DataService:
             return path
         return (Path.cwd() / path).resolve()
 
-    def _inspect_market(self, request: MarketDataRequest) -> dict[str, Any]:
-        paths = self._market_paths(request)
+    def _inspect_market(
+        self, request: MarketDataRequest, config: DataConfig
+    ) -> dict[str, Any]:
+        cache = self._market_cache(request, config)
+        paths: list[Path] = []
+        errors: list[str] = []
+        queries: list[dict[str, Any]] = []
+        for year in range(request.start_date.year, request.end_date.year + 1):
+            try:
+                receipt = cache.receipt(str(year))
+                if receipt is not None:
+                    paths.append(cache.processed_path(receipt))
+                    queries.append(
+                        receipt.model_dump(
+                            mode="json", exclude={"identity", "generation", "version"}
+                        )
+                    )
+            except (OSError, ValueError) as error:
+                errors.append(str(error))
         report: dict[str, Any] = {
             "symbol": request.symbol,
             "timeframe": request.timeframe,
+            "source": cache.identity.source,
+            "market_type": cache.identity.market_type,
+            "queries": queries,
             "paths": [str(path) for path in paths],
-            "exists": all(path.exists() for path in paths),
-            "rows": 0,
+            "exists": len(paths) == request.end_date.year - request.start_date.year + 1,
+            "rows": None,
             "columns": [],
             "start_timestamp": None,
             "end_timestamp": None,
             "timezone": None,
             "missing_values": {},
-            "errors": [],
+            "errors": errors,
         }
         frames: list[pd.DataFrame] = []
         for path in paths:
@@ -627,14 +749,21 @@ class DataService:
         self,
         feature: FeatureSpec,
         request: MarketDataRequest,
+        config: DataConfig,
     ) -> dict[str, Any]:
-        path = (
-            self._default_dvol_path(request)
-            if feature.type == "dvol" and not feature.path
-            else self._resolve_data_path(feature.path)
-            if feature.path
-            else None
-        )
+        path = self._resolve_data_path(feature.path) if feature.path else None
+        query = None
+        query_reusable = None
+        if feature.type == "dvol" and not feature.path:
+            managed = self._managed_dvol(feature, request, config)
+            receipt = managed.receipt()
+            query_reusable = False
+            if receipt is not None:
+                path = managed.cache.processed_path(receipt)
+                query = receipt.model_dump(
+                    mode="json", exclude={"identity", "generation", "version"}
+                )
+                query_reusable = receipt.reusable(request.start_date, request.end_date)
         exists = bool(path and path.exists())
         missing_values: int | None = None
         rows: int | None = None
@@ -656,6 +785,8 @@ class DataService:
             "exists": exists,
             "rows": rows,
             "missing_values": missing_values,
+            "query": query,
+            "query_reusable": query_reusable,
         }
 
     def _dataset_fingerprint_report(
@@ -663,6 +794,7 @@ class DataService:
         request: MarketDataRequest,
         requirements: DataRequirement,
         market_report: object,
+        data_config: DataConfig,
     ) -> dict[str, str]:
         file_hashes = []
         if isinstance(market_report, dict):
@@ -670,7 +802,7 @@ class DataService:
                 path = Path(str(value))
                 if path.exists():
                     file_hashes.append({"path": str(path), "sha256": sha256_file(path)})
-        dataset_id = self._dataset_id(request, requirements)
+        dataset_id = self._dataset_id(request, requirements, data_config)
         payload = {
             "dataset_id": dataset_id,
             "files": file_hashes,
@@ -685,13 +817,15 @@ class DataService:
         self,
         request: MarketDataRequest,
         requirements: DataRequirement,
+        data_config: DataConfig,
     ) -> str:
-        feature_key = ",".join(
-            f"{feature.type}:{feature.source}:{feature.column}:{feature.path or ''}"
-            for feature in requirements.features
-        )
-        return (
-            f"{request.symbol}:{request.timeframe}:"
-            f"{request.start_date.date()}:{request.end_date.date()}:"
-            f"{feature_key}"
+        payload = {
+            "market": DataIdentity.market(data_config, request).model_dump(mode="json"),
+            "request": request.model_dump(mode="json"),
+            "features": [
+                feature.model_dump(mode="json") for feature in requirements.features
+            ],
+        }
+        return "query-sha256:" + sha256_text(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False)
         )

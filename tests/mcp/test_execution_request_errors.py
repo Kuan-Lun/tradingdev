@@ -10,10 +10,10 @@ import yaml
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.loader import StrategyLoader
@@ -56,6 +56,8 @@ def _prepare_arguments(tool: str) -> dict[str, Any]:
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif tool == "prepare_walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
     return arguments
@@ -266,7 +268,7 @@ def test_valid_configuration_with_wrong_mode_remains_a_mode_rejection(
     def read(path: Path) -> dict[str, Any]:
         config = load_config(path)
         if tool == "prepare_backtest":
-            config["validation"] = {}
+            config["validation"] = {"mode": "automatic"}
         else:
             config.pop("validation", None)
         return config
@@ -334,7 +336,7 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
         else:
             config["parallel"] = {"reserve_cores": "not-an-integer"}
         if tool == "prepare_walk_forward":
-            config["validation"] = {}
+            config["validation"] = {"mode": "automatic"}
         return config
 
     module = "optimization_service" if tool == "prepare_optimization" else "job_service"
@@ -358,6 +360,8 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif tool == "prepare_walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
     result = service.call(tool, arguments)
@@ -442,6 +446,8 @@ def test_strategy_binding_failure_is_structured_before_job_creation(
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif tool == "prepare_walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
 
@@ -511,6 +517,8 @@ def test_strategy_loading_failure_is_structured_before_job_creation(
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif tool == "prepare_walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
 
