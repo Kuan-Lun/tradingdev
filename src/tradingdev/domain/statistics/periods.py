@@ -189,8 +189,13 @@ def period_returns(
 
 
 def has_positive_equity(equity_curve: npt.ArrayLike) -> bool:
-    """Whether every equity value is strictly positive, so returns exist."""
-    return bool((np.asarray(equity_curve, dtype=np.float64) > 0.0).all())
+    """Whether every equity value is strictly positive, so returns exist.
+
+    Raises:
+        ValueError: If ``equity_curve`` holds booleans, strings or other
+            non-numbers, as for :func:`equity_series`.
+    """
+    return bool((real_array(equity_curve, "equity_curve") > 0.0).all())
 
 
 def _opening_equity(closing: pd.Series, equity_curve: npt.ArrayLike) -> pd.Series:

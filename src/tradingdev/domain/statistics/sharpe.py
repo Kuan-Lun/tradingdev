@@ -454,7 +454,12 @@ def _resample_sharpe(values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]
 
 
 def _returns(returns: Iterable[float]) -> npt.NDArray[np.float64]:
-    values = real_array(list(returns), "returns")
+    # An array or Series keeps its dtype for real_array to judge; any other
+    # iterable, such as a generator, is materialised first.
+    values = real_array(
+        returns if getattr(returns, "dtype", None) is not None else list(returns),
+        "returns",
+    )
     if values.ndim != 1:
         raise ValueError("returns must be one-dimensional")
     if not np.all(np.isfinite(values)):

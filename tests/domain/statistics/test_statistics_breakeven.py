@@ -1,6 +1,7 @@
 """Tests for the break-even win rate and turnover cost statistics."""
 
 import math
+from decimal import Decimal
 
 import numpy as np
 import pandas as pd
@@ -210,7 +211,20 @@ class TestValidation:
         with pytest.raises(ValueError, match="end must be after start"):
             summarize_breakeven([], start=_ONE_YEAR, end=_START)
 
-    @pytest.mark.parametrize("capital", [0.0, -1.0, float("inf"), True])
+    @pytest.mark.parametrize(
+        "capital",
+        [0.0, -1.0, float("inf"), True, np.True_, "100", Decimal(100), 1 + 0j],
+        ids=[
+            "zero",
+            "negative",
+            "inf",
+            "bool",
+            "numpy-bool",
+            "str",
+            "decimal",
+            "complex",
+        ],
+    )
     def test_rejects_invalid_capital(self, capital: float) -> None:
         with pytest.raises(ValueError, match="capital"):
             summarize_breakeven([], start=_START, end=_ONE_YEAR, capital=capital)

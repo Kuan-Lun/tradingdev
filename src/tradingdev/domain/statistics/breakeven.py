@@ -47,6 +47,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from tradingdev.domain.statistics._validation import is_real
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -136,10 +138,10 @@ def summarize_breakeven(
             ``"open"``.
     """
     years = _years_between(start, end)
-    if capital is not None and (
-        isinstance(capital, bool) or not (math.isfinite(capital) and capital > 0)
+    if capital is not None and not (
+        is_real(capital) and math.isfinite(capital) and capital > 0
     ):
-        raise ValueError("capital must be positive and finite")
+        raise ValueError(f"capital must be a positive, finite number, got {capital!r}")
 
     pnls: list[float] = []
     traded_notional = 0.0

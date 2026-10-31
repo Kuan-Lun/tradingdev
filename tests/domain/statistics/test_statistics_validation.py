@@ -26,6 +26,7 @@ from tradingdev.domain.statistics.comparison import (
 from tradingdev.domain.statistics.performance import summarize_performance
 from tradingdev.domain.statistics.periods import (
     equity_series,
+    has_positive_equity,
     period_returns,
     to_utc_index,
 )
@@ -128,15 +129,35 @@ class TestEquity:
         ("equity", "match"),
         [
             (np.array([True, True, True]), "not booleans"),
-            (["100", "101", "102"], "got dtype"),
+            (["100", "101", "102"], "got '100'"),
             (np.array([100.0, None, 102.0], dtype=object), "got None"),
             (np.array([100.0, True, 102.0], dtype=object), "got True"),
+            # NumPy promotes these lists to floats before a dtype can show it.
+            ([100.0, True, 102.0], "got True"),
+            ([np.True_, 100.0, 102.0], "got np.True_"),
         ],
-        ids=["bool", "numeric-strings", "object-none", "object-bool"],
+        ids=[
+            "bool",
+            "numeric-strings",
+            "object-none",
+            "object-bool",
+            "list-with-bool",
+            "list-with-numpy-bool",
+        ],
     )
     def test_non_numbers_are_rejected(self, equity: object, match: str) -> None:
         with pytest.raises(ValueError, match=f"equity_curve must be numbers, {match}"):
             equity_series(equity, self._DAYS)  # type: ignore[arg-type]
+
+    def test_has_positive_equity_rejects_non_numbers(self) -> None:
+        with pytest.raises(ValueError, match="got True"):
+            has_positive_equity([True, True])
+        with pytest.raises(ValueError, match="got '1'"):
+            has_positive_equity(["1", "2"])
+
+    def test_summarize_performance_rejects_a_boolean_in_a_list(self) -> None:
+        with pytest.raises(ValueError, match="got True"):
+            summarize_performance([100.0, True, 102.0], self._DAYS, [])
 
     def test_buy_and_hold_rejects_boolean_prices(self) -> None:
         with pytest.raises(ValueError, match="not booleans"):
@@ -185,6 +206,36 @@ class TestReturns:
             sharpe_ratio(bad, periods_per_year=365)  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="returns must be numbers"):
             probabilistic_sharpe_ratio(bad)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            [True, 0.5, 0.1],
+            np.array([0.01, True, 0.0], dtype=object),
+            pd.Series([True, 0.01, 0.02, 0.0], dtype=object),
+        ],
+        ids=["list-with-bool", "object-array", "object-series"],
+    )
+    def test_sharpe_functions_reject_hidden_booleans(self, bad: object) -> None:
+        # align_returns already refused these; the Sharpe entry points listed
+        # them first and so let NumPy turn True into 1.0.
+        with pytest.raises(ValueError, match="returns must be numbers, got True"):
+            sharpe_ratio(bad, periods_per_year=365)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="returns must be numbers, got True"):
+            sharpe_interval_outcome(bad, periods_per_year=365)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="returns must be numbers, got True"):
+            deflated_sharpe_ratio(
+                bad,  # type: ignore[arg-type]
+                [0.5, 1.5],
+                periods_per_year=365,
+            )
+
+    def test_sharpe_accepts_a_generator_and_a_float_series(self) -> None:
+        values = [0.01, 0.02, -0.01, 0.0]
+        expected = sharpe_ratio(values, periods_per_year=365)
+
+        assert sharpe_ratio((v for v in values), periods_per_year=365) == expected
+        assert sharpe_ratio(pd.Series(values), periods_per_year=365) == expected
 
     def test_integer_returns_are_accepted(self) -> None:
         integers = pd.Series([0, 1] * (_N // 2), index=_INDEX)

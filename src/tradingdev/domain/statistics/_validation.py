@@ -28,22 +28,35 @@ def positive_int(value: object, label: str) -> int:
     return value
 
 
+def is_real(value: object) -> bool:
+    """Whether ``value`` is a real number and not a boolean.
+
+    ``bool`` is a ``numbers.Real``; ``np.bool_`` is not, but NumPy converts
+    it to 1.0 all the same, so both are excluded explicitly.
+    """
+    return isinstance(value, numbers.Real) and not isinstance(value, bool | np.bool_)
+
+
 def real_array(values: object, label: str) -> npt.NDArray[np.float64]:
     """Return ``values`` as a float array if every element is a real number.
 
     Integer and floating dtypes are accepted. Booleans, strings and other
     objects are rejected even where NumPy could convert them, so ``True`` is
     not read as 1.0 and ``"0.01"`` not as a return of one percent. Object
-    arrays, such as nullable pandas columns, are checked element by element.
-    Finiteness and shape are left to the caller.
+    arrays, such as nullable pandas columns, and plain Python sequences are
+    checked element by element: NumPy promotes ``[100.0, True]`` to floats
+    before any dtype could show the boolean. Finiteness and shape are left to
+    the caller.
     """
-    array = np.asarray(values)
+    # Only input that already has a dtype can be judged by it.
+    has_dtype = getattr(values, "dtype", None) is not None
+    array = np.asarray(values) if has_dtype else np.asarray(values, dtype=object)
     kind = array.dtype.kind
     if kind == "b":
         raise ValueError(f"{label} must be numbers, not booleans")
     if kind == "O":
         for element in array.ravel().tolist():
-            if isinstance(element, bool) or not isinstance(element, numbers.Real):
+            if not is_real(element):
                 raise ValueError(f"{label} must be numbers, got {element!r}")
     elif kind not in "iuf":
         raise ValueError(f"{label} must be numbers, got dtype {array.dtype}")
