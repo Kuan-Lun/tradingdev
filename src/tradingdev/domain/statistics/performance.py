@@ -115,9 +115,12 @@ def summarize_performance(
     """
     annualisation = _annualisation(periods_per_year)
     equity = equity_series(equity_curve, timestamps)
-    daily = period_pnl(equity_curve, timestamps, "daily")
-    monthly = period_pnl(equity_curve, timestamps, "monthly")
-    positive = has_positive_equity(equity_curve)
+    # Validated once: the period functions check their input again, and a
+    # plain list is the slow case for those checks.
+    values, index = equity.to_numpy(), equity.index
+    daily = period_pnl(values, index, "daily")
+    monthly = period_pnl(values, index, "monthly")
+    positive = has_positive_equity(values)
 
     first = float(equity.iloc[0])
     total_pnl = float(equity.iloc[-1]) - first
@@ -142,7 +145,7 @@ def summarize_performance(
         monthly_pnl_mean=float(monthly.mean()),
         monthly_pnl_std=_sample_std(monthly),
         sharpe_ratio=(
-            _sharpe(period_returns(equity_curve, timestamps, "daily"), annualisation)
+            _sharpe(period_returns(values, index, "daily"), annualisation)
             if positive
             else None
         ),

@@ -67,10 +67,23 @@ def real_array(values: object, label: str) -> npt.NDArray[np.float64]:
     before any dtype could show the boolean. Finiteness and shape are left to
     the caller.
     """
-    # Only input that already has a dtype can be judged by it.
-    has_dtype = getattr(values, "dtype", None) is not None
-    array = np.asarray(values) if has_dtype else np.asarray(values, dtype=object)
+    array = np.asarray(values)
     kind = array.dtype.kind
+    if getattr(values, "dtype", None) is None:
+        if kind not in "iuf":
+            # Judge each element, so the message names the first bad one.
+            array = np.asarray(values, dtype=object)
+            kind = "O"
+        elif array.ndim == 1:
+            # NumPy turned the sequence into numbers, which may have hidden
+            # booleans in it. Collecting the element types is far cheaper
+            # than a numbers.Real check of every element, and exact types
+            # suffice: bool cannot be subclassed. Callers reject other
+            # shapes, so only one-dimensional input is scanned.
+            types = set(map(type, values))  # type: ignore[call-overload]
+            for boolean in (bool, np.bool_):
+                if boolean in types:
+                    raise ValueError(f"{label} must be numbers, not booleans")
     if kind == "b":
         raise ValueError(f"{label} must be numbers, not booleans")
     if kind == "O":

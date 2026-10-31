@@ -171,8 +171,8 @@ class TestEquity:
             (np.array([100.0, None, 102.0], dtype=object), "got None"),
             (np.array([100.0, True, 102.0], dtype=object), "got True"),
             # NumPy promotes these lists to floats before a dtype can show it.
-            ([100.0, True, 102.0], "got True"),
-            ([np.True_, 100.0, 102.0], "got np.True_"),
+            ([100.0, True, 102.0], "not booleans"),
+            ([np.True_, 100.0, 102.0], "not booleans"),
         ],
         ids=[
             "bool",
@@ -194,7 +194,7 @@ class TestEquity:
             has_positive_equity(["1", "2"])
 
     def test_summarize_performance_rejects_a_boolean_in_a_list(self) -> None:
-        with pytest.raises(ValueError, match="got True"):
+        with pytest.raises(ValueError, match="not booleans"):
             summarize_performance([100.0, True, 102.0], self._DAYS, [])
 
     def test_buy_and_hold_rejects_boolean_prices(self) -> None:
@@ -257,11 +257,17 @@ class TestReturns:
     def test_sharpe_functions_reject_hidden_booleans(self, bad: object) -> None:
         # align_returns already refused these; the Sharpe entry points listed
         # them first and so let NumPy turn True into 1.0.
-        with pytest.raises(ValueError, match="returns must be numbers, got True"):
+        with pytest.raises(
+            ValueError, match="returns must be numbers, (got True|not booleans)"
+        ):
             sharpe_ratio(bad, periods_per_year=365)  # type: ignore[arg-type]
-        with pytest.raises(ValueError, match="returns must be numbers, got True"):
+        with pytest.raises(
+            ValueError, match="returns must be numbers, (got True|not booleans)"
+        ):
             sharpe_interval_outcome(bad, periods_per_year=365)  # type: ignore[arg-type]
-        with pytest.raises(ValueError, match="returns must be numbers, got True"):
+        with pytest.raises(
+            ValueError, match="returns must be numbers, (got True|not booleans)"
+        ):
             deflated_sharpe_ratio(
                 bad,  # type: ignore[arg-type]
                 [0.5, 1.5],
