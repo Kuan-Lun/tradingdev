@@ -19,9 +19,9 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 *完整閱讀版 · 2026 年 10 月。歷史回測與策略研究。*
 
 <!--
-封面後先提供閱讀路線，再交代個人的研究背景與共用後端的目標，以必要能力比較現有方案，提出 TradingDev 的核心研發課題、目前基礎與使用情境。接著用一個交易想法，展示如何形成可檢查的實驗；逐項產品比較保留在後段供深入閱讀。
+封面後先提供閱讀路線，再交代實驗室研究需求、第三方工具的能力範圍，以及本專案要自行開發的工程回饋機制。用具體案例說明預期價值，再介紹目前基礎、使用情境與策略實驗，最後展開工程回饋的驗證及後續目標。
 初稿專案事實基準：d57da5c20aa7dc578dabef92bbf14d796df8adb6；執行確認與報告交付流程依對應頁面所列的新版本更新。外部資料查核：2026-10-25 至 2026-10-26。
-開場的比較摘要另於 2026-10-30 查核官方文件；「目前已建立的研究基礎」依 cd95d6091bbc2a46c6a58cdb326aa5df730519c4 更新。
+開場的第三方能力摘要另於 2026-10-31 查核所列官方文件；「目前已建立的研究基礎」依 cd95d6091bbc2a46c6a58cdb326aa5df730519c4 更新。
 來源：https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/README.md
 -->
 
@@ -33,16 +33,15 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 
 | 章節 | 主題 | 內容 |
 | --- | --- | --- |
-| 01 | [開發動機與專案定位](index.html#3) | 研究需求、研發定位與使用情境 |
+| 01 | [開發動機與專案定位](index.html#3) | 現成工具的範圍、自製理由與使用情境 |
 | 02 | [策略研究](index.html#11) | 角色分工、運算安排與策略實驗 |
-| 03 | [產品詳細比較](index.html#25) | 各工具的能力、工作方式與使用場合 |
-| 04 | [經驗如何回饋專案](index.html#35) | 研究紀錄與共用能力 |
-| 05 | [後續開發方向](index.html#39) | 可獨立指定的開發目標 |
+| 03 | [經驗如何回饋專案](index.html#25) | 共用改進、驗證方式與開發流程 |
+| 04 | [後續開發方向](index.html#29) | 可獨立指定的開發目標 |
 
 <!-- _footer: "點選章名跳轉。方向鍵換頁，P 開啟講者模式。" -->
 
 <!--
-這是分為五章的完整閱讀版，不限定演講時間。各章可獨立閱讀，內容頁頂端會標示目前章節。開場以比較摘要建立研發定位，說明現有能力與使用情境，再看研究分工、部署安排及實驗流程。後段的逐項產品比較可供深入閱讀與問答，接著說明經驗回饋與後續開發目標。
+這是分為四章的完整閱讀版，不限定演講時間。各章可獨立閱讀，內容頁頂端會標示目前章節。開場以現成工具的能力範圍與具體案例說明自製理由，再看目前的研究分工、部署安排及實驗流程，接著展開工程回饋的驗證與後續開發目標。
 -->
 
 ---
@@ -102,67 +101,69 @@ AI 開發助手從多位使用者的策略開發紀錄中辨識共通問題與�
 
 <!-- _class: compact -->
 
-## 現有工具已經能做什麼
+## 現成工具與我們仍需開發的流程
 
-| 選擇 | 已提供的能力 |
+| 現成工具 | 已提供的基礎 |
 | --- | --- |
-| VectorBT、Backtrader | 策略與歷史回測的計算基礎 |
-| VectorBT PRO MCP 等研究工具 | 讓 AI 查工具、撰寫程式及操作研究 |
-| QuantConnect／LEAN 生態 | 資料、策略研究、團隊與交易流程 |
+| VectorBT、Backtrader | 回測計算與可擴充的策略框架 |
+| VectorBT PRO MCP | AI 程式研究與按需研究指引 |
+| QuantConnect | 研究代理、診斷、專案記憶與共用程式庫 |
 
-**回測與 AI 研究已有成熟工具。**
-本專案以這些能力為基礎，聚焦研究決策、經驗累積與後端改進。
+**我們仍需設計：把跨研究案例轉成後端修改，
+並驗證改進能否供其他策略重用。**
 
-<!-- _footer: "來源：[VectorBT](https://vectorbt.dev/)、[Backtrader](https://www.backtrader.com/docu/)、[VBT PRO MCP](https://vectorbt.pro/features/ai/mcp-server/)、[QC Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents)" -->
+*下列公開文件未描述完整提供這項流程；不代表無法擴充。*
+
+<!-- _footer: "來源：[VectorBT](https://vectorbt.dev/)、[Backtrader](https://www.backtrader.com/docu/)、[VBT PRO MCP](https://vectorbt.pro/features/ai/mcp-server/)、[QC Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents)、[程式庫](https://www.quantconnect.com/docs/v2/local-platform/projects/shared-libraries) · 查核 2026-10-31" -->
 
 <!--
-回測是用歷史行情模擬交易規則。現有工具已能完成許多計算與研究工作，TradingDev 也沿用其中的成熟套件。
-Freqtrade 是含回測、最佳化及交易功能的應用。cloudQuant/backtrader-mcp、bcosm 也支援自訂策略，後段逐一比較。QuantConnect 平台已涵蓋完整研究流程，不能把它描述成只有回測引擎。
+比較對準前頁要求的跨研究工程回饋。回測、策略生成、診斷、研究指引與記憶已能由第三方工具提供，單獨列出這些功能不能證明本專案的必要性。
+VectorBT 與 Backtrader 的官方文件提供回測、參數研究與擴充能力。VBT PRO MCP 提供程式執行、持續 kernel 及回測、最佳化、交叉驗證等按需 skills。QuantConnect Agents 已提供研究流程、結構化診斷、組織共用 skills 與能由代理更新的專案記憶，Shared Libraries 提供跨專案程式重用。
+這些頁面沒有描述完整的「彙集跨研究問題與修正證據、產生共用後端修改、跨策略回歸驗證、審查整合並評估後續效益」流程。這是依明列文件範圍作出的開發判斷，不是已證明所有產品都缺少此功能，也不能由未列出推論其無法擴充。
+研究案例可能含私人內容，共用時須區分可分享證據與私人策略。實際採用仍應比較擴充現有生態與自維護服務的成本，不能僅憑這張摘要宣稱自製必然更便宜、更快或更準確。
+來源：本頁連結的官方文件，查核於 2026-10-31。此處沒有進行同條件產品實測。
 -->
 
 ---
 
 <!-- _class: compact -->
 
-## 現有方案與研究需求的比較
+## 為何需要自行建立研究後端
 
-| 必要能力 | 現有方案的相關能力 | TradingDev 的研發目標 |
-| --- | --- | --- |
-| 共用實驗 | QuantConnect：專案回測與結果管理 | 以一致規則與紀錄支援成員研究 |
-| 策略與模型 | VBT PRO MCP 程式研究、QC 機器學習 | 支援不同方法與一致驗證 |
-| 策略回饋 | QC Agents：研究流程與診斷 | 依實驗證據提出下一步研究 |
-| 後端自動迭代 | QC：專案記憶與共用程式庫 | 從研究案例提出、驗證後端改進 |
+**我們要開發跨研究的工程回饋機制。**
 
-*右欄是本專案的研發目標，各項能力仍分階段開發。*
+- **案例與證據**：連結問題、修正依據與適用條件。
+- **修改與驗證**：AI 提出檢查或元件，經跨策略測試與審查整合。
+- **追蹤與評估**：保留改進版本，檢查後續研究是否減少重複錯誤。
 
-<!-- _footer: "來源：[QC 回測](https://www.quantconnect.com/docs/v2/local-platform/backtesting/getting-started)、[ML](https://www.quantconnect.com/docs/v2/writing-algorithms/machine-learning/key-concepts)、[Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents)、[程式庫](https://www.quantconnect.com/docs/v2/local-platform/projects/shared-libraries)、[VBT PRO MCP](https://vectorbt.pro/features/ai/mcp-server/) · 查核 2026-10-30" -->
+這需要掌握**研究證據、後端檢查與版本更新流程**。
+
+*沿用成熟回測工具；跨研究自動回饋是待開發的核心目標。*
 
 <!--
-QC 是 QuantConnect。這頁依四項研究需求，列出官方文件已說明的能力與本專案的研發方向；逐項工具的操作方式與使用情境留在後段。
-QuantConnect 已提供專案回測、結果管理與 ML 研究；Agents 能依工具結果繼續研究，並接收回測診斷。VBT PRO MCP 能讓助手執行與修改 Python 回測程式。
-自動迭代列中的專案記憶與共用程式庫，是經驗保存與元件重用的相關能力，不等同於自動修改平台後端。此處不據此判定其他產品能否完成後端自動改進，也不宣稱右欄能力是 TradingDev 獨有。
-現有方案能否直接滿足特定研究需求，仍須以案例驗證。右欄列的是本專案希望建立與評估的能力，不是已測得的功能或效能優勢。
-來源：本頁頁尾的官方文件，查核於 2026-10-30。
+自製的研發理由是需要設計與驗證這套工程回饋機制，並維護它對研究後端的修改。只使用現成回測、記憶或程式庫，還不等於建立了案例如何形成改進、如何判斷適用、如何驗證及如何追蹤版本的流程。
+本專案已有策略版本、固定執行設定、檢查、結果查詢與研究筆記，可供後續工作採用。跨研究自動檢索、共通問題歸納及自動後端提案與整合仍未完成，這些是研發目標，不是已交付的獨有功能。
+現有工具可以繼續作為計算基礎，外部開發助手也可負責提案與程式修改。自製研究服務不要求重寫回測引擎、對話模型或整個交易平台；哪些元件需維護由具體案例決定。
+來源：本專案 ARCHITECTURE.md 的策略生命週期、診斷擴充與研究筆記，以及後續開發目標 TODO-02、TODO-03。
 -->
 
 ---
 
-## TradingDev 的核心研發課題
+## 一次修正如何幫助其他研究
 
-**有證據的 AI 研究決策**
-讓 AI 根據檢查與實驗結果，提出下一步研究方向。
+1. 成員 A 發現資料時間對齊錯誤，保留可重現案例。
+2. AI 提出共用檢查與測試，說明適用條件。
+3. 其他策略通過回歸驗證，審查後更新後端。
+4. 成員 B 開發不同策略時，提早攔下同類錯誤。
 
-**可累積的研究經驗**
-將不同策略的問題與解法，整理成可重用的知識與檢查。
+**希望驗證：一次修正，能否減少其他研究的重複錯誤？**
 
-**可驗證的自動迭代**
-讓 AI 提出後端修改，經測試與審查後回饋下一輪研究。
-
-*以可重現案例驗證成效，各項能力仍分階段開發。*
+*待開發的情境示意，非已完成的自動功能或實測成果。*
 
 <!--
-研發重點是讓研究證據持續支持判斷與改進。成熟回測工具提供計算基礎，接下來要用具體案例驗證 AI 是否提出有依據的實驗、找回適用的研究經驗，以及產生能解決共通問題的後端修改。
-這些是待驗證的研發課題。現有實驗與紀錄可作基礎，研究引導、跨研究記憶及自動工程回饋的進度與限制，在後續頁面分別說明。
+這是原工程回饋示例的具體化，提前用來說明自製目標。假設某種新資料來源的時間語意造成對齊問題，從個別修正抽出共用檢查，再驗證其他策略是否適用，不能把這個示例說成已發生的實驗室案例或目前尚未修復的產品 bug。
+預期成果包括可重現案例、問題及修正證據、適用條件、共用檢查或元件、測試及改進版本。AI 提案須經測試與審查，不代表自動發布核心程式，也不會自動分享私人策略。
+能否泛化仍待實驗。後段「工程回饋的驗證方式」說明與既有工具、指引及記憶的對照，以及重複錯誤、誤判與人工工時等觀察方式。
 -->
 
 ---
@@ -209,7 +210,7 @@ ML 模型包含 XGBoost、LightGBM、CatBoost 方向模型；QuantConnect 也提
 這些是依現有能力提出的使用情境，不是已完成的客戶案例。教學重點是如何檢查假說，不是比較誰的回測收益最高。
 團隊可以沿用自己的資料、實驗格式與檢查規則，再將驗證過的共用規則改進到服務中。初期可在可信環境採獨立部署；同一 server 的 workspace 不是現成的多租戶或執行安全隔離。
 公司可將研究後端接到既有 AI 入口，由產品入口選擇對話模型、計量 token 用量及安排收費，行情、主機與結果保存則由整合者安排。公開多人服務仍須另行開發權限、隔離與資源管理，收費上線前也須核實依賴及行情授權。
-個人助手、公司模型服務及私有部署並非 TradingDev 獨有；QuantConnect Private Cloud 也有公司資料與運算的方案，後段比較其整合責任。
+個人助手、公司模型服務及私有部署並非 TradingDev 獨有；QuantConnect Private Cloud 也有公司資料與運算的方案，不能把私有部署當作自製的唯一理由。
 來源：README 的 MCP 連接方式與執行限制、ARCHITECTURE.md 的產品邊界與整合層分工。
 -->
 
@@ -371,7 +372,7 @@ TradingDev 以 server instructions、工具描述與按需契約提供研究指�
 *策略仍須符合訊號契約與檢查政策。驗證不等於完整安全隔離。*
 
 <!--
-這是與僅選擇固定模板的工具相比可具體展示的差異，但不是所有 MCP 專案都只支援模板。cloudQuant/backtrader-mcp 和 bcosm 也支援自訂策略，後面分別比較。
+VBT PRO MCP 也能讓助手執行與修正程式；自訂策略不是本專案獨有功能。此頁說明現有研究範圍，不以此作為自製的唯一理由。
 -->
 
 ---
@@ -490,213 +491,11 @@ signal 使用 VectorBT，包含初始資金。volume 從零累計 P&L，沒有�
 
 ---
 
-<!-- header: "03　產品詳細比較" -->
+<!-- header: "03　經驗如何回饋專案" -->
 <!-- _class: chapter -->
 <!-- _header: "" -->
 
-## 03　產品詳細比較
-
-**基礎計算工具**提供運算能力。
-
-**AI／MCP 研究工具**讓助手操作研究。
-
-**完整平台**進一步整合資料、團隊與交易流程。
-
-*逐一比較能力、工作方式，以及適合採用的情境。*
-
-<!--
-這是為了說明的分類，不是嚴格互斥的產品分類。Freqtrade 是完整交易應用，比單純函式庫更高一層；LEAN 引擎與 QuantConnect 平台也要分開。
--->
-
----
-
-<!-- header: "03　產品詳細比較　／　03.1　基礎工具與交易應用" -->
-<!-- _class: subsection compact -->
-
-## 基礎能力已有成熟實作
-
-| 工具 | 主要用途 | 使用時還要安排什麼 |
-| --- | --- | --- |
-| VectorBT | Python 回測與參數研究函式庫 | 組裝研究流程、服務及保存方式 |
-| Backtrader | 可擴充策略與交易模型的框架 | 選擇維護分支，整合資料與操作流程 |
-| Freqtrade | 含回測、最佳化與交易功能的應用 | 配合其策略介面與部署方式 |
-
-TradingDev 以成熟計算套件支援策略實驗，後續研發聚焦研究決策、記憶與自動改進。
-
-<!-- _footer: "來源：[VectorBT](https://vectorbt.dev/)、[Backtrader](https://www.backtrader.com/docu/)、[Freqtrade](https://www.freqtrade.io/en/stable/)" -->
-
-<!--
-重點是基礎功能有被整合，不把底層套件當作功能不足的對手。Freqtrade 本身已提供很多產品功能，不能說使用它一定要從頭自行組裝。
-原版 Backtrader 主線更新停在 2023 年，社群分支持續修正。維護情況依分支而異，不用 issue 數量推論品質。
-來源：https://github.com/cloudQuant/backtrader/blob/development/CHANGELOG.md 、 https://github.com/backtrader2/backtrader/issues/98
--->
-
----
-
-<!-- header: "03　產品詳細比較　／　03.2　AI／MCP 研究工具" -->
-<!-- _class: subsection -->
-
-## VectorBT PRO MCP
-
-助手可以查文件、讀 API，並在 Python 環境執行與修正回測程式。
-
-**適合的工作方式**：延續個人的程式研究環境，保留變數與資料繼續實驗。
-
-**比較重點**：TradingDev 將策略版本、檢查、背景工作與結果查詢做成明確服務。
-
-*PRO 的程式執行使用持續存在的 kernel，且限 stdio。多人使用需安排環境隔離，未實測衝突。*
-
-<!-- _footer: "來源：[VectorBT PRO MCP 官方說明](https://vectorbt.pro/features/ai/mcp-server/)" -->
-
-<!--
-不能說 VectorBT PRO MCP 只能查文件，或不能開發策略。它也有可由助手讀取的研究 skills。其公開設計不能直接當作完整多人後端，但每人獨立環境是可能的。
--->
-
----
-
-## MaverickMCP
-
-提供策略模板、參數研究、驗證及分析工具，也有 ML 與訊號集成能力。
-
-**適合的工作方式**：沿既有策略類型進行分析與實驗。
-
-**比較重點**：TradingDev 讓助手保存及修正新的 Python 策略版本，並持續查詢完整研究紀錄。
-
-*所查版本的自然語言解析會選擇模板與參數，不會把任意交易描述編譯成新策略。*
-
-<!-- _footer: "來源：[MaverickMCP 回測 API](https://github.com/wshobson/maverick-mcp/blob/da70d074dcdac5fb21e3b2e6383cfebf391f28b5/docs/api/backtesting.md) · 查核版本 da70d07" -->
-
-<!--
-MaverickMCP 有自己的優勢，包括模板便利性、Monte Carlo 與 ensemble 工具。不要把自然語言解析成模板說成不能做任何策略研究。
-所查 MCP 介面未見等價的新策略原始碼保存、revision 驗證及持久背景 job 生命週期。這是介面範圍比較，不是斷言開發者不能擴充原始碼。
--->
-
----
-
-## cloudQuant/backtrader-mcp
-
-已提供策略草稿、驗證、修復、工作追蹤及研究引導。
-
-**共同方向**：讓助手參與策略開發，而不只呼叫一次回測。
-
-**比較重點**：它採 Backtrader 的策略寫法；TradingDev 採訊號輸出規則，並提供逐筆交易與帳戶紀錄查詢。
-
-*它已有 MCP prompts。TradingDev 使用 server instructions 與工具回覆提供引導。*
-
-<!-- _footer: "來源：[backtrader-mcp](https://github.com/cloudQuant/backtrader-mcp/tree/ad6312a11c2fe7ff9a4c3fcfcfab5037a951b58c) · 查核版本 ad6312a" -->
-
-<!--
-cloudQuant 與 QuantConnect 是不同專案。它有持久工作、取消及日誌，與 TradingDev 的部分功能相近。移入策略時要依各自格式改寫，對話追問能力則取決於結果查詢的範圍。
-獨立的 backtrader-skills、backtrader-agent 另有流程與有限 sweep 經驗保存，不能自動視為主 MCP repository 已整合的功能。
--->
-
----
-
-## bcosm/backtester-mcp
-
-可接收策略程式，提供參數最佳化、穩健性檢驗及結果保存。
-
-**比較重點**：TradingDev 把策略版本、驗證資格、執行計畫與實際結果串在同一個生命週期。
-
-它另有 Python 層的**獨立策略淨值加權分析**。
-
-*TradingDev 尚缺等價組合分析，列入 TODO-04。這項 API 尚未接到對方 MCP／CLI，也不是共用資金帳戶。*
-
-<!-- _footer: "來源：[MCP 工具](https://github.com/bcosm/backtester-mcp/blob/ddc0394d0ad6edb07cf836de4f931a641adf23f5/src/backtester_mcp/mcp_server.py)、[組合 API](https://github.com/bcosm/backtester-mcp/blob/ddc0394d0ad6edb07cf836de4f931a641adf23f5/src/backtester_mcp/portfolio.py) · 查核版本 ddc0394" -->
-
-<!--
-bcosm 的驗證工具有 verdict/reasons，流程範例放在 examples/agent_workflow_demo.py。未註冊 prompts 不能簡化成完全沒有引導。
-save_run 接收呼叫端提交的 metrics/code/params，與 TradingDev 固定實際執行設定、保存產物的流程不同。
--->
-
----
-
-<!-- header: "03　產品詳細比較　／　03.3　完整平台與引擎" -->
-<!-- _class: subsection -->
-
-## QuantConnect 與 LEAN
-
-| 層次 | 作用 |
-| --- | --- |
-| LEAN 引擎 | 事件驅動的策略、資料、委託與帳務模型 |
-| QuantConnect 平台 | 專案、資料、運算、協作與交易服務 |
-| 官方 MCP 與 Agents | 對外提供工具，或由研究代理操作流程 |
-
-三者相關，但使用條件與整合責任不同。
-
-<!-- _footer: "來源：[LEAN](https://github.com/QuantConnect/Lean)、[QC MCP](https://www.quantconnect.com/docs/v2/ai-assistance/mcp-server/key-concepts)、[QC Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents)" -->
-
-<!--
-LEAN engine 為 Apache-2.0，可自行建置；官方 CLI/Local Platform 與 Private Cloud 有各自方案條件。不要把官方 remote MCP 的付費 Agent Node 要求套到所有自行使用 LEAN 的情境。
--->
-
----
-
-<!-- _class: compact -->
-
-## 與 QuantConnect 比較的重點
-
-| 問題 | QuantConnect | TradingDev |
-| --- | --- | --- |
-| AI 如何研究策略？ | 可用外部 MCP 客戶端或內建 Agents | 外部助手操作研究後端 |
-| 程式依循什麼模型？ | LEAN 的策略、事件及交易模型 | 訊號輸出規則與驗證流程 |
-| 團隊要維護什麼？ | 選用平台服務或自管方案 | 研究後端與自訂驗證規則 |
-| 資料與主機能自管嗎？ | 有 Local／Private Cloud 路線 | 可自行安排，依需求擴充 |
-
-*雙方都有外部 AI、回測與 ML 研究。價格、速度與準確性未作同條件實測。*
-
-<!-- _footer: "來源：[Private Cloud](https://www.quantconnect.com/docs/v2/local-platform/private-cloud)、[官方 MCP](https://www.quantconnect.com/docs/v2/ai-assistance/mcp-server/key-concepts)、本專案架構" -->
-
-<!--
-QC 已有新策略建立、編譯、回測、最佳化及結果診斷，不能宣稱 TradingDev 的完整研究流程對 QC 也是獨有。
-本頁表達工作方式與維護責任。要主張某個情境更省事或成本更低，仍需具體部署評估。
--->
-
----
-
-<!-- header: "03　產品詳細比較" -->
-
-## 使用場合決定選擇
-
-| 你的主要需求 | 可優先考慮的方向 |
-| --- | --- |
-| 已有 AI 網站，要加入策略實驗 | 將 TradingDev 接成可修改的研究元件 |
-| 已有 Python 流程，要自訂檢查與紀錄 | 維護自己的 TradingDev 服務 |
-| 希望採用完整資料與團隊平台 | 評估 QuantConnect 的現成服務 |
-| 要接券商、處理多資產帳務與實盤 | QC／LEAN 已有較完整能力 |
-
-*這是依現有能力提出的情境建議。TradingDev 目前不提供真實下單。*
-
-<!--
-舉例：「公司已經有和客戶聊天的 AI，只缺一套能真正跑策略實驗的工具。」這比抽象的自由度更容易理解。
-需要私有資料時 QC Private Cloud 也可行，不能用資料是否留在公司作單一判準。
--->
-
----
-
-<!-- _class: statement -->
-
-## TradingDev 的研發定位
-
-> 建立能累積研究經驗，
-> 並由 AI 持續改進的量化研究後端。
-
-以可追問的策略實驗為基礎，逐步驗證 AI 研究決策、跨研究記憶與後端自動迭代。
-
-*目前已具備實驗與紀錄基礎，自動改進流程仍待開發。*
-
-<!--
-現有工具提供可採用的研究能力，也提供評估設計的參考。本專案以研究決策、經驗累積與後端改進作為持續研發方向，成效須由具體研究案例與修改前後的證據驗證。
-既有能力與未來目標分開說明，不把記憶、Agents 或可自架說成市場獨有功能，也不以採用的工具數量代表研究價值。
--->
-
----
-
-<!-- header: "04　經驗如何回饋專案" -->
-<!-- _class: chapter -->
-<!-- _header: "" -->
-
-## 04　經驗如何回饋專案
+## 03　經驗如何回饋專案
 
 讓個別研究中的問題，成為下一次開發可用的能力。
 
@@ -716,17 +515,24 @@ QC 已有新策略建立、編譯、回測、最佳化及結果診斷，不能�
 
 ---
 
-## 一次問題，成為下一次的檢查
+<!-- _class: compact -->
 
-1. 某次策略開發發現時間對齊問題。
-2. 保留可重現案例，確認錯誤原因。
-3. 加入共用檢查或元件，並完成測試與審查。
-4. 下一位開發者使用同一套工具時，得到這項改進。
+## 工程回饋的驗證方式
 
-*這是工程回饋的示例。現有版本與紀錄提供基礎，自動回饋流程仍待開發。*
+| 要驗證什麼 | 觀察方式 |
+| --- | --- |
+| 解法能否重用 | 用未參與開發的策略，檢查同類錯誤是否被攔下 |
+| 是否破壞既有研究 | 比較正常案例的誤判與回歸結果 |
+| 是否減少人工工作 | 記錄診斷、修正與審查所需工時 |
+
+對照既有工具搭配研究指引與記憶的做法。
+
+*這是待執行的驗證設計，尚無比較結果。*
 
 <!--
-可以讓觀眾想像「前一個人踩過的坑，成為下一個人的防護」。這不是自動分享私人策略，也不代表系統已會自行修改並發布核心程式。
+承接開場的時間對齊示例，工程回饋要證明改進能用在後續研究，而非只讓原案例通過。應保留未參與開發的策略案例，以及沒有該問題的正常案例，檢查適用條件與誤判。
+對照不應只採用缺少指引的裸 LLM。比較既有工具搭配研究指引與記憶的做法，以及加入工程回饋機制後的做法；固定模型、任務、資料及可用資訊，記錄人工介入、運算與模型成本。
+回歸驗證需確認其他策略與既有結果契約沒有受到非預期影響。重複錯誤、修復及審查工時是待量測結果，尚未設定效益數字，也不以回測收益變高代替工程成效。
 -->
 
 ---
@@ -748,11 +554,11 @@ QC 已有新策略建立、編譯、回測、最佳化及結果診斷，不能�
 
 ---
 
-<!-- header: "05　後續開發方向" -->
+<!-- header: "04　後續開發方向" -->
 <!-- _class: chapter -->
 <!-- _header: "" -->
 
-## 05　後續開發方向
+## 04　後續開發方向
 
 以現有成果為基礎，安排下一階段的開發與驗證。
 
@@ -799,7 +605,7 @@ QC 已有新策略建立、編譯、回測、最佳化及結果診斷，不能�
 
 ---
 
-<!-- header: "05　後續開發方向　／　TODO-01" -->
+<!-- header: "04　後續開發方向　／　TODO-01" -->
 <!-- _class: subsection -->
 
 ## TODO-01 研究引導與診斷
@@ -821,7 +627,7 @@ DiagnosticProvider 接收原生績效與觀察值；替換入口及證據模型�
 
 ---
 
-<!-- header: "05　後續開發方向　／　TODO-02" -->
+<!-- header: "04　後續開發方向　／　TODO-02" -->
 <!-- _class: subsection -->
 
 ## TODO-02 可引用證據的研究記憶
@@ -843,7 +649,7 @@ PoC 已可保存需求與階段摘要，引用報告並匯出離線閱讀包。
 
 ---
 
-<!-- header: "05　後續開發方向　／　TODO-03" -->
+<!-- header: "04　後續開發方向　／　TODO-03" -->
 <!-- _class: subsection -->
 
 ## TODO-03 共用元件與工程回饋
@@ -864,7 +670,7 @@ PoC 已可保存需求與階段摘要，引用報告並匯出離線閱讀包。
 
 ---
 
-<!-- header: "05　後續開發方向　／　TODO-04" -->
+<!-- header: "04　後續開發方向　／　TODO-04" -->
 <!-- _class: subsection -->
 
 ## TODO-04 多策略配置研究
@@ -884,7 +690,7 @@ PoC 已可保存需求與階段摘要，引用報告並匯出離線閱讀包。
 
 ---
 
-<!-- header: "05　後續開發方向　／　TODO-05" -->
+<!-- header: "04　後續開發方向　／　TODO-05" -->
 <!-- _class: subsection -->
 
 ## TODO-05 成熟引擎評估
@@ -923,7 +729,7 @@ LEAN 的內建回測成交模型預設完全成交。
 
 ---
 
-<!-- header: "05　後續開發方向　／　TODO-06" -->
+<!-- header: "04　後續開發方向　／　TODO-06" -->
 <!-- _class: subsection -->
 
 ## TODO-06 多人服務身分與權限
@@ -944,7 +750,7 @@ LEAN 的內建回測成交模型預設完全成交。
 
 ---
 
-<!-- header: "05　後續開發方向" -->
+<!-- header: "04　後續開發方向" -->
 
 ## 依使用場合決定優先序
 
@@ -989,10 +795,9 @@ LEAN 的內建回測成交模型預設完全成交。
 - [TradingDev 使用說明](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/README.md)與[架構](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/ARCHITECTURE.md)
 - [策略契約](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/docs/strategy_contract.md)與[執行產物](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/docs/run_artifacts.md)
 - [VectorBT](https://vectorbt.dev/)與[VectorBT PRO MCP](https://vectorbt.pro/features/ai/mcp-server/)
-- [Backtrader](https://www.backtrader.com/docu/)與[社群分支更新](https://github.com/cloudQuant/backtrader/blob/development/CHANGELOG.md)
-- [Freqtrade](https://www.freqtrade.io/en/stable/)
+- [Backtrader](https://www.backtrader.com/docu/)
 
-*本專案基準 d57da5c。外部文件查核於 2026-10-25 至 2026-10-26。*
+*本專案初稿基準 d57da5c，個別更新依頁面標示。開場能力摘要查核於 2026-10-31。*
 
 <!--
 原始碼來源固定版本，外部官方文件可能持續變動。簡報更新時應重新核對涉及的主張。
@@ -1002,16 +807,16 @@ LEAN 的內建回測成交模型預設完全成交。
 
 <!-- _class: references -->
 
-## 參考資料：MCP 與完整平台
+## 參考資料：研究指引與擴充
 
 - [MaverickMCP](https://github.com/wshobson/maverick-mcp/tree/da70d074dcdac5fb21e3b2e6383cfebf391f28b5)
 - [cloudQuant/backtrader-mcp](https://github.com/cloudQuant/backtrader-mcp/tree/ad6312a11c2fe7ff9a4c3fcfcfab5037a951b58c)
-- [bcosm/backtester-mcp](https://github.com/bcosm/backtester-mcp/tree/ddc0394d0ad6edb07cf836de4f931a641adf23f5)
-- [QuantConnect MCP](https://www.quantconnect.com/docs/v2/ai-assistance/mcp-server/key-concepts)、[Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents)與[Private Cloud](https://www.quantconnect.com/docs/v2/local-platform/private-cloud)
+- [QuantConnect Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents)與[Shared Libraries](https://www.quantconnect.com/docs/v2/local-platform/projects/shared-libraries)
+- [QuantConnect Private Cloud](https://www.quantconnect.com/docs/v2/local-platform/private-cloud)
 - [LEAN 引擎](https://github.com/QuantConnect/Lean)與[Algorithm Framework](https://www.quantconnect.com/docs/v2/writing-algorithms/algorithm-framework/overview)
 
-*比較依公開文件與所列版本。不代表已進行效能、併發或準確性基準測試。*
+*來源依公開文件與所列版本。尚未實測自製機制相對既有工具的效益。*
 
 <!--
-需要進一步調查時，從各比較頁引用的具體程式或官方文件開始。候選配置套件與引擎的來源已附於 TODO 頁。
+開場的現成能力摘要以該頁官方文件為依據，其餘保留作研究引導、診斷與擴充的參考。Maverick 為初期診斷 adapter 的參考來源。候選配置套件與引擎的來源已附於 TODO 頁，後續開發時仍需重新確認現況。
 -->
