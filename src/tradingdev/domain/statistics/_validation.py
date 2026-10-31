@@ -24,7 +24,26 @@ def positive_int(value: object, label: str) -> int:
     rejects ``True`` and ``np.int64(5)`` for an ``int`` parameter as well.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"{label} must be a positive integer")
+        raise ValueError(
+            f"{label} must be a positive integer (a built-in int of at least 1), "
+            f"got {value!r} of type {type(value).__name__}"
+        )
+    return value
+
+
+def seed_value(value: object) -> int | None:
+    """Return a bootstrap ``seed`` if it is ``None`` or a built-in int >= 0.
+
+    The rule for counts applies, with zero allowed: NumPy would accept
+    ``True`` as seed 1 and reject ``1.5`` or ``"1"`` with a ``TypeError``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            "seed must be None or a non-negative built-in int, "
+            f"got {value!r} of type {type(value).__name__}"
+        )
     return value
 
 

@@ -54,7 +54,11 @@ import numpy as np
 import pandas as pd
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
 
-from tradingdev.domain.statistics._validation import positive_int, real_array
+from tradingdev.domain.statistics._validation import (
+    positive_int,
+    real_array,
+    seed_value,
+)
 from tradingdev.domain.statistics.sharpe import (
     MIN_BOOTSTRAP_OBSERVATIONS,
     IntervalUnavailable,
@@ -173,14 +177,23 @@ def align_returns(
     cause is a timezone mismatch, not disjoint periods.
 
     Raises:
-        ValueError: If no series is given, ``min_overlap`` is not a
-            positive integer, an index has duplicate labels, a return is
+        ValueError: If no series is given, a value is not a
+            ``pd.Series``, ``min_overlap`` is not a positive integer, an
+            index has duplicate labels, a return is
             not a finite number (booleans and strings are not numbers), or
             timezone-naive and timezone-aware datetime indexes are mixed.
     """
     if not series_by_name:
         raise ValueError("at least one return series is required")
     positive_int(min_overlap, "min_overlap")
+    for name, series in series_by_name.items():
+        # Pairing is by index label, so an unlabelled array has nothing to
+        # align on; positions would silently pair unrelated periods.
+        if not isinstance(series, pd.Series):
+            raise ValueError(
+                f"returns {name!r} must be a pandas Series indexed by period, "
+                f"got {type(series).__name__}"
+            )
     _require_consistent_timezones(series_by_name)
     columns: dict[str, pd.Series] = {}
     for name, series in series_by_name.items():
@@ -223,6 +236,7 @@ def difference_interval(
     """
     positive_int(reps, "reps")
     _tail(confidence)
+    seed_value(seed)
     if block_size is not None:
         positive_int(block_size, "block_size")
     if not align_returns({"a": a, "b": b}).sufficient:
@@ -312,11 +326,14 @@ def difference_interval_outcome(
 
     Raises:
         ValueError: If ``reps`` or a given ``block_size`` is not a positive
-            integer, ``confidence`` is not strictly between 0 and 1, an
-            index has duplicate labels, or a return is not a finite number.
+            integer, ``seed`` is neither ``None`` nor a non-negative int,
+            ``confidence`` is not strictly between 0 and 1, ``a`` or ``b``
+            is not a ``pd.Series``, an index has duplicate labels, or a
+            return is not a finite number.
     """
     positive_int(reps, "reps")
     tail = _tail(confidence)
+    seed_value(seed)
     if block_size is not None:
         positive_int(block_size, "block_size")
     aligned = align_returns({"a": a, "b": b})
@@ -383,6 +400,7 @@ def interval_table(
     """
     positive_int(reps, "reps")
     _tail(confidence)
+    seed_value(seed)
     if not align_returns(series_by_name).sufficient:
         return None
     table = interval_table_outcome(
@@ -424,11 +442,14 @@ def interval_table_outcome(
 
     Raises:
         ValueError: If no series is given, ``reps`` is not a positive
-            integer, ``confidence`` is not strictly between 0 and 1, an
-            index has duplicate labels, or a return is not a finite number.
+            integer, ``seed`` is neither ``None`` nor a non-negative int,
+            ``confidence`` is not strictly between 0 and 1, a value is not
+            a ``pd.Series``, an index has duplicate labels, or a return is
+            not a finite number.
     """
     positive_int(reps, "reps")
     tail = _tail(confidence)
+    seed_value(seed)
     aligned = align_returns(series_by_name)
     columns = [aligned.frame[name].to_numpy() for name in aligned.frame.columns]
     if not aligned.sufficient:

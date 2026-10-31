@@ -63,9 +63,10 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
     ``pd.to_datetime(values, unit="s")``. Run outputs already hold datetimes.
 
     Raises:
-        ValueError: If ``timestamps`` is not one-dimensional, holds numbers
-            or booleans, mixes naive and aware timestamps, or has a value
-            that cannot be parsed as a timestamp.
+        ValueError: If ``timestamps`` is not one-dimensional, holds numbers,
+            booleans, durations or bytes, mixes naive and aware timestamps,
+            or has a value that cannot be parsed as a timestamp. No other
+            exception type escapes for a value of the wrong kind.
     """
     if isinstance(timestamps, pd.DatetimeIndex):
         index = timestamps
@@ -73,13 +74,18 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
         values = np.asarray(timestamps)
         if values.ndim != 1:
             raise ValueError("timestamps must be one-dimensional")
-        if values.dtype.kind in "biufc":
+        kind = values.dtype.kind
+        if kind in "biufc":
             raise ValueError(_NUMERIC_TIMESTAMPS.format(values.dtype))
-        index = (
-            _parse_each(values)
-            if values.dtype.kind in "OU"
-            else pd.DatetimeIndex(values)
-        )
+        if kind in "OU":
+            index = _parse_each(values)
+        elif kind == "M":
+            index = pd.DatetimeIndex(values)
+        else:
+            # Durations (m), bytes (S) and anything else are not times.
+            raise ValueError(
+                f"timestamps must be datetimes or date strings, got {values.dtype}"
+            )
     utc = index.tz_localize("UTC") if index.tz is None else index.tz_convert("UTC")
     return utc.as_unit("ns")
 
@@ -90,10 +96,23 @@ def _parse_each(values: npt.NDArray[np.object_ | np.str_]) -> pd.DatetimeIndex:
     # "2024-01-01 01:00", and utc=True would silently read naive values as
     # UTC. Converting aware values one by one accepts differing offsets.
     elements = values.tolist()
+    parsed = []
     for element in elements:
-        if isinstance(element, numbers.Number):
+        # np.bool_ is not a numbers.Number, but it is no more a time than True.
+        if isinstance(element, numbers.Number | np.bool_):
             raise ValueError(_NUMERIC_TIMESTAMPS.format(type(element).__name__))
-    parsed = [pd.Timestamp(value) for value in elements]
+        if isinstance(element, pd.Timedelta | np.timedelta64 | bytes):
+            raise ValueError(
+                "timestamps must be datetimes or date strings, got "
+                f"{type(element).__name__} {element!r}"
+            )
+        # pd.Timestamp rejects np.str_, a str subclass, with a TypeError.
+        value = str(element) if isinstance(element, str) else element
+        try:
+            parsed.append(pd.Timestamp(value))
+        except (TypeError, ValueError) as error:
+            message = f"timestamp {element!r} cannot be parsed: {error}"
+            raise ValueError(message) from error
     if len({ts.tzinfo is not None for ts in parsed if not pd.isna(ts)}) > 1:
         raise ValueError("timestamps mix timezone-naive and timezone-aware values")
     return pd.DatetimeIndex(
@@ -145,7 +164,7 @@ def period_closing_equity(
     """
     # Literal only constrains literal arguments; a str read from settings
     # would otherwise surface as a KeyError from the lookup below.
-    if frequency not in _RESAMPLE_RULES:
+    if not isinstance(frequency, str) or frequency not in _RESAMPLE_RULES:
         raise ValueError(
             f"frequency must be one of {sorted(_RESAMPLE_RULES)}, got {frequency!r}"
         )

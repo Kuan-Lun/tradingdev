@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import partial
 from itertools import product
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -120,6 +120,44 @@ class TestTimestamps:
     )
     def test_datetimes_and_date_strings_are_accepted(self, timestamps: object) -> None:
         assert len(to_utc_index(timestamps)) >= 2  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        ("timestamps", "match"),
+        [
+            (np.array([1, 2], dtype="timedelta64[D]"), "got timedelta64"),
+            (np.array([b"2024-01-01"]), "got |S10"),
+            (np.array([np.True_], dtype=object), "not numbers"),
+            ([pd.Timedelta("1D")], "got Timedelta"),
+            (["not a date"], "cannot be parsed"),
+            ([object()], "cannot be parsed"),
+        ],
+        ids=[
+            "timedelta64",
+            "bytes",
+            "object-numpy-bool",
+            "timedelta",
+            "text",
+            "object",
+        ],
+    )
+    def test_wrong_kinds_raise_value_error(
+        self, timestamps: object, match: str
+    ) -> None:
+        # These used to escape as TypeError (or DateParseError) from pandas.
+        with pytest.raises(ValueError, match=match):
+            to_utc_index(timestamps)  # type: ignore[arg-type]
+
+    def test_numpy_strings_are_parsed_like_strings(self) -> None:
+        values = np.array([np.str_("2024-01-01"), np.str_("2024-01-02")], dtype=object)
+
+        assert list(to_utc_index(values)) == list(
+            pd.date_range("2024-01-01", periods=2, freq="D", tz="UTC")
+        )
+
+    def test_an_unhashable_frequency_raises_value_error(self) -> None:
+        days = pd.date_range("2024-01-01", periods=2, freq="D")
+        with pytest.raises(ValueError, match="frequency must be one of"):
+            period_returns([100.0, 101.0], days, ["daily"])  # type: ignore[arg-type]
 
 
 class TestEquity:
@@ -244,6 +282,64 @@ class TestReturns:
         assert sharpe_ratio([0, 1, 0, 1], periods_per_year=365) is not None
 
 
+class TestPairing:
+    @pytest.mark.parametrize(
+        "bad",
+        [[0.01] * _N, np.zeros(_N), pd.DataFrame({"x": np.zeros(_N)})],
+        ids=["list", "ndarray", "dataframe"],
+    )
+    def test_unlabelled_returns_raise_value_error(self, bad: object) -> None:
+        # These used to fail with AttributeError on series.index.
+        with pytest.raises(ValueError, match="must be a pandas Series"):
+            align_returns({"a": bad})  # type: ignore[dict-item]
+        with pytest.raises(ValueError, match="must be a pandas Series"):
+            interval_table({"a": bad}, _mean, reps=20)  # type: ignore[dict-item]
+        with pytest.raises(ValueError, match="must be a pandas Series"):
+            difference_interval(bad, _B, _mean, reps=20)  # type: ignore[arg-type]
+
+
+def _seeded_calls() -> list[Callable[[Any], object]]:
+    return [
+        lambda s: difference_interval(_A, _B, _mean, reps=20, seed=s),
+        lambda s: difference_interval_outcome(_A, _B, _mean, reps=20, seed=s),
+        lambda s: interval_table({"a": _A}, _mean, reps=20, seed=s),
+        lambda s: interval_table_outcome({"a": _A}, _mean, reps=20, seed=s),
+        lambda s: sharpe_confidence_interval(_A, periods_per_year=365, reps=20, seed=s),
+        lambda s: sharpe_interval_outcome(_A, periods_per_year=365, reps=20, seed=s),
+    ]
+
+
+_SEEDED = _seeded_calls()
+_SEEDED_IDS = [
+    "difference",
+    "difference-outcome",
+    "table",
+    "table-outcome",
+    "sharpe",
+    "sharpe-outcome",
+]
+
+
+class TestSeed:
+    """A seed follows the count rule with zero allowed."""
+
+    @pytest.mark.parametrize(
+        "seed",
+        [True, np.int64(1), 1.5, "1", -1],
+        ids=["bool", "numpy-int", "float", "str", "negative"],
+    )
+    @pytest.mark.parametrize("call", _SEEDED, ids=_SEEDED_IDS)
+    def test_rejects(self, call: Callable[[Any], object], seed: object) -> None:
+        # True used to be seed 1; 1.5 and "1" escaped as TypeError from NumPy.
+        with pytest.raises(ValueError, match="seed must be None or a non-negative"):
+            call(seed)
+
+    @pytest.mark.parametrize("seed", [None, 0, 7], ids=["none", "zero", "int"])
+    @pytest.mark.parametrize("call", _SEEDED, ids=_SEEDED_IDS)
+    def test_accepts(self, call: Callable[[Any], object], seed: object) -> None:
+        call(seed)
+
+
 def _count_parameters() -> list[tuple[str, Callable[[int], object]]]:
     return [
         ("min_overlap", lambda v: align_returns({"a": _A}, min_overlap=v)),
@@ -301,6 +397,15 @@ class TestCountParameters:
     ) -> None:
         with pytest.raises(ValueError, match=f"{name} must be a positive integer"):
             call(value)  # type: ignore[arg-type]
+
+    def test_the_message_names_the_type_that_was_passed(self) -> None:
+        with pytest.raises(ValueError, match=r"got np\.int64\(5\) of type int64"):
+            deflated_sharpe_ratio(
+                _A,
+                [0.5, 1.5],
+                periods_per_year=365,
+                n_trials=np.int64(5),  # type: ignore[arg-type]
+            )
 
     @pytest.mark.parametrize(("name", "call"), _COUNTS, ids=_COUNT_IDS)
     def test_accepts_a_built_in_int(

@@ -37,7 +37,11 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
 
-from tradingdev.domain.statistics._validation import positive_int, real_array
+from tradingdev.domain.statistics._validation import (
+    positive_int,
+    real_array,
+    seed_value,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -215,12 +219,14 @@ def sharpe_interval_outcome(
     Raises:
         ValueError: If ``periods_per_year`` is not positive and finite,
             ``confidence`` is not strictly between 0 and 1, ``reps`` is not
-            a positive integer, or a return is not a finite number.
+            a positive integer, ``seed`` is neither ``None`` nor a
+            non-negative int, or a return is not a finite number.
     """
     scale = _annualisation(periods_per_year)
     if not (isinstance(confidence, numbers.Real) and 0.0 < confidence < 1.0):
         raise ValueError("confidence must be strictly between 0 and 1")
     positive_int(reps, "reps")
+    seed_value(seed)
     values = _returns(returns)
     sharpe = _period_sharpe(values)
 
