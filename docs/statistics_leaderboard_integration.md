@@ -444,7 +444,7 @@ On in-sample series a paired difference measures which candidate overfits
 more thoroughly. In the 2026-10-31 test, the deeper of two LightGBM models
 (`max_depth` 6 with 200 trees against `max_depth` 2 with 50 trees) "won" the
 paired IC comparison at `p = 0`. That is this artifact, not a finding about
-the models. Under the proposed criterion for #62 below, saved series must
+the models. Under the criterion for #62 below, saved series must
 therefore carry their training and evaluation identities, and an analysis
 reports the relationship with its result; holdout status is not a condition
 for saving them or for ranking.
@@ -533,47 +533,72 @@ Documented here, not implemented on this branch:
    over hyperparameters must therefore read entries from the store; this was
    suggested to the maintainer and is not on `main`.
 
-### Proposed Acceptance Criterion for #62
+### Acceptance Criterion for #62
 
-The following text is proposed for issue #62:
+The criterion below was posted to issue #62 on 2026-11-01, and Kuan-Lun agreed
+with its direction on PR #38. The text is the posted version, followed by three
+additions made after Kuan-Lun's reply on PR #38 of 2026-11-01.
 
-> **Proposed acceptance criterion: training and evaluation identity.**
+> **Why.** The paired comparison in `statistics/comparison.py` assumes it is
+> comparing out-of-sample results. On in-sample series, a paired difference
+> measures which candidate overfits more thoroughly, not which one is better.
+> In an end-to-end test on the current pipeline, the deeper of two LightGBM
+> models (`max_depth` 6 with 200 trees against `max_depth` 2 with 50 trees)
+> "won" the paired IC comparison at p = 0, because both were scored on the rows
+> they had been fitted on. That is the overfitting artifact, not a result.
 >
-> *Why.* Later analysis, such as a paired comparison of two candidates, needs
-> the series that were actually evaluated, so #62 is needed whether or not a
-> series is held out. A saved series is only interpretable together with the
-> data it was trained and evaluated on. In an end-to-end test, the deeper of
-> two LightGBM models "won" a paired IC comparison at p = 0 because both were
-> scored on the rows they had been fitted on; a series saved without its
-> training identity would let a later analysis repeat that with full
-> provenance attached.
+> Nothing on the current record distinguishes the two cases: `LeaderboardEntry`
+> stores only the evaluation `dataset_id`, `ModelArtifact` carries
+> `n_train_samples` but no training-dataset identity, and `compute_model_id`
+> hashes the model name, parameters, ordered feature names and the pickled
+> blob's content hash; no data identity is part of it, so joining an entry's
+> `model_id` to its artifact does not answer the question either.
 >
-> *Criterion.*
+> A saved series that cannot say whether it was held out would let a downstream
+> comparison reproduce that artifact *with full provenance attached*. That is
+> worse than today's gap, not better: the number becomes citable.
 >
-> 1. Each saved series records the identity of its evaluation data and of its
->    training data, as part of the series artifact itself.
-> 2. The training identity distinguishes three states: a training dataset
->    identity; "no fitting step" (rules and other signals without a trained
->    model); and "unknown" (for example a missing artifact or an older
->    record). "No fitting step" and "unknown" are never encoded the same way.
-> 3. "No fitting step" does not mean the candidate is independent of the
->    evaluation data: a rule's form or threshold may have been tuned on it.
->    The record does not claim otherwise.
-> 4. For walk-forward evaluations, the artifact saves, from the original
->    evaluation run, each fold's actual predictions together with that fold's
->    training and evaluation ranges. Predictions of a model retrained at the
->    end on the same data do not substitute for them.
-> 5. A historical record without a saved series reports the series as
->    unavailable. It is not regenerated silently, and it is not presumed
->    eligible as out-of-sample.
+> **Proposed acceptance criterion.** Each saved evaluation series either
+> declares its holdout status, or at minimum records the pairing of
+> training-data identity and evaluation-data identity, so that a downstream
+> consumer can judge eligibility itself. Concretely, a consumer holding two
+> saved series can tell from the record alone, for each one, whether it was
+> evaluated on the dataset its model was trained on, on a different dataset, or
+> under an unknown relationship.
 >
-> *Limitation, stated as part of the criterion.* Recording the training and
-> evaluation pair makes the relationship auditable; it does not establish a
-> holdout. Two different dataset IDs can still cover overlapping periods, and
-> a rule's threshold may have been chosen after viewing the evaluation data.
-> An artifact meeting this criterion records what happened and does not
-> assert `out_of_sample`. The rule for which pairs count as held out remains
-> open, and the presence of the fields does not settle it.
+> Candidates without a fitting step (rules and other declared signals) record
+> that they have no training data, distinctly from "unknown".
+>
+> Older entries, and any entry whose training identity is missing, report the
+> relationship as unknown and are never treated as eligible by default, the
+> same pattern the existing Acceptance already applies to missing series.
+>
+> **The pairing has to travel with the series artifact, not only sit on the
+> leaderboard entry.** A consumer holding two saved series files should not
+> need to re-join them to the leaderboard to learn whether either was held out.
+>
+> **Limitation, stated as part of the criterion.** Recording the
+> training/evaluation pair makes the relationship auditable; it does not
+> establish a holdout. Two different dataset IDs can still cover overlapping
+> periods, and a rule's threshold may have been chosen after viewing the
+> evaluation data. A v1 that meets this criterion therefore records what
+> happened and does not assert `out_of_sample`. The rule for which pairs are
+> eligible (for example non-overlapping date ranges after label horizons and
+> embargo) remains open, and the presence of the fields should not be read as
+> settling it.
+
+Added after Kuan-Lun's reply on PR #38 (2026-11-01):
+
+1. **Eligible means usable as input to a paired comparison.** It is not a
+   condition for being ranked; ranking does not require a holdout.
+2. **No fitting step means no training data, nothing more.** It does not mean
+   a rule's form or threshold was never tuned on the evaluation data.
+3. **Walk-forward series and historical records.** A walk-forward series
+   saves, from the original evaluation run, each fold's actual predictions
+   with that fold's training and evaluation ranges; predictions of a model
+   retrained at the end on the same data do not substitute for them. A
+   historical record without a saved series reports the series as
+   unavailable; it is not regenerated and not presumed eligible.
 
 ## Statistical Basis
 
