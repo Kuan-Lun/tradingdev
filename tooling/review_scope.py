@@ -126,6 +126,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "測試與清理",
             "執行時機",
             "開發階段的程式碼審查",
+            "Issue 接手與指派",
             "工作樹與分階段提交",
             "Git hooks 與本機 PR 審查",
             "PR 合併後的本機分支清理",
@@ -140,6 +141,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "依賴相容性限制",
             "測試設計與精簡",
             "開發階段的程式碼審查",
+            "接手 issue",
             "從開發到合併",
             "1. 分階段提交並推送",
             "2. 在 GitHub 建立 PR，交由審閱者檢查",
@@ -159,18 +161,34 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     },
     "docs/strategy_contract.md": {
         **_headings(_ALL, "Strategy Contract"),
-        **_headings(_PRODUCT, "Research Inputs and Simulation Policy"),
+        **_headings(
+            _PRODUCT, "Contract References", "Research Inputs and Simulation Policy"
+        ),
         **_headings(
             {"strategy", "execution", "interfaces"},
             "Python Contract",
             "YAML Contract",
             "Strategy Walk-Forward Settings",
             "Lifecycle",
+            "Revision Identity and Eligibility",
+            "Execution and Parameter Experiments",
+            "Legacy Recovery",
             "Security Model",
         ),
         **_headings(
-            {"ml", "strategy", "interfaces"},
+            {"strategy", "execution", "results", "interfaces"},
+            "Signal and Execution Semantics",
+            "Constructor Binding",
+            "Draft Cleanup",
+        ),
+        **_headings({"strategy", "interfaces"}, "Indicators and Code Quality"),
+        **_headings(
+            {"strategy", "execution", "ml", "interfaces"},
+            "Randomness",
             "Training Before Scoring",
+        ),
+        **_headings(
+            {"ml", "strategy", "interfaces"},
             "ML Research Contract",
             "Dataset and Model Inputs",
             "Fold Validation and Signal Interpretation",
@@ -180,6 +198,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         **_headings(_ALL, "Run Artifacts"),
         **_headings(
             _PRODUCT,
+            "Artifact References",
             "Research Evidence Records",
             "Research Settings and Provenance",
             "Fixed Comparison Evidence",
@@ -195,10 +214,19 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         ),
         **_headings(
             {"execution", "results", "interfaces"},
-            "Execution Manifest",
+            "Run Publication",
+            "Job State and Worker Identity",
             "Execution Plans and Confirmation Documents",
         ),
-        **_headings({"data", "results", "interfaces"}, "Bounded Historical Sampling"),
+        **_headings(
+            {"strategy", "execution", "results", "interfaces"}, "Execution Manifest"
+        ),
+        **_headings(
+            {"data", "results", "interfaces"},
+            "Market Data Cache",
+            "Automatic DVOL Queries",
+            "Bounded Historical Sampling",
+        ),
         **_headings(
             {"results", "interfaces"},
             "MCP Lookup",
@@ -207,6 +235,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Completed Run Files",
             "Performance Scopes and Provenance",
             "Historical Observation Queries",
+            "Research Notes and Archives",
             "Composable Offline Reports",
         ),
     },
@@ -237,6 +266,9 @@ _DOC_HEADINGS.update(
                     "Recorded Signal Evaluations",
                 )
             },
+            "Method families": _DOC_HEADINGS["docs/run_artifacts.md"][
+                "Recorded Signal Evaluations"
+            ],
         },
         **{
             path: {
@@ -263,7 +295,20 @@ _DOC_HEADINGS.update(
 # The baseline contract sits in its own section of the same results-owned
 # document, so it is reviewed by the same scopes as the scope/provenance section.
 _DOC_HEADINGS["docs/performance_artifacts.md"].update(
-    _headings({"results", "interfaces"}, "Benchmarks")
+    {
+        **_headings({"results", "interfaces"}, "Benchmarks"),
+        **_headings(
+            {"strategy", "execution", "results", "interfaces"}, "Metric Interpretation"
+        ),
+    }
+)
+
+# Strategy lifecycle now delegates preparation/approval details to their owner.
+_DOC_HEADINGS["docs/execution_plans.md"].update(
+    _headings(
+        {"strategy", "execution", "results", "interfaces"},
+        "Execution Plans and Confirmation Documents",
+    )
 )
 
 
@@ -283,10 +328,13 @@ _WHOLE_DOC_SCOPES: dict[str, frozenset[str]] = {
         (
             "docs/strategies/glft_ml_strategy.md",
             "docs/strategies/safety_volume_strategy.md",
-            "docs/strategies/quantile_strategy.md",
             "docs/strategies/xgboost_strategy.md",
         ),
         frozenset({"strategy", "execution", "ml"}),
+    ),
+    # Quantile scoring details moved here from the shared authoring contract.
+    "docs/strategies/quantile_strategy.md": frozenset(
+        {"strategy", "execution", "ml", "interfaces"}
     ),
 }
 
