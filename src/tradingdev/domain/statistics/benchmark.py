@@ -6,12 +6,18 @@ and reports show: a fixed instrument per asset class (BTC/USDT for any
 Binance USDT pair, the S&P 500 for US equities), bought once with the
 run's fee and slippage and held to the end. This module takes whatever prices
 the caller passes, charges no costs, and is meant for holding the very
-instrument the strategy trades; the two answer different questions and
-their figures are not interchangeable. The cause is the instrument and the
-definition of excess return, not costs: the product's cost falls on the
-entry only, after which its per-period returns equal the price returns. The
-cost rules therefore stay as they are; to avoid confusion, name the two
-excess returns apart where both are shown.
+instrument the strategy trades. The figures of the two benchmarks differ
+because of the instrument and the definition of the return difference, not
+because of costs: the product's cost falls on the entry only, after which
+its per-period returns equal the price returns. The cost rules therefore
+stay as they are.
+
+The convention this package adopts in benchmark comparisons: "excess
+return" is reserved for the total-return difference, strategy minus
+benchmark, which the reports show beside the product benchmark; the
+annualised mean of the per-period differences is the active return
+(``BenchmarkComparison.active_return_annualised``). The two answer
+different questions and their figures are not interchangeable.
 
 All functions take series supplied by the caller, such as daily returns from
 :func:`tradingdev.domain.statistics.periods.period_returns`, and never read
@@ -40,10 +46,9 @@ Reading the results:
   ETH strategy, neither reading holds.
 * The benchmark pays no transaction costs and the strategy does. Here that
   is deliberate: costs are part of what a strategy has to overcome to beat
-  holding the asset. The product's stored benchmark charges the run's entry
-  costs instead, so the two excess returns differ by construction; its
-  "excess return" in reports is also a total-return difference, while
-  ``excess_return_annualised`` here is an annualised mean difference.
+  holding the asset. The product's stored benchmark charges the run's
+  costs, but only on entry; its figures differ from this module's mainly
+  by instrument and by the return difference used.
 * Both series must cover the same bars. They are always aligned with
   :func:`tradingdev.domain.statistics.comparison.align_returns`, which keeps
   only the periods both cover; build the benchmark from the same bars and
@@ -112,13 +117,14 @@ class BenchmarkComparison:
             returns constant within ``NEGLIGIBLE_SPREAD``.
         alpha_annualised: Regression intercept times ``periods_per_year``;
             ``None`` when ``beta`` is.
-        excess_return_annualised: Mean strategy return minus mean benchmark
-            return, times ``periods_per_year``.
+        active_return_annualised: Mean strategy return minus mean benchmark
+            return, times ``periods_per_year``; the active return, not the
+            total-return excess return of the reports.
         tracking_error_annualised: Sample standard deviation (``ddof=1``)
             of ``strategy - benchmark`` times ``sqrt(periods_per_year)``;
             ``0.0`` when that difference is constant within
             ``NEGLIGIBLE_SPREAD``, and ``None`` with fewer than two periods.
-        information_ratio: ``excess_return_annualised`` over
+        information_ratio: ``active_return_annualised`` over
             ``tracking_error_annualised``, the Sharpe ratio of the active
             return; ``None`` when the tracking error is zero or undefined.
         up_capture: Mean strategy return over mean benchmark return in the
@@ -135,7 +141,7 @@ class BenchmarkComparison:
     n_periods: int
     beta: float | None
     alpha_annualised: float | None
-    excess_return_annualised: float
+    active_return_annualised: float
     tracking_error_annualised: float | None
     information_ratio: float | None
     up_capture: float | None
@@ -190,11 +196,11 @@ def compare_to_benchmark(
 
     ``alpha_annualised = (mean(s) - beta * mean(b)) * ppy``
 
-    ``excess_return_annualised = (mean(s) - mean(b)) * ppy``
+    ``active_return_annualised = (mean(s) - mean(b)) * ppy``
 
     ``tracking_error_annualised = std(s - b, ddof=1) * sqrt(ppy)``
 
-    ``information_ratio = excess_return_annualised /
+    ``information_ratio = active_return_annualised /
     tracking_error_annualised``
 
     ``up_capture = mean(s[b > 0]) / mean(b[b > 0])`` and likewise
@@ -203,7 +209,7 @@ def compare_to_benchmark(
 
     ``beta`` is the ordinary least-squares slope. ``alpha_annualised``
     annualises the per-period intercept arithmetically, as
-    ``intercept * ppy``, consistent with the excess return and the
+    ``intercept * ppy``, consistent with the active return and the
     information ratio; both agree with ``quantstats.stats.greeks``. A
     compounded alpha, ``(1 + intercept)**ppy - 1``, differs noticeably for
     large intercepts. See the module docstring for how to read beta and why the
@@ -212,15 +218,15 @@ def compare_to_benchmark(
     Annualisation differs within this project on purpose. The catalog's
     ``annual_return`` (provided by QuantStats) compounds daily
     returns, while the active-return figures here (``alpha_annualised``,
-    ``excess_return_annualised``, ``tracking_error_annualised``,
+    ``active_return_annualised``, ``tracking_error_annualised``,
     ``information_ratio``) scale arithmetically. Both are correct for what
     they measure. A return figure answers how much capital grew, which is a
     compounded quantity. The information ratio is defined on the arithmetic
-    mean active return over its standard deviation, so the excess return
+    mean active return over its standard deviation, so the active return
     and alpha must be arithmetic for ``information_ratio`` to equal
-    ``excess_return_annualised / tracking_error_annualised``. Side by side
+    ``active_return_annualised / tracking_error_annualised``. Side by side
     in one report the two can differ substantially: in particular,
-    ``excess_return_annualised`` is not the difference of the two series'
+    ``active_return_annualised`` is not the difference of the two series'
     ``annual_return``, and on daily data with a modest edge an arithmetic
     0.168 corresponds to a compounded 0.183.
 
@@ -249,7 +255,7 @@ def compare_to_benchmark(
         if beta is not None
         else None
     )
-    excess = (float(strategy.mean()) - float(benchmark.mean())) * periods
+    active = (float(strategy.mean()) - float(benchmark.mean())) * periods
     tracking_error = _tracking_error(strategy, benchmark, periods)
     up = benchmark > 0.0
     down = benchmark < 0.0
@@ -257,10 +263,10 @@ def compare_to_benchmark(
         n_periods=aligned.overlap,
         beta=beta,
         alpha_annualised=alpha,
-        excess_return_annualised=excess,
+        active_return_annualised=active,
         tracking_error_annualised=tracking_error,
         information_ratio=(
-            excess / tracking_error
+            active / tracking_error
             if tracking_error is not None and tracking_error > 0.0
             else None
         ),

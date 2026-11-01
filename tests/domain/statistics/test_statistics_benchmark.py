@@ -124,7 +124,7 @@ class TestRegression:
         assert result.n_periods == 250
         assert result.beta == pytest.approx(1.0, abs=1e-12)
         assert result.alpha_annualised == pytest.approx(0.0, abs=1e-12)
-        assert result.excess_return_annualised == 0.0
+        assert result.active_return_annualised == 0.0
         assert result.tracking_error_annualised == 0.0
         assert result.information_ratio is None
         assert result.up_capture == pytest.approx(1.0)
@@ -149,7 +149,7 @@ class TestRegression:
         slope, intercept = np.polyfit(b, s, 1)
         assert result.beta == pytest.approx(slope, rel=1e-10)
         assert result.alpha_annualised == pytest.approx(intercept * _DAILY, rel=1e-8)
-        assert result.excess_return_annualised == pytest.approx(
+        assert result.active_return_annualised == pytest.approx(
             (s.mean() - b.mean()) * _DAILY
         )
         assert result.tracking_error_annualised == pytest.approx(
@@ -204,7 +204,7 @@ class TestRegression:
         assert result.alpha_annualised is None
         assert result.tracking_error_annualised is None
         assert result.information_ratio is None
-        assert result.excess_return_annualised == pytest.approx(0.01 * _DAILY)
+        assert result.active_return_annualised == pytest.approx(0.01 * _DAILY)
 
     def test_constant_benchmark_has_no_beta(self) -> None:
         result = compare_to_benchmark(
@@ -228,7 +228,7 @@ class TestRoundingNoise:
 
         assert result.tracking_error_annualised == 0.0
         assert result.information_ratio is None
-        assert result.excess_return_annualised == pytest.approx(0.0004 * _DAILY)
+        assert result.active_return_annualised == pytest.approx(0.0004 * _DAILY)
 
     def test_small_real_tracking_error_is_kept(self) -> None:
         benchmark = _benchmark()
