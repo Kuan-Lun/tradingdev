@@ -91,7 +91,10 @@ Dependencies and reading order
 holds the shared input checks (real-number arrays, counts, seeds); it is
 used by ``periods``, ``sharpe``, ``comparison``, ``plateau`` and
 ``breakeven``, and ``performance`` and ``benchmark`` reach it through
-``periods`` and ``comparison``::
+``periods`` and ``comparison``. The private ``_scaling`` module rescales
+values whose magnitude or spread is extreme by an exact power of two
+before ``sharpe`` and ``plateau`` compute scale-invariant figures from
+them::
 
     performance -> periods, sharpe
     benchmark   -> periods, comparison

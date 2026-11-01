@@ -864,3 +864,104 @@ class TestNumpyIntegers:
             ValueError, match="min_neighborhood must be a positive integer"
         ):
             _summary(trials, min_neighborhood=np.int64(8))
+
+
+class TestExtremeMagnitudes:
+    # A neighbourhood sum of metrics near 1e308 overflowed to infinity, and
+    # squared deviations overflow above about 1e154 or underflow below about
+    # 1e-162; each turned a defined result into a wrong one or a crash.
+    def test_all_metrics_near_the_float_limit_pick_the_first_tie(self) -> None:
+        trials = [
+            Trial(params={"a": a, "b": b}, metric=1e308)
+            for a, b in itertools.product([1.0, 2.0, 3.0], repeat=2)
+        ]
+
+        summary = plateau_summary(
+            trials, axes={"a": [1.0, 2.0, 3.0], "b": [1.0, 2.0, 3.0]}
+        )
+
+        assert summary.plateau_best_params == {"a": 1.0, "b": 1.0}
+        assert summary.plateau_best_score == 1e308
+        assert all(entry.score == 1e308 for entry in _scores(trials))
+
+    def test_one_dimension_near_the_limit_picks_the_highest_plateau(self) -> None:
+        # Points 3 and 4 have the highest neighbourhood mean (1.7e308). The
+        # overflowing mean of point 3 used to read as infinity, and the
+        # infinite gap then matched point 0, whose score is only 1e300.
+        values = [1.0, 1e300, 1.7e308, 1.7e308, 1.7e308]
+        trials = [Trial(params={"a": float(i)}, metric=m) for i, m in enumerate(values)]
+
+        summary = plateau_summary(trials, axes={"a": [0.0, 1.0, 2.0, 3.0, 4.0]})
+
+        assert summary.plateau_best_params == {"a": 3.0}
+        assert summary.plateau_best_score == 1.7e308
+        assert summary.best_params == {"a": 2.0}
+
+    @pytest.mark.parametrize("exponent", [-565, 600], ids=["tiny", "huge"])
+    def test_power_of_two_scale_leaves_results_unchanged(self, exponent: int) -> None:
+        # Scaling by a power of two is exact, so every score scales exactly
+        # and the spikiness, a ratio, is identical. It used to be None for
+        # the tiny grid and 0.0 for the huge one.
+        base = _hill_grid((3, 3), height=1.0, spike=(0, 0, 1.3))
+        scaled = [
+            Trial(params=trial.params, metric=math.ldexp(trial.metric, exponent))
+            for trial in base
+        ]
+
+        expected = _summary(base)
+        summary = _summary(scaled)
+
+        assert expected.spikiness is not None
+        assert summary.spikiness == expected.spikiness
+        assert summary.plateau_best_params == expected.plateau_best_params
+        assert expected.plateau_best_score is not None
+        assert summary.plateau_best_score == math.ldexp(
+            expected.plateau_best_score, exponent
+        )
+        assert [entry.score for entry in _scores(scaled)] == [
+            None if entry.score is None else math.ldexp(entry.score, exponent)
+            for entry in _scores(base)
+        ]
+
+    def test_metric_gap_beyond_the_float_range_is_refused(self) -> None:
+        trials = [
+            Trial(params={"a": 1.0}, metric=1e308),
+            Trial(params={"a": 2.0}, metric=-1e308),
+        ]
+
+        with pytest.raises(ValueError, match="span more than the float range"):
+            plateau_summary(trials, axes={"a": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="span more than the float range"):
+            plateau_scores(trials, axes={"a": [1.0, 2.0]})
+
+    @pytest.mark.parametrize("exponent", [-499, -900, 900], ids=str)
+    def test_tiny_spread_is_rescaled_by_the_spread(self, exponent: int) -> None:
+        # Metrics near 1 differing by 2**-30: their magnitude looked safe at
+        # 2**-499, but the squared deviations underflowed and the spikiness
+        # went wrong in the sixth digit without any error.
+        base = [
+            Trial(params=trial.params, metric=1.0 + 2.0**-30 * trial.metric)
+            for trial in _hill_grid((3, 3), height=1.0, spike=(0, 0, 1.3))
+        ]
+        scaled = [
+            Trial(params=trial.params, metric=math.ldexp(trial.metric, exponent))
+            for trial in base
+        ]
+
+        expected = _summary(base).spikiness
+
+        assert expected is not None
+        assert _summary(scaled).spikiness == expected
+
+    def test_spikiness_beyond_the_float_range_is_none(self) -> None:
+        # The best metric is 1e200 and its neighbours differ by 1e-200, so
+        # the true spikiness is about 1e400.
+        trials = [
+            Trial(params={"a": float(i)}, metric=m)
+            for i, m in enumerate([0.0, 1e200, 1e-200])
+        ]
+
+        summary = plateau_summary(trials, axes={"a": [0.0, 1.0, 2.0]})
+
+        assert summary.best_params == {"a": 1.0}
+        assert summary.spikiness is None

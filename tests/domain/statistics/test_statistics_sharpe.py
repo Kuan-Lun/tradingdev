@@ -233,6 +233,120 @@ class TestDegenerateReturns:
         assert sharpe_confidence_interval(returns, periods_per_year=_DAILY) is None
 
 
+class TestExtremeMagnitudes:
+    # Every statistic here is unchanged by a positive scale of the returns.
+    # Returns near 1e-170 underflowed the variance to zero and raised
+    # ZeroDivisionError; returns near 1e200 overflowed it and gave 0.0.
+    @pytest.mark.parametrize("exponent", [-565, 664], ids=["tiny", "huge"])
+    def test_power_of_two_scale_leaves_every_result_unchanged(
+        self, exponent: int
+    ) -> None:
+        returns = np.random.default_rng(0).normal(0.001, 0.01, 300)
+        scaled = np.ldexp(returns, exponent)
+
+        assert sharpe_ratio(scaled, periods_per_year=_DAILY) == sharpe_ratio(
+            returns, periods_per_year=_DAILY
+        )
+        assert probabilistic_sharpe_ratio(scaled) == probabilistic_sharpe_ratio(returns)
+        assert sharpe_interval_outcome(
+            scaled, periods_per_year=_DAILY, reps=200, seed=0
+        ) == sharpe_interval_outcome(returns, periods_per_year=_DAILY, reps=200, seed=0)
+        assert deflated_sharpe_ratio(
+            scaled, [0.5, 1.0, 1.5], periods_per_year=_DAILY
+        ) == deflated_sharpe_ratio(returns, [0.5, 1.0, 1.5], periods_per_year=_DAILY)
+
+    @pytest.mark.parametrize("scale", [1e-170, 1e200], ids=["1e-170", "1e200"])
+    def test_reported_magnitudes_match_the_unscaled_sharpe(self, scale: float) -> None:
+        returns = np.random.default_rng(0).normal(0.001, 0.01, 300)
+        expected = sharpe_ratio(returns, periods_per_year=_DAILY)
+
+        sharpe = sharpe_ratio(returns * scale, periods_per_year=_DAILY)
+
+        assert expected is not None
+        assert sharpe == pytest.approx(expected, rel=1e-12)
+        assert sharpe != 0.0
+
+    @pytest.mark.parametrize("scale", [1e80, 1e-80, 1e150], ids=str)
+    def test_moments_inside_the_magnitude_range_do_not_overflow(
+        self, scale: float
+    ) -> None:
+        # A fourth moment overflows above about 1e77 although the returns
+        # themselves are far from the float limit.
+        returns = np.random.default_rng(0).normal(0.001, 0.01, 300)
+        expected = probabilistic_sharpe_ratio(returns)
+
+        assert expected is not None
+        assert probabilistic_sharpe_ratio(returns * scale) == pytest.approx(
+            expected, rel=1e-12
+        )
+
+    @pytest.mark.parametrize("scale", [1e100, 1e-100], ids=str)
+    def test_block_length_does_not_depend_on_magnitude(self, scale: float) -> None:
+        returns = np.random.default_rng(0).normal(0.001, 0.01, 300)
+        expected = sharpe_interval_outcome(returns, periods_per_year=_DAILY, seed=0)
+        outcome = sharpe_interval_outcome(
+            returns * scale, periods_per_year=_DAILY, seed=0
+        )
+
+        assert isinstance(expected, SharpeInterval)
+        assert isinstance(outcome, SharpeInterval)
+        assert outcome.block_size == expected.block_size == 3
+
+    @pytest.mark.parametrize("exponent", [-480, -499, 900], ids=str)
+    def test_tiny_spread_is_rescaled_by_the_spread(self, exponent: int) -> None:
+        # The magnitude alone looked safe, but the squared deviations of a
+        # spread 2**-40 times smaller underflowed: a wrong eleventh digit at
+        # 2**-480 and ZeroDivisionError at 2**-499.
+        noise = np.random.default_rng(1).normal(size=200)
+        returns = 1.0 + 2.0**-40 * noise
+
+        assert sharpe_ratio(
+            np.ldexp(returns, exponent), periods_per_year=_DAILY
+        ) == sharpe_ratio(returns, periods_per_year=_DAILY)
+
+    @pytest.mark.parametrize("outlier", [1e250, 1e300], ids=str)
+    def test_one_huge_outlier_keeps_every_resample_defined(
+        self, outlier: float
+    ) -> None:
+        # Rescaling the whole series by the outlier's spread used to push
+        # the other returns so low that resamples without the outlier had a
+        # zero variance and raised ZeroDivisionError.
+        returns = np.random.default_rng(0).normal(0.001, 0.01, 300)
+        returns[5] = outlier
+
+        outcome = sharpe_interval_outcome(
+            returns, periods_per_year=_DAILY, reps=200, seed=0
+        )
+
+        assert isinstance(outcome, SharpeInterval)
+        assert outcome.valid_reps == 200
+        assert outcome.sharpe == sharpe_ratio(returns, periods_per_year=_DAILY)
+        assert math.isfinite(outcome.lower)
+        assert math.isfinite(outcome.upper)
+
+    def test_extreme_constant_returns_stay_undefined(self) -> None:
+        for value in (1e-170, 1e200):
+            assert sharpe_ratio([value] * 50, periods_per_year=_DAILY) is None
+            assert probabilistic_sharpe_ratio([value] * 50) is None
+
+    def test_dispersed_trial_sharpes_give_a_finite_hurdle(self) -> None:
+        returns = np.random.default_rng(0).normal(0.001, 0.01, 300)
+
+        result = deflated_sharpe_ratio(
+            returns, [1e200, -1e200, 0.0], periods_per_year=_DAILY
+        )
+
+        assert result is not None
+        assert result.trial_sharpe_std_annualised == pytest.approx(1e200)
+        assert result.dsr == 0.0
+
+    def test_trial_sharpes_beyond_a_finite_hurdle_are_refused(self) -> None:
+        returns = np.random.default_rng(0).normal(0.001, 0.01, 300)
+
+        with pytest.raises(ValueError, match="trial Sharpes are too dispersed"):
+            deflated_sharpe_ratio(returns, [1.7e308, -1.7e308], periods_per_year=_DAILY)
+
+
 class TestIntervalOutcome:
     def test_short_monthly_sample_reports_counts_and_the_estimate(self) -> None:
         returns = np.random.default_rng(12).normal(0.01, 0.03, 12)

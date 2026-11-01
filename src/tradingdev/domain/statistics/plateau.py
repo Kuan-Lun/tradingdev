@@ -96,6 +96,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from tradingdev.domain.statistics._scaling import rescaled
 from tradingdev.domain.statistics._validation import positive_int
 
 if TYPE_CHECKING:
@@ -284,7 +285,9 @@ class PlateauSummary:
         best_neighborhood_size: Number of the best trial's neighbours.
         spikiness: ``(best_metric - best_neighborhood_mean) /
             best_neighborhood_std``; secondary and unstable in small
-            neighbourhoods.
+            neighbourhoods. ``None`` when undefined, or when the ratio is
+            too large for a float, as with metrics spanning hundreds of
+            orders of magnitude.
     """
 
     n_trials: int
@@ -384,8 +387,9 @@ def plateau_scores(
 
     Raises:
         ValueError: If ``radius`` is not a positive integer, ``axes`` is
-            invalid, or the trials are inconsistent with each other or with
-            ``axes``.
+            invalid, the trials are inconsistent with each other or with
+            ``axes``, or the gap between their largest and smallest metric
+            exceeds the float range.
     """
     grid = _build_grid(trials, axes)
     return _scores(grid, _checked_radius(radius))
@@ -407,8 +411,9 @@ def plateau_summary(
 
     Raises:
         ValueError: If ``radius`` or ``min_neighborhood`` is not a positive
-            integer, ``axes`` is invalid, or the trials are inconsistent
-            with each other or with ``axes``.
+            integer, ``axes`` is invalid, the trials are inconsistent with
+            each other or with ``axes``, or the gap between their largest and
+            smallest metric exceeds the float range.
     """
     radius = _checked_radius(radius)
     if min_neighborhood is not None:
@@ -446,13 +451,15 @@ def plateau_summary(
     ]
     plateau_best = _argmax_score(scores, eligible)
     neighbour_metrics = grid.metrics[grid.neighbours(best, radius)]
-    mean = float(neighbour_metrics.mean()) if neighbour_metrics.size else None
+    mean = _mean(neighbour_metrics) if neighbour_metrics.size else None
     std = _sample_std(neighbour_metrics)
     spikiness = (
         (best_metric - mean) / std
         if mean is not None and std is not None and std > 0
         else None
     )
+    if spikiness is not None and not math.isfinite(spikiness):
+        spikiness = None
     plateau_best_metric = (
         float(grid.metrics[plateau_best]) if plateau_best is not None else None
     )
@@ -507,8 +514,9 @@ def plateau_grid(
     Raises:
         ValueError: If ``x`` equals ``y``, either is not a searched
             parameter, ``radius`` is not a positive integer, ``axes`` is
-            invalid, or the trials are inconsistent with each other or with
-            ``axes``.
+            invalid, the trials are inconsistent with each other or with
+            ``axes``, or the gap between their largest and smallest metric
+            exceeds the float range.
     """
     radius = _checked_radius(radius)
     if x == y:
@@ -575,13 +583,18 @@ def _scores(grid: _Grid, radius: int) -> tuple[PlateauScore, ...]:
             PlateauScore(
                 params=params,
                 metric=float(grid.metrics[index]),
-                score=(
-                    float(neighbour_metrics.mean()) if neighbour_metrics.size else None
-                ),
+                score=_mean(neighbour_metrics) if neighbour_metrics.size else None,
                 neighborhood_size=int(neighbour_metrics.size),
             )
         )
     return tuple(results)
+
+
+def _mean(values: npt.NDArray[np.float64]) -> float:
+    # A neighbourhood of metrics near 1e308 sums to infinity; the exact
+    # power-of-two rescaling keeps the mean finite and is a no-op otherwise.
+    scaled, exponent = rescaled(values)
+    return math.ldexp(float(scaled.mean()), exponent)
 
 
 def _sample_std(values: npt.NDArray[np.float64]) -> float | None:
@@ -591,7 +604,10 @@ def _sample_std(values: npt.NDArray[np.float64]) -> float | None:
     # 1e-16 for 0.7), which would turn the spikiness into a huge number.
     if _within_tolerance(float(np.ptp(values)), float(np.abs(values).max())):
         return 0.0
-    return float(values.std(ddof=1))
+    # Squared deviations overflow above about 1e154 and underflow below
+    # about 1e-162, which would make the spikiness wrongly zero or undefined.
+    scaled, exponent = rescaled(values)
+    return math.ldexp(float(scaled.std(ddof=1)), exponent)
 
 
 def _argmax_score(
@@ -605,6 +621,8 @@ def _argmax_score(
     if not candidates:
         return None
     top = max(score for _, score in candidates)
+    # Scores are means of finite metrics whose range is finite, so every gap
+    # below is finite and the top score always matches itself.
     # Means of equal metrics over different neighbourhood sizes round
     # differently, so an exact comparison would pick a winner by rounding.
     # The tolerance is relative to the two scores compared, not to the
@@ -674,6 +692,14 @@ def _build_grid(trials: Sequence[Trial], axes: Mapping[str, Iterable[float]]) ->
         ranks.append(row)
         params.append(MappingProxyType(dict(zip(names, values, strict=True))))
         metrics.append(_finite(trial.metric, f"trial {position} metric"))
+    # Gaps between metrics drive the plateau choice, the metric gap and the
+    # spikiness. Metrics of opposite sign near the float limit have a gap
+    # that is not a float, so refuse them instead of comparing infinities.
+    if metrics and not math.isfinite(max(metrics) - min(metrics)):
+        raise ValueError(
+            "trial metrics span more than the float range, so their gaps "
+            "cannot be compared; rescale the metric"
+        )
 
     return _Grid(
         names=names,

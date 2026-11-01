@@ -794,3 +794,25 @@ class TestMonthlyBootstrapBoundary:
             isinstance(row, IntervalUnavailable) is not has_interval
             for row in table.values()
         )
+
+
+class TestExtremeMagnitudeBlockLength:
+    # The paired block length is estimated on the jackknife influence of the
+    # difference, which scales with both series. The estimate is invariant
+    # to that scale, but it silently fell back to one far from unit spread.
+    # The comparison statistics themselves are not rescaled, so the test
+    # stays below the 1e154 where squares overflow.
+    @pytest.mark.parametrize("scale", [1e100, 1e-100], ids=str)
+    def test_block_size_ignores_a_common_scale(self, scale: float) -> None:
+        rng = np.random.default_rng(5)
+        a = rng.normal(0.001, 0.01, 300)
+        b = 0.7 * a + rng.normal(0.0, 0.005, 300)
+        expected = difference_interval_outcome(_daily(a), _daily(b), np.mean, seed=0)
+
+        outcome = difference_interval_outcome(
+            _daily(a * scale), _daily(b * scale), np.mean, seed=0
+        )
+
+        assert not isinstance(expected, IntervalUnavailable)
+        assert not isinstance(outcome, IntervalUnavailable)
+        assert outcome.block_size == expected.block_size

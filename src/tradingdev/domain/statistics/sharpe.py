@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
 
+from tradingdev.domain.statistics._scaling import rescaled, rescaled_columns
 from tradingdev.domain.statistics._validation import (
     positive_int,
     real_array,
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
 
 MIN_BOOTSTRAP_OBSERVATIONS = 20
 EULER_MASCHERONI = 0.5772156649015329
+_DISPERSED_TRIALS = "the trial Sharpes are too dispersed for a finite hurdle"
 
 UnavailableReason = Literal[
     "insufficient_observations", "undefined_statistic", "no_valid_resample"
@@ -332,6 +334,9 @@ def probabilistic_sharpe_ratio(
     sharpe = _period_sharpe(values)
     if sharpe is None:
         return None
+    # Skewness and kurtosis are scale-free too; the fourth moment overflows
+    # above about 1e77 without this exact rescaling.
+    values = rescaled(values)[0]
     deviations = values - values.mean()
     variance = float(np.mean(deviations**2))
     skewness = float(np.mean(deviations**3)) / variance**1.5
@@ -436,8 +441,9 @@ def deflated_sharpe_ratio(
         ValueError: If ``periods_per_year`` is not positive and finite, a
             return or trial Sharpe is not a finite number, ``n_trials`` is
             not a positive integer or too large for a float, ``n_trials``
-            is smaller than the number of trial Sharpes, or no trial
-            Sharpes are given without ``n_trials``.
+            is smaller than the number of trial Sharpes, no trial
+            Sharpes are given without ``n_trials``, or the trial Sharpes
+            are so dispersed that the hurdle is not a finite number.
     """
     scale = _annualisation(periods_per_year)
     trial_sharpes = np.array(
@@ -464,8 +470,14 @@ def deflated_sharpe_ratio(
     std_annualised: float | None = None
     if trial_sharpes.size >= 2:
         # Equal Sharpes can still yield a rounding-error std, so test spread exactly.
-        spread = np.ptp(trial_sharpes) != 0.0
-        std_annualised = float(trial_sharpes.std(ddof=1)) if spread else 0.0
+        spread = float(trial_sharpes.max()) != float(trial_sharpes.min())
+        scaled, exponent = rescaled(trial_sharpes)
+        try:
+            std_annualised = (
+                math.ldexp(float(scaled.std(ddof=1)), exponent) if spread else 0.0
+            )
+        except OverflowError:
+            raise ValueError(_DISPERSED_TRIALS) from None
     if n == 1:
         hurdle = 0.0
     elif std_annualised is None:
@@ -478,6 +490,8 @@ def deflated_sharpe_ratio(
             tail
         ) - EULER_MASCHERONI * normal.inv_cdf(tail / math.e)
         hurdle = std_annualised / scale * expected_max
+        if not math.isfinite(hurdle):
+            raise ValueError(_DISPERSED_TRIALS)
 
     psr_vs_zero = probabilistic_sharpe_ratio(values)
     dsr = probabilistic_sharpe_ratio(values, benchmark_sr=hurdle)
@@ -499,9 +513,12 @@ def _block_length(columns: npt.NDArray[np.float64]) -> int:
     estimator, so they are left out; without a finite estimate the block
     length is one.
     """
-    varying = columns[:, np.ptp(columns, axis=0) > 0.0]
+    varying = columns[:, columns.max(axis=0) > columns.min(axis=0)]
     if varying.shape[1] == 0:
         return 1
+    # The estimate is invariant to each column's scale, but its numerics are
+    # not: far from unit spread it silently falls back to one.
+    varying = rescaled_columns(varying)
     estimates = optimal_block_length(varying)["stationary"].to_numpy()
     finite = estimates[np.isfinite(estimates)]
     if finite.size == 0:
@@ -515,13 +532,20 @@ def _returns_block_size(columns: npt.NDArray[np.float64]) -> int:
     ``columns`` holds one return series per column. Their squares carry
     the persistence of volatility that the returns themselves may not show.
     """
+    # Rescale before squaring, so returns near 1e200 do not square to inf.
+    columns = rescaled_columns(columns)
     return _block_length(np.hstack([columns, columns**2]))
 
 
 def _period_sharpe(values: npt.NDArray[np.float64]) -> float | None:
     # Equal values can still yield a rounding-error std, so test spread exactly.
-    if values.size < 2 or np.ptp(values) == 0.0:
+    if values.size < 2 or float(values.max()) == float(values.min()):
         return None
+    # The ratio is unchanged by a positive scale, so an exact power-of-two
+    # rescaling keeps extreme magnitudes or tiny spreads from overflowing or
+    # underflowing the variance. Each bootstrap resample is rescaled on its
+    # own: a resample without an outlier must not inherit the outlier's scale.
+    values = rescaled(values)[0]
     std = float(values.std(ddof=1))
     return float(values.mean()) / std
 
