@@ -6,11 +6,11 @@ This document describes how the statistics package
 (`src/tradingdev/domain/statistics/`) can consume what the ML leaderboard
 records, what fails along the way, and what is still undecided.
 
-Every statement about the leaderboard comes from reading `upstream/main` at
-`a24594c` (2026-11-01). This branch has merged upstream only up to `837f0c6`.
-The method families (`method_family`, `method_name`) and the threshold rules
-(`domain/ml/rules.py`) arrived upstream after that merge, so they are not yet
-in this branch's tree. Code is cited by module, function and constant names.
+This branch has merged upstream main at `a24594c` (2026-11-01). Every
+statement about the leaderboard was checked against that code in this tree,
+including the method families (`method_family` and `method_name` in
+`domain/ml/leaderboard.py`) and the threshold rules (`domain/ml/rules.py`).
+Code is cited by module, function and constant names.
 
 ### Scope
 
@@ -39,43 +39,36 @@ is a return series:
 
 ### Recorded Entry
 
-`LeaderboardEntry` (`domain/ml/leaderboard.py`) holds:
+The full field contract of a recorded candidate is the `LeaderboardEntry`
+definition and its docstrings in `domain/ml/leaderboard.py`; the user-facing
+contract, including method families and threshold rules, is
+`docs/ml_research.md` ("Recorded Signal Evaluations" and "Method families").
+The integration flows below read these fields:
 
-| Field | Meaning |
-| --- | --- |
-| `entry_id` | Candidate identity within a dataset and context, from `build_entry_id`. |
-| `label` | Readable name: the artifact's model name, the rule name, or `ad-hoc signal (<fingerprint prefix>)`. |
-| `context` | `EvaluationContext`: symbol, timeframe, start and end date, `horizon`, `window`, `n_quantiles`, `feature_set`, `code_fingerprint`, `data_fingerprint`. |
-| `metrics` | `Mapping[str, float \| None]`, with three states (below). |
-| `n_observations` | Number of aligned rows scored. |
-| `model_id` | Caller-declared model label; empty for non-model candidates. |
-| `dataset_id` | The dataset the signal was **evaluated** on. |
-| `parameters` | For `ml_model`, copied from the model artifact. For other families, declared by the caller (a rule stores `{"threshold": level}`). |
-| `signal_fingerprint` | Hash of the full evaluated signal, kept apart from `entry_id`; empty on older rows. |
-| `method_family` | `ml_model`, `rule` or `other`; empty on older rows. Read through `LeaderboardEntry.family`, which infers `ml_model` from a model ID and `other` otherwise. |
-| `method_name` | Name of a non-model candidate, such as `rsi_14 > 70`. |
+- `context` (`EvaluationContext`): the three tunable settings `horizon`,
+  `window` and `n_quantiles` (`EvaluationContext.tunable_parameters`), and
+  the identity that `comparability_error` checks.
+- `metrics`: `Mapping[str, float | None]` with three states. A key that is
+  absent was never recorded; a key holding `None` was measured but is
+  unavailable or non-finite; a finite value is an ordinary measurement.
+  `MLService._record_evaluation` stores NaN and infinite metrics as `None`.
+  Older records dropped them, so a missing key on an old record cannot tell
+  the two cases apart.
+- `model_id`, `method_name` and `LeaderboardEntry.family`: what built the
+  signal. `family` is `ml_model`, `rule` or `other`; on rows written before
+  families existed it is inferred from the presence of a model ID. The family
+  is a declaration validated by `resolve_method`, not proof of provenance.
+- `parameters`: for `ml_model`, copied from the model artifact; for a rule,
+  declared by the caller. `ThresholdRule.parameters` stores the exact level
+  as `{"threshold": level}`, while `ThresholdRule.name`, which becomes
+  `method_name`, shows it rounded with the `g` format.
+- `dataset_id`: the dataset the signal was **evaluated** on.
+- `signal_fingerprint`: a hash of the full evaluated signal, empty on older
+  rows.
 
-The three metric states are part of the contract and survive `to_record` and
-`from_record`:
-
-- key absent: the metric was never recorded for this candidate;
-- key present, value `None`: measured but unavailable or non-finite;
-- key present, finite value: an ordinary measurement.
-
-`MLService._record_evaluation` stores NaN and infinite metrics as `None`
-instead of dropping them. Older records dropped them, so a missing key on an
-old record cannot tell the two cases apart.
-
-### Method Families
-
-`resolve_method` validates the declaration. An `ml_model` needs a model ID and
-may not declare its own parameters. A `rule` needs a `method_name`. A model ID
-with a non-model family is refused. Over MCP, `evaluate_signal` accepts either
-a `model_id` or a `column` plus `threshold` rule. Arbitrary signals with
-family `other` come only through the Python `MLService.evaluate_signal` API or
-from older rows. The family is a declaration, not proof of provenance; the
-leaderboard reports a `families` count and adds caveats from
-`family_caveats` when a table mixes families.
+Over MCP, `evaluate_signal` takes either a `model_id` or a `column` plus
+`threshold` rule; signals of family `other` come only through the Python
+`MLService.evaluate_signal` API or from older rows.
 
 ### Ranking and Parameter Surfaces
 
@@ -190,8 +183,10 @@ Every candidate at a coordinate is a separate row, and the leaderboard has no
 field saying that two rows at different coordinates are "the same candidate".
 A surface therefore needs an explicit grouping key chosen by the adapter:
 
-- Within one horizon, a model is one `model_id` and a rule is one
-  `method_name`.
+- Within one horizon, a model is one `model_id`. A rule is one
+  `method_name` together with its exact `parameters`, as `build_entry_id`
+  identifies it; the name alone rounds the level, so two close thresholds
+  can share a name.
 - Across horizons a model is necessarily retrained on each horizon's dataset,
   so its `model_id` changes. The grouping key is then a declared
   configuration, such as model name plus selected hyperparameters, and each
@@ -202,8 +197,8 @@ A surface therefore needs an explicit grouping key chosen by the adapter:
 
 **Do not build a plateau over rule thresholds from the current records.** A
 threshold sweep is stored as one candidate per level: each level is its own
-`rule` entry, with the level in `parameters` and in `method_name`, and all of
-them sit at the same `horizon`, `window` and `n_quantiles`. `parameter_axes`
+`rule` entry, with the exact level in `parameters` and a rounded form in
+`method_name`, and all of them sit at the same `horizon`, `window` and `n_quantiles`. `parameter_axes`
 has no threshold axis, and `ThresholdRule.parameters` states that threshold
 surfaces are not supported.
 
@@ -377,6 +372,14 @@ family:
 They are not interchangeable and must never both be applied to the same
 number: each already accounts for the whole selection. Reports that show both
 must label each figure with its correction.
+
+"Metric family" here groups the corrected numbers; it is unrelated to the
+leaderboard's `method_family`. For the leaderboard, `N` is the number of
+rankable candidates that the call's filters selected (`rank_entries` passes
+that count to `required_t_stat`), so filtering by `family`, like any other
+filter, lowers `N` to the candidates of that family. The correction then
+covers the selection within the filtered set, not every candidate tried on
+the dataset.
 
 They differ in what they assume about dependence between candidates:
 
