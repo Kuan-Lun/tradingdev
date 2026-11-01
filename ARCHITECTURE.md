@@ -53,7 +53,7 @@ flowchart LR
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
-| `domain/statistics/` | 與引擎無關的推論統計：期間損益與報酬、Sharpe 區間與多重比較校正、配對比較、參數平原、損益兩平與同一標的、不計成本的買進持有對照（產品保存的正式基準見下一列）；目前未接入 services，見[引擎無關的統計分析](#引擎無關的統計分析) |
+| `domain/statistics/` | 與引擎無關的推論統計：期間損益與報酬、Sharpe 區間與多重比較校正、配對比較、參數平原、損益兩平與同一標的、不計成本的買進持有對照（產品保存的正式基準見下一列）；目前未接入 services，見[引擎無關的統計分析](#引擎無關的統計分析)；重抽樣與選擇校正的文獻與調整見 [statistics_bootstrap_methods](docs/statistics_bootstrap_methods.md) |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 依資產類別固定的基準定義、買進持有計算與基準行情取得 |
 | `domain/data/`、`domain/indicators/`、`domain/ml/` | 行情與特徵資料處理、技術指標、模型及訓練邏輯 |
 | `adapters/storage/`、`adapters/execution/` | SQLite、revision／manifest／績效檔案保存，以及程序啟動與監督 |
@@ -357,10 +357,14 @@ stdio 回傳本機路徑，不假設客戶端能下載。
   最佳化方向由呼叫端依 catalog 的 `optimization_direction` 傳入，模組不自行推斷。
 - **與 MCP／報告服務**：目前沒有 application service、MCP 工具或報告引用這個套件，
   模型與使用者都看不到這些結果；目前只有測試呼叫它。
-  [統計與排行榜整合](docs/statistics_leaderboard_integration.md) 說明排行榜的範圍
-  （排的是單一 dataset 上的訊號建構，不是策略或回測）、參數平原如何接上排行榜的
-  參數曲面，以及 IC 配對比較目前為何不可行（序列未保存，紀錄也無法分辨樣本內與
-  留出評估）。
+  [統計、排名與排行榜整合](docs/statistics_leaderboard_integration.md) 說明已確認的排名範圍：
+  將同時涵蓋訊號品質與完整策略績效；候選選取、排名與統計分析分屬 application
+  service、共用排序核心與本套件。目前只有訊號排名，回測候選、從 `rank_entries` 抽出的
+  共用排序核心與代表結果都尚未實作。統計比較是排名後的選用分析，不是收錄排名的條件。
+  它也說明參數平原如何接上排行榜的參數曲面，以及 IC 配對比較目前為何不可行
+  （序列未保存，紀錄也無法分辨樣本內與留出評估）。各重抽樣與選擇校正程序採用的
+  文獻、實作版本及本專案的省略或組合，見
+  [統計重抽樣與選擇方法](docs/statistics_bootstrap_methods.md)。
 - **與產品基準**：`statistics/benchmark.py` 是同一標的、不計成本的研究對照；
   run 保存並在報告呈現的正式基準由 `domain/benchmark.py` 定義（依資產類別固定標的、
   以該次 run 的手續費與滑價買進一次後持有）。兩者用途不同，數值差異的主因是
