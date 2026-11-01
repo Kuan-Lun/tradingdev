@@ -7,10 +7,8 @@ objects, or, for the period series and buy-and-hold returns, a
 reads runs, artifacts, caches or an engine's
 ``metrics``, and nothing writes files. No application service or MCP tool
 calls this package yet. ``docs/statistics_leaderboard_integration.md``
-records the leaderboard integration as reviewed against an older main: the
-leaderboard has since gained recorded parameters, ``None`` metrics and
-parameter-axis ranking, so its list of what is still missing is out of date
-until that document is rewritten.
+describes how the plateau and paired-comparison modules can consume the ML
+leaderboard's records, and what still blocks the paired comparison.
 
 Known limitations
 -----------------

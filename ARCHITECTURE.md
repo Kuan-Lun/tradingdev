@@ -355,9 +355,10 @@ stdio 回傳本機路徑，不假設客戶端能下載。
   最佳化方向由呼叫端依 catalog 的 `optimization_direction` 傳入，模組不自行推斷。
 - **與 MCP／報告服務**：目前沒有 application service、MCP 工具或報告引用這個套件，
   模型與使用者都看不到這些結果；目前只有測試呼叫它。
-  [統計與排行榜整合](docs/statistics_leaderboard_integration.md) 記錄的是對較早
-  主線的整合分析；排行榜之後已加入參數欄位、`None` 指標與參數軸排名，其中「尚缺」
-  的清單已經過時，待該文件改寫。
+  [統計與排行榜整合](docs/statistics_leaderboard_integration.md) 說明排行榜的範圍
+  （排的是單一 dataset 上的訊號建構，不是策略或回測）、參數平原如何接上排行榜的
+  參數曲面，以及 IC 配對比較目前為何不可行（序列未保存，紀錄也無法分辨樣本內與
+  留出評估）。
 - **與產品基準**：`statistics/benchmark.py` 是同一標的、不計成本的研究對照；
   run 保存並在報告呈現的正式基準由 `domain/benchmark.py` 定義（依資產類別固定標的、
   以該次 run 的手續費與滑價買進一次後持有）。兩者回答不同問題，數值不能互換；成本規則是否統一尚待決定。

@@ -415,9 +415,12 @@ def deflated_sharpe_ratio(
     apply to the same number: each already accounts for the whole
     selection, so stacking them corrects one selection twice. When reports
     show both side by side, label each figure with the correction it
-    carries. Both share one weakness: they count ``N`` as
-    independent candidates, but neighbouring candidates are correlated, so
-    ``N`` overstates the effective number of trials and both over-correct.
+    carries. They also differ in what they assume about dependence.
+    Bonferroni rests on the union bound, which holds whatever the
+    dependence between the ``N`` tests, so correlated candidates only make
+    it conservative. The independence assumption belongs to this function:
+    its hurdle is the expected maximum of ``N`` independent trials, as the
+    limitation above describes.
 
     Returns ``None`` when :func:`probabilistic_sharpe_ratio` is undefined
     for ``returns``, or when ``N >= 2`` but fewer than two trial Sharpes

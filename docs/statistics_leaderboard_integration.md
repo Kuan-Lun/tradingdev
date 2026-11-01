@@ -1,211 +1,423 @@
 # Statistics and ML Leaderboard Integration
 
-This is a handover contract for the owner of the ML signal leaderboard. It
-lists what the statistics modules in `src/tradingdev/domain/statistics/` need
-before they can analyse leaderboard candidates, and why.
+## Purpose and Status
+
+This document describes how the statistics package
+(`src/tradingdev/domain/statistics/`) can consume what the ML leaderboard
+records, what fails along the way, and what is still undecided.
 
 Every statement about the leaderboard comes from reading `upstream/main` at
-commit `3fa0852` (2026-10-23), which this branch has merged, so the file paths
-below refer to this branch.
+`a24594c` (2026-11-01). This branch has merged upstream only up to `837f0c6`.
+The method families (`method_family`, `method_name`) and the threshold rules
+(`domain/ml/rules.py`) arrived upstream after that merge, so they are not yet
+in this branch's tree. Code is cited by module, function and constant names.
 
-The leaderboard already does several things right that this contract relies
-on: it refuses to rank incomparable contexts, it reports the candidate count
-with a selection caveat, and it labels its normal approximation as optimistic
-for short series. Nothing here asks to weaken any of that.
+### Scope
 
-## Two Selection Corrections
+> The ML leaderboard ranks signal constructions, including non-ML rules, on
+> one saved dataset. It does not rank strategies or backtests; strategy-level
+> comparison remains in the statistics package.
 
-The project has two multiple-comparison corrections for two metric families:
+This wording was proposed by the leaderboard maintainer on PR #38 and is
+adopted here. It is **pending confirmation from Kuan-Lun**.
+
+Under this scope the two sides do not overlap, and the interface between them
+is a return series:
+
+- A leaderboard candidate is a signal: a model's prediction series, a rule's
+  `+1`/`-1` series, or another declared or unnamed signal, scored against
+  forward returns. `method_family` says what built the signal, not what
+  produced a strategy return.
+- The leaderboard's `sharpe` and `annual_return` describe a cost-free
+  simulated long/short book over non-overlapping holding intervals.
+  `docs/ml_research.md` states that they are not backtest results.
+- `comparison.difference_interval` takes two realised, cost-bearing return
+  series of strategies run on the same data. The leaderboard produces no such
+  series, so its figures are not inputs to `comparison` or `benchmark`.
+
+## What the Leaderboard Provides Today
+
+### Recorded Entry
+
+`LeaderboardEntry` (`domain/ml/leaderboard.py`) holds:
+
+| Field | Meaning |
+| --- | --- |
+| `entry_id` | Candidate identity within a dataset and context, from `build_entry_id`. |
+| `label` | Readable name: the artifact's model name, the rule name, or `ad-hoc signal (<fingerprint prefix>)`. |
+| `context` | `EvaluationContext`: symbol, timeframe, start and end date, `horizon`, `window`, `n_quantiles`, `feature_set`, `code_fingerprint`, `data_fingerprint`. |
+| `metrics` | `Mapping[str, float \| None]`, with three states (below). |
+| `n_observations` | Number of aligned rows scored. |
+| `model_id` | Caller-declared model label; empty for non-model candidates. |
+| `dataset_id` | The dataset the signal was **evaluated** on. |
+| `parameters` | For `ml_model`, copied from the model artifact. For other families, declared by the caller (a rule stores `{"threshold": level}`). |
+| `signal_fingerprint` | Hash of the full evaluated signal, kept apart from `entry_id`; empty on older rows. |
+| `method_family` | `ml_model`, `rule` or `other`; empty on older rows. Read through `LeaderboardEntry.family`, which infers `ml_model` from a model ID and `other` otherwise. |
+| `method_name` | Name of a non-model candidate, such as `rsi_14 > 70`. |
+
+The three metric states are part of the contract and survive `to_record` and
+`from_record`:
+
+- key absent: the metric was never recorded for this candidate;
+- key present, value `None`: measured but unavailable or non-finite;
+- key present, finite value: an ordinary measurement.
+
+`MLService._record_evaluation` stores NaN and infinite metrics as `None`
+instead of dropping them. Older records dropped them, so a missing key on an
+old record cannot tell the two cases apart.
+
+### Method Families
+
+`resolve_method` validates the declaration. An `ml_model` needs a model ID and
+may not declare its own parameters. A `rule` needs a `method_name`. A model ID
+with a non-model family is refused. Over MCP, `evaluate_signal` accepts either
+a `model_id` or a `column` plus `threshold` rule. Arbitrary signals with
+family `other` come only through the Python `MLService.evaluate_signal` API or
+from older rows. The family is a declaration, not proof of provenance; the
+leaderboard reports a `families` count and adds caveats from
+`family_caveats` when a table mixes families.
+
+### Ranking and Parameter Surfaces
+
+`MLService.leaderboard` (and `leaderboard_page`, the MCP `leaderboard` tool)
+filters by `dataset_id`, `symbol`, `timeframe`, `horizon`, `feature_set` and
+`family`, then:
+
+1. computes `parameter_axes(entries)` over the filtered entries, including
+   the ones that will be skipped;
+2. unless `allow_mixed` is set, calls `comparability_error`:
+   - by default every field of `EvaluationContext.key` must match;
+   - with `allow_parameter_axes=True` it calls `_surface_error` instead, which
+     lets `horizon`, `window` and `n_quantiles` differ but requires one
+     `EvaluationContext.identity_key` (symbol, timeframe, dates, feature set,
+     feature code) and one `(dataset_id, data_fingerprint)` pair per horizon;
+3. ranks with `rank_entries` by the catalog direction from `metric_direction`.
+
+The response carries `direction`, `parameter_axes`, `ranked` rows (`value` is
+the ranking metric, with `horizon`, `window`, `n_quantiles`, `parameters` and
+`signal_fingerprint`), `skipped` rows (with `reason` and the three
+coordinates), and `caveats`, including `surface_caveats` when an axis has more
+than one value. Ranking and caveats always cover the full candidate set, even
+when only one page is returned.
+
+`parameter_axes` returns `dict[str, list[int]]` with exactly the keys
+`horizon`, `window` and `n_quantiles`, each sorted and deduplicated.
+
+### Training Provenance on the Record
+
+Nothing on the current record distinguishes an in-sample evaluation from a
+held-out one:
+
+- `LeaderboardEntry` stores only the evaluation `dataset_id`.
+- `ModelArtifact` (`domain/ml/registry/model_registry.py`) carries
+  `n_train_samples` but no training-dataset identity.
+- `compute_model_id` hashes the model name, parameters, ordered feature names
+  and the content hash of the pickled model. No data identity is part of it,
+  so joining an entry's `model_id` to its artifact does not answer the
+  question either.
+- `MLTrainingService.train_model` publishes an artifact fitted on every row of
+  its dataset. `MLService.predict` checks only that the dataset supplies the
+  artifact's feature names, and its docstring says prediction "does not
+  establish out-of-sample provenance".
+
+## Integration Flow 1: Parameter Plateau
+
+The plateau functions (`trials_from_metrics`, `plateau_summary`,
+`plateau_grid`) can consume a leaderboard parameter surface over `horizon`,
+`window` and `n_quantiles` today.
+
+### Minimal Input
+
+`trials_from_metrics(rows, params_key=..., metric_key=..., direction=...)`
+needs one row per candidate:
+
+| Input | Source on the leaderboard |
+| --- | --- |
+| Numeric coordinates, the same names in every row | `entry.context.tunable_parameters`, restricted to the swept axes. |
+| One metric value, or `None` for a failed candidate; the key must be present | `entry.metrics[metric]` for entries where the key is present. |
+| `direction`, `"maximize"` or `"minimize"`, no default | `metric_direction(metric)`, or the response's `direction`. |
+
+`plateau_summary(result.trials, axes=...)` then needs the axes. Rows whose
+metric is `None` are dropped from `result.trials` but keep their coordinates in
+`result.axes`, so a failed setting stays a missing grid point between its
+neighbours. Surface `result.dropped_count` with the result.
+
+### Using `parameter_axes`
+
+`parameter_axes` already is the axes mapping in the form `plateau_summary`
+accepts, and it is computed over the same filtered entries, failed ones
+included, so it equals `result.axes` when the coordinates are the three
+context settings. Conditions:
+
+- Use it only from a call with `allow_parameter_axes=True` and without
+  `allow_mixed`. It is computed before the comparability check, so under
+  `allow_mixed` it can mix entries of different identities.
+- Keep only the axes with more than one value, and give the coordinates the
+  same names. An axis with a single value adds a dimension: the neighbourhoods
+  are unaffected, but `dimension_warning` fires spuriously.
+- It covers only the three context settings. If model hyperparameters are
+  also coordinates, pass `result.axes` from `trials_from_metrics` instead;
+  passing `parameter_axes` raises because the parameter names differ from the
+  axes. Do not use `entry.parameters` wholesale as coordinates: it can hold
+  non-numeric settings, which raise. Select the swept numeric settings
+  explicitly.
+- A surface across horizons cannot use the `dataset_id` filter, because each
+  horizon is its own dataset and `leaderboard` checks every entry against the
+  filtered dataset's manifest horizon. Filter by `symbol`, `timeframe` and
+  `feature_set` instead. A surface over `window` and `n_quantiles` alone can
+  use one `dataset_id`.
+
+The recommended adapter works on `LeaderboardEntry` objects from
+`LeaderboardStore.entries` with the same filters, calling `comparability_error`
+with `allow_parameter_axes=True` and then `parameter_axes`. Entries keep the
+three metric states directly. The MCP response marks a key-absent metric only
+through the text of a skipped row's `reason`.
+
+### Failure Paths
+
+| Situation | What happens | What the adapter does |
+| --- | --- | --- |
+| Entries differ in `window` or `horizon` and `allow_parameter_axes` is off | `comparability_error` returns "entries were not measured on the same conditions" and `leaderboard` raises `ValueError` | Opt in to `allow_parameter_axes`; never use `allow_mixed` for a surface. |
+| Different instrument, dates, feature set or feature code | `_surface_error` refuses with "not measured on the same instrument, dates, feature set or feature code" | Build one surface per identity. |
+| One horizon measured on two dataset versions | `_surface_error` refuses with "horizon N was measured on M different dataset versions" | Re-record on one `dataset_id`, or build one surface per version. |
+| Two candidates at the same coordinates | `trials_from_metrics` raises because the parameter set repeats | Select exactly one candidate per coordinate (next section). |
+| Metric key absent on an entry (an older record) | `trials_from_metrics` raises; it does not treat absence as failure | Do not map absence to `None`. Re-evaluate and record, or report the gap. |
+| Hyperparameter coordinates with `parameter_axes` as axes | `plateau_summary` raises because parameter names differ from the axes | Use `result.axes`. |
+
+### One Candidate per Coordinate
+
+Every candidate at a coordinate is a separate row, and the leaderboard has no
+field saying that two rows at different coordinates are "the same candidate".
+A surface therefore needs an explicit grouping key chosen by the adapter:
+
+- Within one horizon, a model is one `model_id` and a rule is one
+  `method_name`.
+- Across horizons a model is necessarily retrained on each horizon's dataset,
+  so its `model_id` changes. The grouping key is then a declared
+  configuration, such as model name plus selected hyperparameters, and each
+  point is a different fitted model.
+- Filtering by `family` alone does not select one candidate.
+
+### Threshold Sweeps Are Not a Surface
+
+**Do not build a plateau over rule thresholds from the current records.** A
+threshold sweep is stored as one candidate per level: each level is its own
+`rule` entry, with the level in `parameters` and in `method_name`, and all of
+them sit at the same `horizon`, `window` and `n_quantiles`. `parameter_axes`
+has no threshold axis, and `ThresholdRule.parameters` states that threshold
+surfaces are not supported.
+
+The leaderboard maintainer has said a threshold axis will not be added, and
+this side agrees not to reconstruct a grid from the stored levels. A grid
+inferred that way would not be a grid:
+
+- The stored levels are whatever was tried, not a declared grid, so missing
+  levels cannot be told apart from levels nobody tried.
+- A level that makes the signal constant is refused by `ThresholdRule.signal`
+  before anything is recorded. The failed point leaves no row, which breaks
+  the plateau's rule that a failed setting keeps its coordinate.
+- Choosing levels after viewing the dataset is in-sample selection, which the
+  ML contract says the backend does not verify.
+
+### What a Plateau Does Not Establish
+
+A plateau result describes the stability of a score across settings; it must
+not feed winner selection. It also inherits the provenance of its inputs. A
+model evaluated on the dataset it was trained on gives in-sample scores, and a
+broad plateau of in-sample scores is still in-sample. The record cannot
+currently say which case applies (see
+[Training Provenance on the Record](#training-provenance-on-the-record)).
+
+## Integration Flow 2: Paired Bootstrap of IC Series
+
+The intended use is `comparison.difference_interval_outcome` on two
+candidates' IC series over a shared bar index: neighbouring candidates scored
+on the same bars share most of their noise, and a paired bootstrap cancels it.
+This flow is **not possible today**, for two separate reasons. Solving the
+first does not solve the second.
+
+### Layer 1: The Series Are Not Recorded
+
+- `LeaderboardEntry.metrics` holds scalar summaries only. `rolling_ic`
+  (`domain/ml/evaluation/metrics.py`) produces one IC per bar, and
+  `signal_metrics` reduces it to scalars through `ic_statistics`; the series
+  is not kept.
+- The entry keeps `signal_fingerprint`, a hash of the evaluated signal, but
+  not the signal, its timestamps or the IC observations.
+- Regenerating is possible but is not a recorded artifact. For a model,
+  rerunning `MLService.predict` on the entry's `dataset_id` and comparing
+  `signal_fingerprint` confirms that the regenerated signal is the ranked one.
+  An end-to-end test on 2026-10-31 matched the fingerprint and reproduced the
+  stored `ic_mean` to ten decimal places. This needs the original model,
+  feature code and dataset, and it fails once any of them is gone.
+- `predict` returns no timestamps, so the adapter must attach the dataset's
+  `timestamp` column in saved row order before `comparison.align_returns` can
+  pair two series.
+
+Issue #62 tracks a versioned artifact with aligned timestamps, signals,
+realised returns and IC observations. It would solve this layer.
+
+### Layer 2: Holdout Status Is Unknown
+
+Even with the series in hand, the comparison would not answer the question it
+is meant to answer:
+
+- `train_model`'s saved artifact is fitted on every row of its dataset, so
+  `predict` on that dataset returns predictions on the training data.
+  Walk-forward and purged folds report scores, not out-of-fold predictions;
+  they estimate the training procedure, not the saved model.
+- The record cannot tell an in-sample evaluation from a held-out one. See
+  [Training Provenance on the Record](#training-provenance-on-the-record).
+- A rule has no fitting step, but its threshold may have been chosen after
+  viewing the same dataset, and nothing records that either.
+
+The `comparison` module compares out-of-sample results. On in-sample series a
+paired difference measures which candidate overfits more thoroughly. In the
+2026-10-31 test, the deeper of two LightGBM models (`max_depth` 6 with 200
+trees against `max_depth` 2 with 50 trees) "won" the paired IC comparison at
+`p = 0`. That is this artifact, not a finding about the models.
+
+### Mechanics Once Both Layers Are Solved
+
+For when a held-out series exists, the steps the 2026-10-31 test validated:
+
+1. Take two candidates on the same dataset (the same rows). Across horizons
+   the datasets differ and the label intervals differ; pairing them needs a
+   separate decision.
+2. Use the IC method that matches the compared metric: Pearson for `ic_*`,
+   Spearman for `rank_ic_*`.
+3. Drop the first `window - 1` values by position, not with a global
+   `dropna()`, so the structural warm-up stays apart from genuine failures.
+4. Remove remaining non-finite values with a counted mask per series. Never
+   fill with zero: zero is a plausible IC, and filling it fabricates
+   observations and shrinks both the mean and the variance.
+5. Take one value every `window` bars. Adjacent rolling ICs share
+   `window - 1` bars; in the test the overlapping series pushed the estimated
+   block length to 92, longer than the window, and its `n = 2782` overstated
+   the sample. One value per window matches the `n_effective` that
+   `ic_statistics` assumes.
+6. Check that at least `MIN_BOOTSTRAP_OBSERVATIONS` values remain, roughly
+   `21 * window` bars. Otherwise `difference_interval_outcome` returns
+   `IntervalUnavailable` with the reason.
+
+## Open Items
+
+1. **Scope confirmation.** The scope wording above is pending Kuan-Lun's
+   confirmation on PR #38. If the team meant strategy-level ranking as well,
+   ownership of `comparison` and `benchmark` must be settled before either
+   side builds it.
+2. **Training/evaluation pair.** The leaderboard maintainer has announced
+   recording the training-dataset identity on the model artifact and the
+   training/evaluation pair on the entry, with older records reading as
+   unknown (upstream branch `feat/ml-training-dataset-binding`, not on
+   `main` at `a24594c`). This makes the relationship auditable but does not
+   prove a holdout; see the proposed criterion below.
+3. **Holdout eligibility rule.** Which training/evaluation pairs count as
+   eligible for a paired comparison (for example non-overlapping date ranges
+   after label horizons and embargo) is undecided. It belongs to the
+   statistics side and Kuan-Lun.
+4. **Cross-horizon surfaces.** `surface_caveats` states that cross-horizon
+   source and raw-data equivalence is not verified, and each horizon is
+   scored on a different set of rows. A plateau across horizons should carry
+   that caveat until shared source bars and common evaluation rows are
+   defined.
+5. **Skipped rows lack settings.** Skipped rows in the response carry the
+   three coordinates but not `parameters` or `signal_fingerprint`. A surface
+   over hyperparameters must therefore read entries from the store; this was
+   suggested to the maintainer and is not on `main`.
+
+### Proposed Acceptance Criterion for #62
+
+The following text is proposed for issue #62:
+
+> **Proposed acceptance criterion: holdout eligibility.** *Why.* The paired comparison in `statistics/comparison.py` assumes it is
+> comparing out-of-sample results. On in-sample series, a paired difference
+> measures which candidate overfits more thoroughly, not which one is better.
+> In an end-to-end test on the current pipeline, the deeper of two LightGBM
+> models (`max_depth` 6 with 200 trees against `max_depth` 2 with 50 trees)
+> "won" the paired IC comparison at p = 0, because both were scored on the
+> rows they had been fitted on. That is the overfitting artifact, not a
+> result. A saved series that cannot say whether it was held out would let a
+> downstream comparison reproduce that artifact with full provenance attached,
+> so we would suggest that the artifact not ship without the following.
+>
+> *Criterion.* Each saved evaluation series either declares its holdout
+> status, or at minimum records the pairing of training-data identity and
+> evaluation-data identity, so that a downstream consumer can judge
+> eligibility itself. Concretely, a consumer holding two saved series can
+> tell from the record alone, for each one, whether it was evaluated on the
+> dataset its model was trained on, on a different dataset, or under an
+> unknown relationship. Candidates without a fitting step (rules and other
+> signals) record that they have no training data, distinctly from "unknown".
+> Older entries, and any entry whose training identity is missing, report the
+> relationship as unknown and are never treated as eligible by default.
+>
+> *Limitation, stated as part of the criterion.* Recording the
+> training/evaluation pair makes the relationship auditable; it does not
+> establish a holdout. Two different dataset IDs can still cover overlapping
+> periods, and a rule's threshold may have been chosen after viewing the
+> evaluation data. A v1 that meets this criterion therefore records what
+> happened and does not assert `out_of_sample`. The rule for which pairs are
+> eligible (for example, non-overlapping date ranges after label horizons and
+> embargo) remains open, and the presence of the fields should not be read as
+> settling it.
+
+## Statistical Basis
+
+### Two Selection Corrections
+
+The project corrects for multiple comparisons in two ways, one per metric
+family:
 
 | Correction | Where | Metric family | Question answered |
 | --- | --- | --- | --- |
-| Bonferroni t-threshold, `Phi^-1(1 - alpha / (2 N))` | `required_t_stat`, `domain/ml/leaderboard.py:272` | IC t-statistics | Would any of `N` IC tests reject at family-wise `alpha`? |
+| Two-sided Bonferroni threshold `Phi^-1(1 - alpha / (2 N))` | `required_t_stat`, `domain/ml/leaderboard.py` | IC t-statistics | Would any of `N` IC tests reject at family-wise `alpha`? |
 | Deflated Sharpe ratio (Bailey and Lopez de Prado) | `deflated_sharpe_ratio`, `domain/statistics/sharpe.py` | Sharpe ratios of return series | How likely does the selected Sharpe beat the best of `N` skill-less trials? |
 
 They are not interchangeable and must never both be applied to the same
-number. Reports that show both must label each figure with its correction.
-Both count `N` as independent candidates, while neighbouring candidates are
-correlated, so both over-correct. The `deflated_sharpe_ratio` docstring
-records the same rule from the statistics side.
+number: each already accounts for the whole selection. Reports that show both
+must label each figure with its correction.
 
-## 1. Parameter Plateau Analysis
+They differ in what they assume about dependence between candidates:
 
-### What Plateau Analysis Needs
+- **Bonferroni needs no independence.** It rests on the union bound: the
+  probability that any of `N` tests rejects is at most the sum of their
+  individual probabilities, whatever the dependence between them. Correlated
+  candidates only make it conservative, so the actual family-wise error rate
+  is below `alpha`. Its guarantee is only as good as each individual test,
+  and the leaderboard's per-test normal approximation is anti-conservative
+  for short IC series, which `required_t_stat` and `_approximation_note`
+  already disclose.
+- **The deflated Sharpe ratio assumes independent trials.** Its hurdle is the
+  expected maximum Sharpe of `N` independent skill-less trials. Correlated
+  grid trials have a smaller effective `N`, so using the raw `N` raises the
+  hurdle; but they also have a smaller measured Sharpe dispersion, which
+  lowers it. Leaning towards over-correction is therefore the documented
+  intent, not a measured result. The `deflated_sharpe_ratio` docstring and
+  the statistics package docstring record the same.
 
-`trials_from_metrics` (`domain/statistics/plateau.py:144`) builds the trials
-for `plateau_summary` and `plateau_grid` from rows. The minimum input is:
+### Why Paired
 
-| Input | Requirement |
-| --- | --- |
-| Numeric parameter coordinates per candidate | A non-empty mapping of parameter name to a finite number, with the same names in every row (`plateau.py:185-194`). |
-| One metric value per candidate | A number, or `None` for a failed candidate. The key must be present: a missing key raises `ValueError` (`plateau.py:181-183`). |
-| The metric's optimisation direction | Passed as `direction`, `"maximize"` or `"minimize"`, with no default; `"minimize"` metrics are negated (`plateau.py:149`, `:173-175`). |
-
-A parameter set must not repeat (`plateau.py:195-197`).
-
-Failed candidates must stay in the input with a `None` metric. Since commit
-`1b51608` ("keep failed slices on the plateau grid axes"),
-`trials_from_metrics` drops their trials but keeps their parameter values on
-the axes. A failed value is then a missing grid point between its neighbours.
-If failed candidates were left out, a value whose candidates all failed would
-disappear from its axis, and its neighbours would look adjacent.
-
-The direction is already available on the leaderboard side:
-`metric_direction` (`leaderboard.py:249`) reads the catalog's
-`optimization_direction` from `SIGNAL_METRIC_CATALOG`.
-
-### What the Leaderboard Records for Plateaus
-
-- `LeaderboardEntry` (`leaderboard.py:112-121`) has no parameter field. Its
-  fields are `entry_id`, `label`, `context`, `metrics`, `n_observations`,
-  `model_id` and `dataset_id`. Candidates differ by `model_id` and `label`;
-  model hyperparameters are not recorded.
-- The only numeric settings on the record are `horizon`, `window` and
-  `n_quantiles` in `EvaluationContext` (`leaderboard.py:45-59`). All three are
-  part of `EvaluationContext.key` (`leaderboard.py:68-83`).
-- `comparability_error` (`leaderboard.py:285-295`) rejects entries whose
-  `context.key` values differ, so entries at different `window` or `horizon`
-  cannot be ranked together. `MLService.leaderboard` skips that check only when
-  `allow_mixed` is set (`app/ml_service.py:442`, `:486-489`).
-- `_record_evaluation` (`app/ml_service.py:381-385`) persists only finite
-  metrics, so a failed metric is dropped from the mapping rather than stored
-  as `None`. `LeaderboardEntry.metrics` is typed `Mapping[str, float]`, and
-  `to_record` and `from_record` convert every value with `float(...)`
-  (`leaderboard.py:139`, `:183`), so a `None` cannot be stored either.
-
-### Two Purposes Behind One Gate
-
-`comparability_error` is the right protection for picking a winner: a ranking
-across different horizons or windows compares numbers measured on different
-questions.
-
-Sensitivity analysis has the opposite purpose. It compares across `window`
-and `horizon` on purpose, to ask whether the best setting is an isolated spike
-or part of a plateau. Today both purposes pass through the same gate, so the
-gate that correctly protects the ranking also blocks plateau analysis.
-`allow_mixed` is not a substitute: it lifts the check for every part of the
-context at once, including instrument, dates and data, and the result is
-still a ranking.
-
-A plateau view needs the candidates that share every other part of the
-context, with `window`, `horizon` or `n_quantiles` as the axes. The plateau
-result must not feed the winner selection.
-
-### Grouping Across Horizons Is Not Possible Yet
-
-An earlier version of this section required the rest of the context, data
-fingerprint included, to match while `horizon` varies. No two entries with
-different horizons can meet that requirement:
-
-- `_record_evaluation` sets `data_fingerprint` to the dataset's
-  `content_hash` (`app/ml_service.py:378`), and `leaderboard` checks entries
-  against the same value (`:473`). That hash is the SHA-256 of the whole
-  labelled Parquet file (`adapters/storage/ml_datasets.py:43`).
-- The horizon is applied before the dataset is saved: `_symbol_frame` derives
-  `forward_return`, `target` and `label_end` from it and drops the rows whose
-  label runs past the data (`app/ml_service.py:896-906`). A different horizon
-  therefore changes the labelled frame, its row count, and its hash, even
-  when the market data are identical.
-- Reproduced with five identical daily bars: horizon 1 keeps 4 rows and
-  horizon 2 keeps 3, and the two `content_hash` values differ.
-
-Grouping by `window` or `n_quantiles` alone is unaffected: both are applied
-after the dataset is built, so those entries can share one dataset.
-
-The direction that would make horizon groups possible is to separate two
-identities that `data_fingerprint` currently merges:
-
-- the identity of the raw market data, which stays the same across horizons
-  (the feature cache already hashes the raw OHLCV bars for its own key,
-  `app/ml_service.py:860`, but that value is not recorded on entries); and
-- the identity of the horizon-derived dataset, which must keep changing
-  with the horizon so that rankings stay protected.
-
-Plateau grouping would also need a definition of which evaluation rows
-entries at different horizons have in common, since each horizon drops a
-different number of trailing rows and so is scored on a different set of
-bars. **Both definitions are open and still to be agreed with the
-leaderboard owner**; this document does not settle them. Until then, a
-plateau over `horizon` must not be built from leaderboard entries.
-
-### Missing for Plateau Analysis
-
-1. Parameter coordinates per entry: model hyperparameters, plus `window`,
-   `horizon` and `n_quantiles` when they are searched.
-2. A way to group entries that match on everything except the searched
-   settings, separate from the `comparability_error` check for ranking. For
-   `horizon` this first needs the two identities and the common evaluation
-   rows described above, which are still open.
-3. Failed candidates kept as entries, with the metric recorded as missing in
-   a form an adapter can turn into `None`, rather than absent without trace.
-
-## 2. Paired Bootstrap of IC Series
-
-### What the Leaderboard Records for IC Series
-
-- `LeaderboardEntry.metrics` is `Mapping[str, float]` (`leaderboard.py:118`).
-  It holds scalar summaries only.
-- `rolling_ic` (`domain/ml/evaluation/metrics.py:111`) returns one IC per
-  aligned bar. `signal_metrics` (`metrics.py:247-283`) reduces those series to
-  scalars through `ic_statistics`; the series is not kept.
-- Predictions are not stored, and the evaluated signal cannot be
-  recovered with certainty. An ad-hoc entry keeps only
-  `signal_fingerprint(signal)` (`ml_service.py:387`), a hash. A
-  model-backed entry keeps no fingerprint at all, and its `model_id` is "a
-  caller label, not proof of signal origin" (`evaluate_signal` docstring,
-  `ml_service.py:193`). `MLService.predict(model_id=..., dataset_id=...)`
-  (`ml_service.py:755-797`) regenerates what the stored model produces on
-  the immutable dataset, but nothing recorded confirms that this is the
-  signal that was scored and ranked.
-- Forward returns are not on the entry, but they can be recovered:
-  `dataset_id` names an immutable dataset whose frame has a `forward_return`
-  column (`ml_service.py:303`, `:331`), and the context carries its content
-  hash.
-
-### Why the Series Are Worth Keeping
-
-Neighbouring candidates are scored on the same bars, so their IC series share
-most of their noise. A paired bootstrap resamples the same bars for both
-candidates, and the shared noise cancels in the difference. The difference
-interval is then much narrower than comparing each candidate with a threshold
-on its own.
-
-The effect has been measured on daily strategy returns, not yet on IC series.
-For KD(9, 3, 3) and KD(14, 3, 3), whose daily returns correlate at 0.68, the
-paired Sharpe difference interval is 3.53 wide, which is 0.69 times the 5.15
-expected from the two individual intervals if the strategies were
-independent (the square root of the sum of the squared widths 3.89 and 3.38).
-See `METHODS.md`, sections 2.12 and 2.13, in the
+The variance of a difference is `var(A) + var(B) - 2 cov(A, B)`. Two candidates
+scored on the same bars share their shocks, so the covariance term is large
+and the paired interval is much narrower than two individual intervals
+suggest. For KD(9, 3, 3) and KD(14, 3, 3), whose daily returns correlate at
+0.68, the paired Sharpe difference interval was 3.53 wide, 0.69 times the 5.15
+expected if the strategies were independent. See `METHODS.md`, sections 2.12
+and 2.13, in the
 [demo evidence](https://github.com/cklivse/tradingdev/tree/b74fd7e/evidence/2026-10-27-statistics-demo)
-kept outside this repository's history. These figures predate
-the current block length rule for paired differences and have not been
-regenerated since; section 2.13 says the same about its table. IC series of
-neighbouring candidates are expected to correlate at least as strongly, but
-that has not been measured.
+kept outside this repository's history. Those figures predate the current
+block length rule for paired differences and have not been regenerated. IC
+series of neighbouring candidates are expected to correlate at least as
+strongly; the 2026-10-31 test measured 0.718 for two models, on in-sample
+series.
 
-`difference_interval` (`domain/statistics/comparison.py`) accepts any
-statistic, so it works on IC series as it does on returns once both series
-are available on a shared index.
+### Effective Sample Size
 
-### Effective Sample Size: An Option
-
-`ic_statistics` (`metrics.py:147-175`) corrects for overlapping windows with
-`n_effective = max(1, n_bars // window)` (`metrics.py:151`). This is a
-reasonable correction, and the module docstring states that it is an
-approximation.
-
-An improvement worth considering: the stationary bootstrap used by
-`difference_interval` chooses its mean block length with the Politis and White
-(2004) estimate, which measures the dependence in the data itself. It would
-reflect the actual overlap, which may be shorter or longer than `window` bars.
-
-### Missing for the Paired Bootstrap
-
-1. The per-bar IC series of each candidate, or its predictions. For
-   model-backed entries, `MLService.predict` plus `rolling_ic` is a
-   possible substitute only if the entry also records a fingerprint of the
-   evaluated signal, so an adapter can check that the regenerated signal is
-   the one that was ranked.
-2. A shared bar index for those series, so `align_returns` can pair them.
-3. Nothing more for forward returns: they are recoverable through
-   `dataset_id`.
+`ic_statistics` corrects for overlapping windows with
+`n_effective = max(1, n_bars // window)` and states that this is an
+approximation. The stationary bootstrap in `comparison` instead chooses its
+block length from the data with the Politis and White (2004) estimate, which
+reflects the actual dependence and may be shorter or longer than `window`
+bars. Taking one IC per window (step 5 above) keeps the two conventions
+consistent.
