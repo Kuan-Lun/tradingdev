@@ -42,11 +42,11 @@ Read these first; each one limits what a result may claim.
   in-sample.
 * **The deflated Sharpe assumes independent trials.** Grid trials are
   strongly correlated, so the effective number of trials is smaller than
-  ``N``; the ``deflated_sharpe_ratio`` docstring treats using the actual
-  ``N`` as an over-correction that leans towards rejecting a real edge.
-  That direction is the documented intent, not a measured result:
-  correlated trials also have a smaller Sharpe dispersion, which lowers
-  the hurdle.
+  ``N``, and using the actual ``N`` raises the hurdle; but correlated
+  trials also have a smaller Sharpe dispersion, which lowers it. Which
+  effect dominates has not been measured, so the net direction is unknown.
+  Leaning conservative is the design intent stated in the
+  ``deflated_sharpe_ratio`` docstring, not a demonstrated property.
 * **Recomputed figures follow their own conventions.** The first period's
   P&L is measured from the first equity value, where the engine uses the
   initial cash; standard deviations use ``ddof=1``, where the engine's

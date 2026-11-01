@@ -386,10 +386,16 @@ def deflated_sharpe_ratio(
 
     Limitation: the formula assumes ``N`` independent trials. Grid-search
     trials are strongly correlated (a lookback of 20 and of 21 is almost
-    the same strategy), so the effective number of trials is far smaller
-    than the actual ``N``. Using the actual ``N`` over-corrects and leans
-    towards rejecting a real edge. This version deliberately takes that
-    conservative side, preferring a missed edge to a false positive.
+    the same strategy), and the correlation has two opposite effects on
+    the hurdle. The effective number of trials is smaller than the actual
+    ``N``, so using the actual ``N`` raises the ``Z^-1`` multiplier, which
+    pushes towards over-correction. But correlated trials also have Sharpe
+    ratios that cluster together, so the measured ``std(SR_n)`` is small,
+    which lowers the hurdle. Which effect dominates has not been measured,
+    so the net direction of the error is unknown: the result may under- or
+    over-correct for the selection. Using the actual ``N`` is a deliberate
+    design choice meant to lean conservative, preferring a missed edge to
+    a false positive; it is not a demonstrated property of the result.
     Estimating the effective ``N`` requires clustering the trials by the
     correlation of their returns and is out of scope.
 

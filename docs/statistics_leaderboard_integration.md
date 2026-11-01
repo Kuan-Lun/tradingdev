@@ -395,9 +395,10 @@ They differ in what they assume about dependence between candidates:
   expected maximum Sharpe of `N` independent skill-less trials. Correlated
   grid trials have a smaller effective `N`, so using the raw `N` raises the
   hurdle; but they also have a smaller measured Sharpe dispersion, which
-  lowers it. Leaning towards over-correction is therefore the documented
-  intent, not a measured result. The `deflated_sharpe_ratio` docstring and
-  the statistics package docstring record the same.
+  lowers it. Which effect dominates has not been measured, so the net
+  direction is unknown; leaning conservative is a design intent, not a
+  measured result. The `deflated_sharpe_ratio` docstring and the statistics
+  package docstring record the same.
 
 ### Why Paired
 
