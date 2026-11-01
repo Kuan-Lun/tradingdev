@@ -7,8 +7,11 @@ Binance USDT pair, the S&P 500 for US equities), bought once with the
 run's fee and slippage and held to the end. This module takes whatever prices
 the caller passes, charges no costs, and is meant for holding the very
 instrument the strategy trades; the two answer different questions and
-their figures are not interchangeable. Whether the cost rules should be
-unified is an open decision.
+their figures are not interchangeable. The cause is the instrument and the
+definition of excess return, not costs: the product's cost falls on the
+entry only, after which its per-period returns equal the price returns. The
+cost rules therefore stay as they are; to avoid confusion, name the two
+excess returns apart where both are shown.
 
 All functions take series supplied by the caller, such as daily returns from
 :func:`tradingdev.domain.statistics.periods.period_returns`, and never read

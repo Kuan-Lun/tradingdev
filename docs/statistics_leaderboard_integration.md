@@ -304,8 +304,8 @@ For when a held-out series exists, the steps the 2026-10-31 test validated:
 2. **Training/evaluation pair.** The leaderboard maintainer has announced
    recording the training-dataset identity on the model artifact and the
    training/evaluation pair on the entry, with older records reading as
-   unknown (upstream branch `feat/ml-training-dataset-binding`, not on
-   `main` at `a24594c`). This makes the relationship auditable but does not
+   unknown (upstream PR #136, branch `feat/ml-training-dataset-binding`,
+   open and not on `main` at `a24594c`). This makes the relationship auditable but does not
    prove a holdout; see the proposed criterion below.
 3. **Holdout eligibility rule.** Which training/evaluation pairs count as
    eligible for a paired comparison (for example non-overlapping date ranges
