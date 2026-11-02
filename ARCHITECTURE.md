@@ -53,6 +53,7 @@ flowchart LR
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
+| `domain/statistics/` | 與引擎無關的推論統計：期間損益與報酬、Sharpe 區間與多重比較校正、配對比較、參數平原、損益兩平與同一標的、不計成本的買進持有對照（產品保存的正式基準見下一列）；目前未接入 services，見[引擎無關的統計分析](#引擎無關的統計分析)；重抽樣與選擇校正的文獻與調整見 [statistics_bootstrap_methods](docs/statistics_bootstrap_methods.md) |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 依資產類別固定的基準定義、買進持有計算與基準行情取得 |
 | `domain/data/`、`domain/indicators/`、`domain/ml/` | 行情與特徵資料處理、技術指標、模型及訓練邏輯 |
 | `adapters/storage/`、`adapters/execution/` | SQLite、revision／manifest／績效檔案保存，以及程序啟動與監督 |
@@ -338,6 +339,40 @@ stdio 回傳本機路徑，不假設客戶端能下載。
 未來可替換 storage／delivery adapter，但應保留版本衝突、來源完整性、容量限制及
 獨立閱讀的契約；不需把聊天供應商或逐字紀錄依賴加進 domain。
 欄位與限制見[報告與筆記契約](docs/reports.md#research-notebooks-and-archives)。
+
+### 引擎無關的統計分析
+
+`domain/statistics/` 回答引擎指標之外的推論問題：結果的不確定性有多大、
+兩個策略的差異是否顯著、在多次嘗試中選出的 Sharpe 是否只是運氣、最佳參數是否
+落在穩定的區域。各模組回答的問題、彼此的依賴與閱讀順序寫在
+`src/tradingdev/domain/statistics/__init__.py` 的模組說明。它與上述績效計算的關係如下：
+
+- **輸入**：只讀呼叫端傳入的權益曲線、時間戳、交易紀錄、報酬序列或 trial 列，
+  不讀取 run、manifest、績效 JSON 或快取，也不寫入任何檔案。
+- **與引擎 metrics**：不讀 `metrics` 字典，而是從原始輸出重新計算，因此可用來交叉
+  檢查引擎回報值。慣例並不完全相同：期間損益的第一期以權益曲線第一個值為基準，
+  而引擎以初始資金為基準；`summarize_performance` 的標準差用 `ddof=1`，引擎的
+  期間損益標準差用 `ddof=0`；Sharpe 不扣無風險利率。兩者不能直接混用或比較。
+- **與 catalog**：不註冊指標 ID，也不屬於 run 保存的績效產物。平原分析需要的
+  最佳化方向由呼叫端依 catalog 的 `optimization_direction` 傳入，模組不自行推斷。
+- **與 MCP／報告服務**：目前沒有 application service、MCP 工具或報告引用這個套件，
+  模型與使用者都看不到這些結果；目前只有測試呼叫它。
+  [統計、排名與排行榜整合](docs/statistics_leaderboard_integration.md) 說明已確認的排名範圍：
+  將同時涵蓋訊號品質與完整策略績效；候選選取、排名與統計分析分屬 application
+  service、共用排序核心與本套件。目前只有訊號排名，回測候選、從 `rank_entries` 抽出的
+  共用排序核心與代表結果都尚未實作。統計比較是排名後的選用分析，不是收錄排名的條件。
+  它也說明參數平原如何接上排行榜的參數曲面，以及 IC 配對比較目前為何不可行
+  （序列未保存，紀錄也無法分辨樣本內與留出評估）。各重抽樣與選擇校正程序採用的
+  文獻、實作版本及本專案的省略或組合，見
+  [統計重抽樣與選擇方法](docs/statistics_bootstrap_methods.md)。
+- **與產品基準**：`statistics/benchmark.py` 是同一標的、不計成本的研究對照；
+  run 保存並在報告呈現的正式基準由 `domain/benchmark.py` 定義（依資產類別固定標的、
+  以該次 run 的手續費與滑價買進一次後持有）。兩者用途不同，數值差異的主因是
+  標的不同與報酬差的定義不同，不是成本：產品基準的成本只落在進場，之後每期報酬
+  等於價格報酬。因此成本規則維持各自的設計。
+- **命名約定**：本套件在基準比較上採用的約定是，「excess return」（超額報酬）保留給
+  總報酬差，即報告在產品基準旁呈現的「策略−基準」；逐期差的平均年化叫 active return
+  （`BenchmarkComparison.active_return_annualised`）。兩者回答不同問題，數值不能互換。
 
 ## 一致性、程序管理與保證範圍
 
