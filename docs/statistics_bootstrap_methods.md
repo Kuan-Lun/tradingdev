@@ -16,9 +16,6 @@ the `arch` package, version 8.0.0 as locked in `uv.lock`
 `arch.bootstrap.optimal_block_length`). Everything else is implemented in this
 package with NumPy and the standard library.
 
-Citations marked *(to verify)* have details that were not checked against the
-publication; correct them before quoting this page elsewhere.
-
 ## References
 
 - **[PR94]** Politis, D. N., and Romano, J. P. (1994). The stationary
@@ -30,13 +27,16 @@ publication; correct them before quoting this page elsewhere.
   "Automatic block-length selection for the dependent bootstrap" by D. Politis
   and H. White. *Econometric Reviews*, 28(4), 372–375.
 - **[ET93]** Efron, B., and Tibshirani, R. J. (1993). *An Introduction to the
-  Bootstrap*. Chapman & Hall. (Percentile interval: chapter 13 *(to verify)*.)
+  Bootstrap*. Chapman & Hall. (Percentile interval: chapter 13, "Confidence
+  intervals based on bootstrap percentiles", section 13.3, "The percentile
+  interval".)
 - **[LW08]** Ledoit, O., and Wolf, M. (2008). Robust performance hypothesis
   testing with the Sharpe ratio. *Journal of Empirical Finance*, 15(5),
-  850–859.
+  850–859. The time-series test is in section 3.2.2.
 - **[BL12]** Bailey, D. H., and López de Prado, M. (2012). The Sharpe ratio
-  efficient frontier. *Journal of Risk*, 15(2), 3–44 *(volume, issue and pages
-  to verify)*.
+  efficient frontier. *Journal of Risk*, 15(2), 3–44 (December 2012).
+  doi:10.21314/JOR.2012.255. The appendix gives the authors' Python code
+  ([preprint](https://www.davidhbailey.com/dhbpapers/sharpe-frontier.pdf)).
 - **[BL14]** Bailey, D. H., and López de Prado, M. (2014). The deflated Sharpe
   ratio: correcting for selection bias, backtest overfitting, and
   non-normality. *Journal of Portfolio Management*, 40(5), 94–107.
@@ -86,9 +86,11 @@ column. Applied as published, with these additions in `sharpe._block_length`:
 Fewer than 20 returns (after alignment, for comparisons) give no interval;
 the `*_outcome` functions report `"insufficient_observations"`.
 
-Not from the literature: this is a project choice ([PW04] state their
-results asymptotically; whether they recommend a minimum sample is *to
-verify*). The automatic estimate relies on sample autocorrelations and a band of
+Not from the literature: this is a project choice. [PW04] recommend no
+minimum sample; their results are asymptotic, and their simulations use
+samples of 200 and 800 observations, noting extreme values of the circular
+bootstrap's estimate at 200. A floor of 20 is far below any sample size they
+studied. The automatic estimate relies on sample autocorrelations and a band of
 `±2 * sqrt(log10(n) / n)`, which say little in very short samples, and a
 percentile interval from a handful of distinct values is mostly
 discreteness. The threshold counts periods, so it is 20 days of daily returns
@@ -102,10 +104,13 @@ Every interval is the equal-tailed percentile interval of the resampled
 statistic [ET93]: the `(1 - confidence) / 2` and `1 - (1 - confidence) / 2`
 quantiles of the valid resamples, with NumPy's default linear interpolation.
 
-Replaced, not followed: [LW08] test a Sharpe difference with a studentized
-circular block bootstrap: the statistic is divided by a standard error (a
-kernel-based HAC estimate for the original sample, and a block-based estimate
-inside each resample *(construction details to verify)*). Studentizing
+Replaced, not followed: [LW08] (section 3.2.2) test a Sharpe difference with
+a studentized circular block bootstrap. The circular block bootstrap
+(Politis and Romano, 1992, as cited in [LW08]) resamples blocks of fixed size
+`b` from the observed pairs of returns. The standard error is a HAC estimate
+with the prewhitened quadratic spectral kernel (Andrews and Monahan, 1992,
+as cited) for the original sample, and is computed from block sums inside
+each resample (following Götze and Künsch, 1996, as cited). Studentizing
 generally gives better coverage than a percentile interval for a ratio
 statistic such as the Sharpe ratio. This package uses the
 percentile interval instead because:
@@ -116,6 +121,22 @@ percentile interval instead because:
   none.
 - One rule for single-series intervals, joint tables and paired differences
   keeps the three directly comparable.
+
+Two further departures from [LW08]:
+
+- **Symmetric versus equal-tailed.** [LW08] build a symmetric interval from
+  the bootstrap distribution of `|Δ* - Δ̂| / s(Δ*)`, so both ends lie the same
+  distance from the estimate. This package takes equal-tailed percentiles,
+  which can be asymmetric. A symmetric interval needs the studentized
+  statistic; without a standard error there is nothing to symmetrise.
+- **Block length.** [LW08] choose the fixed block size by calibration
+  (their Algorithm 3.1, after Loh, 1987, as cited): for each candidate size
+  they resample from a fitted model, measure the coverage of the resulting
+  intervals and keep the size whose coverage is closest to nominal. This
+  package uses the automatic estimate of [PW04] instead. Calibration repeats
+  the whole bootstrap for every candidate size and needs a model to generate
+  data from, which a statistic passed as an arbitrary callable does not
+  provide.
 
 Bias-corrected and accelerated (BCa) intervals were not adopted either; their
 acceleration constant is normally estimated with an iid jackknife, which does
@@ -247,7 +268,13 @@ resamples, up to rounding when the two are equal.
   with the per-period Sharpe ratio, skewness `g3` and non-excess kurtosis `g4`.
 - **As published:** the formula, with a per-period benchmark `SR*`.
 - **Choices in this project:** skewness and kurtosis use population moments
-  (whether [BL12] specify the estimator is *to verify*). Returns whose
+  (dividing by `n`). The [BL12] text does not specify the estimator; the
+  authors' appendix code (`PSR_Opt.get_Moments`) divides by the number of
+  observations, as here. The per-period Sharpe ratio differs: the appendix
+  code divides the mean by the population standard deviation, while
+  `sharpe._period_sharpe` uses the sample standard deviation (`ddof=1`), the
+  same Sharpe ratio as the rest of this package. The two differ by a factor
+  of `sqrt(n / (n - 1))`, which is negligible for long samples. Returns whose
   spread is below `2**-60` or whose largest magnitude is above `2**60` are
   rescaled by an exact
   power of two before the moments are taken, which leaves the ratios
