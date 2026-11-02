@@ -700,6 +700,51 @@ follows AIunusual's proposal
    gaps in Open Items 2, an explicit "no fitting step" versus "unknown"
    status and the signal source, change the same entry schema that #136
    introduces, so they are cheapest to decide before #136 merges.
+7. **Dependence check for PSR/DSR (proposal, not implemented).** The PSR's
+   standard error assumes independent returns, and the DSR inherits it
+   ([Independence Assumptions](statistics_bootstrap_methods.md#independence-assumptions)).
+   Proposed: report, next to a PSR or DSR, the ratio of a stationary-bootstrap
+   standard error of the per-period Sharpe ratio to the formula's standard
+   error, with the block length from `_returns_block_size`.
+   - **Report only.** The ratio does not adjust the standard error; PSR and
+     DSR keep the Bailey and López de Prado formulas.
+   - **Possible fields:** `ratio`, `block_length` (`L`) and `n_over_l`
+     (observations over `L`).
+   - **Unavailable below `n / L = 20`,** with a neutral reason such as "too
+     few effective blocks to check". The reason must not say that the
+     standard error may be understated: in simulation the floor mostly
+     excluded GARCH series (18% of them, against 0% to 1% for the other
+     cases), whose block length is long because it also covers squared
+     returns, yet whose formula standard error is accurate. The value 20 is a
+     project floor, not calibrated.
+   - **Biased towards 1.** In simulation (300 series of 365 returns per case,
+     1,000 resamples each, seed 20261102;
+     [script and output](https://github.com/cklivse/tradingdev/tree/37ed9f4/evidence/2026-11-02-round19-independence),
+     kept outside this repository's history):
+
+     | Returns | True ratio | Diagnostic p10 / median / p90 |
+     | --- | --- | --- |
+     | iid Student t(5) | 1.01 | 0.94 / 1.00 / 1.05 |
+     | AR(1), ρ = 0.2 | 1.23 | 1.06 / 1.15 / 1.26 |
+     | AR(1), ρ = 0.4 | 1.52 | 1.24 / 1.38 / 1.55 |
+     | AR(1), ρ = −0.2 | 0.82 | 0.75 / 0.85 / 0.93 |
+     | GARCH(1,1), α = 0.10, β = 0.85 | 1.00 | 0.83 / 0.98 / 1.08 |
+
+     The direction is right, but the median misses about a quarter to a third
+     of the distance from 1 (36% at ρ = 0.2, 26% at ρ = 0.4, 16% at
+     ρ = −0.2). A ratio within about 0.95 to 1.05 is indistinguishable
+     from iid; one above that suggests the standard error is understated,
+     probably by more than the ratio shows.
+   - **KD fixture:** `n = 366`, `L = 3`, `n / L = 122`; the ratio is 1.00 to
+     1.05 over ten bootstrap seeds, indistinguishable from iid.
+   - **Deferred:** correcting the denominator for serial correlation, after
+     Lo (2002) ([LO02](statistics_bootstrap_methods.md#references)), is a
+     design change. Decide it once the distribution of the
+     ratio over real backtests is known.
+   - **Planned tests,** all with fixed seeds: iid returns give a ratio near
+     1; AR(1) returns with coefficient 0.4 give a ratio clearly above 1; a
+     short series with `n / L < 20` returns unavailable with the neutral
+     reason.
 
 ### Acceptance Criterion for #62
 
@@ -798,10 +843,10 @@ points below concern the leaderboard specifically.
 The project corrects for multiple comparisons in two ways, one per metric
 family:
 
-| Correction | Where | Metric family | Question answered |
-| --- | --- | --- | --- |
-| Two-sided Bonferroni threshold `Phi^-1(1 - alpha / (2 N))` | `required_t_stat`, `domain/ml/leaderboard.py` | IC t-statistics | Would any of `N` IC tests reject at family-wise `alpha`? |
-| Deflated Sharpe ratio (Bailey and Lopez de Prado) | `deflated_sharpe_ratio`, `domain/statistics/sharpe.py` | Sharpe ratios of return series | How likely does the selected Sharpe beat the best of `N` skill-less trials? |
+| Correction | Where | Metric family | Question answered | Independence assumed |
+| --- | --- | --- | --- | --- |
+| Two-sided Bonferroni threshold `Phi^-1(1 - alpha / (2 N))` | `required_t_stat`, `domain/ml/leaderboard.py` | IC t-statistics | Would any of `N` IC tests reject at family-wise `alpha`? | None across the `N` tests (union bound). Within each series, the IC t-statistic from `ic_statistics` treats the ICs of `n_bars // window` non-overlapping windows as independent. |
+| Deflated Sharpe ratio (Bailey and Lopez de Prado) | `deflated_sharpe_ratio`, `domain/statistics/sharpe.py` | Sharpe ratios of return series | How likely does the selected Sharpe beat the best of `N` skill-less trials? | Both: independent trials for the expected maximum, and independent returns within the series through the PSR's standard error. |
 
 "Metric family" here groups the corrected numbers; it is unrelated to the
 leaderboard's `method_family`. For the leaderboard, `N` is the number of
@@ -811,8 +856,11 @@ filter, lowers `N` to the candidates of that family. The correction then
 covers the selection within the filtered set, not every candidate tried on
 the dataset.
 
-Their assumptions about dependence, and why they are never stacked, are in
-[the methods page](statistics_bootstrap_methods.md#not-stacked-with-bonferroni).
+What each assumption means, where it sits in the code and which way its
+violation biases the result are in
+[Independence Assumptions](statistics_bootstrap_methods.md#independence-assumptions);
+why the two corrections are never stacked is in
+[Not stacked with Bonferroni](statistics_bootstrap_methods.md#not-stacked-with-bonferroni).
 For the leaderboard specifically, the Bonferroni guarantee is only as good as
 each individual test, and the per-test normal approximation is
 anti-conservative for short IC series, which `required_t_stat` and
