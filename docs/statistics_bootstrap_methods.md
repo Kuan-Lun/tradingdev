@@ -40,6 +40,8 @@ package with NumPy and the standard library.
 - **[BL14]** Bailey, D. H., and López de Prado, M. (2014). The deflated Sharpe
   ratio: correcting for selection bias, backtest overfitting, and
   non-normality. *Journal of Portfolio Management*, 40(5), 94–107.
+- **[LO02]** Lo, A. W. (2002). The statistics of Sharpe ratios. *Financial
+  Analysts Journal*, 58(4), 36–52.
 - **[K89]** Künsch, H. R. (1989). The jackknife and the bootstrap for general
   stationary observations. *The Annals of Statistics*, 17(3), 1217–1241.
   Cited only as background for linearising a statistic through its
@@ -274,11 +276,45 @@ resamples, up to rounding when the two are equal.
   code divides the mean by the population standard deviation, while
   `sharpe._period_sharpe` uses the sample standard deviation (`ddof=1`), the
   same Sharpe ratio as the rest of this package. The two differ by a factor
-  of `sqrt(n / (n - 1))`, which is negligible for long samples. Returns whose
+  of `sqrt(n / (n - 1))`, which is negligible for long samples: in the
+  simulation under *Assumption* below, the PSR moved by 0.0004 on average
+  and at most 0.0009 between the two. Returns whose
   spread is below `2**-60` or whose largest magnitude is above `2**60` are
   rescaled by an exact
   power of two before the moments are taken, which leaves the ratios
   unchanged and avoids overflow of the fourth moment.
+- **Assumption: independent returns.** The standard error the formula divides
+  by, `sqrt((1 - g3 * SR + (g4 - 1) / 4 * SR**2) / (n - 1))`, is the variance
+  of the Sharpe estimator for iid returns that [BL12] take from Mertens (2002,
+  as cited in [BL12], "Variance of the IID estimator in Lo (2002)"). It is
+  computed from the sample's own skewness and kurtosis and has no term for
+  serial correlation. Positively autocorrelated returns make the true standard
+  error larger than the formula, so PSR, and the DSR built on it, are too
+  optimistic; negatively autocorrelated returns make them too conservative.
+  [BL12] (sections 1 and 2.4) also state, citing Opdyke (2007, as cited in [BL12]), that
+  the expression remains valid for stationary ergodic returns; the simulation
+  below shows that the expression as computed here does not hold under serial
+  correlation, so this project reads it as the iid variance. [LO02] derives
+  the Sharpe ratio's distribution under serial correlation for the normal case.
+  Evidence, from 20,000 samples of 365 returns per case with a true per-period
+  Sharpe ratio of 0.05 tested against that same benchmark, so the nominal rate
+  of `PSR > 0.95` is 5%
+  ([script and output](https://github.com/cklivse/tradingdev/tree/37ed9f4/evidence/2026-11-02-round19-independence),
+  seed 20261102, kept outside this repository's history; AR(1) and GARCH use
+  normal innovations; Monte Carlo band about ±0.3 to ±0.5 points):
+
+  | Returns | `P(PSR > 0.95)` | True SD of SR / formula SE |
+  | --- | --- | --- |
+  | iid Student t(5) | 5.5% | 1.01 |
+  | AR(1), ρ = 0.2 | 9.0% | 1.23 |
+  | AR(1), ρ = 0.4 | 13.9% | 1.52 |
+  | AR(1), ρ = −0.2 | 2.3% | 0.82 |
+  | GARCH(1,1), α = 0.10, β = 0.85 | 5.4% | 1.00 |
+
+  Fat tails are handled by the moment terms; autocorrelation is not.
+  Volatility clustering alone left the formula accurate here, but only
+  because the per-period Sharpe ratio was small
+  ([Independence Assumptions](#independence-assumptions)).
 - **Undefined cases:** `None` with fewer than two returns, zero dispersion,
   or a variance term that is not positive.
 
@@ -293,7 +329,12 @@ resamples, up to rounding when the two are equal.
 - **Choices in this project:**
   - `std(SR_n)` is the sample standard deviation (`ddof=1`) of the trials'
     per-period Sharpe ratios; annualised inputs are converted to per-period
-    values so the hurdle is not inflated by `sqrt(periods_per_year)`.
+    values so the hurdle is not inflated by `sqrt(periods_per_year)`. The
+    population standard deviation would multiply the hurdle by
+    `sqrt((N - 1) / N)`, 18% lower at `N = 3`, under-correcting the selection
+    for small `N`.
+  - The returns are assumed independent, as for the PSR above: the DSR is a
+    PSR against a raised benchmark and inherits that assumption unchanged.
   - `N` is `n_trials`, which the caller must set to the total number of
     trials searched, failed ones included (for plateau input,
     `len(result.trials) + result.dropped_count`). It defaults to the number
@@ -317,16 +358,60 @@ The ML leaderboard's `required_t_stat` (`domain/ml/leaderboard.py`) applies a
 two-sided Bonferroni threshold to IC t-statistics. The DSR corrects the
 Sharpe ratios of strategy return series. Each already accounts for the whole
 selection it covers, so the two are never applied to the same number;
-stacking them corrects one selection twice. Bonferroni rests on the union
-bound and needs no independence; the DSR's expected maximum assumes
-independent trials. Reports that show both label each figure with its
-correction.
+stacking them corrects one selection twice. Reports that show both label each
+figure with its correction.
+
+They also differ in what they assume about independence, which has two
+dimensions (next section). Bonferroni rests on the union bound and needs no
+independence *across* the `N` tests, but each IC t-statistic it compares
+still treats the ICs of non-overlapping windows as independent *within* its
+series. The DSR needs both: independent trials for its expected maximum, and
+independent returns for the PSR it is built on.
+
+## Independence Assumptions
+
+The selection-adjusted figures rest on independence in two dimensions:
+across the trials or tests searched, and between the periods within one
+series. The two metric families assume different things in each.
+
+| | Across trials or tests | Within one series |
+| --- | --- | --- |
+| **Sharpe family** | **DSR** (`deflated_sharpe_ratio`, `sharpe.py`): the hurdle is the expected maximum Sharpe of `N` *independent* skill-less trials. Correlated grid trials have a smaller effective `N`, which makes the actual `N` raise the hurdle, and a smaller measured `std(SR_n)`, which lowers it; the net direction has not been measured. | **PSR** (`probabilistic_sharpe_ratio`, `sharpe.py`): the standard error is the iid variance of the Sharpe estimator. Positive autocorrelation understates it, so PSR and DSR are too optimistic; negative autocorrelation makes them too conservative ([evidence](#probabilistic-sharpe-ratio)). |
+| **IC family** | **Bonferroni** (`required_t_stat`, `domain/ml/leaderboard.py`): a union bound, valid whatever the dependence between the `N` tests; correlated tests only make it conservative. | **IC t-statistic** (`ic_statistics`, `domain/ml/evaluation/metrics.py`): `ICIR * sqrt(n_bars // window)` treats the ICs of `n_bars // window` non-overlapping windows as independent. Positively correlated window ICs overstate the t-statistic (too optimistic); negatively correlated ones understate it. |
+
+Two further points:
+
+- **Volatility clustering.** Dependence in squared returns, without
+  autocorrelation in the returns themselves, reaches the PSR's standard error
+  only through the terms of the denominator that are multiplied by the Sharpe
+  ratio, the `SR**2` term above all. With a small per-period Sharpe ratio
+  these terms are near zero and the effect is negligible: in the GARCH case
+  above, at a per-period Sharpe ratio of 0.05, the formula was accurate (ratio
+  1.00, false-positive rate 5.4%). On the project's own data the terms are not
+  small. The KD(14,3,3) BTC/USDT 1h 2024 test fixture has 366 daily returns
+  with a per-period Sharpe ratio of −0.40, skewness `g3 = −1.58` and kurtosis
+  `g4 = 8.70`. Its denominator `1 - g3 * SR + (g4 - 1) / 4 * SR**2` is
+  `1 − 0.63 + 0.30 = 0.68`: the kurtosis term alone is 30% of the leading 1,
+  and the moment terms together lower the denominator by a third. The
+  argument that volatility clustering can be ignored therefore does not carry
+  over to such series.
+- **Bonferroni is only as good as each test.** The union bound removes the
+  need for independence between tests, not within them; an IC t-statistic
+  that is too large because its window ICs are positively correlated passes
+  through the Bonferroni threshold uncorrected.
+
+The IC t-statistic is computed upstream in the ML evaluation code; this page
+describes its assumption and does not change it. A check of the PSR's
+within-series assumption is proposed, not implemented: see
+[the integration document](statistics_leaderboard_integration.md#open-items).
 
 ## What This Page Does Not Claim
 
 - No procedure here has a demonstrated coverage at its nominal level for the
-  dependence found in strategy returns. The simulations cited are those
-  recorded in the docstrings, with 100 samples each.
+  dependence found in strategy returns. The interval simulations cited are
+  those recorded in the docstrings, with 100 samples each; the PSR
+  simulation is the one linked under
+  [Probabilistic Sharpe ratio](#probabilistic-sharpe-ratio).
 - Resampling assumes the series is stationary over the sample. A regime
   change inside the sample is not repaired by any block length.
 - These methods quantify sampling uncertainty of one sample. They do not
