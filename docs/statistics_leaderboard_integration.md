@@ -535,9 +535,16 @@ Documented here, not implemented on this branch:
 
 ### Acceptance Criterion for #62
 
-The criterion below was posted to issue #62 on 2026-11-01, and Kuan-Lun agreed
-with its direction on PR #38. The text is the posted version, followed by three
-additions made after Kuan-Lun's reply on PR #38 of 2026-11-01.
+The criterion below was posted to issue #62 on 2026-11-01
+([comment](https://github.com/Kuan-Lun/tradingdev/issues/62#issuecomment-6554320220)),
+and Kuan-Lun agreed with its direction on PR #38. The quote starts at the
+comment's *Why* section, with its section headings shown in bold. It omits the
+opening paragraphs, which framed the criterion as a one-field delta to the
+issue's Required work, inside its Boundaries. That framing is withdrawn: the
+follow-up comment
+([comment](https://github.com/Kuan-Lun/tradingdev/issues/62#issuecomment-6560285324))
+adds per-fold training and evaluation ranges to the record, so it is no longer
+a one-field delta. The amendments from that comment follow the quote.
 
 > **Why.** The paired comparison in `statistics/comparison.py` assumes it is
 > comparing out-of-sample results. On in-sample series, a paired difference
@@ -551,7 +558,7 @@ additions made after Kuan-Lun's reply on PR #38 of 2026-11-01.
 > stores only the evaluation `dataset_id`, `ModelArtifact` carries
 > `n_train_samples` but no training-dataset identity, and `compute_model_id`
 > hashes the model name, parameters, ordered feature names and the pickled
-> blob's content hash; no data identity is part of it, so joining an entry's
+> blob's content hash — no data identity is part of it, so joining an entry's
 > `model_id` to its artifact does not answer the question either.
 >
 > A saved series that cannot say whether it was held out would let a downstream
@@ -570,7 +577,7 @@ additions made after Kuan-Lun's reply on PR #38 of 2026-11-01.
 > that they have no training data, distinctly from "unknown".
 >
 > Older entries, and any entry whose training identity is missing, report the
-> relationship as unknown and are never treated as eligible by default, the
+> relationship as unknown and are never treated as eligible by default — the
 > same pattern the existing Acceptance already applies to missing series.
 >
 > **The pairing has to travel with the series artifact, not only sit on the
@@ -583,22 +590,33 @@ additions made after Kuan-Lun's reply on PR #38 of 2026-11-01.
 > periods, and a rule's threshold may have been chosen after viewing the
 > evaluation data. A v1 that meets this criterion therefore records what
 > happened and does not assert `out_of_sample`. The rule for which pairs are
-> eligible (for example non-overlapping date ranges after label horizons and
-> embargo) remains open, and the presence of the fields should not be read as
+> eligible — for example non-overlapping date ranges after label horizons and
+> embargo — remains open, and the presence of the fields should not be read as
 > settling it.
 
-Added after Kuan-Lun's reply on PR #38 (2026-11-01):
+Amended after Kuan-Lun's reply on PR #38 (2026-11-01). Items 1 to 3 are the
+follow-up comment's three amendments; item 4 is its closing implementation
+note, listed here as an amendment because the criterion depends on it:
 
 1. **Eligible means usable as input to a paired comparison.** It is not a
-   condition for being ranked; ranking does not require a holdout.
+   condition for appearing on or being ranked by the leaderboard: holdout
+   status and out-of-sample proof are not ranking-admission requirements, and
+   paired comparison is an optional analysis after ranking.
 2. **No fitting step means no training data, nothing more.** It does not mean
-   a rule's form or threshold was never tuned on the evaluation data.
+   a rule's form or threshold was never tuned on the evaluation data. A
+   consumer must not read "no training data" as held out.
 3. **Walk-forward series and historical records.** A walk-forward series
    saves, from the original evaluation run, each fold's actual predictions
    with that fold's training and evaluation ranges; predictions of a model
    retrained at the end on the same data do not substitute for them. A
    historical record without a saved series reports the series as
    unavailable; it is not regenerated and not presumed eligible.
+4. **The series artifact records two distinctions explicitly.** It records "no
+   fitting step" as a state distinct from "unknown", and whether the backend
+   produced the signal from the model artifact or the caller supplied it.
+   Equal training and evaluation dataset IDs indicate an in-sample evaluation
+   only when the backend produced the signal. PR #136 does not yet make either
+   distinction (Open Items 2).
 
 ## Statistical Basis
 
