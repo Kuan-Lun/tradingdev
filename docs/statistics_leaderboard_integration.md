@@ -49,11 +49,17 @@ layers. This is the agreed division of work. Today only the signal source and
 its ranking exist (see [What Exists Today](#what-exists-today)); the rest is
 listed under [Follow-up Work](#follow-up-work).
 
-| Responsibility | Owner | What it does |
-| --- | --- | --- |
-| Candidate selection | Application service | Finds the candidates, keeps their identity, conditions and representative choice, and passes them to ranking. |
-| Ranking | Shared ranking core (to be extracted), fed by each candidate source | Orders candidates by one metric in its catalog direction, assigns tied ranks and keeps missing values with their reason. |
-| Statistical analysis | `domain/statistics` | Optional analysis of ranked candidates: intervals, paired differences, plateau, deflated Sharpe. |
+| Responsibility | Layer | Who builds it | What it does |
+| --- | --- | --- | --- |
+| Candidate selection | Application service | AIunusual (proposed): backtest candidate source, representative results, service entry point | Finds the candidates, keeps their identity, conditions and representative choice, and passes them to ranking. |
+| Ranking | Shared ranking core (to be extracted), fed by each candidate source | AIunusual (proposed) | Orders candidates by one metric in its catalog direction, assigns tied ranks and keeps missing values with their reason. |
+| Statistical analysis | `domain/statistics` | cklivse | Optional analysis of ranked candidates: intervals, paired differences, plateau, deflated Sharpe. |
+
+The "Who builds it" column follows AIunusual's proposal on PR #38
+(2026-11-01); see
+[Proposed Shared Ranking Core](#proposed-shared-ranking-core-aiunusual-2026-11-01).
+This document and `ARCHITECTURE.md` stay with cklivse. The #62 series store
+is not assigned.
 
 The target is that MCP tools and reports both use the application service's
 results and neither ranks on its own. Today the ML report block
@@ -472,32 +478,189 @@ The steps the 2026-10-31 test validated:
    `21 * window` bars. Otherwise `difference_interval_outcome` returns
    `IntervalUnavailable` with the reason.
 
+## Proposed Shared Ranking Core (AIunusual, 2026-11-01)
+
+AIunusual proposed this on PR #38
+([comment](https://github.com/Kuan-Lun/tradingdev/pull/38#issuecomment-6563407857),
+"for your doc"). It is a proposal, not implemented. The checks below were made
+against `rank_entries` and its callers on upstream main at `a77babf`, which
+differs from `a24594c` only in `tooling/prompt_contracts.py`. This branch does
+not change `domain/ml/leaderboard.py`, so extracting the core does not
+conflict with it.
+
+### Proposed Work and Ownership
+
+AIunusual offered to take on four pieces:
+
+1. **Extract the ranking core.** Moving to a shared module: direction-aware
+   ordering taken from the metric definition, the stable tie-break (sort by
+   candidate id first, then by value), `math.isclose` tie detection with
+   dense ranks and tie counts, the three missing-value states (not recorded,
+   not finite, not applicable) with the reason preserved, `top_k`, and the
+   selection caveat. Staying in the signal layer: `comparability_error` over
+   the evaluation context, the method-family caveat, and the IC-specific
+   statistics text.
+2. **Backtest candidate source**, keyed by `(run_id, scope)` rather than
+   `run_id`, reading `get_run_metrics()` so nothing is recomputed, and
+   carrying strategy version, parameters and trading conditions (symbol,
+   timeframe, period, costs).
+3. **Representative-result selection**, persisted so a later experiment
+   cannot replace it, marked as "included in comparison", never as proof of
+   out-of-sample.
+4. **One application-service entry point** for both the read-stored-metrics
+   path and the re-evaluate-then-rank path, with MCP and reports consuming
+   the same result.
+
+Statistical analysis, this document and `ARCHITECTURE.md` stay with cklivse.
+AIunusual does not claim the #62 series store, which remains unassigned.
+
+### Proposed Interface
+
+As posted:
+
+```text
+Candidate        = { candidate_id, values: {metric: float | null}, group_key }
+MetricDefinition = { name, direction: maximize | minimize, unit }
+
+rank_candidates(candidates, metric, *, top_k = null) -> {
+  ranked:  [{ rank, candidate_id, value, tied }],
+  skipped: [{ candidate_id, reason }],
+  caveats: [text]
+}
+```
+
+> - `candidate_id`: `entry_id` for signals; a stable `(run_id, scope)`
+>   rendering for backtests, so the tie-break stays deterministic.
+> - `group_key`: whatever must match for candidates to be comparable — the
+>   evaluation context for signals, the metric definition and unit for runs.
+>   The core does not interpret it; it refuses to rank across groups unless
+>   explicitly allowed, and reports when it does.
+> - Missing values are never coerced to zero, and the three reasons stay
+>   distinct in `skipped`.
+>
+> Two measurements the core must keep apart, because they share a name but
+> not a definition: the simulated-book Sharpe reported with a signal entry,
+> and the backtest Sharpe read from a run. They must not share a column
+> without saying so.
+
+### What the Statistics Side Needs from It
+
+Each point names the proposed type or field it concerns and what the code on
+main does today.
+
+1. **Rank numbering (`ranked[].rank`).** The proposal says dense ranks.
+   `rank_entries` assigns competition ranks: when a value is not close to the
+   previous one, `rank = index + 1`, so three entries with the first two tied
+   rank 1, 1, 3; dense ranking would give 1, 1, 2. Switching changes the
+   `rank` field of the MCP `leaderboard` response and of the ML report. The
+   choice should be made deliberately and documented. `tied` (a `Counter`
+   over the assigned ranks) is unaffected.
+2. **Tie detection (`ranked[].tied`).** `rank_entries` compares each sorted
+   value with `math.isclose(value, previous)` at the defaults
+   (`rel_tol=1e-9`, `abs_tol=0.0`), against the previous value rather than
+   the first value of the tie group. A chain of values each close to its
+   neighbour therefore shares one rank even when its ends are not close.
+   With `abs_tol=0.0`, a value of exactly `0.0` ties only with `0.0`.
+   Keeping this is fine; the core's documentation should state it.
+3. **Missing values (`Candidate.values`, `skipped[].reason`).**
+   `{metric: float | null}` holds two states, an absent key and `null`, not
+   the three the proposal lists. Today `rank_entries` separates an absent key
+   (`no '<metric>' recorded`) from a stored `None` or non-finite value
+   (`'<metric>' is unavailable or not finite`); there is no "not applicable"
+   state. `_stored_metric` already writes non-finite values as `null`, so
+   after storage "not finite" and "measurement failed" are one state. A third
+   state needs its own representation, for example a reason code alongside
+   `null`. `reason` is free text today; a fixed code, with the text beside
+   it, would let MCP, reports and statistics branch on it.
+4. **Cross-group ranking (`rank_candidates` signature, result).** Today the
+   refusal sits outside `rank_entries`: `MLService.leaderboard` calls
+   `comparability_error` unless `allow_mixed` is set, and with
+   `allow_parameter_axes` it relaxes the check to `_surface_error`. A mixed
+   ranking reports only `"context": "mixed"`. The proposed signature has no
+   parameter to allow mixing, and the result has no field saying which
+   `group_key` values were mixed. Both are needed if the core is to refuse
+   and report, as proposed.
+5. **Selection size (result fields).** `rank_entries` passes `n_candidates`,
+   the number of entries with a finite value after the store filters, to
+   `required_t_stat`, and the number appears only in caveat text. The
+   service response has `n_candidates` (`len(entries)`, including skipped
+   ones) and `n_ranked` (`len(result.ranked)`, after `top_k`); neither is the
+   number of rankable candidates, and nothing records the total before
+   filters ([Two Selection Corrections](#two-selection-corrections)). The
+   deflated Sharpe ratio needs the number of trials as a number. Wanted:
+   the rankable count, the skipped count and, when a filter applied, the
+   count before it, as fields. Skipped candidates were still tried, so they
+   count as trials for selection, even though they cannot be ranked.
+6. **Run metric definitions (`MetricDefinition`, `group_key` for runs).**
+   The proposal puts the metric definition and unit in a run's `group_key`.
+   A run's `MetricDefinitionSnapshot` carries the unit and
+   `requires_annualization`, but not the annualisation basis. A run's
+   `sharpe_ratio` is computed from daily returns and annualised with the
+   backtest's `periods_per_year` and `risk_free_rate`
+   (`domain/backtest/metrics.py`, `calculate_metrics`). Two runs annualised
+   with 365 and 252 days per year, or with different risk-free rates, carry
+   the same definition snapshot but are not the same measurement. Those
+   settings belong in the run `group_key`.
+7. **Candidate reference (`candidate_id`).** Today `RankedEntry` holds the
+   whole `LeaderboardEntry`. The proposal reduces it to a string, which for
+   runs is a rendering of `(run_id, scope)`. Analysis after ranking has to
+   fetch each candidate's returns and timestamps, or the reason they are
+   unavailable, so it needs a structured reference next to the string: a
+   kind plus `entry_id`, or a kind plus `run_id` and `scope`. De-duplication
+   should use the same pair, not `run_id` alone.
+
+Points already covered by the proposal, restated here as requirements the
+statistics side relies on:
+
+- Direction comes from the metric catalog (`MetricDefinition.direction`),
+  never from the caller. `metric_direction` raises for a signal metric
+  without a direction; a run metric whose `optimization_direction` is `None`
+  should be refused the same way.
+- The signal simulation's `sharpe` and a run's `sharpe_ratio` already have
+  different catalog ids. Keeping `MetricDefinition.name` the catalog id,
+  never a display label, keeps them out of one column.
+- Walk-forward fold statistics (scope kind `fold_summary`) are not ranked as
+  the performance of one continuous backtest
+  ([Ranking](#ranking)).
+- Scopes `trial/0/train`, `trial/1/train` and so on of one optimisation run
+  are an in-sample selection. Ranking them is fine; a paired comparison among
+  them measures fit, and the chosen trial's Sharpe ratio should be read with
+  the deflated Sharpe ratio over that run's trial count.
+
 ## Follow-up Work
 
-Documented here, not implemented on this branch:
+Documented here, not implemented on this branch. The owner in brackets
+follows AIunusual's proposal
+([Proposed Work and Ownership](#proposed-work-and-ownership)).
 
-1. **Backtest candidates.** A candidate source that references `run_id` plus
+1. **Backtest candidates (AIunusual).** A candidate source that references `run_id` plus
    `scope` and carries the strategy version, parameters and trading
    conditions (instrument, frequency, period, costs), read from the saved
    metrics without rerunning. It must allow several scopes of one run, which
    `compare_runs` does not.
-2. **Shared ranking core.** Extract the sort, tie and missing-value handling
+2. **Shared ranking core (AIunusual).** Extract the sort, tie and missing-value handling
    from `rank_entries` into a module both sources call, each supplying its
    metric definitions and directions. IC caveats and `required_t_stat` stay
    in the signal layer.
-3. **Representative results.** Save the user's explicit mark that a strategy
+3. **Representative results (AIunusual).** Save the user's explicit mark that a strategy
    version and parameter set is finished for development, and the chosen
    representative result. New experiments never replace it automatically. The
    mark means inclusion in the comparison, not demonstrated out-of-sample
    performance.
-4. **Walk-forward fold statistics.** Present `test_summary` fold statistics
+4. **Walk-forward fold statistics (not assigned).** Present `test_summary` fold statistics
    as a fold summary; never rank them as the performance of a whole backtest.
-5. **Reports on the service.** Have the ML report take its ranking from the
+5. **Reports on the service (AIunusual, as part of the service entry point).** Have the ML report take its ranking from the
    application service instead of calling `rank_entries` in
    `ml_report_block`, so MCP and reports share one result.
-6. **Missing-value reasons.** Carry the reason a metric is missing from the
+6. **Missing-value reasons (AIunusual, in the ranking core and its sources).** Carry the reason a metric is missing from the
    saved record through ranking to MCP and reports, for both sources, instead
    of a bare `None` or a dropped candidate.
+7. **Saved evaluation series for #62 (not assigned).** The series store and
+   its training/evaluation record
+   ([Acceptance Criterion for #62](#acceptance-criterion-for-62)).
+8. **Statistical analysis after ranking (cklivse).** Consuming the ranked
+   candidates' series, per
+   [Statistical Comparison After Ranking](#statistical-comparison-after-ranking).
 
 ## Open Items
 
@@ -532,6 +695,11 @@ Documented here, not implemented on this branch:
    three coordinates but not `parameters` or `signal_fingerprint`. A surface
    over hyperparameters must therefore read entries from the store; this was
    suggested to the maintainer and is not on `main`.
+6. **Order of #136 and the ranking core.** AIunusual intends to merge
+   PR #136 first and branch the core extraction from the new `main`. The two
+   gaps in Open Items 2, an explicit "no fitting step" versus "unknown"
+   status and the signal source, change the same entry schema that #136
+   introduces, so they are cheapest to decide before #136 merges.
 
 ### Acceptance Criterion for #62
 
