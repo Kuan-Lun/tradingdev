@@ -38,8 +38,8 @@ def test_job_elapsed_uses_terminal_end_and_active_clock_consistently(
         ended_at="2024-01-01T00:00:10+00:00" if state != "optimizing" else None,
     )
     service = JobService(job_store=store)
-    monkeypatch.setattr(service, "_is_process_alive", lambda _: True)
-    monkeypatch.setattr("tradingdev.app.job_service.datetime", _Clock)
+    monkeypatch.setattr(service._lifecycle, "_is_process_alive", lambda _: True)
+    monkeypatch.setattr("tradingdev.app.job_queries.datetime", _Clock)
     for hour in (1, 2):
         monkeypatch.setattr(_Clock, "instant", datetime(2024, 1, 1, hour, tzinfo=UTC))
         expected = hour * 3600.0 if state == "optimizing" else 10.0
