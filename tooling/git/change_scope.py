@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from tooling.presentations import is_presentation_path, presentation_change_allowed
+from tooling.presentations import (
+    PRESENTATION_PATHS,
+    is_presentation_path,
+    presentation_change_allowed,
+)
 
 # These tools do not implement product behavior or shared product-test facilities.
 # New/unknown tools remain on the full path until their consumers are reviewed.
@@ -92,7 +96,41 @@ class ChangeScope:
 
 def classify_changes(repository: Path, base: str, tree: str) -> ChangeScope:
     """Inspect both Git sides; unknown changes keep code checks and related checks."""
-    output = subprocess.check_output(
+    return _classify_diff(repository, _raw_diff(repository, base, tree))
+
+
+def presentation_only_advance(
+    repository: Path,
+    *,
+    base: str,
+    updated_base: str,
+    tree: str,
+    updated_tree: str,
+) -> bool:
+    """Allow only a disjoint deck delta copied unchanged into the new candidate.
+
+    The caller must separately prove an unchanged PR identity/head and a forward
+    base update. Compiler, configuration and general documentation changes are
+    ineligible, even when they use a lightweight check profile on their own.
+    """
+    delta = _raw_diff(repository, base, updated_base)
+    if _classify_diff(repository, delta).kind != "presentations":
+        return False
+    paths = set(delta.split("\0")[1::2])
+    if not paths <= PRESENTATION_PATHS:
+        return False
+    pr_delta = _raw_diff(repository, base, tree)
+    # Even disjoint deck/compiler edits can change the original review context.
+    if _classify_diff(repository, pr_delta).presentations_changed:
+        return False
+    pr_paths = set(pr_delta.split("\0")[1::2])
+    return not paths.intersection(pr_paths) and delta == _raw_diff(
+        repository, tree, updated_tree
+    )
+
+
+def _raw_diff(repository: Path, base: str, tree: str) -> str:
+    return subprocess.check_output(
         [
             "git",
             "-C",
@@ -113,6 +151,9 @@ def classify_changes(repository: Path, base: str, tree: str) -> ChangeScope:
         text=True,
         stderr=subprocess.PIPE,
     )
+
+
+def _classify_diff(repository: Path, output: str) -> ChangeScope:
     if not output:
         return ChangeScope("code")
     fields = output.split("\0")
