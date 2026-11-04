@@ -9,7 +9,7 @@ import pytest
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
-from tests.e2e.test_llm_workflows import assert_workflow
+from tests.e2e.workflow_evidence import assert_workflow
 from tests.integration.execution_fixtures import (
     execution_evidence_draft,
     synthetic_preflight_receipt,
