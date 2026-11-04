@@ -98,14 +98,14 @@ def fake_codex(monkeypatch: MonkeyPatch) -> Iterator[Path]:
             "    print(os.environ['REVIEW_FAKE_EVENTS'], end='')\n"
             "    print(os.environ['REVIEW_FAKE_STDERR'], end='', file=sys.stderr)\n"
             "    pathlib.Path('verdict.json').write_text(\n"
-            "        json.dumps({'passed': True, 'findings': []}))\n"
+            "        json.dumps({'findings': []}))\n"
             "    sys.exit(int(os.environ['REVIEW_FAKE_EXIT']))\n"
-            "verdict = {'passed': True, 'findings': []}\n"
+            "verdict = {'findings': []}\n"
             "if mode == 'outdated':\n"
-            "    verdict = {'passed': False, 'findings': [{'file': 'README.md', "
+            "    verdict = {'findings': [{'file': 'README.md', "
             "'explanation': f'Update old behavior to staged behavior. "
             "Batch {batch}.'}]}\n"
-            "if mode == 'inconsistent': verdict['passed'] = False\n"
+            "if mode == 'extra_field': verdict['passed'] = True\n"
             "result = 'broken json' if mode == 'malformed' else json.dumps(verdict)\n"
             "output = pathlib.Path(sys.argv["
             "sys.argv.index('--output-last-message') + 1])\n"
@@ -126,6 +126,29 @@ def fake_codex(monkeypatch: MonkeyPatch) -> Iterator[Path]:
         monkeypatch.delenv("REVIEW_FAKE_BATCH_MODES", raising=False)
         monkeypatch.delenv("REVIEW_FAKE_READY_COUNT", raising=False)
         yield record
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        None,
+        {},
+        {"findings": False},
+        {"findings": [None]},
+        {"findings": [{"file": "README.md", "explanation": "  "}]},
+        {"findings": [{"file": 1, "explanation": "Update the changed command."}]},
+        {
+            "findings": [
+                {"file": "README.md", "explanation": "Update it.", "passed": True}
+            ]
+        },
+    ],
+)
+def test_invalid_finding_payload_cannot_be_treated_as_an_empty_review(
+    verdict: Any,
+) -> None:
+    with pytest.raises(review_docs.ReviewError, match="malformed documentation"):
+        review_docs._validate_verdict(json.dumps(verdict))
 
 
 def test_review_uses_immutable_candidate_and_removes_temporary_files(
@@ -532,7 +555,7 @@ def test_evidence_includes_deleted_codex_hook(
     [
         ("outdated", "README.md: Update old behavior"),
         ("malformed", "could not complete"),
-        ("inconsistent", "inconsistent documentation verdict"),
+        ("extra_field", "malformed documentation verdict"),
         ("missing", "could not complete"),
         ("exit", "exited 9: stderr: authentication failed"),
         ("failed_event", "failed review"),
@@ -1136,7 +1159,7 @@ def test_findings_from_separate_batches_are_all_reported(
     ("mode", "message"),
     [
         ("malformed", "could not complete"),
-        ("inconsistent", "inconsistent documentation verdict"),
+        ("extra_field", "malformed documentation verdict"),
         ("missing", "could not complete"),
         ("exit", "exited 9: stderr: authentication failed"),
         ("failed_event", "failed review"),
@@ -1199,7 +1222,7 @@ def test_queued_and_running_batches_share_one_absolute_deadline(
         if clock.now >= deadline:
             raise review_docs.ReviewError("Codex documentation review timed out.")
         (root / "verdict.json").write_text(
-            json.dumps({"passed": True, "findings": []}), encoding="utf-8"
+            json.dumps({"findings": []}), encoding="utf-8"
         )
 
     monkeypatch.setattr(review_docs, "_run", controlled_run)

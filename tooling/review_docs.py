@@ -52,7 +52,6 @@ DEFAULT_REVIEW_REASONING_EFFORT = "high"
 SCHEMA = {
     "type": "object",
     "properties": {
-        "passed": {"type": "boolean"},
         "findings": {
             "type": "array",
             "items": {
@@ -66,7 +65,7 @@ SCHEMA = {
             },
         },
     },
-    "required": ["passed", "findings"],
+    "required": ["findings"],
     "additionalProperties": False,
 }
 
@@ -299,10 +298,10 @@ def _run(
 
 def _validate_verdict(raw: str) -> None:
     verdict = json.loads(raw)
-    if not isinstance(verdict, dict) or set(verdict) != {"passed", "findings"}:
+    if not isinstance(verdict, dict) or set(verdict) != {"findings"}:
         raise ReviewError("Codex returned a malformed documentation verdict.")
-    passed, findings = verdict["passed"], verdict["findings"]
-    if not isinstance(passed, bool) or not isinstance(findings, list):
+    findings = verdict["findings"]
+    if not isinstance(findings, list):
         raise ReviewError("Codex returned a malformed documentation verdict.")
     for finding in findings:
         if (
@@ -313,8 +312,6 @@ def _validate_verdict(raw: str) -> None:
             )
         ):
             raise ReviewError("Codex returned a malformed documentation finding.")
-    if passed != (len(findings) == 0):
-        raise ReviewError("Codex returned an inconsistent documentation verdict.")
     if findings:
         raise ReviewError(
             "Documentation needs updates:\n"

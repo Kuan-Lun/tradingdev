@@ -45,7 +45,7 @@ def check_commit() -> None:
         if base.returncode == 0
         else ChangeScope("code")
     )
-    profile = "fast" if scope.kind in {"code", "tooling"} else scope.kind
+    profile = scope.commit_profile
     print(f"Commit checks: {profile}", flush=True)
     check_snapshot(tree, profile)
     assert_index_unchanged(tree)

@@ -253,7 +253,8 @@
 ## 工作樹與分階段提交
 
 - 唯讀分析不建立 branch；修改前用 `scripts/detect-primary-branch.sh` 判定
-  主線。從主線開始工作時建立 task branch；已在適合目前任務的開發／PR
+  主線。每個任務開始先 fetch 遠端主線，核對最新版本與現有分支的差異。
+  從主線開始工作時以最新遠端主線建立 task branch；已在適合目前任務的開發／PR
   分支時沿用，不另拆分支。主線不可直接 commit 或 rebase；推往 GitHub
   的主線變更須透過 PR 合併。
 - 不得 stash、reset、clean、覆寫或混入既有使用者修改。若工作樹包含與任務
@@ -285,27 +286,18 @@
 ## Git hooks 與本機 PR 審查
 
 - 用 `scripts/install-git-hooks.sh` 安裝 repository 的 `.githooks`。
-- 分類以不可變 Git tree 的非空差異為準，改名核對前後路徑，兩側仍存在的
-  檔案均須為 mode `100644` 的一般檔案，才可進入文件或簡報專項分流。
-- 一般文件分流接受 `README.md`、`ARCHITECTURE.md` 與 `docs/**/*.md`。
-  已登錄簡報的 Markdown 入口與來源優先歸入簡報專項，避免修改文字卻未更新 HTML。
-- 簡報專項接受一般文件及已登錄的簡報入口、來源、HTML、CSS、空的
-  `docs/.nojekyll`，以及通過內容驗證的 `.vscode/tasks.json` 差異。
-  只允許既定簡報工作的固定命令與結構；其他工作須完全未變。
-  頂層只允許 `version` 與 `tasks`；額外的 `options`、`inputs` 等設定即使
-  未變，也走程式分流，避免全域設定覆寫簡報工作的執行方式。
-  不以工作名稱或 `.json` 副檔名放行任意命令、環境覆寫或動態替換。
-- 開發工具分流接受 `AGENTS.md`、`CLAUDE.md`、已登錄的開發工具與腳本，
-  以及 `tests/tooling/test_*.py`；可混合一般文件與合格簡報變更。登錄來源為
-  [change_scope.py](tooling/git/change_scope.py)，不概括放行整個 `scripts/` 或
-  `tooling/`。一般檔案兩側仍須為 `100644`，只有已登錄的腳本允許 `100755`。
-  新工具須審查使用端與測試責任後才登錄，不依名稱猜測產品影響。
-- 產品程式、依賴與 lock、共用測試設定／fixtures／程序設施、未登錄工具、未知設定、
-  未獲允許的可執行檔、符號連結、混合產品變更、空差異與無法確認的變更，
-  均走完整程式分流。不得為讓某次變更通過而擴大白名單或偽造分類。
-- 每次 commit 都執行提交格式檢查；一般文件執行 `check-docs.sh`，簡報專項
-  執行 `check-presentations.sh`，開發工具與完整程式分流均執行 `check-fast.sh`。
-  Commit 不因開發工具分流而新增 pytest 或模型呼叫。各路徑都驗證
+- 交付檢查前，用 `uv run --no-sync python -m tooling.git.change_scope --base <任務基準ref> --tree HEAD`
+  取得整個已提交任務差異的 JSON 計畫；還有本階段暫存內容時改用 `--staged`，
+  base 仍須涵蓋先前階段，不能只比較最後一次提交或暫存差異。
+  依 `delivery_profile` 執行相應 `scripts/check-<profile>.sh`，不得靠副檔名或提示詞猜分流。
+  `verification_planned` 只表示計畫產生，不代表檢查通過；未暫存內容不在該計畫內。
+  每階段仍執行受影響的相關測試；此入口不新增逐階段完整檢查，當次 PR 候選仍獨立驗證。
+- [change_scope.py](tooling/git/change_scope.py) 的 `classify_changes` 與 `ChangeScope`
+  是路徑登錄、檔案模式、內容限制及各階段檢查順序的正式定義，hooks 與候選檢查共用它們。
+  未知、空差異與混合產品變更保守走完整程式分流；不得為通過檢查擴大白名單或偽造分類。
+  新工具須先審查使用端與測試責任才可登錄，不概括放行整個工具目錄。
+- 每次 commit 都執行提交格式檢查與計畫的 `commit_profile`，不新增 pytest 或模型呼叫。
+  各路徑都驗證
   暫存內容的獨立 snapshot，核對暫存 tree 未變，不以未暫存修正掩蓋錯誤。
   文件與簡報專項不執行 Ruff、Mypy、自動 Codex 審查或完整 pytest。
 - 一般 task branch push 不跑完整 pytest 或呼叫模型。Hook 的主線推送保護
@@ -343,6 +335,11 @@
   LLM 語意審查可能漏判，不能當成文件正確性的形式證明。
 - 檢查結束再讀 PR 身分／狀態與實際遠端 refs 核對版本，不以 PR API 的
   base SHA 代表即時主線。輸出 PR URL、base／head SHA 與候選 tree。
+  同一次 PR 檢查中，工具可依 `presentation_only_advance`、PR 身分／head 與主線
+  前進核對，對不重疊的已登錄簡報檔案更新重建候選並補做簡報檢查；
+  PR 自身涉及簡報或其工具時不適用，避免沿用已改變的審查脈絡。
+  `pr_base_refreshed` 記錄補驗證及最新版本，審閱者仍須確認新增簡報差異的語意。
+  其他變更或補驗證期間再次變動均失敗，不由代理自行忽略版本差異。
   審閱者在 GitHub 網頁合併前，須確認目前 base／head 仍相同；任一改變
   都重新執行。純本機結果只代表當次版本，不能鎖住網站或消除檢查後競態。
   本專案不要求雲端 Codex CI 或上傳憑證；目前採審閱者遵守流程。

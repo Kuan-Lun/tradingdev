@@ -415,9 +415,21 @@ def test_build_command_cannot_load_candidate_config_or_local_engine(
     )
 
 
-@pytest.mark.parametrize("mode", ["success", "failure", "timeout", "stale"])
+@pytest.mark.parametrize(
+    "mode, observation_delay",
+    [
+        ("success", 0),
+        ("failure", 0),
+        ("timeout", 0),
+        ("stale", 0),
+        pytest.param("success", 0.35, id="delayed-observation"),
+    ],
+)
 def test_check_cleans_temporary_files_and_child_processes(
-    tmp_path: Path, monkeypatch: MonkeyPatch, mode: str
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    mode: str,
+    observation_delay: float,
 ) -> None:
     deck = _deck(tmp_path)
     original = (deck / "index.html").read_bytes()
@@ -432,14 +444,32 @@ def test_check_cleans_temporary_files_and_child_processes(
     monkeypatch.setattr(presentations, "mkdtemp", make_space)
     monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
     marker = tmp_path / "child.pid"
+    observed = tmp_path / "child.observed"
     child_code = "import time; time.sleep(60)"
+    original_children = psutil.Process.children
+
+    # Test cleanup of a discovered child; a fixed delay races process inspection.
+    def observe_children(
+        process: psutil.Process, recursive: bool = False
+    ) -> list[psutil.Process]:
+        if observation_delay and marker.exists() and not observed.exists():
+            time.sleep(observation_delay)
+        children: list[psutil.Process] = original_children(process, recursive=recursive)
+        if marker.exists() and int(marker.read_text()) in {p.pid for p in children}:
+            observed.touch()
+        return children
+
+    monkeypatch.setattr(psutil.Process, "children", observe_children)
 
     def command(toolchain: Path, source: Path, theme: Path, output: Path) -> list[str]:
         code = (
             "import os,subprocess,sys,time\nfrom pathlib import Path\n"
             "child=subprocess.Popen([sys.executable,'-c',sys.argv[4]],start_new_session=True)\n"
-            "Path(sys.argv[1]).write_text(str(child.pid))\n"
-            "time.sleep(60 if sys.argv[3]=='timeout' else 0.2)\n"
+            "pending=Path(sys.argv[1]+'.pending')\n"
+            "pending.write_text(str(child.pid))\n"
+            "pending.replace(sys.argv[1])\n"
+            "while not Path(sys.argv[6]).exists(): time.sleep(0.01)\n"
+            "if sys.argv[3]=='timeout': time.sleep(60)\n"
             "text=sys.argv[5] + ('stale' if sys.argv[3]=='stale' else '')\n"
             "Path(sys.argv[2]).write_text(text)\n"
             "raise SystemExit(9 if sys.argv[3]=='failure' else 0)\n"
@@ -453,6 +483,7 @@ def test_check_cleans_temporary_files_and_child_processes(
             mode,
             child_code,
             _html(),
+            str(observed),
         ]
 
     monkeypatch.setattr(presentations, "_command", command)
@@ -469,6 +500,7 @@ def test_check_cleans_temporary_files_and_child_processes(
                 presentations.check_presentations(
                     tmp_path, timeout=0.6 if mode == "timeout" else 5
                 )
+        assert observed.exists()
         assert spaces and all(not path.exists() for path in spaces)
         assert (deck / "index.html").read_bytes() == original
         process = psutil.Process(int(marker.read_text()))

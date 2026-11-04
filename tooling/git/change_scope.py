@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from tooling.presentations import is_presentation_path, presentation_change_allowed
+from tooling.presentations import (
+    PRESENTATION_PATHS,
+    is_presentation_path,
+    presentation_change_allowed,
+)
 
 # These tools do not implement product behavior or shared product-test facilities.
 # New/unknown tools remain on the full path until their consumers are reviewed.
@@ -59,10 +66,71 @@ class ChangeScope:
     kind: Literal["docs", "presentations", "tooling", "code"]
     presentations_changed: bool = False
 
+    @property
+    def commit_profile(self) -> str:
+        return "fast" if self.kind in {"tooling", "code"} else self.kind
+
+    @property
+    def delivery_profile(self) -> str:
+        return "full" if self.kind == "code" else self.kind
+
+    @property
+    def candidate_checks(self) -> tuple[str, ...]:
+        if self.kind in {"docs", "presentations"}:
+            return (self.kind,)
+        return (
+            *(("presentations",) if self.presentations_changed else ()),
+            "documentation_review",
+            self.delivery_profile,
+        )
+
+    def payload(self) -> dict[str, object]:
+        """One executable plan for staged commits, delivery and PR candidates."""
+        return {
+            "scope": self.kind,
+            "commit_profile": self.commit_profile,
+            "delivery_profile": self.delivery_profile,
+            "candidate_checks": list(self.candidate_checks),
+        }
+
 
 def classify_changes(repository: Path, base: str, tree: str) -> ChangeScope:
     """Inspect both Git sides; unknown changes keep code checks and related checks."""
-    output = subprocess.check_output(
+    return _classify_diff(repository, _raw_diff(repository, base, tree))
+
+
+def presentation_only_advance(
+    repository: Path,
+    *,
+    base: str,
+    updated_base: str,
+    tree: str,
+    updated_tree: str,
+) -> bool:
+    """Allow only a disjoint deck delta copied unchanged into the new candidate.
+
+    The caller must separately prove an unchanged PR identity/head and a forward
+    base update. Compiler, configuration and general documentation changes are
+    ineligible, even when they use a lightweight check profile on their own.
+    """
+    delta = _raw_diff(repository, base, updated_base)
+    if _classify_diff(repository, delta).kind != "presentations":
+        return False
+    paths = set(delta.split("\0")[1::2])
+    if not paths <= PRESENTATION_PATHS:
+        return False
+    pr_delta = _raw_diff(repository, base, tree)
+    # Even disjoint deck/compiler edits can change the original review context.
+    if _classify_diff(repository, pr_delta).presentations_changed:
+        return False
+    pr_paths = set(pr_delta.split("\0")[1::2])
+    return not paths.intersection(pr_paths) and delta == _raw_diff(
+        repository, tree, updated_tree
+    )
+
+
+def _raw_diff(repository: Path, base: str, tree: str) -> str:
+    return subprocess.check_output(
         [
             "git",
             "-C",
@@ -81,7 +149,11 @@ def classify_changes(repository: Path, base: str, tree: str) -> ChangeScope:
             "--",
         ],
         text=True,
+        stderr=subprocess.PIPE,
     )
+
+
+def _classify_diff(repository: Path, output: str) -> ChangeScope:
     if not output:
         return ChangeScope("code")
     fields = output.split("\0")
@@ -125,7 +197,8 @@ def classify_changes(repository: Path, base: str, tree: str) -> ChangeScope:
 
 def _read_blob(repository: Path, oid: str) -> bytes:
     return subprocess.check_output(
-        ["git", "-C", str(repository), "cat-file", "blob", oid]
+        ["git", "-C", str(repository), "cat-file", "blob", oid],
+        stderr=subprocess.PIPE,
     )
 
 
@@ -143,3 +216,60 @@ def _documentation_path(name: str) -> bool:
     return name in {"README.md", "ARCHITECTURE.md"} or (
         len(path.parts) > 1 and path.parts[0] == "docs" and path.suffix == ".md"
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path.cwd())
+    parser.add_argument("--base", required=True, help="Explicit base commit or tree")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--tree", help="Explicit candidate commit or tree")
+    target.add_argument("--staged", action="store_true", help="Only the current index")
+    args = parser.parse_args(argv)
+
+    def git(*arguments: str) -> str:
+        return subprocess.check_output(
+            ["git", "-C", str(args.repo), *arguments],
+            text=True,
+            stderr=subprocess.PIPE,
+        ).strip()
+
+    def tree(reference: str) -> str:
+        return git("rev-parse", "--verify", "--end-of-options", f"{reference}^{{tree}}")
+
+    try:
+        base = tree(args.base)
+        candidate = git("write-tree") if args.staged else tree(args.tree)
+        scope = classify_changes(args.repo, base, candidate)
+        current = git("write-tree") if args.staged else tree(args.tree)
+        if tree(args.base) != base or current != candidate:
+            raise RuntimeError("The requested Git trees changed while planning checks.")
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        message = str(error)
+        if isinstance(error, subprocess.CalledProcessError):
+            diagnostic = error.stderr
+            if isinstance(diagnostic, bytes):
+                diagnostic = diagnostic.decode("utf-8", errors="replace")
+            if isinstance(diagnostic, str) and diagnostic.strip():
+                message = diagnostic.strip()
+        print(
+            json.dumps({"code": "verification_plan_failed", "error": message}),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "code": "verification_planned",
+                "base_tree": base,
+                "candidate_tree": candidate,
+                "source": "staged" if args.staged else "tree",
+                **scope.payload(),
+            }
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
