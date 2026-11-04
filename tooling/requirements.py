@@ -25,7 +25,6 @@ DOCUMENT_SCOPES = {
     "docs/requirements/results.md": ("results", "execution", "ml", "interfaces"),
     "docs/requirements/ml.md": ("ml", "strategy", "results", "interfaces"),
     "docs/requirements/interfaces.md": ("interfaces",),
-    "docs/requirements/maintenance.md": ("tooling",),
     "docs/requirements/quality.md": (
         "interfaces",
         "strategy",

@@ -684,12 +684,12 @@ def test_cross_scope_keeps_srs_contract_when_presentation_owns_its_file(
     _write(
         repo,
         "docs/requirements.md",
-        "# SRS\n\n[Maintenance](requirements/maintenance.md)\n",
+        "# SRS\n\n[Interface](requirements/interfaces.md)\n",
     )
     _write(
         repo,
-        "docs/requirements/maintenance.md",
-        "# Maintenance\n\n## NFR-MAINT-001 Contract\n\n"
+        "docs/requirements/interfaces.md",
+        "# Interface\n\n## NFR-API-001 Contract\n\n"
         "- **需求**：Keep the contract.\n- **驗收**：Deliver its original evidence.\n"
         "- **契約**：[contract](../talks/tradingdev-introduction/README.md#contract)\n"
         "- **驗證**：[test](../../tests/test_example.py)\n",
