@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from tooling import review_docs
+from tooling.presentations import DECK, PRESENTATION_PATHS
+from tooling.requirements import check_requirements
 from tooling.review_evidence import ReviewError, build_evidence
 from tooling.review_plan import build_review_plan
 
@@ -604,14 +606,19 @@ def test_automatic_document_provenance_fails_closed(
         build_review_plan(json.dumps(raw))
 
 
+@pytest.mark.parametrize("scope", ["strategy", "cross_scope"])
 def test_srs_explicit_contract_sections_come_from_candidate_git(
     change: tuple[Path, str, str],
+    scope: str,
 ) -> None:
     repo, base, _ = change
     contract = "docs/run_artifacts.md"
     original = "# Run Artifacts\n\n## Market Data Cache\nOriginal data contract.\n"
-    _write(repo, contract, original)
+    _write(
+        repo, contract, original + "\n## Discovery Pages\nUnrelated contract text.\n"
+    )
     base = _tree(repo)
+    _write(repo, REPORT, "VALUE = 'cross-scope report change'\n")
     _write(
         repo,
         "docs/requirements/strategy.md",
@@ -626,17 +633,17 @@ def test_srs_explicit_contract_sections_come_from_candidate_git(
     batch = next(
         _payload(prompt)
         for prompt in plan.prompts
-        if _payload(prompt).get("scope") == "strategy"
+        if _payload(prompt).get("scope") == scope
     )
     sections = [
         section for section in batch["document_sections"] if section["path"] == contract
     ]
-    assert "".join(section["text"] for section in sections) == original
+    assert "".join(section["text"] for section in sections) == original + "\n"
     assert all(
         section["blob_oid"] == _git(repo, "rev-parse", f"{tree}:{contract}")
         for section in sections
     )
-    assert contract in batch["requirement_context_paths"]["strategy"]
+    assert contract in batch["requirement_context_paths"][scope]
     assert len({section["start_line"] for section in sections}) == len(sections)
     evidence = json.loads(raw)
     del evidence["candidate_files"][contract]
@@ -659,3 +666,55 @@ def test_missing_or_nonregular_srs_contract_fails_before_review(
     tree = _tree(repo)
     with pytest.raises(ReviewError, match="Missing regular SRS contract evidence"):
         build_review_plan(build_evidence(repo, base, tree))
+
+
+@pytest.mark.parametrize("explicit_context", [False, True])
+def test_cross_scope_keeps_srs_contract_when_presentation_owns_its_file(
+    change: tuple[Path, str, str], explicit_context: bool
+) -> None:
+    repo, _, _ = change
+    for path in PRESENTATION_PATHS:
+        _write(repo, path, "# Deck\n" if path.endswith(".md") else "asset\n")
+    contract = f"{DECK}/README.md"
+    original = "# Deck\n\n## Contract\nORIGINAL_CONTRACT_EVIDENCE\n"
+    _write(repo, contract, original)
+    _write(repo, "tests/test_example.py", "# Evidence target, never executed.\n")
+    base = _tree(repo)
+    _write(repo, f"{DECK}/theme.css", "/* changed asset */\n")
+    _write(
+        repo,
+        "docs/requirements.md",
+        "# SRS\n\n[Maintenance](requirements/maintenance.md)\n",
+    )
+    _write(
+        repo,
+        "docs/requirements/maintenance.md",
+        "# Maintenance\n\n## NFR-MAINT-001 Contract\n\n"
+        "- **需求**：Keep the contract.\n- **驗收**：Deliver its original evidence.\n"
+        "- **契約**：[contract](../talks/tradingdev-introduction/README.md#contract)\n"
+        "- **驗證**：[test](../../tests/test_example.py)\n",
+    )
+    assert check_requirements(repo) == 1
+    tree = _tree(repo)
+    raw = build_evidence(
+        repo,
+        base,
+        tree,
+        review_context_for=(("cross_scope", contract),) if explicit_context else (),
+    )
+    plan = build_review_plan(raw)
+    batch = next(
+        _payload(p) for p in plan.prompts if _payload(p)["scope"] == "cross_scope"
+    )
+    sections = [s for s in batch["document_sections"] if s["path"] == contract]
+    assert contract in batch["requirement_context_paths"]["cross_scope"]
+    if explicit_context:
+        assert not sections
+        assert batch["candidate_files"][contract] == original
+    else:
+        assert contract not in batch["candidate_files"]
+        assert "".join(s["text"] for s in sections) == original
+        assert all(
+            s["blob_oid"] == _git(repo, "rev-parse", f"{tree}:{contract}")
+            for s in sections
+        )

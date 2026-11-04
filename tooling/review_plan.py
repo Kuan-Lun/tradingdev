@@ -258,6 +258,9 @@ def build_review_plan(
             except ValueError as error:
                 raise ReviewError(str(error)) from error
         requirement_context[scope] = reference_targets
+    # The interaction audit must receive original contracts too; a scope batch's
+    # inventory or verdict cannot stand in for its evidence.
+    requirement_context["cross_scope"] = set().union(*requirement_context.values())
     common["requirement_context_paths"] = {
         scope: sorted({path for path, _ in paths})
         for scope, paths in requirement_context.items()
@@ -271,16 +274,24 @@ def build_review_plan(
         sections: list[dict[str, Any]] = []
         for path in sorted(doc_index):
             if (
-                path in presentation
+                (path in presentation and scope != "cross_scope")
                 or path in additional
                 or path in scoped.get(scope, set())
             ):
                 continue
             lines = markdown_lines(files[path])
-            reason = selection_reason(scope, path, files[path])
+            reason = (
+                selection_reason(scope, path, files[path])
+                if scope != "cross_scope"
+                else "explicit-SRS-contract"
+            )
             chosen = {
                 part.start_line: part
-                for part in sections_for_scope(scope, path, files[path])
+                for part in (
+                    sections_for_scope(scope, path, files[path])
+                    if scope != "cross_scope"
+                    else ()
+                )
             }
             for reference, fragment in requirement_context[scope]:
                 if reference == path:
@@ -406,6 +417,7 @@ def build_review_plan(
             "document_inventory": doc_index,
             "candidate_tree_inventory": raw["candidate_tree_inventory"],
             "additional_context_paths": sorted(additional),
+            "document_sections": document_context("cross_scope", audit_context),
         }
         if not fits(audit):
             raise capacity_error("Complete cross-scope diff and inventory")
