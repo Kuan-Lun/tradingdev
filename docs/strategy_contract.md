@@ -604,9 +604,11 @@ For exact inputs, responses and diagnostic fields, read the MCP schemas or
 [StrategyService](../src/tradingdev/app/strategy_service.py) owns save, validation,
 promotion and executable-state checks. Static/quality failures stop checks before
 generated Python executes; runtime checks have the [security boundary](#security-model).
-Ruff and Mypy must both be installed in the server's Python environment. Missing
-tools or interpreter, timeouts and nonzero exits fail validation with diagnostic
-repair hints; restore missing dependencies in that environment before retrying.
+Ruff and Mypy must both be installed in the server's Python environment.
+Unavailable tools or interpreter, timeouts and nonzero exits fail validation.
+Follow the diagnostic repair hint: restore unavailable tools or interpreter;
+investigate timeouts or make the strategy analyzable within the tool's limit;
+for nonzero exits, resolve the errors reported by that tool before retrying.
 
 Names are optional and separate from technical identity. `display_name` and
 YAML `strategy.display_name` must agree when both are given. If only one is given,
