@@ -185,6 +185,7 @@ def test_repeated_headings_remain_distinct_with_correct_ancestors() -> None:
         ("src/tradingdev/domain/backtest/engines.py", "execution"),
         ("tests/app/test_execution_plan_service.py", "execution"),
         ("src/tradingdev/app/contracts/plans.py", "execution"),
+        ("src/tradingdev/domain/presentation/confirmation_contract.py", "execution"),
         ("src/tradingdev/app/contracts/jobs.py", "execution"),
         ("src/tradingdev/mcp/workers/backtest.py", "execution"),
         ("tests/adapters/execution/test_worker_supervisor.py", "execution"),

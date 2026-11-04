@@ -382,6 +382,7 @@ _MODULE_EXACT_SCOPES = {
     "domain/backtest/metrics.py": "results",
     "domain/backtest/test_performance_metrics.py": "results",
     "domain/presentation/confirmation.py": "execution",
+    "domain/presentation/confirmation_contract.py": "execution",
     "adapters/presentation/confirmation.py": "execution",
 }
 _MODULE_PREFIX_SCOPES = (
