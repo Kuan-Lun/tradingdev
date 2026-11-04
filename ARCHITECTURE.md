@@ -10,6 +10,7 @@ MCP 是主要產品介面；CLI 與 dashboard 共用 application services 的執
 
 | 文件 | 負責內容 |
 | ---- | -------- |
+| [軟體需求規格](docs/requirements.md) | 產品需求、驗收條件與契約／驗證追溯 |
 | [README](README.md) | 安裝、設定、工具使用與使用者升級說明 |
 | [策略契約](docs/strategy_contract.md) | 策略 Python／YAML、驗證規則、revision 與執行資格 |
 | [執行產物契約](docs/run_artifacts.md) | Workspace、Manifest、SQLite 與歷史查詢入口 |

@@ -108,6 +108,7 @@ ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定�
 
 | 文件 | 維護責任 |
 | --- | --- |
+| [軟體需求規格](requirements.md) | 產品需求、驗收條件與契約／驗證入口；按責任分冊。 |
 | [README](../README.md) | 使用者安裝、操作與結果解讀。 |
 | [架構](../ARCHITECTURE.md) | 模組責任與跨層流程。 |
 | [策略契約](strategy_contract.md) | 策略作者的 Python／YAML、訊號、訓練與 revision 要求。 |
