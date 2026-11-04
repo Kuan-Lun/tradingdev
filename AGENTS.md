@@ -253,7 +253,8 @@
 ## 工作樹與分階段提交
 
 - 唯讀分析不建立 branch；修改前用 `scripts/detect-primary-branch.sh` 判定
-  主線。從主線開始工作時建立 task branch；已在適合目前任務的開發／PR
+  主線。每個任務開始先 fetch 遠端主線，核對最新版本與現有分支的差異。
+  從主線開始工作時以最新遠端主線建立 task branch；已在適合目前任務的開發／PR
   分支時沿用，不另拆分支。主線不可直接 commit 或 rebase；推往 GitHub
   的主線變更須透過 PR 合併。
 - 不得 stash、reset、clean、覆寫或混入既有使用者修改。若工作樹包含與任務
