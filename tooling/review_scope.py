@@ -356,6 +356,8 @@ _PREFIX_SCOPES: tuple[tuple[str, str], ...] = (
 )
 _EXACT_SCOPES = {
     "tooling/presentations.py": "presentation",
+    "tooling/presentation_errors.py": "presentation",
+    "tooling/presentation_html.py": "presentation",
     "scripts/presentations.sh": "presentation",
     "scripts/check-presentations.sh": "presentation",
     "tests/tooling/test_presentations.py": "presentation",

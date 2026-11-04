@@ -55,6 +55,8 @@ def repository() -> Iterator[tuple[Path, str]]:
         ("tooling/git/claim_issue.py", "tooling"),
         ("tooling/git/change_scope.py", "tooling"),
         ("tooling/review_scope.py", "tooling"),
+        ("tooling/presentation_html.py", "tooling"),
+        ("tooling/presentation_errors.py", "tooling"),
         ("tests/tooling/test_new_tool.py", "tooling"),
         ("scripts/check-tooling.sh", "tooling"),
         ("tests/conftest.py", "code"),
