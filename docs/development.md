@@ -358,17 +358,18 @@ git push -u origin feature/my-task
 已有開發分支時沿用。Commit hook 依暫存內容執行文件、簡報或快速檢查；一般 push
 不執行完整 pytest 或呼叫模型。本機 hook 的主線推送保護限於 GitHub remote。
 
-需要在階段檢查前判定範圍時，先暫存本階段檔案，再取得機械可讀的檢查計畫：
+交付前對整個任務差異取得機械可讀的檢查計畫；以下 `origin/main` 應替換成實際任務基準：
 
 ```bash
-git add -- path/to/changed_file.py
-uv run --no-sync python -m tooling.git.change_scope --base HEAD --staged
+uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HEAD
 ```
 
-固定 Git 版本改用 `--base <ref> --tree <ref>`；`--repo <path>` 可指定 checkout。
+有尚未提交的最後階段時，先暫存相關檔案並以 `--staged` 取代 `--tree HEAD`，base 仍涵蓋
+先前所有階段，不能只比較 `HEAD` 與最後的暫存內容。`--repo <path>` 可指定 checkout。
 `verification_planned` 回覆固定 tree 身分與 `ChangeScope.payload` 產生的計畫，並非通過證明。
-`delivery_profile` 指定階段交付要跑的 `scripts/check-<profile>.sh`；`commit_profile`
+`delivery_profile` 指定任務交付要跑的 `scripts/check-<profile>.sh`；`commit_profile`
 供 hook 使用，`candidate_checks` 是 PR／本機合併候選的檢查順序。
+每階段仍只要求受影響的相關測試，當次 PR 候選另外獨立檢查；計畫不新增逐階段完整檢查。
 暫存模式不包含未暫存或未追蹤內容；這時提交使用 `git-flow-commit.sh "type: message"`，
 不再傳檔名。工具失敗時不能假設可走較輕的分流。
 

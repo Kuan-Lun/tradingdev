@@ -286,10 +286,12 @@
 ## Git hooks 與本機 PR 審查
 
 - 用 `scripts/install-git-hooks.sh` 安裝 repository 的 `.githooks`。
-- 階段檢查前，用 `uv run --no-sync python -m tooling.git.change_scope --base HEAD --staged`
-  取得本階段已暫存內容的 JSON 計畫；固定版本可改用 `--base <ref> --tree <ref>`。
+- 交付檢查前，用 `uv run --no-sync python -m tooling.git.change_scope --base <任務基準ref> --tree HEAD`
+  取得整個已提交任務差異的 JSON 計畫；還有本階段暫存內容時改用 `--staged`，
+  base 仍須涵蓋先前階段，不能只比較最後一次提交或暫存差異。
   依 `delivery_profile` 執行相應 `scripts/check-<profile>.sh`，不得靠副檔名或提示詞猜分流。
   `verification_planned` 只表示計畫產生，不代表檢查通過；未暫存內容不在該計畫內。
+  每階段仍執行受影響的相關測試；此入口不新增逐階段完整檢查，當次 PR 候選仍獨立驗證。
 - [change_scope.py](tooling/git/change_scope.py) 的 `classify_changes` 與 `ChangeScope`
   是路徑登錄、檔案模式、內容限制及各階段檢查順序的正式定義，hooks 與候選檢查共用它們。
   未知、空差異與混合產品變更保守走完整程式分流；不得為通過檢查擴大白名單或偽造分類。
