@@ -285,27 +285,16 @@
 ## Git hooks 與本機 PR 審查
 
 - 用 `scripts/install-git-hooks.sh` 安裝 repository 的 `.githooks`。
-- 分類以不可變 Git tree 的非空差異為準，改名核對前後路徑，兩側仍存在的
-  檔案均須為 mode `100644` 的一般檔案，才可進入文件或簡報專項分流。
-- 一般文件分流接受 `README.md`、`ARCHITECTURE.md` 與 `docs/**/*.md`。
-  已登錄簡報的 Markdown 入口與來源優先歸入簡報專項，避免修改文字卻未更新 HTML。
-- 簡報專項接受一般文件及已登錄的簡報入口、來源、HTML、CSS、空的
-  `docs/.nojekyll`，以及通過內容驗證的 `.vscode/tasks.json` 差異。
-  只允許既定簡報工作的固定命令與結構；其他工作須完全未變。
-  頂層只允許 `version` 與 `tasks`；額外的 `options`、`inputs` 等設定即使
-  未變，也走程式分流，避免全域設定覆寫簡報工作的執行方式。
-  不以工作名稱或 `.json` 副檔名放行任意命令、環境覆寫或動態替換。
-- 開發工具分流接受 `AGENTS.md`、`CLAUDE.md`、已登錄的開發工具與腳本，
-  以及 `tests/tooling/test_*.py`；可混合一般文件與合格簡報變更。登錄來源為
-  [change_scope.py](tooling/git/change_scope.py)，不概括放行整個 `scripts/` 或
-  `tooling/`。一般檔案兩側仍須為 `100644`，只有已登錄的腳本允許 `100755`。
-  新工具須審查使用端與測試責任後才登錄，不依名稱猜測產品影響。
-- 產品程式、依賴與 lock、共用測試設定／fixtures／程序設施、未登錄工具、未知設定、
-  未獲允許的可執行檔、符號連結、混合產品變更、空差異與無法確認的變更，
-  均走完整程式分流。不得為讓某次變更通過而擴大白名單或偽造分類。
-- 每次 commit 都執行提交格式檢查；一般文件執行 `check-docs.sh`，簡報專項
-  執行 `check-presentations.sh`，開發工具與完整程式分流均執行 `check-fast.sh`。
-  Commit 不因開發工具分流而新增 pytest 或模型呼叫。各路徑都驗證
+- 階段檢查前，用 `uv run --no-sync python -m tooling.git.change_scope --base HEAD --staged`
+  取得本階段已暫存內容的 JSON 計畫；固定版本可改用 `--base <ref> --tree <ref>`。
+  依 `delivery_profile` 執行相應 `scripts/check-<profile>.sh`，不得靠副檔名或提示詞猜分流。
+  `verification_planned` 只表示計畫產生，不代表檢查通過；未暫存內容不在該計畫內。
+- [change_scope.py](tooling/git/change_scope.py) 的 `classify_changes` 與 `ChangeScope`
+  是路徑登錄、檔案模式、內容限制及各階段檢查順序的正式定義，hooks 與候選檢查共用它們。
+  未知、空差異與混合產品變更保守走完整程式分流；不得為通過檢查擴大白名單或偽造分類。
+  新工具須先審查使用端與測試責任才可登錄，不概括放行整個工具目錄。
+- 每次 commit 都執行提交格式檢查與計畫的 `commit_profile`，不新增 pytest 或模型呼叫。
+  各路徑都驗證
   暫存內容的獨立 snapshot，核對暫存 tree 未變，不以未暫存修正掩蓋錯誤。
   文件與簡報專項不執行 Ruff、Mypy、自動 Codex 審查或完整 pytest。
 - 一般 task branch push 不跑完整 pytest 或呼叫模型。Hook 的主線推送保護

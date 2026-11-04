@@ -265,7 +265,8 @@ def verify_candidate(
     validate_documentation_timeout(documentation_timeout_seconds)
     print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
     scope = classify_changes(candidate.repository, candidate.base, candidate.tree)
-    if scope.kind in {"docs", "presentations"}:
+    checks = scope.candidate_checks
+    if "documentation_review" not in checks:
         label = "Documentation-only" if scope.kind == "docs" else "Presentation"
         print(
             f"{label} candidate: running {scope.kind} snapshot checks. "
@@ -274,61 +275,63 @@ def verify_candidate(
         )
         check_snapshot(
             candidate.tree,
-            scope.kind,
+            scope.delivery_profile,
             repo=candidate.repository,
             timeout_seconds=snapshot_timeout_seconds,
         )
         print(f"{label} checks passed.", flush=True)
         return
-    if scope.presentations_changed:
-        print("Candidate also changes presentations: checking slides.", flush=True)
-        check_snapshot(
+    for check in checks:
+        if check != "documentation_review":
+            print(f"Candidate test profile: {check}", flush=True)
+            check_snapshot(
+                candidate.tree,
+                check,
+                repo=candidate.repository,
+                timeout_seconds=snapshot_timeout_seconds,
+            )
+            continue
+        print(
+            f"Documentation timeout: {documentation_timeout_seconds} seconds",
+            flush=True,
+        )
+        print("Reviewing code/documentation consistency with Codex...", flush=True)
+        command = [
+            sys.executable,
+            "-m",
+            "tooling.review_docs",
+            "--repo",
+            str(candidate.repository),
+            "--base",
+            candidate.base,
+            "--tree",
             candidate.tree,
-            "presentations",
-            repo=candidate.repository,
-            timeout_seconds=snapshot_timeout_seconds,
+            "--timeout-seconds",
+            str(documentation_timeout_seconds),
+        ]
+        if max_evidence_bytes is not None:
+            print(
+                f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True
+            )
+            command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
+        command.extend(
+            review_arguments(
+                review_scopes=review_scopes,
+                review_context=review_context,
+                review_context_for=review_context_for,
+                max_prompt_bytes=max_prompt_bytes,
+                max_total_prompt_bytes=max_total_prompt_bytes,
+            )
         )
-    print(f"Documentation timeout: {documentation_timeout_seconds} seconds", flush=True)
-    print("Reviewing code/documentation consistency with Codex...", flush=True)
-    command = [
-        sys.executable,
-        "-m",
-        "tooling.review_docs",
-        "--repo",
-        str(candidate.repository),
-        "--base",
-        candidate.base,
-        "--tree",
-        candidate.tree,
-        "--timeout-seconds",
-        str(documentation_timeout_seconds),
-    ]
-    if max_evidence_bytes is not None:
-        print(f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True)
-        command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
-    command.extend(
-        review_arguments(
-            review_scopes=review_scopes,
-            review_context=review_context,
-            review_context_for=review_context_for,
-            max_prompt_bytes=max_prompt_bytes,
-            max_total_prompt_bytes=max_total_prompt_bytes,
+        # Preserve setup time and allow the review's deadline/cleanup to finish.
+        run(
+            command,
+            cwd=Path(__file__).resolve().parents[2],
+            timeout=max(
+                900, documentation_timeout_seconds + _DOCUMENTATION_CLEANUP_SECONDS
+            ),
         )
+    print(
+        f"Codex documentation review and {scope.delivery_profile} pytest passed.",
+        flush=True,
     )
-    # Preserve setup time and allow the review's own deadline/cleanup to finish.
-    run(
-        command,
-        cwd=Path(__file__).resolve().parents[2],
-        timeout=max(
-            900, documentation_timeout_seconds + _DOCUMENTATION_CLEANUP_SECONDS
-        ),
-    )
-    profile = "tooling" if scope.kind == "tooling" else "full"
-    print(f"Candidate test profile: {profile}", flush=True)
-    check_snapshot(
-        candidate.tree,
-        profile,
-        repo=candidate.repository,
-        timeout_seconds=snapshot_timeout_seconds,
-    )
-    print(f"Codex documentation review and {profile} pytest passed.", flush=True)
