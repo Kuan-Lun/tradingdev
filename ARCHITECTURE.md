@@ -252,6 +252,9 @@ PipelineResult；最佳化沒有此 pickle。讀取依保存路徑，不用目�
 `app/dvol_data.py` 管理未指定本機路徑的 DVOL，以精確 UTC 區間建立獨立查詢身分，
 共用上述儲存與重用政策。準備執行時固定資料目錄，仍保留自動查詢模式；
 取樣取得的少量特徵不發布為完整研究期間的查詢證據。
+DataService 委派 FeatureData 統一特徵載入、受限合併及來源檢查，委派
+DatasetInspection 組裝行情快取內容與指紋報告；資料查詢身分仍由 DataService
+使用共用 DataIdentity 產生，檢查不下載或發布資料。
 
 ### 獨立行情取樣
 
