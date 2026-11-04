@@ -13,7 +13,7 @@
 
 - **需求**：可成長的清單及輸出使用分頁、明確容量或 artifact；受監督的驗證與準備具期限，背景工作可取消並查詢清理結果。
 - **驗收**：超量明確失敗或提供續讀，不默默截斷重要證據。成功、例外與逾時均核對所屬程序停止後清理臨時資料；無法核對時回報並保留診斷。保留使用者成果；外部強殺 supervisor 或自行脫離 session 的後代不在程序保證內。
-- **契約**：[程序控制與清理](../../ARCHITECTURE.md#程序控制與清理)、[探索分頁](../run_artifacts.md#discovery-pages)。
+- **契約**：[程序控制與清理](../../ARCHITECTURE.md#程序控制與清理)、[策略驗證限制](../strategy_contract.md#security-model)、[執行準備](../execution_plans.md#execution-plans-and-confirmation-documents)、[工作控制與清理狀態](../run_artifacts.md#job-state-and-worker-identity)、[探索分頁](../run_artifacts.md#discovery-pages)。
 - **驗證**：[preflight 臨時檔案](../../tests/integration/test_preflight_temporary_files.py)、[真實受監督 worker](../../tests/integration/test_managed_workers.py)、[分頁](../../tests/app/test_pagination.py) 檢查清理、狀態與容量。
 
 ## NFR-REPRO-001 有界的重現性承諾
