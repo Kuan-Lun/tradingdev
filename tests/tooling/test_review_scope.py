@@ -209,6 +209,8 @@ def test_repeated_headings_remain_distinct_with_correct_ancestors() -> None:
         ("src/tradingdev/adapters/cli/main.py", "interfaces"),
         ("docs/talks/tradingdev-introduction/slides.md", "presentation"),
         ("tooling/presentations.py", "presentation"),
+        ("tooling/presentation_errors.py", "presentation"),
+        ("tooling/presentation_html.py", "presentation"),
         ("tooling/marp/package-lock.json", "presentation"),
         ("tests/tooling/test_presentations.py", "presentation"),
         ("scripts/check-presentations.sh", "presentation"),

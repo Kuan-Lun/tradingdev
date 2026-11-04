@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 
 import psutil
 import pytest
-from tooling import presentations
+from tooling import presentation_html, presentations
+from tooling.presentation_errors import PresentationError
 from tooling.process_guard import CLEANUP_UNVERIFIED_EXIT_CODE, ProcessCleanupError
 
 if TYPE_CHECKING:
@@ -105,6 +106,8 @@ def test_registered_paths_do_not_allow_arbitrary_decks_or_compiler_changes() -> 
     for path in (
         "tooling/marp/package-lock.json",
         "tooling/presentations.py",
+        "tooling/presentation_html.py",
+        "tooling/presentation_errors.py",
         "scripts/check-presentations.sh",
         "scripts/presentations.sh",
     ):
@@ -130,7 +133,7 @@ _ENTRY = "# Editing the deck\n\nUse Tasks: Run Task → slides: watch.\n"
 
 def test_static_html_accepts_embedded_resources_and_external_citations() -> None:
     assert (
-        presentations.check_html(
+        presentation_html.check_html(
             _html(
                 '<img src="data:image/png;base64,AA==">'
                 "<style>a {background:url(#a)}</style>"
@@ -165,8 +168,8 @@ def test_static_html_accepts_embedded_resources_and_external_citations() -> None
     ],
 )
 def test_loaded_resources_and_watch_injections_are_rejected(extra: str) -> None:
-    with pytest.raises(presentations.PresentationError):
-        presentations.check_html(_html(extra))
+    with pytest.raises(PresentationError):
+        presentation_html.check_html(_html(extra))
 
 
 @pytest.mark.parametrize(
@@ -179,8 +182,8 @@ def test_loaded_resources_and_watch_injections_are_rejected(extra: str) -> None:
     ],
 )
 def test_html_page_counts_and_section_identity_must_agree(content: str) -> None:
-    with pytest.raises(presentations.PresentationError):
-        presentations.check_html(content)
+    with pytest.raises(PresentationError):
+        presentation_html.check_html(content)
 
 
 def _deck(root: Path) -> Path:
@@ -242,7 +245,7 @@ def test_changed_root_manifest_cannot_reuse_stale_lock_and_installation(
     monkeypatch.delenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", raising=False)
     manifest = json.loads((installed / "package.json").read_text())
     (installed / "package.json").write_text(json.dumps({**manifest, **update}))
-    with pytest.raises(presentations.PresentationError, match="[Rr]oot manifest"):
+    with pytest.raises(PresentationError, match="[Rr]oot manifest"):
         presentations._toolchain(tmp_path)
 
 
@@ -257,7 +260,7 @@ def test_lock_identity_must_match_root_manifest(
     target = lock["packages"][""] if record == "root" else lock
     target[field] = "different"
     (installed / "package-lock.json").write_text(json.dumps(lock))
-    with pytest.raises(presentations.PresentationError, match=f"manifest {field}"):
+    with pytest.raises(PresentationError, match=f"manifest {field}"):
         presentations._toolchain(tmp_path)
 
 
@@ -272,7 +275,7 @@ def test_unverified_root_resolution_modes_are_rejected(
     manifest = json.loads((installed / "package.json").read_text())
     manifest[field] = {}
     (installed / "package.json").write_text(json.dumps(manifest))
-    with pytest.raises(presentations.PresentationError, match="Unsupported root npm"):
+    with pytest.raises(PresentationError, match="Unsupported root npm"):
         presentations._toolchain(tmp_path)
 
 
@@ -304,7 +307,7 @@ def test_root_must_declare_exact_cli_version_even_with_matching_root_lock(
     lock["packages"][""] = manifest
     (installed / "package.json").write_text(json.dumps(manifest))
     (installed / "package-lock.json").write_text(json.dumps(lock))
-    with pytest.raises(presentations.PresentationError, match="root manifest must"):
+    with pytest.raises(PresentationError, match="root manifest must"):
         presentations._toolchain(tmp_path)
 
 
@@ -320,15 +323,13 @@ def test_toolchain_requires_lock_matching_snapshot_and_installed_versions(
     monkeypatch.setenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(copy))
     assert presentations._toolchain(root) == copy
     (copy / "package-lock.json").write_text("{}")
-    with pytest.raises(
-        presentations.PresentationError, match="differs from the checked snapshot"
-    ):
+    with pytest.raises(PresentationError, match="differs from the checked snapshot"):
         presentations._toolchain(root)
     monkeypatch.delenv("TRADINGDEV_PRESENTATION_TOOLCHAIN")
     (installed / "node_modules/@marp-team/marp-cli/package.json").write_text(
         '{"version":"4.6.0"}'
     )
-    with pytest.raises(presentations.PresentationError, match="version differs"):
+    with pytest.raises(PresentationError, match="version differs"):
         presentations._toolchain(root)
 
 
@@ -342,9 +343,7 @@ def test_missing_dependency_fails_without_implicit_install(
         pytest.fail("Missing dependencies must not trigger npm or network installation")
 
     monkeypatch.setattr(presentations, "run_captured", no_launch)
-    with pytest.raises(
-        presentations.PresentationError, match="scripts/presentations.sh setup"
-    ):
+    with pytest.raises(PresentationError, match="scripts/presentations.sh setup"):
         presentations.check_presentations(tmp_path)
 
 
@@ -355,7 +354,7 @@ def test_missing_node_directs_to_installing_node_before_setup(
     monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
     monkeypatch.setattr(shutil, "which", lambda name: None)
 
-    with pytest.raises(presentations.PresentationError) as error:
+    with pytest.raises(PresentationError) as error:
         presentations.build(tmp_path)
 
     message = str(error.value)
@@ -381,7 +380,7 @@ def test_missing_toolchain_reports_the_install_step_that_can_succeed(
         shutil, "which", lambda name: f"/usr/bin/{name}" if name in present else None
     )
 
-    with pytest.raises(presentations.PresentationError) as error:
+    with pytest.raises(PresentationError) as error:
         presentations.build(tmp_path)
 
     message = str(error.value)
@@ -461,9 +460,7 @@ def test_check_cleans_temporary_files_and_child_processes(
             presentations.check_presentations(tmp_path, timeout=5)
         else:
             expected = (
-                subprocess.TimeoutExpired
-                if mode == "timeout"
-                else presentations.PresentationError
+                subprocess.TimeoutExpired if mode == "timeout" else PresentationError
             )
             with pytest.raises(expected):
                 presentations.check_presentations(
@@ -518,7 +515,7 @@ def test_cli_propagates_only_typed_cleanup_failure_and_retains_its_workspace(
     errors: dict[str, Exception] = {
         "cleanup": ProcessCleanupError("opaque failure"),
         "runtime": RuntimeError("Could not terminate subprocesses"),
-        "build": presentations.PresentationError("compiler failed"),
+        "build": PresentationError("compiler failed"),
         "timeout": subprocess.TimeoutExpired(["compiler"], 1),
     }
     spaces: list[Path] = []
@@ -615,7 +612,7 @@ def test_watch_recovers_from_build_failure_when_input_is_fixed(
         if calls == 1:
             if timed_out:
                 raise subprocess.TimeoutExpired(["compiler"], 120)
-            raise presentations.PresentationError("invalid source")
+            raise PresentationError("invalid source")
 
     monkeypatch.setattr(presentations, "build", compile_deck)
     pauses = 0
