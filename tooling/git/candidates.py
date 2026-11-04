@@ -147,6 +147,81 @@ class MergeCandidate:
     tree: str
 
 
+def _candidate_git(repository: Path, *args: str) -> str:
+    environment = execution_environment(repository)
+    result = run_captured(
+        ["git", "-C", str(repository), "-c", f"core.hooksPath={os.devnull}", *args],
+        # Fetch needs authentication helpers; merge uses project rules.
+        env=environment
+        if args[0] == "fetch"
+        else {
+            **environment,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_ATTR_NOSYSTEM": "1",
+        },
+        cwd=repository,
+        timeout=120,
+    )
+    if result.returncode:
+        # Fetch diagnostics can include credential-bearing remote URLs.
+        detail = (
+            " Merge conflicts must be resolved on the PR branch."
+            if args[0] == "merge-tree"
+            else ""
+        )
+        raise RuntimeError(f"Candidate git {args[0]} failed.{detail}")
+    return result.stdout.strip()
+
+
+def fetch_merge_candidate(
+    repository: Path, source: str, base_ref: str, head_ref: str
+) -> MergeCandidate:
+    """Fetch a candidate in an owned repository, retaining earlier Git objects."""
+    _candidate_git(
+        repository,
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-prune",
+        "--no-recurse-submodules",
+        "--no-write-fetch-head",
+        "--",
+        source,
+        # Owned temporary refs must reflect rewrites so callers can reject them
+        # using the fetched identities and ancestry, without altering user refs.
+        f"+{base_ref}:refs/check/base",
+        f"+{head_ref}:refs/check/head",
+    )
+    base = _candidate_git(repository, "rev-parse", "refs/check/base^{commit}")
+    head = _candidate_git(repository, "rev-parse", "refs/check/head^{commit}")
+    tree = _candidate_git(repository, "merge-tree", "--write-tree", base, head)
+    return MergeCandidate(repository, base, head, tree)
+
+
+def base_advanced(previous: MergeCandidate, updated: MergeCandidate) -> bool:
+    """Verify ancestry using actual fetched commits, not PR API base metadata."""
+    if previous.base == updated.base:
+        return False
+    result = run_captured(
+        [
+            "git",
+            "-C",
+            str(updated.repository),
+            "merge-base",
+            "--is-ancestor",
+            previous.base,
+            updated.base,
+        ],
+        cwd=updated.repository,
+        env=execution_environment(updated.repository),
+        timeout=120,
+    )
+    if result.returncode not in {0, 1}:
+        raise RuntimeError("Cannot verify the updated primary branch ancestry.")
+    return result.returncode == 0
+
+
 @contextmanager
 def merge_candidate(
     source: str, base_ref: str, head_ref: str
@@ -155,57 +230,8 @@ def merge_candidate(
     with process_workspace(
         prefix="tradingdev-pr-candidate-", label="Merge candidate"
     ) as repository:
-        environment = execution_environment(repository)
-
-        def candidate_git(*args: str) -> str:
-            result = run_captured(
-                [
-                    "git",
-                    "-C",
-                    str(repository),
-                    "-c",
-                    f"core.hooksPath={os.devnull}",
-                    *args,
-                ],
-                # Fetch needs authentication helpers; merge uses project rules.
-                env=environment
-                if args[0] == "fetch"
-                else {
-                    **environment,
-                    "GIT_CONFIG_GLOBAL": os.devnull,
-                    "GIT_CONFIG_SYSTEM": os.devnull,
-                    "GIT_ATTR_NOSYSTEM": "1",
-                },
-                cwd=repository,
-                timeout=120,
-            )
-            if result.returncode:
-                # Fetch diagnostics can include credential-bearing remote URLs.
-                detail = (
-                    " Merge conflicts must be resolved on the PR branch."
-                    if args[0] == "merge-tree"
-                    else ""
-                )
-                raise RuntimeError(f"Candidate git {args[0]} failed.{detail}")
-            return result.stdout.strip()
-
-        candidate_git("init", "--quiet", "--template=")
-        candidate_git(
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-prune",
-            "--no-recurse-submodules",
-            "--no-write-fetch-head",
-            "--",
-            source,
-            f"{base_ref}:refs/check/base",
-            f"{head_ref}:refs/check/head",
-        )
-        base = candidate_git("rev-parse", "refs/check/base^{commit}")
-        head = candidate_git("rev-parse", "refs/check/head^{commit}")
-        tree = candidate_git("merge-tree", "--write-tree", base, head)
-        yield MergeCandidate(repository, base, head, tree)
+        _candidate_git(repository, "init", "--quiet", "--template=")
+        yield fetch_merge_candidate(repository, source, base_ref, head_ref)
 
 
 def validate_evidence_budget(max_evidence_bytes: int | None) -> None:
@@ -265,7 +291,8 @@ def verify_candidate(
     validate_documentation_timeout(documentation_timeout_seconds)
     print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
     scope = classify_changes(candidate.repository, candidate.base, candidate.tree)
-    if scope.kind in {"docs", "presentations"}:
+    checks = scope.candidate_checks
+    if "documentation_review" not in checks:
         label = "Documentation-only" if scope.kind == "docs" else "Presentation"
         print(
             f"{label} candidate: running {scope.kind} snapshot checks. "
@@ -274,61 +301,63 @@ def verify_candidate(
         )
         check_snapshot(
             candidate.tree,
-            scope.kind,
+            scope.delivery_profile,
             repo=candidate.repository,
             timeout_seconds=snapshot_timeout_seconds,
         )
         print(f"{label} checks passed.", flush=True)
         return
-    if scope.presentations_changed:
-        print("Candidate also changes presentations: checking slides.", flush=True)
-        check_snapshot(
+    for check in checks:
+        if check != "documentation_review":
+            print(f"Candidate test profile: {check}", flush=True)
+            check_snapshot(
+                candidate.tree,
+                check,
+                repo=candidate.repository,
+                timeout_seconds=snapshot_timeout_seconds,
+            )
+            continue
+        print(
+            f"Documentation timeout: {documentation_timeout_seconds} seconds",
+            flush=True,
+        )
+        print("Reviewing code/documentation consistency with Codex...", flush=True)
+        command = [
+            sys.executable,
+            "-m",
+            "tooling.review_docs",
+            "--repo",
+            str(candidate.repository),
+            "--base",
+            candidate.base,
+            "--tree",
             candidate.tree,
-            "presentations",
-            repo=candidate.repository,
-            timeout_seconds=snapshot_timeout_seconds,
+            "--timeout-seconds",
+            str(documentation_timeout_seconds),
+        ]
+        if max_evidence_bytes is not None:
+            print(
+                f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True
+            )
+            command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
+        command.extend(
+            review_arguments(
+                review_scopes=review_scopes,
+                review_context=review_context,
+                review_context_for=review_context_for,
+                max_prompt_bytes=max_prompt_bytes,
+                max_total_prompt_bytes=max_total_prompt_bytes,
+            )
         )
-    print(f"Documentation timeout: {documentation_timeout_seconds} seconds", flush=True)
-    print("Reviewing code/documentation consistency with Codex...", flush=True)
-    command = [
-        sys.executable,
-        "-m",
-        "tooling.review_docs",
-        "--repo",
-        str(candidate.repository),
-        "--base",
-        candidate.base,
-        "--tree",
-        candidate.tree,
-        "--timeout-seconds",
-        str(documentation_timeout_seconds),
-    ]
-    if max_evidence_bytes is not None:
-        print(f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True)
-        command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
-    command.extend(
-        review_arguments(
-            review_scopes=review_scopes,
-            review_context=review_context,
-            review_context_for=review_context_for,
-            max_prompt_bytes=max_prompt_bytes,
-            max_total_prompt_bytes=max_total_prompt_bytes,
+        # Preserve setup time and allow the review's deadline/cleanup to finish.
+        run(
+            command,
+            cwd=Path(__file__).resolve().parents[2],
+            timeout=max(
+                900, documentation_timeout_seconds + _DOCUMENTATION_CLEANUP_SECONDS
+            ),
         )
+    print(
+        f"Codex documentation review and {scope.delivery_profile} pytest passed.",
+        flush=True,
     )
-    # Preserve setup time and allow the review's own deadline/cleanup to finish.
-    run(
-        command,
-        cwd=Path(__file__).resolve().parents[2],
-        timeout=max(
-            900, documentation_timeout_seconds + _DOCUMENTATION_CLEANUP_SECONDS
-        ),
-    )
-    profile = "tooling" if scope.kind == "tooling" else "full"
-    print(f"Candidate test profile: {profile}", flush=True)
-    check_snapshot(
-        candidate.tree,
-        profile,
-        repo=candidate.repository,
-        timeout_seconds=snapshot_timeout_seconds,
-    )
-    print(f"Codex documentation review and {profile} pytest passed.", flush=True)

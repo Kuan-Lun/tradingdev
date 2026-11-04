@@ -358,6 +358,21 @@ git push -u origin feature/my-task
 已有開發分支時沿用。Commit hook 依暫存內容執行文件、簡報或快速檢查；一般 push
 不執行完整 pytest 或呼叫模型。本機 hook 的主線推送保護限於 GitHub remote。
 
+交付前對整個任務差異取得機械可讀的檢查計畫；以下 `origin/main` 應替換成實際任務基準：
+
+```bash
+uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HEAD
+```
+
+有尚未提交的最後階段時，先暫存相關檔案並以 `--staged` 取代 `--tree HEAD`，base 仍涵蓋
+先前所有階段，不能只比較 `HEAD` 與最後的暫存內容。`--repo <path>` 可指定 checkout。
+`verification_planned` 回覆固定 tree 身分與 `ChangeScope.payload` 產生的計畫，並非通過證明。
+`delivery_profile` 指定任務交付要跑的 `scripts/check-<profile>.sh`；`commit_profile`
+供 hook 使用，`candidate_checks` 是 PR／本機合併候選的檢查順序。
+每階段仍只要求受影響的相關測試，當次 PR 候選另外獨立檢查；計畫不新增逐階段完整檢查。
+暫存模式不包含未暫存或未追蹤內容；這時提交使用 `git-flow-commit.sh "type: message"`，
+不再傳檔名。工具失敗時不能假設可走較輕的分流。
+
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
 
 ```bash
@@ -377,6 +392,15 @@ git push -u origin feature/my-task
 PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分類器，
 依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode；未知內容保留完整檢查。
 開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更即跑全套。
+
+同一次 PR 檢查中若只有主線前進，工具會重新取得合併候選。PR 身分與 head 必須不變，
+且 `change_scope.presentation_only_advance` 須確認更新僅含已登錄簡報檔案、與 PR 路徑
+不重疊，及相同 blob／mode 差異完整套入新候選，才可沿用本次已完成的檢查。
+新候選仍須通過簡報 snapshot；成功輸出 `pr_base_refreshed` JSON，包含 `reused_tree`、
+最新 base／head／tree 與補做的 `checks`，審閱者仍須確認新增差異的語意與必要視覺行為。
+主線更新含編譯工具、設定、一般文件、產品變更或改寫歷史不適用；PR 自身涉及簡報或其工具
+也不適用，因為不同檔案可能互為審查脈絡。補驗證期間再次變動也會失敗。
+此路徑不重用跨次執行的 receipt，檢查結束後仍須依下節核對即時版本。
 
 真實模型策略測試另依變更選取。開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
 這一步預設使用 `gpt-6-luna` 與 `high`；以 `TRADINGDEV_DOC_REVIEW_MODEL`、
