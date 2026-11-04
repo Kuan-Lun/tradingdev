@@ -6,7 +6,7 @@
 
 - **需求**：研究者須能探索來源與需求，依所選市場、原始代號、頻率及期間取得或檢查行情；資料可用性檢查、快取清單與明示 cached-only 讀取不隱式下載資料。
 - **驗收**：不同來源及市場不混用價格；無資料、無法取得與資料缺口明確區分。未來區間拒絕；成功查詢或可重用快取不等於 K 棒完整，也不保證外部來源永不修正。
-- **契約**：[行情快取](../run_artifacts.md#market-data-cache)。
+- **契約**：[來源能力探索](../strategy_contract.md#research-inputs-and-simulation-policy)、[行情快取](../run_artifacts.md#market-data-cache)。
 - **驗證**：[資料 service](../../tests/app/test_data_service.py)、[來源管線](../../tests/integration/test_data_source_pipeline.py) 以替代外部來源檢查查詢與讀取邊界，不證明即時來源可用。
 
 ## FR-DATA-002 查詢證據與快取保存

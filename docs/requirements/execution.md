@@ -48,5 +48,5 @@
 
 - **需求**：正式背景工作提供穩定身分、可查狀態、失敗原因與取消能力；程序控制須核對啟動身分，不只相信數字 PID。
 - **驗收**：結果保存成功後才回報完成；執行中工作確認所屬程序清理後才能標為已取消，尚未啟動工作可直接取消。異常與取消不得悄悄變成成功或刪除已保存成果；無法證實停止時明示限制。
-- **契約**：[工作狀態與程序身分](../run_artifacts.md#job-state-and-worker-identity)。
+- **契約**：[工作狀態與程序身分](../run_artifacts.md#job-state-and-worker-identity)、[程序控制與清理限制](../../ARCHITECTURE.md#程序控制與清理)。
 - **驗證**：[工作 service](../../tests/app/test_job_service.py)、[真實受監督 worker](../../tests/integration/test_managed_workers.py) 檢查狀態、控制與清理。
