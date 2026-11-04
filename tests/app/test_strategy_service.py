@@ -163,7 +163,6 @@ def test_config_errors_are_reported_before_constructing_strategy(
 )
 def test_lossy_yaml_values_cannot_execute_or_advance_lifecycle(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     dry_run: bool,
     invalid_case: str,
 ) -> None:
@@ -186,7 +185,11 @@ def test_lossy_yaml_values_cannot_execute_or_advance_lifecycle(
         circular: list[Any] = []
         circular.append(circular)
         config["strategy"]["parameters"]["threshold"] = circular
-    saved = service._revisions.create("invalid_json", _STRATEGY_CODE, config)
+    code = _STRATEGY_CODE.replace(
+        "self._engine = backtest_engine",
+        'raise AssertionError("Invalid raw configuration reached the constructor")',
+    )
+    saved = service._revisions.create("invalid_json", code, config)
     if dry_run:
         assert service.record_validation_status(
             "invalid_json",
@@ -197,18 +200,9 @@ def test_lossy_yaml_values_cannot_execute_or_advance_lifecycle(
                 "diagnostics": [],
             },
         )["success"]
-    called = False
-
-    def unexpected_constructor(*args: object, **kwargs: object) -> None:
-        nonlocal called
-        called = True
-        raise AssertionError("Invalid raw configuration reached the constructor")
-
-    monkeypatch.setattr(service._loader, "create_from_config", unexpected_constructor)
     checked = (
         service.dry_run("invalid_json") if dry_run else service.validate("invalid_json")
     )
-    assert not called
     assert checked["success"] is False
     assert checked["effective_config"] is None
     assert checked["diagnostics"][0]["code"] == "invalid_execution_config"

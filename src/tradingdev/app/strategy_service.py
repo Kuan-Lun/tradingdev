@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import ast
 import re
-import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import yaml
 
+from tradingdev.adapters.execution.strategy_quality import run_quality_gates
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
     now_iso,
@@ -23,28 +22,19 @@ from tradingdev.adapters.storage.strategy_revisions import (
     StrategyRevisionConflictError,
     StrategyRevisionError,
     StrategyRevisionStore,
-    UnsupportedStrategyRevisionError,
 )
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
-from tradingdev.app.contracts.strategy import (
-    BundledStrategySummary,
-    GeneratedStrategySummary,
-    LegacyStrategySummary,
-    StrategyKind,
-    StrategySummary,
-)
-from tradingdev.app.pagination import paginate
 from tradingdev.app.quality_policy import quality_check_config
 from tradingdev.app.research import SelectedResearchRevision, build_research_config
 from tradingdev.app.strategy_contract_service import StrategyContractService
+from tradingdev.app.strategy_errors import strategy_not_found, strategy_revision_error
+from tradingdev.app.strategy_queries import StrategyQueries
 from tradingdev.domain.research import ResearchSpec  # noqa: TC001
-from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
     VALIDATE_FIXTURE_ROWS,
 )
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import (
     StrategyDiagnostic,
     StrategyMetadata,
@@ -54,9 +44,11 @@ from tradingdev.domain.strategies.schemas import (
 )
 from tradingdev.domain.strategies.validator import (
     StrategyValidator,
-    diagnostic,
     has_error,
 )
+
+if TYPE_CHECKING:
+    from tradingdev.app.contracts.strategy import StrategyKind, StrategySummary
 
 _VALID_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -93,10 +85,6 @@ class StrategyService:
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._catalog = BundledStrategyCatalog()
-        self._loader = StrategyLoader(
-            workspace_root=self._workspace.root,
-            catalog=self._catalog,
-        )
         self._validator = StrategyValidator()
         self._contract_checker = StrategyContractService(
             self._workspace, timeout_seconds=contract_timeout_seconds
@@ -104,6 +92,7 @@ class StrategyService:
         self._workspace.ensure()
         self._store = store or get_sqlite_store(self._workspace)
         self._revisions = StrategyRevisionStore(self._workspace)
+        self._queries = StrategyQueries(self._catalog, self._revisions, self._store)
 
     def save_draft(
         self,
@@ -279,41 +268,7 @@ class StrategyService:
         self, strategy_id: str, revision_id: str | None = None
     ) -> StrategySpec | None:
         """Load a bundled or generated strategy spec."""
-        entry = self._catalog.get(strategy_id) if revision_id is None else None
-        metadata = (
-            None
-            if entry is not None
-            else self._revisions.load(strategy_id, revision_id)
-        )
-        if metadata is not None:
-            return StrategySpec(
-                strategy_id=metadata.strategy_id,
-                revision_id=metadata.revision_id,
-                class_name=metadata.class_name,
-                source_path=metadata.source_path,
-                config_path=metadata.config_path,
-                status=metadata.status,
-                kind="generated",
-                metadata=metadata,
-            )
-
-        if revision_id is not None:
-            return None
-        if entry is None:
-            return None
-        return StrategySpec(
-            strategy_id=strategy_id,
-            class_name=entry.class_name,
-            source_path=str(entry.module_source_path),
-            config_path=str(entry.config_path),
-            status=StrategyStatus.PROMOTED,
-            kind="bundled",
-            execution_capabilities=entry.execution_capabilities,
-            metadata={
-                "version": entry.strategy_section.get("version"),
-                "declared_source_path": entry.declared_source_path,
-            },
-        )
+        return self._queries.load(strategy_id, revision_id)
 
     def resolve_executable(
         self, strategy_id: str, revision_id: str | None = None
@@ -360,7 +315,7 @@ class StrategyService:
             with self._revisions.lifecycle_lock(strategy_id):
                 return self._record_validation_status(strategy_id, result)
         except StrategyRevisionError as exc:
-            return self._revision_error(exc)
+            return strategy_revision_error(exc)
 
     def _record_validation_status(
         self,
@@ -375,7 +330,7 @@ class StrategyService:
         try:
             metadata = self._revisions.load(strategy_id, validation.revision_id)
             if metadata is None:
-                return self._not_found(strategy_id, validation.revision_id)
+                return strategy_not_found(strategy_id, validation.revision_id)
             if metadata.status not in {StrategyStatus.DRAFT, StrategyStatus.VALIDATED}:
                 return self._state_error(
                     metadata,
@@ -393,7 +348,7 @@ class StrategyService:
             metadata.updated_at = now_iso()
             self._revisions.update(metadata, expected_metadata=expected_metadata)
         except StrategyRevisionError as exc:
-            return self._revision_error(exc)
+            return strategy_revision_error(exc)
         return self._check_response(metadata, validation)
 
     def validate(
@@ -417,7 +372,7 @@ class StrategyService:
                     strategy_id, revision_id, dry_run=dry_run
                 )
         except StrategyRevisionError as exc:
-            return self._revision_error(exc)
+            return strategy_revision_error(exc)
 
     def _check_locked_revision(
         self, strategy_id: str, revision_id: str | None, *, dry_run: bool
@@ -425,7 +380,7 @@ class StrategyService:
         try:
             metadata = self._revisions.load(strategy_id, revision_id)
             if metadata is None:
-                return self._not_found(strategy_id, revision_id)
+                return strategy_not_found(strategy_id, revision_id)
             if dry_run:
                 if metadata.status != StrategyStatus.VALIDATED:
                     return self._state_error(
@@ -459,11 +414,11 @@ class StrategyService:
             effective_config: dict[str, Any] | None = None
             if not dry_run:
                 diagnostics.extend(self._validator.syntax_diagnostics(source_path))
-                if not self._has_error(diagnostics):
+                if not has_error(diagnostics):
                     diagnostics.extend(self._validator.static_policy_scan(source_path))
-                if not self._has_error(diagnostics):
+                if not has_error(diagnostics):
                     diagnostics.extend(self._quality_gate_diagnostics(source_path))
-            if not self._has_error(diagnostics):
+            if not has_error(diagnostics):
                 contract = self._contract_checker.check(
                     metadata,
                     fixture_rows=DRY_RUN_FIXTURE_ROWS
@@ -479,7 +434,7 @@ class StrategyService:
             result = ValidationResult(
                 revision_id=metadata.revision_id,
                 checked_at=now_iso(),
-                success=not self._has_error(diagnostics),
+                success=not has_error(diagnostics),
                 diagnostics=diagnostics,
                 signal_analysis=signal_analysis,
                 effective_config=effective_config,
@@ -497,7 +452,7 @@ class StrategyService:
             metadata.updated_at = now_iso()
             self._revisions.update(metadata, expected_metadata=expected_metadata)
         except StrategyRevisionError as exc:
-            return self._revision_error(exc)
+            return strategy_revision_error(exc)
         return self._check_response(metadata, result)
 
     def promote(
@@ -507,7 +462,7 @@ class StrategyService:
         try:
             metadata = self._revisions.load(strategy_id, revision_id)
             if metadata is None:
-                return self._not_found(strategy_id, revision_id)
+                return strategy_not_found(strategy_id, revision_id)
             if metadata.status != StrategyStatus.RUNNABLE:
                 return self._state_error(
                     metadata, "Only runnable strategies can be promoted"
@@ -518,7 +473,7 @@ class StrategyService:
             metadata.updated_at = now_iso()
             self._revisions.update(metadata, expected_metadata=expected_metadata)
         except StrategyRevisionError as exc:
-            return self._revision_error(exc)
+            return strategy_revision_error(exc)
         except StrategyNotExecutableError as exc:
             return {
                 "success": False,
@@ -559,99 +514,9 @@ class StrategyService:
             "code": "invalid_strategy_status",
         }
 
-    @staticmethod
-    def _not_found(strategy_id: str, revision_id: str | None) -> dict[str, Any]:
-        return {
-            "success": False,
-            "error": f"Strategy not found: {strategy_id}, revision={revision_id}",
-            "code": "strategy_not_found",
-        }
-
-    @staticmethod
-    def _revision_error(exc: StrategyRevisionError) -> dict[str, Any]:
-        return {
-            "success": False,
-            "error": str(exc),
-            "code": (
-                "strategy_revision_required"
-                if isinstance(exc, UnsupportedStrategyRevisionError)
-                else "strategy_revision_invalid"
-            ),
-        }
-
     def list_strategies(self) -> list[dict[str, Any]]:
         """List bundled, revisioned, and legacy strategies requiring resaving."""
-        items: list[dict[str, Any]] = []
-        for entry in self._catalog.entries():
-            strategy = entry.strategy_section
-            items.append(
-                {
-                    "strategy_id": entry.strategy_id,
-                    "class_name": entry.class_name,
-                    "description": strategy.get("description", ""),
-                    "kind": "bundled",
-                    "execution_capabilities": entry.execution_capabilities.model_dump(
-                        mode="json"
-                    ),
-                    "revision_id": None,
-                    "status": "promoted",
-                    "config_path": str(entry.config_path),
-                    "metadata": {
-                        "revision_id": None,
-                        "version": strategy.get("version"),
-                        "source_path": str(entry.module_source_path),
-                        "parameters": strategy.get("parameters", {}),
-                    },
-                    "data_requirements": self._data_requirements(entry.raw_config),
-                    "recent_runs": self._recent_runs(entry.strategy_id),
-                }
-            )
-        for metadata in self._revisions.list_current():
-            raw = yaml.safe_load(Path(metadata.config_path).read_text(encoding="utf-8"))
-            items.append(
-                {
-                    "strategy_id": metadata.strategy_id,
-                    "revision_id": metadata.revision_id,
-                    "class_name": metadata.class_name,
-                    "kind": "generated",
-                    "execution_capabilities": StrategyCapabilities().model_dump(
-                        mode="json"
-                    ),
-                    "status": metadata.status.value,
-                    "source_path": metadata.source_path,
-                    "config_path": metadata.config_path,
-                    "metadata": metadata.model_dump(mode="json"),
-                    "data_requirements": self._data_requirements(raw),
-                    "recent_runs": self._recent_runs(metadata.strategy_id),
-                }
-            )
-        items.extend(
-            self._legacy_summary(strategy_id)
-            for strategy_id in self._revisions.list_legacy_ids()
-        )
-        return items
-
-    def _legacy_summary(self, strategy_id: str) -> dict[str, Any]:
-        reserved = self._catalog.get(strategy_id) is not None
-        read_step = "get_strategy(legacy=true)" if reserved else "get_strategy"
-        save_step = (
-            "save_strategy using a different, non-reserved strategy_id"
-            if reserved
-            else "save_strategy"
-        )
-        return {
-            "strategy_id": strategy_id,
-            "revision_id": None,
-            "kind": "legacy",
-            "execution_capabilities": StrategyCapabilities().model_dump(mode="json"),
-            "status": "revision_required",
-            "code": "strategy_revision_required",
-            "message": (
-                f"Read source/config with {read_step}, then explicitly {save_step} "
-                "as a new draft and validate/dry-run its returned revision_id. "
-                "Legacy status and evidence do not authorize execution."
-            ),
-        }
+        return self._queries.list_strategies()
 
     def list_strategies_page(
         self,
@@ -662,44 +527,9 @@ class StrategyService:
         limit: int = DEFAULT_PAGE_LIMIT,
     ) -> Page[StrategySummary]:
         """Discover identities without expanding configuration or run history."""
-        entries: list[StrategySummary] = []
-        if kind in (None, "bundled"):
-            entries.extend(
-                BundledStrategySummary(
-                    strategy_id=entry.strategy_id,
-                    revision_id=None,
-                    class_name=entry.class_name,
-                    description=entry.strategy_section.get("description", ""),
-                    kind="bundled",
-                    execution_capabilities=entry.execution_capabilities,
-                    status="promoted",
-                )
-                for entry in self._catalog.entries()
-                if strategy_id is None or entry.strategy_id == strategy_id
-            )
-        if kind in (None, "generated"):
-            entries.extend(
-                GeneratedStrategySummary(
-                    strategy_id=metadata.strategy_id,
-                    revision_id=metadata.revision_id,
-                    class_name=metadata.class_name,
-                    kind="generated",
-                    execution_capabilities=StrategyCapabilities(),
-                    status=metadata.status,
-                )
-                for metadata in self._revisions.list_current()
-                if strategy_id is None or metadata.strategy_id == strategy_id
-            )
-        if kind in (None, "legacy"):
-            entries.extend(
-                LegacyStrategySummary.model_validate(self._legacy_summary(identity))
-                for identity in self._revisions.list_legacy_ids()
-                if strategy_id is None or identity == strategy_id
-            )
-        entries.sort(
-            key=lambda item: (item.strategy_id, item.kind, item.revision_id or "")
+        return self._queries.list_strategies_page(
+            kind=kind, strategy_id=strategy_id, offset=offset, limit=limit
         )
-        return paginate(entries, project=lambda item: item, offset=offset, limit=limit)
 
     def get_strategy(
         self,
@@ -709,210 +539,8 @@ class StrategyService:
         legacy: bool = False,
     ) -> dict[str, Any]:
         """Read bundled or generated strategy source and config."""
-        if legacy:
-            if revision_id is not None:
-                return self._revision_error(
-                    StrategyRevisionError("Legacy source has no revision_id")
-                )
-            if strategy_id not in self._revisions.list_legacy_ids():
-                return self._not_found(strategy_id, None)
-            return self._get_legacy_strategy(strategy_id)
-        try:
-            metadata = (
-                None
-                if revision_id is None and self._catalog.get(strategy_id) is not None
-                else self._revisions.load(strategy_id, revision_id)
-            )
-        except UnsupportedStrategyRevisionError:
-            return self._get_legacy_strategy(strategy_id)
-        except StrategyRevisionError as exc:
-            return self._revision_error(exc)
-        if metadata is not None:
-            source_path = Path(metadata.source_path)
-            config_path = Path(metadata.config_path)
-            return {
-                "success": True,
-                "strategy_id": strategy_id,
-                "kind": "generated",
-                "execution_capabilities": StrategyCapabilities().model_dump(
-                    mode="json"
-                ),
-                "revision_id": metadata.revision_id,
-                "source_code": source_path.read_text(encoding="utf-8"),
-                "yaml_config": config_path.read_text(encoding="utf-8"),
-                "metadata": metadata.model_dump(mode="json"),
-            }
-        if revision_id is not None:
-            return self._not_found(strategy_id, revision_id)
-        entry = self._catalog.get(strategy_id)
-        if entry is not None:
-            return {
-                "success": True,
-                "strategy_id": strategy_id,
-                "kind": "bundled",
-                "execution_capabilities": entry.execution_capabilities.model_dump(
-                    mode="json"
-                ),
-                "revision_id": None,
-                "source_code": entry.module_source_path.read_text(encoding="utf-8"),
-                "yaml_config": entry.config_path.read_text(encoding="utf-8"),
-                "metadata": {
-                    "status": "promoted",
-                    "revision_id": None,
-                    "source_path": str(entry.module_source_path),
-                    "config_path": str(entry.config_path),
-                },
-            }
-        return {
-            "success": False,
-            "error": f"Strategy not found: {strategy_id}",
-            "code": "strategy_not_found",
-        }
-
-    def _get_legacy_strategy(self, strategy_id: str) -> dict[str, Any]:
-        try:
-            source, config = self._revisions.read_legacy_source(strategy_id)
-        except StrategyRevisionError as exc:
-            return self._revision_error(exc)
-        return {
-            **self._legacy_summary(strategy_id),
-            "success": True,
-            "source_code": source,
-            "yaml_config": config,
-        }
-
-    def _data_requirements(self, raw_config: object) -> dict[str, Any] | None:
-        if not isinstance(raw_config, dict):
-            return None
-        data = raw_config.get("data", {})
-        if not isinstance(data, dict):
-            return None
-        requirements = data.get("requirements")
-        return requirements if isinstance(requirements, dict) else None
-
-    def _recent_runs(self, strategy_id: str) -> list[dict[str, Any]]:
-        if not strategy_id:
-            return []
-        recent: list[dict[str, Any]] = []
-        for run in self._store.list_runs():
-            if run.get("strategy_id") != strategy_id:
-                continue
-            recent.append(
-                {
-                    "run_id": run["run_id"],
-                    "job_id": run["job_id"],
-                    "revision_id": run.get("revision_id"),
-                    "created_at": run["created_at"],
-                    "dataset_id": run.get("dataset_id"),
-                    "metrics": run.get("metrics", {}),
-                }
-            )
-            if len(recent) >= 5:
-                break
-        return recent
+        return self._queries.get_strategy(strategy_id, revision_id, legacy=legacy)
 
     def _quality_gate_diagnostics(self, source_path: Path) -> list[StrategyDiagnostic]:
         with quality_check_config() as config:
-            return self._run_quality_gates(source_path, config)
-
-    def _run_quality_gates(
-        self, source_path: Path, config: Path
-    ) -> list[StrategyDiagnostic]:
-        diagnostics: list[StrategyDiagnostic] = []
-        config_path = str(config)
-        for command, label, timeout in (
-            (
-                [
-                    sys.executable,
-                    "-m",
-                    "ruff",
-                    "check",
-                    "--config",
-                    config_path,
-                    str(source_path),
-                ],
-                "ruff",
-                30,
-            ),
-            (
-                [
-                    sys.executable,
-                    "-m",
-                    "mypy",
-                    "--config-file",
-                    config_path,
-                    "--follow-imports=silent",
-                    str(source_path),
-                ],
-                "mypy",
-                60,
-            ),
-        ):
-            try:
-                result = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    check=False,
-                )
-            except FileNotFoundError as exc:
-                diagnostics.append(
-                    self._diagnostic(
-                        code=f"{label}_unavailable",
-                        phase="quality_gate",
-                        message=f"{label} quality gate could not start: {exc}",
-                        fix=(
-                            "Install ruff and mypy in the server's Python "
-                            "environment before running "
-                            "validate_strategy."
-                        ),
-                    )
-                )
-                continue
-            except subprocess.TimeoutExpired as exc:
-                diagnostics.append(
-                    self._diagnostic(
-                        code=f"{label}_timeout",
-                        phase="quality_gate",
-                        message=f"{label} quality gate timed out: {exc}",
-                        fix=(
-                            f"Make the generated strategy analyzable within "
-                            f"{timeout} seconds or investigate the quality gate."
-                        ),
-                    )
-                )
-                continue
-            if result.returncode != 0:
-                output = (result.stdout or result.stderr).strip()
-                diagnostics.append(
-                    self._diagnostic(
-                        code=f"{label}_failed",
-                        phase="quality_gate",
-                        message=f"{label} failed: {output}",
-                        fix=f"Fix the {label} diagnostics and save the strategy again.",
-                    )
-                )
-        return diagnostics
-
-    def _diagnostic(
-        self,
-        *,
-        code: str,
-        phase: str,
-        message: str,
-        level: str = "error",
-        line: int | None = None,
-        fix: str | None = None,
-    ) -> StrategyDiagnostic:
-        return diagnostic(
-            code=code,
-            phase=phase,
-            message=message,
-            level=level,
-            line=line,
-            fix=fix,
-        )
-
-    def _has_error(self, diagnostics: list[StrategyDiagnostic]) -> bool:
-        return has_error(diagnostics)
+            return run_quality_gates(source_path, config)

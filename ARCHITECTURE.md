@@ -149,6 +149,10 @@ Walk-forward 設定的替換、模式與 UTC 日期包含關係由 schema／準�
 StrategyService 將新建與修訂分開，修訂在 lifecycle lock 內核對預期版本。
 成功保存建立不可變 revision；metadata 記錄該版本證據，current 指向最新保存版本。
 命名可自動產生，不能覆寫既有 namespace；新版本不繼承舊版本的執行資格。
+StrategyService 保留 application 入口與狀態轉移，將清單、來源與版本讀取委派給
+StrategyQueries；兩者共用 catalog、revision store 與 SQLite store。
+Ruff／Mypy 的程序執行由 strategy_quality adapter 負責，使用 application 傳入的
+共用品質設定；程序失敗轉成驗證診斷，不授予執行資格。
 
 ```mermaid
 stateDiagram-v2
