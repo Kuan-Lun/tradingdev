@@ -152,7 +152,7 @@ StrategyService 將新建與修訂分開，修訂在 lifecycle lock 內核對預
 StrategyService 保留 application 入口與狀態轉移，將清單、來源與版本讀取委派給
 StrategyQueries；兩者共用 catalog、revision store 與 SQLite store。
 Ruff／Mypy 的程序執行由 strategy_quality adapter 負責，使用 application 傳入的
-共用品質設定；程序失敗轉成驗證診斷，不授予執行資格。
+共用品質設定；找不到執行檔、逾時與非零退出會轉成驗證診斷，不授予執行資格。
 
 ```mermaid
 stateDiagram-v2
