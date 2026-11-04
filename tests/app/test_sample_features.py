@@ -42,7 +42,7 @@ def _service(
     monkeypatch.setattr(
         "tradingdev.app.data_service.create_crawler", lambda *_: Crawler()
     )
-    monkeypatch.setattr("tradingdev.app.data_service.DeribitDVOLCrawler", Crawler)
+    monkeypatch.setattr("tradingdev.app.feature_data.DeribitDVOLCrawler", Crawler)
     config = BacktestConfig(
         symbol="BTC/USDT",
         timeframe="1h",
