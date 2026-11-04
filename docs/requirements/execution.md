@@ -19,7 +19,7 @@
 ## FR-EXEC-003 執行模式與回測
 
 - **需求**：以所選策略版本、行情、有效參數與成本執行歷史回測，依策略能力拒絕不支援的模式。Signal 與 volume 模式按各自交易及績效語意處理。
-- **驗收**：必須訓練的策略不能以一般回測或不支援的最佳化繞過訓練；設定不合法時於正式資料載入前拒絕。結果保存實際設定，不把模擬帳戶宣稱為交易所保證金或資金費率帳本。
+- **驗收**：必須訓練的策略不能以一般回測或不支援的最佳化繞過訓練；可離線判定的設定錯誤於正式資料載入前拒絕，資料相依檢查仍可能在正式執行時失敗。結果保存實際設定，不把模擬帳戶宣稱為交易所保證金或資金費率帳本。
 - **契約**：[訓練前置條件](../strategy_contract.md#training-before-scoring)、[訊號與成交語意](../strategy_contract.md#signal-and-execution-semantics)。
 - **驗證**：[策略能力](../../tests/domain/strategies/test_strategy_capabilities.py)、[回測 service](../../tests/app/test_backtest_service.py) 驗證模式與執行邊界。
 
@@ -33,7 +33,7 @@
 ## FR-EXEC-005 分段訓練與樣本外評估
 
 - **需求**：Walk-forward 須固定有效訓練／測試切分，依策略能力訓練或分段回測，並依宣告的標籤 horizon 與淨化模式檢查時間重疊。
-- **驗收**：日期換算、研究期間包含關係及互斥選項依契約檢查；不能為通過切分而擴大使用者期間。零 horizon 停用重疊稽核，不代表標籤安全；設定檢查通過不代表真實資料可形成分折。逐折結果與聚合摘要分開，不將分折分布當成單一路徑績效。
+- **驗收**：日期換算、研究期間包含關係及互斥選項依契約檢查；不能為通過切分而擴大使用者期間。Automatic／explicit 模式的零 horizon 停用重疊稽核，不代表標籤安全；purged 模式要求正值。設定檢查通過不代表真實資料可形成分折。逐折結果與聚合摘要分開，不將分折分布當成單一路徑績效。
 - **契約**：[Walk-forward 設定](../strategy_contract.md#strategy-walk-forward-settings)。
 - **驗證**：[日期包含](../../tests/domain/validation/test_explicit_dates.py)、[標籤洩漏檢查](../../tests/domain/validation/test_leakage_gate.py)、[保存分折](../../tests/app/test_saved_walk_forward.py) 分別檢查設定、時間邊界與讀回。
 
