@@ -602,3 +602,60 @@ def test_automatic_document_provenance_fails_closed(
         raw["automatic_document_paths"].append("README.md")
     with pytest.raises(ReviewError, match="document provenance"):
         build_review_plan(json.dumps(raw))
+
+
+def test_srs_explicit_contract_sections_come_from_candidate_git(
+    change: tuple[Path, str, str],
+) -> None:
+    repo, base, _ = change
+    contract = "docs/run_artifacts.md"
+    original = "# Run Artifacts\n\n## Market Data Cache\nOriginal data contract.\n"
+    _write(repo, contract, original)
+    base = _tree(repo)
+    _write(
+        repo,
+        "docs/requirements/strategy.md",
+        "# Strategy\n\n## FR-STR-001 Inputs\n\n"
+        "- **契約**：[cache](../run_artifacts.md#market-data-cache)\n",
+    )
+    tree = _tree(repo)
+    # Working tree changes must not replace immutable contract evidence.
+    _write(repo, contract, "# Locally changed\n")
+    raw = build_evidence(repo, base, tree)
+    plan = build_review_plan(raw)
+    batch = next(
+        _payload(prompt)
+        for prompt in plan.prompts
+        if _payload(prompt).get("scope") == "strategy"
+    )
+    sections = [
+        section for section in batch["document_sections"] if section["path"] == contract
+    ]
+    assert "".join(section["text"] for section in sections) == original
+    assert all(
+        section["blob_oid"] == _git(repo, "rev-parse", f"{tree}:{contract}")
+        for section in sections
+    )
+    assert contract in batch["requirement_context_paths"]["strategy"]
+    assert len({section["start_line"] for section in sections}) == len(sections)
+    evidence = json.loads(raw)
+    del evidence["candidate_files"][contract]
+    with pytest.raises(ReviewError, match="context is missing"):
+        build_review_plan(json.dumps(evidence))
+
+
+@pytest.mark.parametrize("mode", ["missing", "symlink"])
+def test_missing_or_nonregular_srs_contract_fails_before_review(
+    change: tuple[Path, str, str], mode: str
+) -> None:
+    repo, base, _ = change
+    _write(
+        repo,
+        "docs/requirements/strategy.md",
+        "# Strategy\n\n## FR-STR-001 Inputs\n\n- **契約**：[missing](../missing.md)\n",
+    )
+    if mode == "symlink":
+        (repo / "docs/missing.md").symlink_to("../README.md")
+    tree = _tree(repo)
+    with pytest.raises(ReviewError, match="Missing regular SRS contract evidence"):
+        build_review_plan(build_evidence(repo, base, tree))
