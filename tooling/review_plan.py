@@ -60,8 +60,7 @@ REVIEW_INSTRUCTIONS = (
     "reason as a finding; a later invocation can add --review-context or "
     "--review-context-for. "
     "Coverage proves evidence delivery, not semantic correctness or complete "
-    "discovery of dynamic dependencies. Return only the required JSON verdict; "
-    "passed=true if and only if findings is empty.\n\n"
+    "discovery of dynamic dependencies. Return only the required JSON verdict.\n\n"
 )
 SCOPE_INSTRUCTIONS = (
     "This scope batch contains complete assigned candidate files and their exact "

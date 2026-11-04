@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -13,7 +14,10 @@ from pathlib import Path
 from tooling.git.candidates import (
     DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
     DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
+    base_advanced,
+    check_snapshot,
     execution_environment,
+    fetch_merge_candidate,
     git,
     merge_candidate,
     validate_documentation_timeout,
@@ -21,6 +25,7 @@ from tooling.git.candidates import (
     validate_snapshot_timeout,
     verify_candidate,
 )
+from tooling.git.change_scope import presentation_only_advance
 from tooling.git.pr_context import get_pull_request, remote_url
 from tooling.process_guard import (
     ProcessCleanupError,
@@ -116,6 +121,22 @@ def check_pr(
     source = remote_url(remote)
     base_ref = f"refs/heads/{request.base_ref}"
     head_ref = f"refs/pull/{number}/head"
+
+    def verify_request_identity() -> None:
+        current = get_pull_request(number, remote)
+        # API base metadata and provisional merge SHAs can lag actual Git refs.
+        if (
+            replace(
+                current,
+                base_sha=request.base_sha,
+                merge_commit_sha=request.merge_commit_sha,
+            )
+            != request
+        ):
+            raise RuntimeError(
+                "The PR/base changed during checks; run the check again."
+            )
+
     with merge_candidate(source, base_ref, head_ref) as candidate:
         if candidate.head != request.head_sha:
             raise RuntimeError("The PR head moved while fetching; run the check again.")
@@ -135,24 +156,57 @@ def check_pr(
             snapshot_timeout_seconds=snapshot_timeout_seconds,
             documentation_timeout_seconds=documentation_timeout_seconds,
         )
-        current = get_pull_request(number, remote)
-        # API base metadata can lag the advertised main ref, and GitHub computes
-        # provisional merge SHAs asynchronously. Validate actual Git tips below.
-        if (
-            replace(
-                current,
-                base_sha=request.base_sha,
-                merge_commit_sha=request.merge_commit_sha,
+        verify_request_identity()
+        current_refs = _remote_refs(source, base_ref, head_ref)
+        if current_refs != (candidate.base, candidate.head):
+            if current_refs[1] != candidate.head:
+                raise RuntimeError(
+                    "The PR/base refs changed during checks; rerun the check."
+                )
+            updated = fetch_merge_candidate(
+                candidate.repository, source, base_ref, head_ref
             )
-            != request
-        ):
-            raise RuntimeError(
-                "The PR/base changed during checks; run the check again."
+            if (
+                (updated.base, updated.head) != current_refs
+                or not base_advanced(candidate, updated)
+                or not presentation_only_advance(
+                    candidate.repository,
+                    base=candidate.base,
+                    updated_base=updated.base,
+                    tree=candidate.tree,
+                    updated_tree=updated.tree,
+                )
+            ):
+                raise RuntimeError(
+                    "The PR/base refs changed during checks; rerun the check."
+                )
+            check_snapshot(
+                updated.tree,
+                "presentations",
+                repo=updated.repository,
+                timeout_seconds=snapshot_timeout_seconds,
             )
-        if _remote_refs(source, base_ref, head_ref) != (candidate.base, candidate.head):
-            raise RuntimeError(
-                "The PR/base refs changed during checks; rerun the check."
+            verify_request_identity()
+            if _remote_refs(source, base_ref, head_ref) != current_refs:
+                raise RuntimeError(
+                    "The PR/base refs changed during presentation refresh; "
+                    "rerun the check."
+                )
+            print(
+                json.dumps(
+                    {
+                        "code": "pr_base_refreshed",
+                        "previous_base": candidate.base,
+                        "reused_tree": candidate.tree,
+                        "base": updated.base,
+                        "head": updated.head,
+                        "tree": updated.tree,
+                        "checks": ["presentations"],
+                    }
+                ),
+                flush=True,
             )
+            candidate = updated
         if git("rev-parse", "HEAD") != starting_head or git(
             "status", "--porcelain", "--untracked-files=all"
         ):
