@@ -5,7 +5,7 @@
 ## NFR-SAFE-001 程式執行與部署邊界
 
 - **需求**：生成 Python 的靜態限制、受監督執行及 HTTP 入口保護須明確區分；使用者可得知會執行程式的時機及未提供的隔離／驗證能力。
-- **驗收**：不把 workspace、靜態檢查或使用者同意稱為完整沙箱。MCP HTTP Host／Origin 與本文容量檢查依設定生效，允許清單不冒充登入驗證；跨設備部署由操作者提供適當驗證與存取控制。平台支援與 POSIX 程序限制如實列明。
+- **驗收**：不把 workspace、靜態檢查或使用者同意稱為完整沙箱。MCP HTTP Host／Origin 依允許清單設定檢查，請求本文依固定容量上限拒絕超量；允許清單不冒充登入驗證；跨設備部署由操作者提供適當驗證與存取控制。平台支援與 POSIX 程序限制如實列明。
 - **契約**：[策略安全模型](../strategy_contract.md#security-model)、[連線與部署](../../README.md#2-啟動-mcp-server-並連接助手)。
 - **驗證**：[HTTP 入口保護](../../tests/mcp/test_http_transport_security.py)、[真實 preflight worker](../../tests/integration/test_preflight_workers.py) 驗證適用邊界；不證明生成程式的全面安全。
 
