@@ -609,6 +609,10 @@ Unavailable tools or interpreter, timeouts and nonzero exits fail validation.
 Follow the diagnostic repair hint: restore unavailable tools or interpreter;
 investigate timeouts or make the strategy analyzable within the tool's limit;
 for nonzero exits, resolve the errors reported by that tool before retrying.
+Each quality tool has its own deadline, defined by
+[run_quality_gates](../src/tradingdev/adapters/execution/strategy_quality.py) and
+included in its timeout diagnostic. These deadlines are independent of the
+[runtime-check deadline](#security-model).
 
 Names are optional and separate from technical identity. `display_name` and
 YAML `strategy.display_name` must agree when both are given. If only one is given,
