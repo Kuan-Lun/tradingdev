@@ -79,6 +79,8 @@
 
 DVOL 檔案路徑由 `data.requirements.features` 宣告。策略參數只控制
 `vol_type` 與交易邏輯，不保存 feature 資料路徑。
+歷史波動率的公式、滾動窗口與缺值語意見
+[共用波動率定義](glft_strategy.md#historical-volatility)；參數搜尋與訊號生成均依所選模式計算。
 
 ## 特徵工程
 
