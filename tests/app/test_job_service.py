@@ -160,7 +160,7 @@ def test_cancel_job_uses_control_identity_before_marking_cancelled(
         requests.append((root, handle))
         return stopped
 
-    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stop)
+    monkeypatch.setattr("tradingdev.app.job_lifecycle.request_worker_stop", stop)
     signals: list[tuple[int, int]] = []
     monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
     monkeypatch.setattr(os, "killpg", lambda pid, sig: signals.append((pid, sig)))
@@ -348,7 +348,7 @@ def test_cancel_does_not_claim_success_when_control_cleanup_fails(
     def fail_stop(root: Path, handle: WorkerHandle) -> bool:
         raise failure_type("control unavailable")
 
-    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", fail_stop)
+    monkeypatch.setattr("tradingdev.app.job_lifecycle.request_worker_stop", fail_stop)
 
     response = JobService(job_store=store).cancel_job("worker")
 
@@ -401,7 +401,7 @@ def test_poll_preserves_completion_during_liveness_check(
         store.update_job("race", status="done")
         return False
 
-    monkeypatch.setattr(service, "_is_process_alive", finish)
+    monkeypatch.setattr(service._lifecycle, "_is_process_alive", finish)
     assert service.get_job_status("race")["status"] == "done"
     record = store.get_job("race")
     assert record is not None
@@ -424,7 +424,7 @@ def test_cancellation_does_not_override_completion_during_stop(
         store.update_job("race", status="done")
         return False
 
-    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stop)
+    monkeypatch.setattr("tradingdev.app.job_lifecycle.request_worker_stop", stop)
     response = JobService(job_store=store).cancel_job("race")
     assert response["success"] is False
     assert response["status"] == "done"
@@ -514,13 +514,13 @@ def test_cleanup_failure_keeps_diagnostic_and_reads_worker_completion(
         **WorkerHandle(12345, 100.0, "b" * 32).job_fields(),
     )
     service = JobService(job_store=store)
-    monkeypatch.setattr(service, "_is_process_alive", lambda _: False)
+    monkeypatch.setattr(service._lifecycle, "_is_process_alive", lambda _: False)
 
     def stop(root: Path, handle: WorkerHandle) -> bool:
         store.update_job("race", status="done")
         raise RuntimeError("cleanup acknowledgement unavailable")
 
-    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stop)
+    monkeypatch.setattr("tradingdev.app.job_lifecycle.request_worker_stop", stop)
     response = (
         service.cancel_job("race")
         if operation == "cancel"

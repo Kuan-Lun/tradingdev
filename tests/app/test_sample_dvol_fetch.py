@@ -66,7 +66,7 @@ def test_missing_dvol_samples_all_sparse_market_timestamps(
         crawler._client.close()
         crawler._client = client
         monkeypatch.setattr(
-            "tradingdev.app.data_service.DeribitDVOLCrawler", lambda: crawler
+            "tradingdev.app.feature_data.DeribitDVOLCrawler", lambda: crawler
         )
         result = service.load_sample(
             {
