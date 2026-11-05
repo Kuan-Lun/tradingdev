@@ -6,9 +6,11 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import psutil
@@ -37,6 +39,55 @@ child = subprocess.Popen([sys.executable, '-c', sys.argv[1]], start_new_session=
 Path('child.pid').write_text(str(child.pid))
 Path('leader.pid').write_text(str(os.getpid()))
 """
+
+
+@pytest.mark.parametrize("captured", [False, True])
+def test_observation_delay_does_not_replace_a_completed_process_result(
+    monkeypatch: MonkeyPatch, tmp_path: Path, captured: bool
+) -> None:
+    observed_exit = False
+    elapsed = 0.0
+    real_observe = process_guard._observe
+    release = tmp_path / "release"
+
+    def observe(known: set[psutil.Process]) -> bool:
+        nonlocal observed_exit, elapsed
+        complete = real_observe(known)
+        if any(process.pid == os.getpid() for process in known):
+            return complete
+        if not observed_exit:
+            children = [process for process in known if process.pid != os.getpid()]
+            if children:
+                assert len(children) == 1
+                release.touch()
+                # Observe completion without reaping: Popen must retain the real
+                # exit status. Only the observer's delay crosses the fake deadline.
+                os.waitid(os.P_PID, children[0].pid, os.WEXITED | os.WNOWAIT)
+                observed_exit = True
+                elapsed = 2.0
+        return complete
+
+    monkeypatch.setattr(process_guard, "_observe", observe)
+    monkeypatch.setattr(
+        process_guard,
+        "time",
+        SimpleNamespace(monotonic=lambda: elapsed, sleep=time.sleep),
+    )
+    exit_code = 7 if captured else 0
+    command = [
+        sys.executable,
+        "-c",
+        "import time\nfrom pathlib import Path\n"
+        "while not Path('release').exists(): time.sleep(0.01)\n"
+        f"raise SystemExit({exit_code})",
+    ]
+    if captured:
+        result = run_captured(command, cwd=tmp_path, env=dict(os.environ), timeout=1)
+        assert result.returncode == exit_code
+    else:
+        run_checked(command, cwd=tmp_path, env=dict(os.environ), timeout=1)
+    assert observed_exit
+    assert list(tmp_path.iterdir()) == [release]
 
 
 def _assert_stopped(root: Path) -> None:
