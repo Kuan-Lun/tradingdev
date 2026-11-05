@@ -66,14 +66,34 @@ mkdir -p site-dist/tradingdev && cp docs/talks/tradingdev-introduction/index.htm
 Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
 `site-dist/` 是忽略的發布產物，只包含要公開的 HTML；不會將整個 `docs/` 發布。
 
-首次部署後，在該 Worker 的 **Settings → Domains & Routes → Add → Custom Domain**
-加入 `slides.klwang.tw`。該網域須屬於同一 Cloudflare 帳號的有效 zone，且不能有
-衝突的 CNAME。Cloudflare 負責建立 DNS 記錄與 HTTPS 憑證；此設定由管理者在
-Cloudflare 維護，不在 Wrangler 設定中宣告。
+### 共用網域與專案路徑
 
-完成連接及網域設定後，簡報預期位址為
-`https://slides.klwang.tw/tradingdev/`。只有部署成功才會更新網站；repository 中的
-設定檔不代表已連接 Cloudflare 或發布。根路徑 `/` 未提供目錄頁或重新導向。
+`slides.klwang.tw` 是多個專案共用的簡報網域。Custom Domain 綁定獨立的
+`klwang-slides` 入口 Worker，由管理者在 Cloudflare 維護；本 repository
+只部署 `klwang-slides-tradingdev`，不接管整個網域。
+
+根目錄的 `wrangler.jsonc` 宣告本專案的兩條 Route：
+
+- `slides.klwang.tw/tradingdev`：不帶尾端斜線的入口。
+- `slides.klwang.tw/tradingdev/*`：簡報及其子路徑。
+
+Route 優先於共用入口的 Custom Domain；路由保留原始路徑，因此發布檔案仍放在
+`site-dist/tradingdev/index.html`。不要改成 `slides.klwang.tw/*` 或將整個
+Custom Domain 綁回本專案，也不要使用會涵蓋 `/tradingdev-other` 的
+`/tradingdev*`。不帶尾端斜線且附有 query 的網址由共用入口補上斜線後轉址。
+
+首次設定時，管理者先在 **Workers & Pages → klwang-slides → Domains →
+Add domain** 加入 `slides.klwang.tw`。網域須屬於同一 Cloudflare 帳號的有效
+zone，Cloudflare 負責 DNS 與 HTTPS。TradingDev 的部署權限須包含該 zone 的
+Workers Routes 編輯權限；部署後在本專案 Worker 的 **Domains** 核對兩條 Route。
+沿用舊設定時，先建立上述 Route，再將 Custom Domain 移到共用入口，以保留簡報入口。
+
+新增其他專案時，使用獨立 Worker 與不同的路徑前綴，各自連接自己的 repository；
+不覆寫本專案 Worker，也不移動共用 Custom Domain。共用入口的首頁連結由管理者
+另外維護，不隨 TradingDev 發布更新。
+
+簡報位址為 `https://slides.klwang.tw/tradingdev/`。只有部署成功才會更新網站；
+repository 中的設定檔不代表已連接 Cloudflare 或發布。
 
 ## 透過 GitHub Pages 發布
 
