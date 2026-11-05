@@ -428,6 +428,32 @@ JobQueries 讀取結果明細與組裝回覆；清單查詢只讀取已保存狀
 自行脫離 session 不在清理保證內。
 控制檔案與證據見[Workspace Layout](docs/run_artifacts.md#workspace-layout)。
 
+### 容器執行 adapter
+
+[`DockerRuntime`](src/tradingdev/adapters/execution/container_runtime.py) 提供直接整合與
+測試使用的容器執行入口，目前尚未接入產品策略流程。隔離保證與可信元件的範圍由
+[直接容器 adapter 安全模型](docs/strategy_contract.md#direct-container-adapter)說明；
+建置映像、環境設定與測試操作見[開發指南](docs/development.md#容器建置與驗證)。
+
+1. 建立 `DockerRuntime(control_root)`，以可保留的獨立目錄保存執行歸屬紀錄。
+   Adapter 固定所選本機 Docker 端點，後續 Docker context 變更不會改變清理目標。
+   `resolve(image=..., limits=...)` 核對 daemon 能力與預建映像，回傳固定 image ID
+   及有效政策的 `RuntimeSpec`，不自動下載映像。政策欄位與限制由
+   [`RuntimeLimits`](src/tradingdev/domain/runtime.py)定義。
+2. 使用 `with runtime.open(spec, command) as session` 啟動映像內的命令及管理生命週期。
+   `command` 是程式與參數序列，所需檔案須已在映像內；此入口不掛載 host 工作區。
+   每個 context 擁有獨立執行單元及歸屬紀錄。
+3. `session.exchange(message)` 依序交換單行 `bytes`：傳入內容不含換行，回傳內容移除
+   結尾換行。命令須每次輸入只產生一行 stdout，診斷使用 stderr；超量與已偵測的
+   額外 stdout 會失敗。診斷保留有上限的尾端，發生截斷時標示。
+4. Context 正常結束或拋出例外時，先停止 attach client，再移除並核對整個執行單元。
+   清理核對 daemon 身分、owner 與不可變 container ID；只有確認清理後才移除歸屬紀錄。
+   發生 `IsolatedRuntimeError` 時檢查 `cleanup_verified` 與 `control_path`；清理未確認
+   就保留控制目錄，不把操作失敗與清理完成視為同一件事。
+5. 原呼叫端停止後，可在原 daemon 上呼叫 `runtime.recover_abandoned()` 重試復原。
+   它只接手已釋放 lease 的單元，跳過仍持有 lease 的執行；身分不符、紀錄不明或
+   daemon 不可用時回報失敗並保留紀錄，不承諾立即清理。
+
 ### 可重現性與策略執行安全
 
 策略 YAML 頂層 `random_seed` 建立執行內的 Python／NumPy 亂數 context；walk-forward

@@ -714,6 +714,11 @@ back to legacy files. Historical runs without revisions retain `revision_id: nul
 
 ## Security Model
 
+The product strategy paths—validation, dry-run, preflight/preparation and formal
+execution—do not use the independent `DockerRuntime` adapter yet. Their current
+supervision limits follow below; the [Direct Container Adapter](#direct-container-adapter)
+subsection describes the isolation boundary for direct callers and tests only.
+
 The [static policy reference](#contract-references) supplies the enforced import
 and call restrictions. Static-policy or quality failures stop validation before
 generated code is imported or executed.
@@ -744,4 +749,40 @@ before their actual runs.
 Supervision does not isolate filesystem or network access, and a workspace is
 only an output location. User approval controls formal submission; it does not
 make earlier code execution safe. Review generated Python as runtime code at
-every boundary until a dedicated isolation layer exists.
+every product boundary; the independent container adapter does not change the
+guarantees of paths that have not been connected to it.
+
+### Direct Container Adapter
+
+These guarantees apply only to commands launched through `DockerRuntime.open`.
+The callable API, message protocol, ownership records and cleanup recovery are
+maintained in [Container Execution Adapter](../ARCHITECTURE.md#容器執行-adapter).
+
+Each execution unit has a private Linux PID namespace. Its trusted
+[`container_init`](../src/tradingdev/adapters/execution/container_init.py) runs as
+root PID 1; Docker drops all capabilities except `SETUID` and `SETGID`, which the
+init uses to launch the command as UID/GID 65534 with no supplementary groups.
+The command has no effective capabilities, and `no-new-privileges` prevents
+privilege gains through execution. Generated code runs under this reduced identity.
+
+One wall-clock deadline covers the entire session, including waits between
+calls. The trusted PID 1 owns that deadline even if the host control client
+disappears. Its exit terminates all processes in the namespace, including
+descendants that created another session or process group.
+
+The image filesystem is read-only, external networking is disabled, and the
+adapter mounts neither the host workspace nor the Docker socket. It forwards
+only its selected runtime environment settings, not host environment secrets.
+Temporary storage is bounded and mounted with `noexec`, `nosuid` and `nodev`;
+CPU, memory and process limits apply to the execution unit and its descendants.
+Messages and retained diagnostics are bounded as well. The formal policy fields,
+defaults and constraints are defined by
+[`RuntimeLimits`](../src/tradingdev/domain/runtime.py).
+
+This boundary depends on the trusted control process, runtime image and init,
+Docker daemon and Linux kernel. It does not protect against compromise of those
+components. An unavailable daemon or unverifiable execution identity prevents
+confirmed cleanup: the adapter reports failure and retains ownership evidence
+for recovery. The namespace deadline does not itself prove that the daemon's
+container record has been removed; callers must follow the cleanup contract
+linked above. These guarantees do not change the current product paths' limits.

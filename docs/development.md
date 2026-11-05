@@ -61,6 +61,31 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定隨 wheel 收錄。
 映像採多階段建置，執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
 
+獨立策略 worker 使用 `strategy-runtime` target。完整離線測試包含真實 Linux 容器邊界
+檢查，需先準備可透過本機 Unix socket 連線、支援 cgroup v2 資源限制的 Docker Engine
+與此映像；所有支援平台都不接受 SSH 或 TCP 遠端端點：
+
+```bash
+docker build --target strategy-runtime -t tradingdev-strategy-runtime:dev .
+export TRADINGDEV_STRATEGY_IMAGE=tradingdev-strategy-runtime:dev
+```
+
+此映像供 `DockerRuntime` 的直接呼叫與測試使用，尚未接入產品策略流程；既有入口的
+監督範圍與 adapter 的隔離限制見[策略安全模型](strategy_contract.md#security-model)。
+
+macOS 可使用 Docker Desktop 提供的 Linux Engine。
+測試本身不下載映像；缺少 daemon、
+必要能力或預建映像會失敗。`TRADINGDEV_STRATEGY_IMAGE` 可指定專用測試標籤，執行前
+會解析為固定 image ID。建立 adapter 前，以 `TRADINGDEV_RUNTIME_LIMITS` 的 JSON 物件設定測試資源政策；
+未設定時使用預設政策，直接呼叫明示的 `limits` 優先。可設定欄位、預設值及
+欄位間限制以 [`RuntimeLimits`](../src/tradingdev/domain/runtime.py) 為準。
+
+直接整合或診斷 adapter 時，查閱[容器執行 adapter](../ARCHITECTURE.md#容器執行-adapter)，
+取得 `DockerRuntime.resolve/open`、`ContainerSession.exchange`、清理失敗判定及
+`recover_abandoned` 的呼叫契約。傳輸、程序身分與故障清理的驗證入口為
+[替代 daemon 的 adapter 測試](../tests/adapters/test_container_runtime.py)及
+[真實容器測試](../tests/integration/test_strategy_isolation.py)。
+
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
 以及錯誤 Host／Origin 的拒絕行為。使用獨立 Compose project、臨時工作區及映像標籤，
