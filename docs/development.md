@@ -63,8 +63,13 @@ ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定�
 
 獨立策略 worker 使用 `strategy-runtime` target。完整離線測試包含真實 Linux 容器邊界
 檢查，需先準備可透過本機 Unix socket 連線、支援 cgroup v2 資源限制的 Docker Engine
-與此映像；所有支援平台都不接受 SSH 或 TCP 遠端端點。在 repository 根目錄為本次
-檢查建立專用 builder 與標籤，明確選用 builder 而不切換預設 builder：
+與此映像；所有支援平台都不接受 SSH 或 TCP 遠端端點。建置另需 Docker CLI 的
+Buildx 元件，不能只以 Engine 可用判定工具已齊備。先執行 `docker buildx version`，
+再以 `docker buildx create --help` 確認包含 `docker-container` driver、
+`docker buildx build --help` 確認支援 `--load`；缺少命令或能力時須先安裝或更新
+Docker 安裝來源提供的 Buildx 元件，不能繼續下列建置。
+
+在 repository 根目錄為本次檢查建立專用 builder 與標籤，明確選用 builder 而不切換預設 builder：
 
 ```bash
 tradingdev_check_id="$(uv run --no-sync python -c 'import uuid; print(uuid.uuid4().hex)')"
