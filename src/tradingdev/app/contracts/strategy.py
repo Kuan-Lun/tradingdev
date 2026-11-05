@@ -96,6 +96,14 @@ class StrategyEvidenceContract(ContractModel):
     unsourced_single_execution_example: ResearchEvidenceDraft
 
 
+class StrategyRuntimeContract(ContractModel):
+    """Generated execution boundary, maintained resource schema and recovery."""
+
+    limits_schema: dict[str, JsonValue]
+    boundary: list[str]
+    operation: list[str]
+
+
 class StrategyContractResponse(ContractModel):
     """A selected section, with references to the remaining contract material."""
 
@@ -108,6 +116,7 @@ class StrategyContractResponse(ContractModel):
         | StrategyExampleContract
         | StrategyConfigurationContract
         | StrategyIndicatorContract
+        | StrategyRuntimeContract
     )
 
     @model_validator(mode="after")
@@ -119,6 +128,7 @@ class StrategyContractResponse(ContractModel):
             "evidence": StrategyEvidenceContract,
             "example": StrategyExampleContract,
             "configuration": StrategyConfigurationContract,
+            "runtime": StrategyRuntimeContract,
         }
         if not isinstance(self.content, expected[self.section]):
             raise ValueError("Contract content does not match its section")

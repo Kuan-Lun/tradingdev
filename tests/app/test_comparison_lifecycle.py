@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -14,7 +15,7 @@ from tests.app.test_backtest_service import (
     _raw_config,
     _service,
     _SignalStrategy,
-    _StrategyLoaderStub,
+    _StrategyFactoryStub,
 )
 from tests.app.test_execution_dataset import _candidate
 
@@ -32,6 +33,8 @@ from tradingdev.domain.comparison import ComparisonCandidate, ComparisonManifest
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import pandas as pd
 
     from tradingdev.app.backtest_service import BacktestService
@@ -49,7 +52,7 @@ class _Comparison:
     bundle: ComparisonManifest
     backtest: BacktestService
     data: _DataServiceStub
-    loader: _StrategyLoaderStub
+    loader: _StrategyFactoryStub
     service: ComparisonService
 
     def ledger(self) -> ComparisonLedger:
@@ -139,19 +142,20 @@ def test_eight_candidates_share_one_snapshot_and_keep_independent_execution_stat
                 assert df.at[0, "close"] == 100.0
             return super().generate_signals(df)
 
+    @contextmanager
     def create(
         _config: dict[str, Any],
         _execution: StrategyExecution,
         engine: BaseBacktestEngine | None,
         _parallel: ParallelConfig | None = None,
-    ) -> Candidate:
+    ) -> Iterator[Candidate]:
         strategy = Candidate()
         if engine is not None:
             strategies.append(strategy)
             engines.append(engine)
-        return strategy
+        yield strategy
 
-    monkeypatch.setattr(fixture.loader, "create_from_execution", create)
+    monkeypatch.setattr(fixture.loader, "open_from_execution", create)
 
     ledger = fixture.service.execute("comparison")
 
@@ -215,9 +219,9 @@ def test_strategy_failure_preserves_all_outcomes_and_continues_later_candidates(
 
     monkeypatch.setattr(
         fixture.loader,
-        "create_from_execution",
-        lambda _config, execution, *_args: Candidate(
-            execution.constructor_kwargs["number"]
+        "open_from_execution",
+        lambda _config, execution, *_args: nullcontext(
+            Candidate(execution.constructor_kwargs["number"])
         ),
     )
 

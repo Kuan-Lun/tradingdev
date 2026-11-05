@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 
 from tests.e2e.strategy_scenarios import SCENARIOS, expected_signals, market_frame
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
@@ -23,7 +24,6 @@ from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.randomness import execution_randomness
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
 _REPORT_FILES = {
@@ -117,10 +117,12 @@ def verify(root: Path) -> None:
         config["strategy"]["parameters"].update(
             fast_period=fast_period, slow_period=slow_period
         )
-        with execution_randomness(config.get("random_seed")):
-            strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
+        with (
+            execution_randomness(config.get("random_seed")),
+            StrategyFactory(workspace_root=workspace.root).open_from_config(
                 config, engine=None
-            )
+            ) as strategy,
+        ):
             result = strategy.generate_signals(frame)
             fast = close.rolling(fast_period).mean()
             slow = close.rolling(slow_period).mean()
@@ -198,10 +200,12 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     for parameters in (scenario.parameters, scenario.overrides):
         overridden = deepcopy(config)
         overridden["strategy"]["parameters"] = parameters
-        with execution_randomness(config.get("random_seed")):
-            strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
+        with (
+            execution_randomness(config.get("random_seed")),
+            StrategyFactory(workspace_root=workspace.root).open_from_config(
                 overridden, engine=None
-            )
+            ) as strategy,
+        ):
             actual = strategy.generate_signals(frame)
             expected = expected_signals(frame, scenario, parameters)
             pd.testing.assert_series_equal(
@@ -294,10 +298,12 @@ def verify_novice_intake(root: Path) -> None:
         .astype(int)
         .rename("signal")
     )
-    with execution_randomness(config.get("random_seed")):
-        strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
+    with (
+        execution_randomness(config.get("random_seed")),
+        StrategyFactory(workspace_root=workspace.root).open_from_config(
             config, engine=None
-        )
+        ) as strategy,
+    ):
         for length in (len(frame), 4, 29, 55, 92):
             prefix = frame.iloc[:length].copy(deep=True)
             actual = strategy.generate_signals(prefix)

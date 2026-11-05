@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 from tests.domain.test_comparison import candidate
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution import ExecutionManifest
@@ -61,6 +62,7 @@ def _manifest(*, bundled: bool = False) -> ExecutionManifest:
         },
         strategy_execution=StrategyExecution(
             kind="bundled" if bundled else "generated",
+            program=None if bundled else GENERATED_PROGRAM,
             constructor_kwargs={},
         ),
     )

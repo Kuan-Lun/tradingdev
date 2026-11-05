@@ -139,8 +139,19 @@ def request_worker_stop(
     """
     if WorkerHandle.from_job(handle.job_fields()) != handle:
         raise ValueError("Invalid worker control identity")
-    deadline = time.monotonic() + timeout
     directory = workspace_root / ".workers" / handle.control_id
+    try:
+        return _stop_and_verify_worker(directory, handle, timeout=timeout)
+    except (OSError, ValueError, RuntimeError, psutil.Error) as error:
+        raise RuntimeError(
+            f"Worker cleanup failed; retained {directory}: {error}"
+        ) from error
+
+
+def _stop_and_verify_worker(
+    directory: Path, handle: WorkerHandle, *, timeout: float
+) -> bool:
+    deadline = time.monotonic() + timeout
     if _read_control(directory / "start.json") != handle.job_fields():
         raise RuntimeError(
             f"Worker control identity missing or mismatched: {directory}"
@@ -153,19 +164,18 @@ def request_worker_stop(
         result = _wait_for_control(directory / "finished.json", timeout)
     assert result is not None
     if result.get("cleaned") is not True:
-        raise RuntimeError(f"Worker cleanup failed: {result.get('error', result)}")
-    # The acknowledgement proves worker-group cleanup, but is published just
-    # before the supervisor exits. Observe that identity until it is inactive
+        raise RuntimeError(
+            f"Cleanup acknowledgement failed: {result.get('error', result)}"
+        )
+    # The acknowledgement proves worker-group and container cleanup, but arrives
+    # just before supervisor exit. Observe that identity until it is inactive
     # before callers delete its workspace. Reused PIDs are never signalled.
-    try:
-        while handle.get_process() is not None:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"Worker supervisor did not exit after cleanup: {directory}"
-                )
-            time.sleep(0.05)
-    except psutil.Error as error:
-        raise RuntimeError(f"Cannot verify supervisor exit: {error}") from error
+    while handle.get_process() is not None:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Worker supervisor did not exit after cleanup: {directory}"
+            )
+        time.sleep(0.05)
     return requested
 
 

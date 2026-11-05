@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -19,7 +20,9 @@ if TYPE_CHECKING:
 
 def _manifest(*, fees: float = 0.0) -> ExecutionManifest:
     return ExecutionManifest.create(
-        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+        strategy_execution=StrategyExecution(
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+        ),
         kind="backtest",
         config={
             "strategy": {"id": "fixture", "revision_id": None},

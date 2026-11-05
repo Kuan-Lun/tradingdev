@@ -499,14 +499,18 @@ def test_identity_writer_and_worker_merge_inside_one_sqlite_transaction(
             assert row[key] == record[key]
 
 
-@pytest.mark.parametrize("operation", ["cancel", "poll_comparison"])
+@pytest.mark.parametrize(
+    "operation", ["cancel", "poll_backtest", "poll_optimization", "poll_comparison"]
+)
 def test_cleanup_failure_keeps_diagnostic_and_reads_worker_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path))
     store.create_job(
         job_id="race",
-        job_type="comparison" if operation == "poll_comparison" else "backtest",
+        job_type=operation.removeprefix("poll_")
+        if operation != "cancel"
+        else "backtest",
     )
     store.update_job(
         "race",
@@ -527,6 +531,6 @@ def test_cleanup_failure_keeps_diagnostic_and_reads_worker_completion(
         else service.get_job_status("race")
     )
     assert response["status"] == "done"
-    error = response if operation == "cancel" else response["detail_error"]
+    error = response if operation == "cancel" else response["cleanup_error"]
     assert error["code"] == "worker_cleanup_failed"
     assert "cleanup acknowledgement unavailable" in error["error"]

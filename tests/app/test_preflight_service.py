@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,16 +16,18 @@ from tradingdev.adapters.execution.process_runner import (
     BoundedWorkerError,
     ProcessRunner,
 )
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.preflight_service import PreflightError, PreflightService
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import PreflightReceipt, PreflightRequest
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import pandas as pd
 
     from tradingdev.domain.strategies.base import BaseStrategy
@@ -64,21 +67,24 @@ def test_preflight_checks_effective_program_without_market_training_or_engine(
         request.arguments["param_ranges"] = {"threshold": [0.001, 0.02]}
     _forbid_historical_execution(monkeypatch)
     observed: list[tuple[int, float]] = []
-    create = StrategyLoader.create_from_execution
+    create = StrategyFactory.open_from_execution
 
-    def capture(loader: StrategyLoader, *args: Any, **kwargs: Any) -> BaseStrategy:
-        strategy = create(loader, *args, **kwargs)
-        generate = strategy.generate_signals
-        monkeypatch.setattr(strategy, "fit", _unexpected_execution)
+    @contextmanager
+    def capture(
+        loader: StrategyFactory, *args: Any, **kwargs: Any
+    ) -> Iterator[BaseStrategy]:
+        with create(loader, *args, **kwargs) as strategy:
+            generate = strategy.generate_signals
+            monkeypatch.setattr(strategy, "fit", _unexpected_execution)
 
-        def checked(frame: pd.DataFrame) -> pd.DataFrame:
-            observed.append((len(frame), strategy.get_parameters()["threshold"]))
-            return generate(frame)
+            def checked(frame: pd.DataFrame) -> pd.DataFrame:
+                observed.append((len(frame), strategy.get_parameters()["threshold"]))
+                return generate(frame)
 
-        monkeypatch.setattr(strategy, "generate_signals", checked)
-        return strategy
+            monkeypatch.setattr(strategy, "generate_signals", checked)
+            yield strategy
 
-    monkeypatch.setattr(StrategyLoader, "create_from_execution", capture)
+    monkeypatch.setattr(StrategyFactory, "open_from_execution", capture)
     before = {
         str(path.relative_to(workspace.root)): path.read_bytes()
         for path in workspace.root.rglob("*")
@@ -133,7 +139,7 @@ def test_bundled_preparation_does_not_construct_fit_or_score_untrained_models(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "source")
     _forbid_historical_execution(monkeypatch)
-    monkeypatch.setattr(StrategyLoader, "create_from_execution", _unexpected_execution)
+    monkeypatch.setattr(StrategyFactory, "open_from_execution", _unexpected_execution)
     request = PreflightRequest(
         kind=kind,
         arguments=research_arguments(
@@ -169,24 +175,27 @@ def test_preflight_rejects_invalid_generated_programs(
     workspace, request = make_preflight_fixture(
         tmp_path, monkeypatch, failure="exception" if failure == "exception" else None
     )
-    create = StrategyLoader.create_from_execution
+    create = StrategyFactory.open_from_execution
 
-    def invalid(loader: StrategyLoader, *args: Any, **kwargs: Any) -> BaseStrategy:
-        strategy = create(loader, *args, **kwargs)
-        generate = strategy.generate_signals
+    @contextmanager
+    def invalid(
+        loader: StrategyFactory, *args: Any, **kwargs: Any
+    ) -> Iterator[BaseStrategy]:
+        with create(loader, *args, **kwargs) as strategy:
+            generate = strategy.generate_signals
 
-        def signals(frame: pd.DataFrame) -> pd.DataFrame:
-            result = generate(frame)
-            if failure == "invalid_signal":
-                result["signal"] = 2
-            elif failure == "input_mutated":
-                frame["close"] = 0.0
-            return result
+            def signals(frame: pd.DataFrame) -> pd.DataFrame:
+                result = generate(frame)
+                if failure == "invalid_signal":
+                    result["signal"] = 2
+                elif failure == "input_mutated":
+                    frame["close"] = 0.0
+                return result
 
-        monkeypatch.setattr(strategy, "generate_signals", signals)
-        return strategy
+            monkeypatch.setattr(strategy, "generate_signals", signals)
+            yield strategy
 
-    monkeypatch.setattr(StrategyLoader, "create_from_execution", invalid)
+    monkeypatch.setattr(StrategyFactory, "open_from_execution", invalid)
     _forbid_historical_execution(monkeypatch)
     with pytest.raises(PreflightError, match="contract"):
         execute_preflight(

@@ -24,6 +24,7 @@ class JobObservation:
 
     job: dict[str, Any] | None
     cleanup_error: dict[str, Any] | None = None
+    detail_error: dict[str, Any] | None = None
 
 
 class JobLifecycle:
@@ -42,65 +43,66 @@ class JobLifecycle:
             return JobObservation(job=None)
 
         status = str(job["status"])
-        cleanup_error: dict[str, Any] | None = None
-        if (
-            status in self._ACTIVE_STATUSES
-            and (status != "queued" or job.get("pid") is not None)
-            and not self._is_process_alive(job)
-        ):
-            latest = self._job_store.get_job(job_id)
-            if latest is not None and latest["status"] in self._TERMINAL_STATUSES:
-                return self.refresh(job_id)
-            if job.get("job_type") == "comparison":
-                handle = WorkerHandle.from_job(job)
-                try:
-                    if handle is None:
-                        raise RuntimeError("Worker control identity is unavailable")
-                    request_worker_stop(self._job_store.workspace.root, handle)
-                except (OSError, ValueError, RuntimeError) as exc:
-                    cleanup_error = {
-                        "success": False,
-                        "code": "worker_cleanup_failed",
-                        "error": f"Worker cleanup could not be confirmed: {exc}",
-                    }
-                if cleanup_error is None:
-                    latest = self._job_store.get_job(job_id)
-                    if (
-                        latest is not None
-                        and latest["status"] in self._TERMINAL_STATUSES
-                    ):
-                        # The worker may finish between the first read and its
-                        # supervisor's exit. Preserve that completed lifecycle.
-                        return self.refresh(job_id)
-                    try:
-                        ComparisonService(job_store=self._job_store).reconcile(
-                            job_id, reason="Worker process terminated unexpectedly."
-                        )
-                    except (OSError, TypeError, ValueError) as exc:
-                        cleanup_error = {
-                            "success": False,
-                            "code": "execution_manifest_invalid",
-                            "error": str(exc),
-                        }
-            if (
-                cleanup_error is None
-                or cleanup_error["code"] == "execution_manifest_invalid"
-            ):
-                status = "failed"
-                failure = {
-                    "status": status,
-                    "error": "Worker process terminated unexpectedly.",
-                    "ended_at": datetime.now(UTC).isoformat(),
-                }
-                latest = self._job_store.update_job(job_id, **failure)
-                if latest is not None:
-                    job = latest
-                    status = str(job["status"])
+        has_identity = any(
+            job.get(key) is not None
+            for key in ("pid", "process_create_time", "worker_control_id")
+        )
+        needs_recovery = status in self._ACTIVE_STATUSES and (
+            status != "queued" or has_identity
+        )
+        needs_cleanup_check = needs_recovery or (
+            status in self._TERMINAL_STATUSES and has_identity
+        )
+        if not needs_cleanup_check or self._is_process_alive(job):
+            return JobObservation(job=job)
 
-        # A cleanup attempt can fail after the worker commits its final state.
-        # Preserve that state while still reporting the cleanup diagnostic.
+        cleanup_error = self._cleanup_error(job)
+        # Publication can finish during cleanup. A terminal result and resource
+        # cleanup are independent facts; preserve the result and report both.
         job = self._job_store.get_job(job_id) or job
-        return JobObservation(job=job, cleanup_error=cleanup_error)
+        if job["status"] in self._TERMINAL_STATUSES:
+            return JobObservation(job=job, cleanup_error=cleanup_error)
+
+        detail_error: dict[str, Any] | None = None
+        if job.get("job_type") == "comparison":
+            if cleanup_error is not None:
+                # Do not finalize candidate outcomes while their worker may live.
+                return JobObservation(job=job, cleanup_error=cleanup_error)
+            try:
+                ComparisonService(job_store=self._job_store).reconcile(
+                    job_id, reason="Worker process terminated unexpectedly."
+                )
+            except (OSError, TypeError, ValueError) as exc:
+                detail_error = {
+                    "success": False,
+                    "code": "execution_manifest_invalid",
+                    "error": str(exc),
+                }
+        self._job_store.update_job(
+            job_id,
+            status="failed",
+            error="Worker process terminated unexpectedly.",
+            ended_at=datetime.now(UTC).isoformat(),
+        )
+        return JobObservation(
+            job=self._job_store.get_job(job_id) or job,
+            cleanup_error=cleanup_error,
+            detail_error=detail_error,
+        )
+
+    def _cleanup_error(self, job: dict[str, Any]) -> dict[str, Any] | None:
+        handle = WorkerHandle.from_job(job)
+        try:
+            if handle is None:
+                raise RuntimeError("Worker control identity is unavailable")
+            request_worker_stop(self._job_store.workspace.root, handle)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return {
+                "success": False,
+                "code": "worker_cleanup_failed",
+                "error": f"Worker cleanup could not be confirmed: {exc}",
+            }
+        return None
 
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued or running background job."""

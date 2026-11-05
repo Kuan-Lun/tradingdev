@@ -14,6 +14,7 @@ from tests.e2e.conversation_user import ObservedPlanUser, _assert_summary, revie
 from tests.e2e.llm_client import ToolCall
 from tests.integration.mcp_harness import MCPWorkspace
 from tests.mcp.execution_fixtures import PlanContext, plan_context
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.app.contracts.execution_requests import BacktestInput
 from tradingdev.app.contracts.plans import PlanResponse
 from tradingdev.app.data_service import DataService
@@ -21,7 +22,6 @@ from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.research_preparation import ResearchPreparationService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from tradingdev.app.contracts.plans import ExecutionDecision
@@ -360,7 +360,7 @@ def test_revision_requires_new_saved_plan_with_requested_settings(
     workspace = context.service.workspace
     changed = ResearchPreparationService(
         strategy_service=StrategyService(workspace),
-        strategy_loader=StrategyLoader(workspace_root=workspace.root),
+        strategy_loader=StrategyFactory(workspace_root=workspace.root),
         data_service=DataService(workspace),
     ).prepare("backtest", BacktestInput.model_validate(args))
     assert isinstance(changed, PreparedExecution)

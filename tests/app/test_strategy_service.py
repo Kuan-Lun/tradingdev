@@ -32,10 +32,9 @@ from tradingdev.domain.strategies.base import BaseStrategy
 class FixtureStrategy(BaseStrategy):
     def __init__(
         self,
-        backtest_engine: object | None = None,
         threshold: float = 0.0,
     ) -> None:
-        self._engine = backtest_engine
+        self._constructor_reached = True
         self._threshold = threshold
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -119,7 +118,7 @@ def test_config_errors_are_reported_before_constructing_strategy(
     config = yaml.safe_load(_YAML)
     config["backtest"][field] = 42
     code = _STRATEGY_CODE.replace(
-        "self._engine = backtest_engine",
+        "self._constructor_reached = True",
         'raise RuntimeError("Constructor must not run for an invalid config")',
     )
     saved = service._revisions.create("invalid_config", code, config)
@@ -186,7 +185,7 @@ def test_lossy_yaml_values_cannot_execute_or_advance_lifecycle(
         circular.append(circular)
         config["strategy"]["parameters"]["threshold"] = circular
     code = _STRATEGY_CODE.replace(
-        "self._engine = backtest_engine",
+        "self._constructor_reached = True",
         'raise AssertionError("Invalid raw configuration reached the constructor")',
     )
     saved = service._revisions.create("invalid_json", code, config)
@@ -227,8 +226,8 @@ def test_validation_and_dry_run_seed_constructor_and_signals(tmp_path: Path) -> 
             "from tradingdev.domain.strategies.base import BaseStrategy",
         )
         .replace(
-            "self._engine = backtest_engine",
-            "self._engine = backtest_engine\n"
+            "self._constructor_reached = True",
+            "self._constructor_reached = True\n"
             "        assert get_seed() == 42\n"
             "        assert get_random().random() == 0.6394267984578837\n"
             "        assert get_numpy_rng().integers(100) == 8",
@@ -566,10 +565,9 @@ from tradingdev.domain.strategies.base import BaseStrategy
 class TalibStrategy(BaseStrategy):
     def __init__(
         self,
-        backtest_engine: object | None = None,
         length: int = 3,
     ) -> None:
-        self._engine = backtest_engine
+        self._constructor_reached = True
         self._length = length
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
@@ -53,7 +54,9 @@ def _draft(revisions: StrategyRevisionStore) -> StrategyMetadata:
 
 def _manifest(revision_id: str) -> ExecutionManifest:
     return ExecutionManifest.create(
-        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+        strategy_execution=StrategyExecution(
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+        ),
         kind="backtest",
         config={
             "strategy": {"id": "fixture", "revision_id": revision_id},
@@ -88,7 +91,9 @@ def _comparison(
                     kind="backtest",
                     config=config,
                     strategy_execution=StrategyExecution(
-                        kind="generated", constructor_kwargs={"period": index}
+                        kind="generated",
+                        program=GENERATED_PROGRAM,
+                        constructor_kwargs={"period": index},
                     ),
                 ),
             )

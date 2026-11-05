@@ -16,9 +16,24 @@ class RuntimeLimits(BaseModel):
     memory_bytes: int = Field(default=2 * 1024**3, ge=64 * 1024**2, strict=True)
     cpus: float = Field(default=2, gt=0, le=256, strict=True)
     processes: int = Field(default=128, ge=8, le=4096, strict=True)
-    temporary_bytes: int = Field(default=256 * 1024**2, ge=1024**2, strict=True)
-    message_bytes: int = Field(default=64 * 1024**2, ge=1024, strict=True)
-    diagnostic_bytes: int = Field(default=64 * 1024, ge=1024, strict=True)
+    temporary_bytes: int = Field(
+        default=256 * 1024**2,
+        ge=1024**2,
+        strict=True,
+        description="Temporary storage cannot exceed memory_bytes.",
+    )
+    message_bytes: int = Field(
+        default=64 * 1024**2,
+        ge=1024,
+        strict=True,
+        description="Each message cannot exceed one quarter of memory_bytes.",
+    )
+    diagnostic_bytes: int = Field(
+        default=64 * 1024,
+        ge=1024,
+        strict=True,
+        description="Retained diagnostic bytes cannot exceed message_bytes.",
+    )
 
     @model_validator(mode="after")
     def _bounded_buffers(self) -> Self:

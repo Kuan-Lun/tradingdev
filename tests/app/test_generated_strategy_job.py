@@ -48,9 +48,6 @@ from tradingdev.domain.strategies.base import BaseStrategy
 
 
 class IntegrationStrategy(BaseStrategy):
-    def __init__(self, backtest_engine: object | None = None) -> None:
-        self._engine = backtest_engine
-
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
         result["signal"] = 0

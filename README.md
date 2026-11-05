@@ -37,6 +37,11 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 原生 Windows 目前不支援生成策略驗證、執行計畫檢查及背景回測與最佳化；
 這些程序監督功能需要 POSIX 環境。
 
+執行生成策略另需本機 Docker CLI 與支援 cgroup v2 的 Linux Docker Engine，
+並開啟記憶體、CPU 配額與程序數限制。macOS 可使用 Docker Desktop；MCP server
+與 CLI 仍在 macOS 原生執行，生成 Python 從匯入開始在 Linux 容器中執行。
+目前只接受本機 Unix socket，不支援遠端 SSH／TCP Docker context。
+
 Node.js 不是啟動 MCP 助手或執行離線 pytest 的先決條件。若要**建置或檢查簡報**
 （`scripts/presentations.sh`、`scripts/check-presentations.sh`），另需 Node.js 18
 以上與 npm，並確認 `node` 在 `PATH` 上：
@@ -55,9 +60,10 @@ Node.js 或 npm 本身；執行 `setup` 前請先裝好 Node.js 與 npm。簡報
 git clone https://github.com/Kuan-Lun/tradingdev.git
 cd tradingdev
 uv sync --locked
+docker build --target strategy-runtime -t tradingdev-strategy-runtime:0.1.0 .
 ```
 
-已有專案時，直接在現有專案根目錄執行 `uv sync --locked` 即可。
+已有專案時，在現有專案根目錄執行 `uv sync --locked`，並依下方更新流程重建策略映像。
 這會建立 `.venv` 並安裝鎖定版本的套件，包含內建策略需要的機器學習依賴；
 首次安裝可能需要較長時間。從 Python 3.12／3.13 升級或明確選擇版本時，
 使用 `uv sync --locked --python 3.14`；舊版 Python 不再支援。
@@ -67,6 +73,11 @@ FLAML 自動選模在此環境由專案測試驗證；Python 3.14 與所用 XGBo
 [依賴相容性限制](docs/development.md#依賴相容性限制)。
 
 以下終端機命令皆在專案根目錄執行。
+
+更新程式後也要重建策略映像。自訂標籤時，在啟動 MCP／CLI 的環境設定
+`TRADINGDEV_STRATEGY_IMAGE`；未設定時使用已安裝專案版本的映像標籤。
+缺少映像、daemon 或必要隔離能力會明確失敗，不會改在本機執行生成 Python。
+已固定的執行綁定原映像內容，仍需重播時請保留該映像。
 
 ### 2. 啟動 MCP server 並連接助手
 
@@ -168,6 +179,7 @@ Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413�
 
 適合長期運行 MCP Server 的 Linux 伺服器或 NAS。主機需有 Docker Engine 與
 Docker Compose v2 以上，以及 64 位元 x86-64 或 ARM64 CPU；不支援 32 位元 NAS。
+Engine 須支援前述 cgroup v2 限制，並提供本機 Unix socket。
 映像包含 Python 與內建策略所需依賴，首次建置會下載較多套件，請預留磁碟空間。
 這套部署只提供 MCP Server；查看結果時，可請助手產生 HTML 報告並匯出研究 ZIP，
 下載後離線開啟，操作見[查看結果與圖表](#查看結果與圖表)。
@@ -192,6 +204,12 @@ id -g
 若要另存到 NAS 共享資料夾，將 `TRADINGDEV_DATA_DIR` 改為該資料夾的絕對路徑，
 例如 `/volume1/docker/tradingdev-workspace`，先建立它並授予該帳號讀寫權限。
 遇到 `Permission denied` 時核對 UID／GID 與 NAS 資料夾權限；部署不會自動變更既有檔案擁有者。
+
+MCP 容器需要連接同一個 Docker daemon 來建立策略執行單元。Linux 上先用
+`stat -c '%g' /var/run/docker.sock` 查詢 socket 群組，將數字填入
+`TRADINGDEV_DOCKER_GID`；socket 不在此路徑時一併設定 `TRADINGDEV_DOCKER_SOCKET`。
+這會授予可信 MCP 控制程式操作 daemon 的權限；socket 的唯讀掛載不會限制 Docker API。
+生成策略的容器不會取得 socket、主機工作區或主機環境變數。
 
 首次使用請選擇空的工作區。既有研究可能記錄絕對路徑，不要直接把原生安裝的工作區
 搬到容器內當作遷移。容器內的工作區固定為 `/workspace`，往後更新與還原都保持此路徑。
@@ -238,7 +256,7 @@ Host 值不含協定或路徑，Origin 包含協定但不含路徑；非預設�
 
 允許清單不提供登入驗證。服務能保存並執行生成的 Python 策略，請只開放給可信使用者；
 公開網路入口須由反向代理提供驗證、TLS 與存取控制。共用此容器的客戶端會使用同一工作區，
-不具備每位使用者的資料隔離；容器也不代表完整的策略執行 sandbox。
+不具備每位使用者的資料隔離。生成程式的容器邊界不取代帳號權限與服務部署保護。
 瀏覽器客戶端所需的跨來源政策仍由代理處理，詳細限制見
 [HTTP 連接說明](#手動啟動並使用-http-連接)。
 
@@ -248,6 +266,7 @@ Host 值不含協定或路徑，Origin 包含協定但不含路徑；非預設�
 
 ```bash
 docker compose config --quiet
+docker build --target strategy-runtime -t tradingdev-strategy-runtime:0.1.0 .
 docker compose up -d --build
 docker compose ps
 docker compose logs --tail=100 -f mcp
@@ -275,6 +294,7 @@ docker compose stop
 
 ```bash
 git pull --ff-only
+docker build --target strategy-runtime -t tradingdev-strategy-runtime:0.1.0 .
 docker compose up -d --build
 ```
 
@@ -362,8 +382,15 @@ GLFT 的 EMA 聚合設定使用 `signal_agg_bars` 與 `signal_agg_bars_candidate
 舊版本與歷史結果仍保留，可請助手指定版本執行或查詢。
 自行撰寫 Python 或 YAML 時，請參考[策略契約](docs/strategy_contract.md)。
 
-程式驗證、合成資料檢查與正式回測都可能執行生成的 Python。這些步驟不是完整的安全沙箱，
-工作區路徑也不限制程式能存取的範圍；詳見[策略安全模型](docs/strategy_contract.md#security-model)。
+程式驗證、合成資料檢查與正式回測都可能執行生成的 Python，統一使用有期限與資源上限的
+Linux 容器，無外部網路或主機資料夾掛載。策略可讀取執行映像內的檔案；行情與研究資料
+須由主程式傳入，不能直接取得主機工作區或回測引擎。
+超限會失敗，需由操作者調整 `TRADINGDEV_RUNTIME_LIMITS` 或修改策略後重新準備執行。
+隔離範圍、可傳輸資料及清理失敗的處理見[策略安全模型](docs/strategy_contract.md#security-model)。
+
+升級前未保存隔離環境身分的生成策略執行，須重新準備後才能執行；舊原始碼與結果不會
+自動改寫或刪除。使用舊版的引擎注入參數時，須修訂策略以只使用傳入資料。
+固定執行仍需要當時的策略映像，請勿刪除還要重用的映像。
 
 ### 比較參數
 

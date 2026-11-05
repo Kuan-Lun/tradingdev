@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.cli.reports import main as report_cli_main
 from tradingdev.adapters.reporting.labels import metric_label, unit_label
@@ -106,7 +107,9 @@ def _save(
                 },
             },
             strategy_execution=StrategyExecution(
-                kind="generated", constructor_kwargs={"slow": 26, "signal": 9}
+                kind="generated",
+                program=GENERATED_PROGRAM,
+                constructor_kwargs={"slow": 26, "signal": 9},
             ),
         )
     digest = manifest.manifest_hash if manifest else None

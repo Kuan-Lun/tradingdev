@@ -77,6 +77,19 @@ macOS 可使用 Docker Desktop 的 Linux Engine，透過本機 Unix socket 連�
 替代 daemon 的 adapter 測試及
 [真實容器測試](../tests/integration/test_strategy_isolation.py) 驗證。
 
+變更 worker、資料協定或其依賴後，先從待驗證內容重建策略映像，再執行相關測試。
+固定執行保存 image ID；重用標籤不會更新已保存的身分。請為本次檢查建立專用標籤與 builder，
+完成後核對引用，只清理本次建立且沒有執行引用的映像、快取及容器，不執行共享 daemon 的全域 prune。
+MCP runtime target 含 Docker CLI，Compose 只把本機 socket 掛給可信控制端；操作權限與
+安裝設定由 [README 的 Docker 部署](../README.md#使用-docker-部署) 說明。
+
+若開發檢查回報未確認清理，先保留所列控制目錄並恢復原 Docker daemon。停止相應 host
+工作後，可用 [`DockerRuntime(control_root).recover_abandoned()`](../src/tradingdev/adapters/execution/container_runtime.py)
+重試 released lease 的清理；`control_root` 使用錯誤所列 JSON 的所在目錄。
+此入口核對 daemon 身分、owner 與不可變 container ID，略過仍持有 lease 的工作。
+成功只代表該次可確認的單元已清理；仍有 JSON 或再次失敗時保留紀錄，不直接刪檔掩蓋問題。
+此入口不證明可信 host worker 已停止，也不改寫工作的結果或既有清理 acknowledgement。
+
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
 以及錯誤 Host／Origin 的拒絕行為。使用獨立 Compose project、臨時工作區及映像標籤，
