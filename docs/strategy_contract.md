@@ -59,6 +59,13 @@ candidate cannot alter the captured market data for later candidates. Indicator
 columns may still contain warm-up NaNs. These checks do not prove the absence of
 future-data use, agreement with a prose strategy, or safe Python execution.
 
+When [`generate_checked_signals`](../src/tradingdev/domain/strategies/signals.py)
+rejects output, callers can inspect `SignalContractError.analysis` for observations
+that `signal_analysis` could safely extract. The isolated strategy worker returns
+this analysis alongside its contract diagnostics. Malformed output may yield only
+partial analysis or an empty mapping; other execution failures need not provide
+analysis, and complete statistics are not guaranteed.
+
 ### Signal and Execution Semantics
 
 In signal mode, each row specifies a position state: `1` long, `-1` short,

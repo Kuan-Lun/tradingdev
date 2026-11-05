@@ -452,6 +452,16 @@ Supervisor 停止 host worker 後，依[容器執行 adapter](#容器執行-adap
 離開時確認容器清理。兩者接收已固定來源雜湊、類別與 runtime 的
 [`GeneratedProgram`](src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
 
+直接呼叫時，`inspect_parameters(..., capture=True)` 擷取缺少的宣告預設、核對 keyword
+binding 並回傳完整設定 dict；它不呼叫建構子，但仍會載入及執行模組層程式。
+`capture=False` 與 `open_strategy` 要求每個具名參數都有顯式值，包括已有預設的參數。
+呼叫端可先 capture，再把回傳 dict 交給驗證或開啟策略；也可自行提供完整設定。
+
+這些 helper 的設定與 proxy hook 回傳值遵循
+[`finite_strategy_value`](src/tradingdev/domain/strategies/execution.py) 的有限 JSON 邊界。
+`get_parameters()` 須回傳 JSON object；`rolling_trace()` 須回傳 JSON object 或 `None`。
+內含 tuple、NumPy 陣列或其他不受支援物件的 Python dict 也會被拒絕，不自動轉型。
+
 DataFrame 透過 [`FramePayload`、`encode_frame` 與 `decode_frame`](src/tradingdev/adapters/execution/frame_codec.py)
 跨越邊界。欄名必須是唯一字串，index／columns 的名稱只能是字串或 `None`。
 支援 RangeIndex、DatetimeIndex 及一般數值／字串 index；MultiIndex、categorical／自訂
