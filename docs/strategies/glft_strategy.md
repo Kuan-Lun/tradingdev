@@ -8,6 +8,19 @@
 
 適用場景：第三方造市服務，需達成指定交易量（如單邊 12.5M USDT/月），同時控制虧損。
 
+## 時間尺度
+
+純 GLFT 與 GLFT-ML 以輸入 K 棒為共同時間單位，支援固定間距的秒、分鐘、小時等資料。
+`fit()` 與 `generate_signals()` 要求至少兩根帶有 `timestamp` 的 K 棒，時間戳須有效、
+唯一且遞增，正規化為 UTC 後間距須相同。實際間距用於每根波動率換算；不以預設 YAML
+的 `1m` 猜測，也不把整段資料的中位間距當作缺棒修復。缺棒造成的間距變化、休市間隔
+及不等長日曆 K 棒會失敗，不補價格或壓縮時間軸。均勻缺失的資料無法僅靠時間戳辨認，
+來源資料仍須符合請求頻率；策略不宣稱這項檢查能證明行情完整。
+
+EMA／波動率窗口、持倉上限與 ML 預測 horizon 都以根數計算；例如 1h 的 30 根持倉
+上限為 30 小時。切換頻率會改變實際研究時長，不保證績效相同。已完成訓練或參數搜尋
+的實例若改用另一頻率，須重新 `fit()`。AutoML 的運算時間預算仍以秒計，不隨 K 棒改變。
+
 ## 理論基礎
 
 ### 原始 GLFT 模型
@@ -76,11 +89,12 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 
 ### 出場邏輯
 
-持倉後按優先級檢查以下出場條件：
+策略狀態機持倉後按優先級檢查以下出場條件；持倉門檻計算輸入 K 棒根數。
+回測引擎仍可能提早平倉，見[持倉時間限制的研究假設](#持倉時間限制的研究假設)。
 
 | 優先級 | 條件 | 參數 | 說明 |
 |--------|------|------|------|
-| 0 | 最短持倉 | `min_holding_bars` | 持倉不足門檻 → 強制不平倉（交易所規則） |
+| 0 | 最短持倉 | `min_holding_bars` | 持倉根數不足門檻 → 維持策略持倉訊號 |
 | 1 | 最長持倉 | `max_holding_bars` | 持倉滿上限 → 強制平倉 |
 | 2 | 策略級止損 | `strategy_sl` | deviation 反向超過入場偏離 → 止損 |
 | 3 | 利潤目標 | `profit_target_ratio` | deviation 回歸至目標水平 → 獲利了結 |
@@ -145,19 +159,23 @@ Parkinson 可從第一筆有效高低價計算，realized 至少需兩筆報酬�
 **轉換公式**（年化 % → per-bar sigma）：
 
 ```text
-sigma_per_bar = DVOL / 100 / sqrt(525960)
+bars_per_year = 365.25 * 24 * 3600 / bar_seconds
+sigma_per_bar = DVOL / 100 / sqrt(bars_per_year)
 ```
 
-其中 `525960 = 365.25 × 24 × 60`（年分鐘數）。
+其中 `bar_seconds` 是輸入時間戳的固定間距。沿用 DVOL 的全年連續市場換算假設：
+1m 每年有 525960 根，1h 每年有 8766 根，因此相同 DVOL 的每小時 sigma 是每分鐘的
+`√60` 倍。`realized`／`parkinson` 已在輸入 K 棒尺度，不再乘此係數。這是策略內的
+隱含波動率換算，與績效指標使用的日報酬年化設定分開。
 
 ### Multi-Timeframe
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `signal_agg_minutes` | 1 | 信號聚合時間（分鐘）；1=不聚合，5=5 分鐘 EMA |
-| `signal_agg_minutes_candidates` | [1] | Grid search 候選值 |
+| `signal_agg_bars` | 1 | 信號聚合根數；1=不聚合，5=每 5 根輸入 K 棒聚合 |
+| `signal_agg_bars_candidates` | [1] | Grid search 候選值 |
 
-當 `signal_agg_minutes > 1` 時，EMA 在聚合後的 N 分鐘 K 棒上計算，再映射回 1 分鐘解析度；每根 1 分鐘 bar 只使用已收完的聚合 K 棒，第一根聚合 K 棒收完之前為 NaN，不進場。執行仍在 1 分鐘精度。效果：偏離度更大、信號更穩定。
+當 `signal_agg_bars > 1` 時，從輸入第一根開始，每 N 根 K 棒組成一組，取完整組的最後收盤價計算 EMA，再映射回原始 K 棒。分組不對齊時鐘整點；尾端不足 N 根不更新 EMA。每根只使用已收完的完整組，暖機完成前為 NaN，不進場。兩個聚合參數均只接受正整數；舊的 `signal_agg_minutes`／`signal_agg_minutes_candidates` 已移除，1m 設定可改名並保留原數值。
 
 ### Entry
 
@@ -178,8 +196,8 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `min_holding_bars` | 5 | 最短持倉（5 min @1m）— 符合交易所規則 |
-| `max_holding_bars` | 30 | 最長持倉（30 min @1m）— 對應 GLFT 的 horizon T |
+| `min_holding_bars` | 5 | 最短持倉根數（1m 時為 5 分鐘） |
+| `max_holding_bars` | 30 | 最長持倉根數（1m 時為 30 分鐘）— 對應 GLFT 的 horizon T |
 
 ### Dynamic Sizing（動態倉位）
 
@@ -234,15 +252,17 @@ actual_size = position_size × weight
 | `monthly_volume_target` | 12,500,000 | 月度單邊交易量目標 |
 | `fee_rate` | 0.0005 | 單邊手續費（taker） |
 
-## 交易所規則合規
+## 持倉時間限制的研究假設
 
-**限制**: ≤3 min 交易占比 < 60%, ≤5 min 交易占比 < 75%
+既有研究採用「持倉 ≤3 分鐘的交易占比 <60%、≤5 分鐘的占比 <75%」作為目標，
+這是歷史研究假設，不代表目前交易所規則或合規保證。
 
-**合規機制**:
+`min_holding_bars` 計算輸入根數：5 根 1m K 棒為 5 分鐘，5 根 1s K 棒只有 5 秒。
+切換頻率時，須按實際 K 棒長度重新換算持倉根數，並檢查回測成交明細的實際持倉時間
+與占比；恰好 5 分鐘仍屬於上述「≤5 分鐘」，不能僅靠設定 5 根判定達標。
 
-- `min_holding_bars >= 5`（@1m timeframe = 5 分鐘）
-- 狀態機強制執行：持倉期間內不可提前退出
-- 較大的 position_size (10,000 USDT) 減少所需交易次數
+最短持倉只約束策略狀態機的出場訊號，回測引擎的止損、止盈、月度熔斷或資料結束
+仍可能提早平倉。增加 `position_size` 也不保證持倉時間占比符合目標。
 
 ## 歷史 Walk-Forward 驗證結果
 
@@ -375,8 +395,8 @@ strategy:
     strategy_sl: 0.01
 
     # Multi-timeframe
-    signal_agg_minutes: 1
-    signal_agg_minutes_candidates: [1]
+    signal_agg_bars: 1
+    signal_agg_bars_candidates: [1]
 
     # Position & volume
     position_size: 10000.0

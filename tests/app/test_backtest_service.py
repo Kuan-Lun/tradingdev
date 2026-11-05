@@ -5,7 +5,9 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import Mock
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
@@ -21,6 +23,10 @@ from tradingdev.app.strategy_service import (
 )
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.glft_ml_strategy.strategy import (
+    GLFTMLStrategy,
+)
+from tradingdev.domain.strategies.bundled.glft_strategy.strategy import GLFTStrategy
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
@@ -315,6 +321,46 @@ def test_run_raw_config_allows_promoted_bundled_strategy(tmp_path: Path) -> None
     run = service.run_raw_config(raw_config)
 
     assert run.mode == "simple"
+
+
+@pytest.mark.parametrize("ml", [False, True])
+@pytest.mark.parametrize("gap", [False, True])
+def test_glft_execution_uses_hourly_data_and_rejects_gaps(
+    tmp_path: Path, monkeypatch: MonkeyPatch, ml: bool, gap: bool
+) -> None:
+    frame = _frame().assign(open=100.0, high=130.0, low=90.0, volume=100.0, dvol=50.0)
+    if gap:
+        frame = frame.drop(index=5)
+    dataset = LoadedDataset(frame, tmp_path / "processed.parquet", "glft-hourly")
+    service = BacktestService(
+        data_service=_DataServiceStub(dataset),
+        strategy_loader=StrategyLoader(workspace_root=tmp_path / "workspace"),
+        strategy_gate=_gate_service(tmp_path),
+    )
+    cls = GLFTMLStrategy if ml else GLFTStrategy
+    method = "_run_ml_glft_state_machine" if ml else "_run_glft_state_machine"
+    observed = Mock(wraps=getattr(cls, method))
+    monkeypatch.setattr(cls, method, staticmethod(observed))
+    config = _raw_config(
+        strategy={
+            "id": "glft_ml" if ml else "glft_market_making",
+            "parameters": {"vol_type": "implied"},
+        }
+    )
+    manifest = service.prepare_execution(config, kind="backtest")
+    manifest.verify()
+    assert manifest.config_copy()["backtest"]["timeframe"] == "1h"
+    if gap:
+        with pytest.raises(ValueError, match="uniform"):
+            service.run_manifest(manifest)
+        observed.assert_not_called()
+    else:
+        run = service.run_manifest(manifest)
+        observed.assert_called_once()
+        np.testing.assert_allclose(
+            observed.call_args.kwargs["sigma"], 0.5 / np.sqrt(8766)
+        )
+        assert run.pipeline.execution_manifest is manifest
 
 
 @pytest.mark.parametrize("walk_forward", [False, True])

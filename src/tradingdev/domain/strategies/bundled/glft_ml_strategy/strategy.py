@@ -2,7 +2,7 @@
 
 Combines the GLFT analytical spread model with a FLAML AutoML
 direction predictor.  The ML model forecasts price direction over
-a configurable horizon (e.g. 5 min); the GLFT model determines
+a configurable horizon (e.g. 5 input bars); the GLFT model determines
 optimal entry thresholds.  Entries are only taken when both agree.
 
 Designed for limit-order execution (maker fees).
@@ -26,6 +26,10 @@ from tradingdev.domain.optimization.grid_search import (
     tuple_grid,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.glft_time import (
+    ensure_glft_fit_scale,
+    glft_bar_seconds,
+)
 from tradingdev.domain.strategies.bundled.glft_volatility import (
     compute_glft_volatility,
 )
@@ -49,7 +53,11 @@ _GLFTParamTuple = tuple[float, float, int, int, float, float]
 class GLFTMLStrategy(BaseStrategy):
     """GLFT + FLAML AutoML direction prediction strategy.
 
-    The ML model predicts price direction over the next N minutes.
+    The ML model predicts price direction over the next N input bars.
+    Windows and holding horizons also count input bars. Timestamps must be
+    uniformly spaced (at least two bars); gaps are errors. Annualized DVOL
+    is converted to that per-bar scale using a 365.25-day continuous year.
+    After fit(), generating signals at a different bar duration requires refitting.
     The GLFT model computes entry thresholds based on volatility.
     Entries require both ML direction agreement and GLFT deviation
     threshold to be met.
@@ -65,6 +73,7 @@ class GLFTMLStrategy(BaseStrategy):
         backtest_engine: BaseBacktestEngine | None = None,
         parallel_config: ParallelConfig | None = None,
     ) -> None:
+        self._fitted_bar_seconds: float | None = None
         self._config = config
         self._backtest_engine = backtest_engine
         self._parallel_config = parallel_config
@@ -84,6 +93,7 @@ class GLFTMLStrategy(BaseStrategy):
             random_seed=config.random_seed,
         )
         self._ml_trained = False
+        self._fit_failed = False
         self._confidence_threshold: float = config.confidence_threshold
 
         # GLFT parameters (populated by fit or use defaults)
@@ -116,9 +126,15 @@ class GLFTMLStrategy(BaseStrategy):
         2. Generate ML direction predictions on training data
         3. Grid-search GLFT parameters using ML-filtered signals
         """
+        bar_seconds = glft_bar_seconds(df)
         if self._backtest_engine is None:
             logger.warning("No backtest engine; skipping fit()")
             return
+
+        # Training replaces the model before parameter search completes. Block
+        # prediction (including fallback) until the whole fit succeeds.
+        self._fit_failed = True
+        self._ml_trained = False
 
         # --- Step 1: Train ML model ---
         logger.info(
@@ -133,14 +149,20 @@ class GLFTMLStrategy(BaseStrategy):
         )
 
         self._ml_model.train(feat_df)
-        self._ml_trained = True
 
         # Score predictions and search parameters on the same complete timeline
         # used by generate_signals, not the rows retained for supervised training.
         self._grid_search_glft(df)
+        self._fitted_bar_seconds = bar_seconds
+        self._ml_trained = True
+        self._fit_failed = False
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """Generate GLFT position states, filtering by ML only after training."""
+        if self._fit_failed:
+            raise ValueError("GLFT-ML fit did not complete; refit successfully first")
+        bar_seconds = glft_bar_seconds(df)
+        ensure_glft_fit_scale(bar_seconds, self._fitted_bar_seconds)
         ml_directions: npt.NDArray[np.float64] | None
         if self._ml_trained:
             ml_directions = self._predict_ml_directions(
@@ -160,7 +182,9 @@ class GLFTMLStrategy(BaseStrategy):
             dvol = np.asarray(df["dvol"].astype(float).values)
 
         ema = self._compute_ema(close, self._best_ema_window)
-        sigma = self._compute_volatility(close, high, low, dvol=dvol)
+        sigma = self._compute_volatility(
+            close, high, low, dvol=dvol, bar_seconds=bar_seconds
+        )
 
         signals = self._run_ml_glft_state_machine(
             close=close,
@@ -249,6 +273,7 @@ class GLFTMLStrategy(BaseStrategy):
 
     def _grid_search_glft(self, df: pd.DataFrame) -> None:
         """Grid-search GLFT parameters with ML direction filter."""
+        bar_seconds = glft_bar_seconds(df)
         assert self._backtest_engine is not None
 
         cfg = self._config
@@ -310,6 +335,7 @@ class GLFTMLStrategy(BaseStrategy):
                     high,
                     low,
                     dvol=dvol,
+                    bar_seconds=bar_seconds,
                 )
 
                 signals = self._run_ml_glft_state_machine(
@@ -394,7 +420,7 @@ class GLFTMLStrategy(BaseStrategy):
         close: npt.NDArray[np.floating[Any]],
         ema_window: int,
     ) -> npt.NDArray[np.floating[Any]]:
-        """Compute EMA on 1-min close; NaN until the window has warmed up."""
+        """Compute EMA on input-bar closes; NaN until the window has warmed up."""
         return np.asarray(
             indicators.ema(pd.Series(close), ema_window),
             dtype=np.float64,
@@ -410,6 +436,8 @@ class GLFTMLStrategy(BaseStrategy):
         high: npt.NDArray[np.floating[Any]],
         low: npt.NDArray[np.floating[Any]],
         dvol: npt.NDArray[np.floating[Any]] | None = None,
+        *,
+        bar_seconds: float,
     ) -> npt.NDArray[np.floating[Any]]:
         """Compute per-bar volatility sigma."""
         return compute_glft_volatility(
@@ -419,6 +447,7 @@ class GLFTMLStrategy(BaseStrategy):
             vol_type=self._config.vol_type,
             window=self._config.vol_window,
             dvol=dvol,
+            bar_seconds=bar_seconds,
         )
 
     # ------------------------------------------------------------------

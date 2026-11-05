@@ -19,14 +19,17 @@ def compute_glft_volatility(
     *,
     vol_type: Literal["realized", "parkinson", "implied"],
     window: int,
+    bar_seconds: float,
     dvol: npt.NDArray[np.floating[Any]] | None = None,
 ) -> npt.NDArray[np.float64]:
-    """Estimate sigma, preserving missing values and the one-minute DVOL scale."""
+    """Estimate per-input-bar sigma; DVOL assumes a 365.25-day continuous year."""
+    if not math.isfinite(bar_seconds) or bar_seconds <= 0:
+        raise ValueError("bar_seconds must be finite and positive")
     if vol_type == "implied":
         if dvol is None:
             raise ValueError("dvol array is required when vol_type is 'implied'")
-        # Annualized percent to one-minute sigma (365.25 * 24 * 60).
-        sigma = dvol / 100.0 / np.sqrt(525_960.0)
+        # Historical estimators already measure input-bar returns/ranges.
+        sigma = dvol / 100.0 / np.sqrt(365.25 * 24 * 3600 / bar_seconds)
     elif vol_type == "parkinson":
         log_hl = np.log(np.maximum(high, 1e-10) / np.maximum(low, 1e-10))
         parkinson_var = log_hl**2 / (4.0 * math.log(2))

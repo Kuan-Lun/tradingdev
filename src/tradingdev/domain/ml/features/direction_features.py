@@ -1,9 +1,9 @@
-"""Feature engineering for multi-minute direction prediction.
+"""Feature engineering for multi-bar direction prediction.
 
 Produces a feature matrix suitable for tabular learners (FLAML AutoML,
 LightGBM, XGBoost, CatBoost) to predict the direction of price movement
 over configurable horizons
-(e.g. 5, 15, 30 minutes).
+(e.g. 5, 15, 30 input bars).
 """
 
 from __future__ import annotations
