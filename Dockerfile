@@ -14,7 +14,7 @@ RUN uv sync --locked --no-dev --no-install-project --no-cache
 COPY src/ ./src/
 RUN uv sync --locked --no-dev --no-editable --no-cache
 
-FROM base AS runtime
+FROM base AS installed
 RUN groupadd --gid 1000 tradingdev \
     && useradd --uid 1000 --gid tradingdev --create-home tradingdev \
     && mkdir /workspace \
@@ -31,6 +31,12 @@ ENV PATH="/app/.venv/bin:$PATH" \
     MYPY_CACHE_DIR=/tmp/mypy \
     XDG_CACHE_HOME=/tmp/cache
 USER tradingdev
+
+FROM installed AS strategy-runtime
+USER root
+ENTRYPOINT ["python", "-I", "-u", "-m", "tradingdev.adapters.execution.container_init"]
+
+FROM installed AS runtime
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD ["python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=3).close()"]
