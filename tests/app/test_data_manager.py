@@ -280,10 +280,14 @@ def test_inspection_distinguishes_missing_observations_from_empty_query(
         raw_dir=str(tmp_path / "raw"),
         processed_dir=str(tmp_path / "processed"),
     )
-    before = service._inspect_market(manager._request, config)
+    before = service._inspection.market(
+        manager._request, service._market_cache(manager._request, config)
+    )
     assert before["rows"] is None and before["queries"] == []
     manager.load()
-    after = service._inspect_market(manager._request, config)
+    after = service._inspection.market(
+        manager._request, service._market_cache(manager._request, config)
+    )
     assert after["rows"] == 0 and len(after["queries"]) == 1
 
 

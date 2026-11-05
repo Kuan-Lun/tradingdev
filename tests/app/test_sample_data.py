@@ -169,7 +169,7 @@ def test_sample_missing_feature_is_fetched_only_into_sample_directory(
         def save_raw(self, frame: pd.DataFrame, path: Path) -> None:
             path.write_text(frame.to_csv(index=False))
 
-    monkeypatch.setattr("tradingdev.app.data_service.DeribitDVOLCrawler", Crawler)
+    monkeypatch.setattr("tradingdev.app.feature_data.DeribitDVOLCrawler", Crawler)
     output = tmp_path / "sample"
     result = data.load_sample(raw, _config(), max_rows=64, output_dir=output)
     assert len(result.frame) == 64

@@ -111,7 +111,7 @@ def test_job_lifecycle_payloads_satisfy_advertised_contract(
             },
         )
         store.update_job("job", result_path=str(result_path))
-    monkeypatch.setattr(job_service, "_is_process_alive", lambda _: True)
+    monkeypatch.setattr(job_service._lifecycle, "_is_process_alive", lambda _: True)
     server = MCPServer("contract-test")
     jobs.register(server, job_service)
     result = asyncio.run(server.call_tool("get_job_status", {"job_id": "job"}))

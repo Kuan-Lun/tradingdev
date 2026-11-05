@@ -335,7 +335,7 @@ def test_cancellation_stops_worker_before_recovering_published_candidate(
         stopped.append(selected)
         return True
 
-    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stop)
+    monkeypatch.setattr("tradingdev.app.job_lifecycle.request_worker_stop", stop)
 
     response = JobService(job_store=fixture.jobs).cancel_job("comparison")
 
@@ -357,7 +357,7 @@ def test_failed_worker_cleanup_does_not_finalize_comparison_candidates(
     def fail_stop(_root: Path, _selected: WorkerHandle) -> bool:
         raise RuntimeError("cleanup not confirmed")
 
-    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", fail_stop)
+    monkeypatch.setattr("tradingdev.app.job_lifecycle.request_worker_stop", fail_stop)
 
     response = JobService(job_store=fixture.jobs).cancel_job("comparison")
 
@@ -374,7 +374,7 @@ def test_dead_worker_recovers_completed_publication_before_finalizing_ledger(
     handle = WorkerHandle(12345, 100.0, "b" * 32)
     fixture.jobs.update_job("comparison", **handle.job_fields())
     service = JobService(job_store=fixture.jobs)
-    monkeypatch.setattr(service, "_is_process_alive", lambda _job: False)
+    monkeypatch.setattr(service._lifecycle, "_is_process_alive", lambda _job: False)
     stopped: list[WorkerHandle] = []
 
     def stop(_root: Path, selected: WorkerHandle) -> bool:
@@ -382,7 +382,7 @@ def test_dead_worker_recovers_completed_publication_before_finalizing_ledger(
         stopped.append(selected)
         return False
 
-    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stop)
+    monkeypatch.setattr("tradingdev.app.job_lifecycle.request_worker_stop", stop)
 
     response = service.get_job_status("comparison")
 
@@ -593,7 +593,7 @@ def test_status_preserves_completion_between_liveness_check_and_cleanup(
         **WorkerHandle(12345, 100.0, "b" * 32).job_fields(),
     )
     service = JobService(job_store=fixture.jobs)
-    monkeypatch.setattr(service, "_is_process_alive", lambda _job: False)
+    monkeypatch.setattr(service._lifecycle, "_is_process_alive", lambda _job: False)
 
     calls: list[WorkerHandle] = []
 
@@ -602,7 +602,7 @@ def test_status_preserves_completion_between_liveness_check_and_cleanup(
         fixture.service.execute("comparison", worker_handle=_handle)
         return False
 
-    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stopped)
+    monkeypatch.setattr("tradingdev.app.job_lifecycle.request_worker_stop", stopped)
 
     response = service.get_job_status("comparison")
 
