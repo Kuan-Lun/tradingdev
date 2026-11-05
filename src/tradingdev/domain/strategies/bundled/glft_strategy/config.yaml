@@ -15,9 +15,9 @@ strategy:
     vol_window: 30 # Rolling window for sigma (unused when vol_type: "implied")
     vol_type: "implied" # "realized", "parkinson", or "implied"
 
-    # Holding management (exchange compliance)
-    min_holding_bars: 5 # 5 min @1m — exchange rule compliance
-    max_holding_bars: 30 # 30 min @1m — natural tau horizon
+    # Holding management in input bars; elapsed time depends on bar duration.
+    min_holding_bars: 5
+    max_holding_bars: 30 # GLFT tau horizon in input bars
 
     # fit() grid search candidates
     # gamma controls vol-adaptive threshold (corrected formula)
