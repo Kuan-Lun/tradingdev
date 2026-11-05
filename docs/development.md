@@ -73,37 +73,17 @@ export TRADINGDEV_STRATEGY_IMAGE=tradingdev-strategy-runtime:dev
 macOS 可使用 Docker Desktop 提供的 Linux Engine。
 測試本身不下載映像；缺少 daemon、
 必要能力或預建映像會失敗。`TRADINGDEV_STRATEGY_IMAGE` 可指定專用測試標籤，執行前
-會解析為固定 image ID。`DockerRuntime.resolve()` 未明示 `limits` 時，會讀取
-`TRADINGDEV_RUNTIME_LIMITS` 的 JSON 物件；未設定時使用預設政策。可設定欄位、預設值及
+會解析為固定 image ID。建立 adapter 前，以 `TRADINGDEV_RUNTIME_LIMITS` 的 JSON 物件設定測試資源政策；
+未設定時使用預設政策，直接呼叫明示的 `limits` 優先。可設定欄位、預設值及
 欄位間限制以 [`RuntimeLimits`](../src/tradingdev/domain/runtime.py) 為準。
 
-直接整合或驗證 adapter 時，使用
-[`container_runtime.py`](../src/tradingdev/adapters/execution/container_runtime.py) 的以下入口：
-
-1. 建立 `DockerRuntime(control_root)`，以可保留的獨立目錄保存歸屬紀錄；
-   `resolve(image=..., limits=...)` 核對 daemon 能力與預建映像，回傳固定 image ID
-   及有效政策的 `RuntimeSpec`，不自動下載映像。
-2. 使用 `with runtime.open(spec, command) as session` 啟動映像內的命令及管理生命週期；
-   `command` 是程式與參數序列，檔案須已在映像內，不掛載 host 工作區。
-   `session.exchange(message)` 依序交換單行 `bytes`：傳入內容不含換行，回傳內容移除
-   結尾換行。命令須每次輸入只產生一行 stdout，診斷使用 stderr；超量與已偵測的
-   額外 stdout 會失敗。診斷保留有上限的尾端，發生截斷時標示。
-3. Context 結束時，先停止 attach client，再移除並核對整個執行單元。發生
-   `IsolatedRuntimeError` 時檢查 `cleanup_verified` 與 `control_path`；清理未確認就保留
-   控制目錄。原呼叫端停止後，可在原 daemon 上呼叫 `runtime.recover_abandoned()`
-   重試復原；它跳過仍持有 lease 的單元，不清除無法核對的紀錄。
-
-產品入口經策略 factory 使用同一 runtime；程序／檔案／網路隔離、資源限制及信任邊界
-集中於[策略安全模型](strategy_contract.md#security-model)。傳輸、程序身分與故障清理由
-替代 daemon 的 adapter 測試及[真實容器測試](../tests/integration/test_strategy_isolation.py) 驗證。
-
-驗證生成策略 worker 協定時，可直接使用
-[`generated_strategy.inspect_parameters` 與 `open_strategy`](../src/tradingdev/adapters/execution/generated_strategy.py)：
-前者擷取或驗證建構參數，後者在 context 內保留訓練狀態與亂數序列，離開時確認容器清理。
-兩者接收已固定來源雜湊、類別與 runtime 的
-[`GeneratedProgram`](../src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
-資料型別與錯誤邊界由 [codec 測試](../tests/adapters/test_frame_codec.py) 和
-[直接 worker／proxy 測試](../tests/integration/test_generated_protocol.py) 驗證。
+直接整合或診斷 adapter 時，查閱[容器執行 adapter](../ARCHITECTURE.md#容器執行-adapter)，
+取得 `DockerRuntime.resolve/open`、`ContainerSession.exchange`、生成策略呼叫與身分綁定、
+清理失敗判定及 `recover_abandoned` 的契約。傳輸、程序身分與故障清理的驗證入口為
+[替代 daemon 的 adapter 測試](../tests/adapters/test_container_runtime.py)及
+[真實容器測試](../tests/integration/test_strategy_isolation.py)。
+生成策略資料協定另由 [codec 測試](../tests/adapters/test_frame_codec.py)及
+[直接 worker／proxy 測試](../tests/integration/test_generated_protocol.py)驗證。
 
 變更 worker、資料協定或其依賴後，先從待驗證內容重建策略映像，再執行相關測試。
 固定執行保存 image ID；重用標籤不會更新已保存的身分。請為本次檢查建立專用標籤與 builder，
@@ -111,12 +91,8 @@ macOS 可使用 Docker Desktop 提供的 Linux Engine。
 MCP runtime target 含 Docker CLI，Compose 只把本機 socket 掛給可信控制端；操作權限與
 安裝設定由 [README 的 Docker 部署](../README.md#使用-docker-部署) 說明。
 
-若開發檢查回報未確認清理，先保留所列控制目錄並恢復原 Docker daemon。停止相應 host
-工作後，可用 [`DockerRuntime(control_root).recover_abandoned()`](../src/tradingdev/adapters/execution/container_runtime.py)
-重試 released lease 的清理；`control_root` 使用錯誤所列 JSON 的所在目錄。
-此入口核對 daemon 身分、owner 與不可變 container ID，略過仍持有 lease 的工作。
-成功只代表該次可確認的單元已清理；仍有 JSON 或再次失敗時保留紀錄，不直接刪檔掩蓋問題。
-此入口不證明可信 host worker 已停止，也不改寫工作的結果或既有清理 acknowledgement。
+若開發檢查回報未確認清理，保留所列控制目錄；停止相應 host 工作並恢復原 Docker daemon
+後，依[容器執行 adapter 的復原契約](../ARCHITECTURE.md#容器執行-adapter)選定控制目錄並重試。
 
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，

@@ -430,16 +430,47 @@ JobQueries 讀取結果明細與組裝回覆；清單查詢只讀取已保存狀
 StrategyFactory 的 context-managed 生命週期，透過有界資料協定呼叫容器中的實例。
 fit 狀態與亂數 context 保留於同一實例；主程式不反序列化 worker 提供的 Python 物件。
 
-DockerRuntime 以 daemon 身分、不可變 container ID、owner label 與檔案鎖 lease 記錄
-歸屬。先停止直屬 attach client 解除輸出回壓，再移除並核對隔離單元；無法確認時保留
-控制紀錄並回報失敗。Supervisor 停止 host worker 後另恢復該次工作的容器控制紀錄，
-不以程序群組已空代替容器清理。跨 MCP session 的取消沿用同一 launch 控制身分。
+Supervisor 停止 host worker 後，依[容器執行 adapter](#容器執行-adapter)的清理契約
+恢復該次工作的容器控制紀錄，不以程序群組已空代替容器清理。
+跨 MCP session 的取消沿用同一 launch 控制身分。
 
-隔離單元由不同 UID 的可信 PID 1 持有獨立期限。PID namespace 結束時，Linux 核心
-一併停止另開 session 的策略後代；即使外部強殺 host controller，這個期限仍存在。
 強殺 host supervisor 仍可能使可信 host worker 的清理證據缺失；不得據此宣稱整個工作
-已清理。Daemon 或核心故障時不承諾立即清理，必須保留紀錄並恢復可核對的控制環境。
+已清理。容器隔離與獨立期限的保證範圍見[策略安全模型](docs/strategy_contract.md#security-model)。
 控制檔案與證據見[Workspace Layout](docs/run_artifacts.md#workspace-layout)。
+
+### 容器執行 adapter
+
+[`DockerRuntime`](src/tradingdev/adapters/execution/container_runtime.py) 是產品
+`StrategyFactory`、直接整合與測試共用的容器執行入口。隔離保證與可信元件的範圍由
+[策略安全模型](docs/strategy_contract.md#security-model)說明；
+建置映像、環境設定與測試操作見[開發指南](docs/development.md#容器建置與驗證)。
+
+生成策略透過
+[`generated_strategy.inspect_parameters` 與 `open_strategy`](src/tradingdev/adapters/execution/generated_strategy.py)
+使用此 adapter：前者擷取或驗證建構參數，後者在 context 內保留訓練狀態與亂數序列，
+離開時確認容器清理。兩者接收已固定來源雜湊、類別與 runtime 的
+[`GeneratedProgram`](src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
+底層容器呼叫契約如下。
+
+1. 建立 `DockerRuntime(control_root)`，以可保留的獨立目錄保存執行歸屬紀錄。
+   Adapter 固定所選本機 Docker 端點，後續 Docker context 變更不會改變清理目標。
+   `resolve(image=..., limits=...)` 核對 daemon 能力與預建映像，回傳固定 image ID
+   及有效政策的 `RuntimeSpec`，不自動下載映像。政策欄位與限制由
+   [`RuntimeLimits`](src/tradingdev/domain/runtime.py)定義。
+2. 使用 `with runtime.open(spec, command) as session` 啟動映像內的命令及管理生命週期。
+   `command` 是程式與參數序列，所需檔案須已在映像內；此入口不掛載 host 工作區。
+   每個 context 擁有獨立執行單元及歸屬紀錄。
+3. `session.exchange(message)` 依序交換單行 `bytes`：傳入內容不含換行，回傳內容移除
+   結尾換行。命令須每次輸入只產生一行 stdout，診斷使用 stderr；超量與已偵測的
+   額外 stdout 會失敗。診斷保留有上限的尾端，發生截斷時標示。
+4. Context 正常結束或拋出例外時，先停止 attach client，再移除並核對整個執行單元。
+   清理核對 daemon 身分、owner 與不可變 container ID；只有確認清理後才移除歸屬紀錄。
+   發生 `IsolatedRuntimeError` 時檢查 `cleanup_verified` 與 `control_path`；清理未確認
+   就保留控制目錄，不把操作失敗與清理完成視為同一件事。
+5. 原呼叫端停止後，可在原 daemon 上呼叫 `runtime.recover_abandoned()` 重試復原；
+   `control_root` 使用錯誤所列 `control_path` JSON 的所在目錄。
+   它只接手已釋放 lease 的單元，跳過仍持有 lease 的執行；身分不符、紀錄不明或
+   daemon 不可用時回報失敗並保留紀錄，不承諾立即清理。
 
 ### 可重現性與策略執行安全
 

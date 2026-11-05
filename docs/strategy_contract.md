@@ -732,10 +732,12 @@ data acquisition, backtest engines, result storage and independent ML model
 loading remain trusted host operations.
 
 Each generated instance has a private PID namespace and an independent trusted
-PID 1 deadline. The generated worker runs as another unprivileged UID, without
-effective capabilities. A read-only image, bounded temporary storage, no host
-mounts, no Docker socket, no inherited host secrets and no external network
-restrict access. Memory, CPU quota and process-count limits cover descendants.
+PID 1 deadline. The trusted `container_init` runs as root PID 1 with only the
+`SETUID` and `SETGID` capabilities, then launches the generated worker as UID/GID
+65534 with no supplementary groups or effective capabilities. A read-only image,
+bounded temporary storage, no host mounts, no Docker socket, no inherited host
+secrets and no external network restrict access. Memory, CPU quota and process-count
+limits cover descendants.
 Normal completion, failure, timeout and cancellation remove the entire unit,
 including descendants that create another session. A lost host controller cannot
 remove PID 1's deadline; daemon unavailability or uncertain cleanup is reported
