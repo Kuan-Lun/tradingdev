@@ -99,7 +99,7 @@ Workers Routes 編輯權限；部署後在本專案 Worker 的 **Domains** 核�
 不覆寫本專案 Worker，也不移動共用 Custom Domain。共用入口的首頁連結由管理者
 另外維護，不隨 TradingDev 發布更新。
 
-簡報位址為 `https://slides.klwang.tw/tradingdev/`。只有部署成功才會更新網站；
+簡報位址為 [https://slides.klwang.tw/tradingdev/](https://slides.klwang.tw/tradingdev/)。只有部署成功才會更新網站；
 repository 中的設定檔不代表已連接 Cloudflare 或發布。
 
 ## 透過 GitHub Pages 發布
