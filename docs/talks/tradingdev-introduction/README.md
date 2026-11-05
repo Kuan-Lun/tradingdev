@@ -81,6 +81,19 @@ Cloudflare 的 Wrangler 預覽設定契約明定此要求，原文節錄：
 在建置記錄確認分支與 commit，成功後開啟產生的預覽網址並加上 `/tradingdev/` 查看簡報。
 分支預覽與 `main` 正式部署是兩次獨立建置，須分別核對結果；本機簡報檢查不代表雲端部署成功。
 
+在 **Settings → Builds** 的 **Production** 與 **Preview base** 分頁，分別設定
+**Build watch paths**：從 **Include paths** 移除預設的 `*`，加入以下兩個精確路徑，
+並讓 **Exclude paths** 保持空白。
+
+- `docs/talks/tradingdev-introduction/index.html`
+- `wrangler.jsonc`
+
+這項設定由 Cloudflare 保存，用來略過一般程式、測試與文件更新，不寫在 `wrangler.jsonc`。
+`slides.md` 或 `theme.css` 修改後，須重建並提交 HTML，由 HTML 變更觸發發布。
+Cloudflare 對零檔案變更、至少 3,000 個檔案變更或至少 20 個 commits 的推送會略過
+路徑篩選，因此這些事件仍可能觸發建置。核對略過行為時，使用一般的小型文件提交，
+不要用空提交作為不應建置的測試。
+
 若建置設定顯示 Git 帳戶中斷連線，按 Git repository 旁的 **Manage**，在 GitHub
 完成必要的重新驗證，確認 Cloudflare 應用程式仍可存取本 repository，再回到
 Cloudflare 重新整理設定頁。確認連線警告消失、Production branch 為 `main`，
