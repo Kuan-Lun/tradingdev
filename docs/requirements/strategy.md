@@ -20,7 +20,7 @@
 
 - **需求**：生成策略須通過程式政策、品質及合成訊號檢查，取得所選版本的執行資格。訊號須符合契約並保持輸入資料；策略作者不得使用未來資料。
 - **驗收**：無效訊號、輸入變更、程式檢查失敗、逾時或清理未確認均不得授予資格；實際執行仍檢查當次有效參數的訊號。通過合成檢查不表示已證明無前視、符合自然語言構想或能在真實資料獲利。
-- **契約**：[Python 訊號契約](../strategy_contract.md#python-contract)、[執行安全邊界](../strategy_contract.md#security-model)。
+- **契約**：[Python 訊號契約](../strategy_contract.md#python-contract)、[版本驗證與資格](../strategy_contract.md#revision-identity-and-eligibility)、[執行安全邊界](../strategy_contract.md#security-model)。
 - **驗證**：[訊號框架](../../tests/domain/strategies/test_signal_frames.py) 驗證輸入與輸出；[真實策略檢查 worker](../../tests/integration/test_strategy_check_workers.py) 驗證正常、失敗與逾時清理。
 
 ## FR-STR-004 參數實驗與版本隔離
