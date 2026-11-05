@@ -66,6 +66,12 @@ mkdir -p site-dist/tradingdev && cp docs/talks/tradingdev-introduction/index.htm
 Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
 `site-dist/` 是忽略的發布產物，只包含要公開的 HTML；不會將整個 `docs/` 發布。
 
+若建置設定顯示 Git 帳戶中斷連線，按 Git repository 旁的 **Manage**，在 GitHub
+完成必要的重新驗證，確認 Cloudflare 應用程式仍可存取本 repository，再回到
+Cloudflare 重新整理設定頁。確認連線警告消失、Production branch 為 `main`，
+且 **Disable builds** 關閉。下一次主線更新後，核對建置記錄的 commit 與部署結果；
+手動重試建置成功不代表 GitHub 自動觸發已驗證。
+
 ### 共用網域與專案路徑
 
 `slides.klwang.tw` 是多個專案共用的簡報網域。Custom Domain 綁定獨立的
@@ -83,8 +89,9 @@ Custom Domain 綁回本專案，也不要使用會涵蓋 `/tradingdev-other` 的
 `/tradingdev*`。不帶尾端斜線且附有 query 的網址由共用入口補上斜線後轉址。
 
 首次設定時，管理者先在 **Workers & Pages → klwang-slides → Domains →
-Add domain** 加入 `slides.klwang.tw`。網域須屬於同一 Cloudflare 帳號的有效
-zone，Cloudflare 負責 DNS 與 HTTPS。TradingDev 的部署權限須包含該 zone 的
+Add domain** 選擇 `klwang.tw`，在 Subdomain 填入 `slides`，啟用於 Production。
+網域須屬於同一 Cloudflare 帳號的有效 zone，Cloudflare 負責 DNS 與 HTTPS。
+TradingDev 的部署權限須包含該 zone 的
 Workers Routes 編輯權限；部署後在本專案 Worker 的 **Domains** 核對兩條 Route。
 沿用舊設定時，先建立上述 Route，再將 Custom Domain 移到共用入口，以保留簡報入口。
 
