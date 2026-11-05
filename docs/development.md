@@ -81,18 +81,12 @@ macOS 可使用 Docker Desktop 提供的 Linux Engine。
 欄位間限制以 [`RuntimeLimits`](../src/tradingdev/domain/runtime.py) 為準。
 
 直接整合或診斷 adapter 時，查閱[容器執行 adapter](../ARCHITECTURE.md#容器執行-adapter)，
-取得 `DockerRuntime.resolve/open`、`ContainerSession.exchange`、清理失敗判定及
-`recover_abandoned` 的呼叫契約。傳輸、程序身分與故障清理的驗證入口為
+取得 `DockerRuntime.resolve/open`、`ContainerSession.exchange`、生成策略呼叫與身分綁定、
+清理失敗判定及 `recover_abandoned` 的契約。傳輸、程序身分與故障清理的驗證入口為
 [替代 daemon 的 adapter 測試](../tests/adapters/test_container_runtime.py)及
 [真實容器測試](../tests/integration/test_strategy_isolation.py)。
-
-驗證生成策略 worker 協定時，可直接使用
-[`generated_strategy.inspect_parameters` 與 `open_strategy`](../src/tradingdev/adapters/execution/generated_strategy.py)：
-前者擷取或驗證建構參數，後者在 context 內保留訓練狀態與亂數序列，離開時確認容器清理。
-兩者接收已固定來源雜湊、類別與 runtime 的
-[`GeneratedProgram`](../src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
-資料型別與錯誤邊界由 [codec 測試](../tests/adapters/test_frame_codec.py) 和
-[直接 worker／proxy 測試](../tests/integration/test_generated_protocol.py) 驗證。
+生成策略資料協定另由 [codec 測試](../tests/adapters/test_frame_codec.py)及
+[直接 worker／proxy 測試](../tests/integration/test_generated_protocol.py)驗證。
 
 變更 worker、資料協定或其依賴後，須從待驗證內容重建策略映像，再執行相關測試。
 請使用本次檢查的專用標籤與 builder；固定 image ID 不會隨標籤重建而改變。

@@ -435,6 +435,13 @@ JobQueries 讀取結果明細與組裝回覆；清單查詢只讀取已保存狀
 [直接容器 adapter 安全模型](docs/strategy_contract.md#direct-container-adapter)說明；
 建置映像、環境設定與測試操作見[開發指南](docs/development.md#容器建置與驗證)。
 
+生成策略透過
+[`generated_strategy.inspect_parameters` 與 `open_strategy`](src/tradingdev/adapters/execution/generated_strategy.py)
+使用此 adapter：前者擷取或驗證建構參數，後者在 context 內保留訓練狀態與亂數序列，
+離開時確認容器清理。兩者接收已固定來源雜湊、類別與 runtime 的
+[`GeneratedProgram`](src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
+底層容器呼叫契約如下。
+
 1. 建立 `DockerRuntime(control_root)`，以可保留的獨立目錄保存執行歸屬紀錄。
    Adapter 固定所選本機 Docker 端點，後續 Docker context 變更不會改變清理目標。
    `resolve(image=..., limits=...)` 核對 daemon 能力與預建映像，回傳固定 image ID
