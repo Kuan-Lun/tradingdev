@@ -347,7 +347,7 @@
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="19" data-paginate="true" data-header="02　策略研究　／　02.2　策略實驗與結果" data-footer="來源：[執行確認流程](https://github.com/Kuan-Lun/tradingdev/blob/35d709d4ac9ed8c9d3a71a3e24cd98996bf3a1e6/README.md#完成第一次回測)" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" data-marpit-pagination="19" style="--paginate:true;--header:02　策略研究　／　02.2　策略實驗與結果;--footer:來源：[執行確認流程](https://github.com/Kuan-Lun/tradingdev/blob/35d709d4ac9ed8c9d3a71a3e24cd98996bf3a1e6/README.md#完成第一次回測);--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="39" data-size="16:9">
 <header>02　策略研究　／　02.2　策略實驗與結果</header>
-<h2 id="%E5%9F%B7%E8%A1%8C%E5%89%8D%E7%9A%84%E7%A2%BA%E8%AA%8D%E5%96%AE">執行前的確認單</h2>
+<h2 id="mcp-%E5%9F%B7%E8%A1%8C%E5%89%8D%E7%9A%84%E7%A2%BA%E8%AA%8D%E5%96%AE">MCP 執行前的確認單</h2>
 <p>正式回測前，先確認：</p>
 <ul>
 <li>交易規則、資料期間與參數。</li>
@@ -717,8 +717,9 @@ TradingDev 以 server instructions、工具描述與按需契約提供研究指�
 整合者可以維護自己的研究服務、檢查、策略契約及輸出，但需承擔相應的開發與驗證責任；使用現有服務時仍須遵守其確認流程與後端檢查，不能把可自訂解讀成可在對話中略過授權。
 來源：README「手動啟動並使用 HTTP 連接」、ARCHITECTURE.md。</p></div><div class="bespoke-marp-note" data-index="16" tabindex="0"><p>新策略會保存版本，通過驗證及 dry-run 後才取得執行資格；其中的訊號檢查使用固定合成資料，並非歷史回測。準備確認單時只做離線程式與設定檢查，以及適用的合成訊號檢查。單次準備的內建策略不在此時執行訊號；固定參數比較則對每組候選（包含內建策略）執行 80 與 240 根合成 K 棒的訊號檢查。確認前不取得真實行情、不訓練模型、不執行歷史回測；行情、訓練及績效須同意後才開始驗證。
 這些步驟已有 SERVER_INSTRUCTIONS 引導，並搭配工具說明及 get_strategy_contract 的按需內容。缺少必要研究選擇時須追問；保存研究筆記須有保存或分享需求。客戶端可安排自己的互動方式，但工具仍會檢查契約與執行狀態。
-來源：src/tradingdev/mcp/prompts.py、tools/strategy.py、README「完成第一次回測」與 docs/strategy_contract.md。</p></div><div class="bespoke-marp-note" data-index="17" tabindex="0"><p>VBT PRO MCP 也能讓助手執行與修正程式；自訂策略不是本專案獨有功能。此頁說明現有研究範圍，不以此作為自製的唯一理由。</p></div><div class="bespoke-marp-note" data-index="18" tabindex="0"><p>確認前不取得真實行情、不訓練模型、不執行歷史回測；自建策略適用的訊號檢查只用固定合成資料。單次準備的內建策略只檢查設定、執行模式與參數；固定比較的每組候選則都要通過 80 與 240 根合成 K 棒的訊號檢查，包含內建策略。一到八組普通回測的固定候選可共用一份確認單，使用者批准整組後才執行；這不包含需要訓練或 walk-forward 的多組比較，也不會自動擴大搜尋。修改候選或設定後要準備新的計畫並重新確認。後端依賴助手如實轉交使用者決定，不能獨立驗證決定的人類來源。這項限制留在講者稿，操作細節以 README 為準。
-來源：README「完成第一次回測」、docs/run_artifacts.md 的 execution plans。</p></div><div class="bespoke-marp-note" data-index="19" tabindex="0"><p>結果主要供 LLM 查詢和分析。詳細交易、帳戶序列與執行紀錄可分頁查詢；不存在的舊紀錄不能靠助手猜測重建。
+來源：src/tradingdev/mcp/prompts.py、tools/strategy.py、README「完成第一次回測」與 docs/strategy_contract.md。</p></div><div class="bespoke-marp-note" data-index="17" tabindex="0"><p>VBT PRO MCP 也能讓助手執行與修正程式；自訂策略不是本專案獨有功能。此頁說明現有研究範圍，不以此作為自製的唯一理由。</p></div><div class="bespoke-marp-note" data-index="18" tabindex="0"><p>本頁適用於 MCP 執行計畫；CLI 命令本身是執行請求，不另套用對話確認流程。
+確認前不取得真實行情、不訓練模型、不執行歷史回測；自建策略適用的訊號檢查只用固定合成資料。單次準備的內建策略只檢查設定、執行模式與參數；固定比較的每組候選則都要通過 80 與 240 根合成 K 棒的訊號檢查，包含內建策略。一到八組普通回測的固定候選可共用一份確認單，使用者批准整組後才執行；這不包含需要訓練或 walk-forward 的多組比較，也不會自動擴大搜尋。修改候選或設定後要準備新的計畫並重新確認。後端依賴助手如實轉交使用者決定，不能獨立驗證決定的人類來源。這項限制留在講者稿，操作細節以 README 為準。
+來源：README「完成第一次回測」、docs/run_artifacts.md 的 execution plans，以及 docs/requirements.md 的 UC-01／02 入口差異。</p></div><div class="bespoke-marp-note" data-index="19" tabindex="0"><p>結果主要供 LLM 查詢和分析。詳細交易、帳戶序列與執行紀錄可分頁查詢；不存在的舊紀錄不能靠助手猜測重建。
 SERVER_INSTRUCTIONS 要求先讀 get_run_diagnostics，再以 summary、observations、hypotheses_and_limits、next_steps 及精確的 run/scope 引用提交分析，保留於 HTML。generate_report 的工具說明與 ReportAnalysis schema 也公開這個結構。後端提供規則式診斷並核對引用，文字推理由客戶端模型產生，未提供時會標示；不是後端自行呼叫另一個 LLM。涉及特定虧損期間時須先查交易或權益資料，不能只憑摘要判定原因。
 來源：src/tradingdev/mcp/tools/history.py、runs.py 與 mcp/prompts.py。</p></div><div class="bespoke-marp-note" data-index="20" tabindex="0"><p>對話仍是查詢、解讀與修正策略的主要入口，使用者不必閱讀圖表。完成回測並解讀績效、風險時，助手預設交付標準報告連結、對應結果及查看明細的方法；使用者可明確選擇只要摘要。執行後報告與執行前確認單分開。保存紀錄不等於保存完整軟體環境，不能保證跨環境完全重現。
 來源：https://github.com/Kuan-Lun/tradingdev/blob/7298a4d8cf0769c0db7f92f0df46e2e739c8e470/README.md#交易紀錄與-html-報告 及同版本 docs/run_artifacts.md。</p></div><div class="bespoke-marp-note" data-index="21" tabindex="0"><p>signal 使用 VectorBT，包含初始資金。volume 從零累計 P&amp;L，沒有初始資金，不能當作本金報酬率；名目規模可由 size_weight 調整。volume 也不是市場深度或成交量限制撮合模型。
