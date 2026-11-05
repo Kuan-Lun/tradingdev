@@ -23,6 +23,9 @@ from tradingdev.domain.optimization.grid_search import (
     tuple_grid,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.glft_volatility import (
+    compute_glft_volatility,
+)
 from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
@@ -409,10 +412,6 @@ class GLFTStrategy(BaseStrategy):
     # Volatility estimation
     # ------------------------------------------------------------------
 
-    # Minutes in a year (365.25 * 24 * 60) — used for
-    # annualized-to-per-bar volatility conversion.
-    _MINUTES_PER_YEAR: float = 525_960.0
-
     def _compute_volatility(
         self,
         close: npt.NDArray[np.floating[Any]],
@@ -426,36 +425,14 @@ class GLFTStrategy(BaseStrategy):
         (annualized % from Deribit DVOL).  Otherwise a rolling
         historical estimator is used.
         """
-        if self._config.vol_type == "implied":
-            if dvol is None:
-                msg = "dvol array is required when vol_type is 'implied'"
-                raise ValueError(msg)
-            # DVOL is annualized vol in % (e.g. 45 = 45%).
-            # Convert to per-bar (1 min) sigma:
-            #   sigma = DVOL / 100 / sqrt(minutes_per_year)
-            sigma = dvol / 100.0 / np.sqrt(self._MINUTES_PER_YEAR)
-        elif self._config.vol_type == "parkinson":
-            window = self._best_vol_window
-            # Parkinson estimator: uses high-low range
-            log_hl = np.log(
-                np.maximum(high, 1e-10) / np.maximum(low, 1e-10),
-            )
-            parkinson_var = log_hl**2 / (4.0 * math.log(2))
-            sigma = np.sqrt(
-                pd.Series(parkinson_var).rolling(window, min_periods=1).mean().values,
-            )
-        else:
-            window = self._best_vol_window
-            # Realized volatility: rolling std of log returns
-            log_ret = np.diff(
-                np.log(np.maximum(close, 1e-10)),
-            )
-            log_ret = np.concatenate([[0.0], log_ret])
-            sigma = pd.Series(log_ret).rolling(window, min_periods=1).std().values
-
-        # Keep unknown volatility missing; only floor nonpositive observations.
-        sigma = np.where(sigma <= 0, 1e-10, sigma)
-        return np.asarray(sigma, dtype=np.float64)
+        return compute_glft_volatility(
+            close,
+            high,
+            low,
+            vol_type=self._config.vol_type,
+            window=self._best_vol_window,
+            dvol=dvol,
+        )
 
     # ------------------------------------------------------------------
     # GLFT state machine
