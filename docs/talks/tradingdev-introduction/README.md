@@ -38,7 +38,44 @@
 `TODO-01` 等既有識別碼作為子主題標示；同一目標的補充頁沿用其頁首。
 新增或移動頁面時，同步核對閱讀路線及其他 `index.html#頁碼` 連結。
 
-## 在 GitHub 網頁上播放
+## 透過 Cloudflare 自動發布
+
+Cloudflare Workers Builds 可連接本 repository，在 `main` 更新時發布已提交的
+`index.html`。本機仍須先編譯、檢查並提交 HTML；雲端只複製與部署成品，
+不執行 Marp、Python 檢查或安裝 TradingDev 產品依賴。
+
+在 Cloudflare 的 **Workers & Pages → Create application → GitHub** 選擇本
+repository；GitHub 授權範圍只選需要發布的 repository。設定如下：
+
+| 欄位 | 設定 |
+| --- | --- |
+| Worker name | 與根目錄 [wrangler.jsonc](../../../wrangler.jsonc) 的 `name` 相同。 |
+| Production branch | `main`。 |
+| Root directory | repository 根目錄。 |
+| Build command | 下方的複製指令。 |
+| Deploy command | `npx wrangler deploy`。 |
+
+Build command：
+
+```bash
+mkdir -p site-dist/tradingdev && cp docs/talks/tradingdev-introduction/index.html site-dist/tradingdev/index.html
+```
+
+在 **Settings → Build → Build Variables and Secrets** 加入
+`SKIP_DEPENDENCY_INSTALL=1`，停用自動安裝專案依賴。部署仍會使用 Wrangler；
+Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
+`site-dist/` 是忽略的發布產物，只包含要公開的 HTML；不會將整個 `docs/` 發布。
+
+首次部署後，在該 Worker 的 **Settings → Domains & Routes → Add → Custom Domain**
+加入 `slides.klwang.tw`。該網域須屬於同一 Cloudflare 帳號的有效 zone，且不能有
+衝突的 CNAME。Cloudflare 負責建立 DNS 記錄與 HTTPS 憑證；此設定由管理者在
+Cloudflare 維護，不在 Wrangler 設定中宣告。
+
+完成連接及網域設定後，簡報預期位址為
+`https://slides.klwang.tw/tradingdev/`。只有部署成功才會更新網站；repository 中的
+設定檔不代表已連接 Cloudflare 或發布。根路徑 `/` 未提供目錄頁或重新導向。
+
+## 透過 GitHub Pages 發布
 
 GitHub 的一般檔案頁只會顯示 HTML 原始碼。若要直接播放，可使用同一 repository
 的 GitHub Pages。
