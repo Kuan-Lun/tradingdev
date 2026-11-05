@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from tradingdev.domain.ml.features.context import FeatureContext
 from tradingdev.domain.ml.rolling_gen import (
     ROLLING_SCHEMES,
     RollingGenConfig,
@@ -138,7 +139,10 @@ def test_strategy_config_accepts_a_flat_rolling_gen_block() -> None:
 def test_sliding_window_moves_with_the_bar() -> None:
     """lookback=10 declares a 10 x lookback = 100-bar window."""
     geometry = resolve_geometry(
-        get_rolling_scheme("roll_sd"), lookback=10, retrain_interval=7
+        get_rolling_scheme("roll_sd"),
+        context=FeatureContext(12, 21),
+        lookback=10,
+        retrain_interval=7,
     )
 
     assert geometry.train_window(250) == (150, 250)
@@ -148,7 +152,10 @@ def test_sliding_window_moves_with_the_bar() -> None:
 
 def test_expanding_window_keeps_the_first_bar() -> None:
     geometry = resolve_geometry(
-        get_rolling_scheme("roll_ex"), lookback=10, retrain_interval=7
+        get_rolling_scheme("roll_ex"),
+        context=FeatureContext(12, 21),
+        lookback=10,
+        retrain_interval=7,
     )
 
     assert geometry.train_window(250) == (0, 250)
@@ -160,6 +167,7 @@ def test_declared_window_size_wins_over_the_lookback_rule() -> None:
         RollingScheme(
             name="roll_sd", description="", rtype=RollType.ROLL_SD, window_size=30
         ),
+        context=FeatureContext(12, 21),
         lookback=10,
         retrain_interval=7,
     )
@@ -171,7 +179,10 @@ def test_declared_window_size_wins_over_the_lookback_rule() -> None:
 def test_training_window_never_reaches_the_scored_bar(name: str) -> None:
     """The stop bound is the scored bar itself, for every roll type."""
     geometry = resolve_geometry(
-        get_rolling_scheme(name), lookback=10, retrain_interval=7
+        get_rolling_scheme(name),
+        context=FeatureContext(12, 21),
+        lookback=10,
+        retrain_interval=7,
     )
 
     for combined_idx in (0, 1, 99, 100, 250):
@@ -182,18 +193,24 @@ def test_training_window_never_reaches_the_scored_bar(name: str) -> None:
 def test_unset_fields_follow_the_strategy_parameters() -> None:
     """lookback=12, interval=50 -> window 120, min 22, context 24, step 50."""
     geometry = resolve_geometry(
-        get_rolling_scheme("roll_sd"), lookback=12, retrain_interval=50
+        get_rolling_scheme("roll_sd"),
+        context=FeatureContext(12, 21),
+        lookback=12,
+        retrain_interval=50,
     )
 
     assert geometry.step == 50
     assert geometry.window_size == 120
     assert geometry.min_train_bars == 22
-    assert geometry.predict_lookback == 24
+    assert geometry.predict_lookback == 20
 
 
 def test_predict_context_ends_at_the_scored_bar() -> None:
     geometry = resolve_geometry(
-        get_rolling_scheme("roll_sd"), lookback=10, retrain_interval=7
+        get_rolling_scheme("roll_sd"),
+        context=FeatureContext(12, 21),
+        lookback=10,
+        retrain_interval=7,
     )
 
     assert geometry.predict_context(250) == (230, 251)
@@ -201,7 +218,7 @@ def test_predict_context_ends_at_the_scored_bar() -> None:
 
 
 def test_context_that_cannot_cover_the_lookback_is_rejected() -> None:
-    with pytest.raises(ValueError, match="at least lookback \\+ 1"):
+    with pytest.raises(ValueError, match="at least 11 prior bars"):
         resolve_geometry(
             RollingScheme(
                 name="roll_sd",
@@ -209,6 +226,7 @@ def test_context_that_cannot_cover_the_lookback_is_rejected() -> None:
                 rtype=RollType.ROLL_SD,
                 predict_lookback=10,
             ),
+            context=FeatureContext(12, 21),
             lookback=10,
             retrain_interval=7,
         )
@@ -231,4 +249,6 @@ def test_context_that_cannot_cover_the_lookback_is_rejected() -> None:
 )
 def test_unusable_geometry_is_rejected(scheme: RollingScheme, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        resolve_geometry(scheme, lookback=10, retrain_interval=7)
+        resolve_geometry(
+            scheme, context=FeatureContext(12, 21), lookback=10, retrain_interval=7
+        )

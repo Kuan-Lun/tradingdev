@@ -1,8 +1,4 @@
-"""Declarative rolling schemes, off by default (qlib ``RollingGen`` counterpart).
-
-Enable one through a strategy's ``rolling_gen`` block.  While it is disabled the
-strategies keep their classic retraining loop and nothing here runs.
-"""
+"""Shared rolling prediction with automatic or named causal geometry."""
 
 from __future__ import annotations
 
@@ -13,6 +9,7 @@ from tradingdev.domain.ml.rolling_gen.config import (
 from tradingdev.domain.ml.rolling_gen.engine import (
     RollingOutcome,
     RollTrace,
+    UnavailableReason,
     rolling_outcome,
     rolling_probabilities,
     run_rolling,
@@ -38,6 +35,7 @@ __all__ = [
     "RollTrace",
     "RollType",
     "RollWindow",
+    "UnavailableReason",
     "RollingGenConfig",
     "RollingGeometry",
     "RollingOutcome",

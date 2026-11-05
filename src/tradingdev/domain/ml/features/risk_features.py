@@ -9,6 +9,7 @@ from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.technical_features import (
     compute_sma_ratios,
     compute_volume_features,
+    seed_decay_bars,
 )
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -18,6 +19,10 @@ _VOL_WINDOWS = [5, 15, 30, 60]
 _ATR_WINDOWS = [14, 21]
 _SMA_WINDOWS = [7, 14, 21]
 _ROLL_WINDOWS = [6, 12, 24]
+_VOL_CHANGE_WINDOWS = [5, 15]
+_BOLLINGER_WINDOW = 20
+_ADX_WINDOW = 14
+_MOMENT_WINDOW = 24
 
 _EXCLUDE_COLS = frozenset(
     {
@@ -39,6 +44,8 @@ class RiskFeatureEngineer:
     features rather than directional prediction.
     """
 
+    target_classes = (0, 1)
+
     def __init__(
         self,
         lookback: int = 24,
@@ -46,6 +53,8 @@ class RiskFeatureEngineer:
         fee_rate: float = 0.0011,
         max_acceptable_loss_pct: float = 0.003,
     ) -> None:
+        if lookback < 1:
+            raise ValueError("lookback must be at least 1 bar")
         self._lookback = lookback
         self._target_holding_bars = target_holding_bars
         self._fee_rate = fee_rate
@@ -55,6 +64,35 @@ class RiskFeatureEngineer:
     @property
     def lookback(self) -> int:
         return self._lookback
+
+    @property
+    def minimum_context_rows(self) -> int:
+        """Fewest rows including the scored bar that can yield every feature."""
+        return max(
+            max(_VOL_WINDOWS) + 1,
+            2 * max(_VOL_CHANGE_WINDOWS) + 1,
+            max(_ATR_WINDOWS) + 1,
+            _BOLLINGER_WINDOW,
+            2 * _ADX_WINDOW,
+            max(_SMA_WINDOWS),
+            _MOMENT_WINDOW + 1,
+            max(_sampled_lags(self._lookback)) + 2,
+            max(_ROLL_WINDOWS) + 1,
+        )
+
+    @property
+    def context_rows(self) -> int:
+        """Preferred history for ATR and ADX seed decay, not an error bound.
+
+        ADX cascades Wilder smoothing of directional movement and DX. Allow a
+        decay interval for each stage; nonlinear ratios still preclude a uniform
+        error guarantee. Missing or degenerate data can remain unavailable.
+        """
+        return max(
+            self.minimum_context_rows,
+            *(w + 1 + seed_decay_bars(1.0 / w) for w in _ATR_WINDOWS),
+            2 * _ADX_WINDOW + 2 * seed_decay_bars(1.0 / _ADX_WINDOW),
+        )
 
     def transform(
         self,
@@ -76,7 +114,7 @@ class RiskFeatureEngineer:
             features[f"realized_vol_{w}"] = log_ret.rolling(w).std()
 
         # --- Volatility change (trend in vol) ---
-        for w in [5, 15]:
+        for w in _VOL_CHANGE_WINDOWS:
             vol_now = log_ret.rolling(w).std()
             vol_prev = log_ret.shift(w).rolling(w).std()
             features[f"vol_change_{w}"] = vol_now / vol_prev.replace(0, np.nan) - 1
@@ -88,11 +126,11 @@ class RiskFeatureEngineer:
             )
 
         # --- Bollinger bandwidth ---
-        bands = indicators.bollinger_bands(close, length=20)
+        bands = indicators.bollinger_bands(close, length=_BOLLINGER_WINDOW)
         features["bb_width_20"] = (bands.upper - bands.lower) / close
 
         # --- ADX (trend strength) ---
-        features["adx_14"] = indicators.adx(high, low, close, length=14).adx
+        features["adx_14"] = indicators.adx(high, low, close, length=_ADX_WINDOW).adx
 
         # --- Volume anomaly ---
         features.update(compute_volume_features(volume, _SMA_WINDOWS))
@@ -105,8 +143,8 @@ class RiskFeatureEngineer:
         features["lower_wick_ratio"] = (close.clip(lower=low) - low) / full_range
 
         # --- Return distribution moments ---
-        features["ret_skew_24"] = log_ret.rolling(24).skew()
-        features["ret_kurt_24"] = log_ret.rolling(24).kurt()
+        features["ret_skew_24"] = log_ret.rolling(_MOMENT_WINDOW).skew()
+        features["ret_kurt_24"] = log_ret.rolling(_MOMENT_WINDOW).kurt()
 
         # --- Lagged returns & rolling stats (reuse pattern) ---
         features["log_return"] = log_ret

@@ -196,8 +196,11 @@ def test_direction_inputs_stay_unique_for_a_risk_feature_frame(
     assert "log_return" in frame.columns, "the fixture must collide with a feature"
     ohlcv_only = frame.loc[:, ["timestamp", "open", "high", "low", "close", "volume"]]
 
-    actual = strategy._compute_ml_directions(frame)
-    expected = strategy._compute_ml_directions(ohlcv_only)
+    assert strategy._dir_fe is not None
+    assert strategy._dir_model is not None
+    source = _MLDirection(features=strategy._dir_fe, model=strategy._dir_model)
+    actual = strategy._ml_directions(frame, source)
+    expected = strategy._ml_directions(ohlcv_only, source)
 
     assert np.count_nonzero(actual) > 0, "the comparison must cover real predictions"
     np.testing.assert_array_equal(actual, expected)
@@ -264,6 +267,7 @@ def test_two_walk_forward_folds_refit_the_same_strategy(
     strategy = SafetyVolumeStrategy(
         _config(use_ml_direction=True), cast("BaseBacktestEngine", _ExposureEngine())
     )
+    strategy._config.retrain_interval = 100
     validator = WalkForwardValidator(
         AutomaticWalkForwardConfig(
             mode="automatic",
@@ -308,7 +312,7 @@ def test_scored_validation_bars_keep_their_directions(
     )
     feat_val = risk_features.transform(frame.iloc[split:], include_target=False)
 
-    sliced = strategy._compute_ml_directions(feat_val)
+    sliced = strategy._ml_directions(feat_val, source)
     with_history = strategy._validation_directions(feat_val, frame, source)
 
     assert np.count_nonzero(sliced) < len(sliced), "the slice loses its warm-up"
@@ -316,7 +320,7 @@ def test_scored_validation_bars_keep_their_directions(
     positions = frame.index.get_indexer(feat_val.index)
     np.testing.assert_array_equal(
         with_history,
-        strategy._compute_ml_directions(frame)[positions],
+        strategy._ml_directions(frame, source)[positions],
     )
 
 

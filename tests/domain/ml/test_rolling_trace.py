@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tradingdev.domain.ml.features.context import FeatureContext
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.ml.rolling_gen import (
@@ -26,6 +27,7 @@ from tradingdev.domain.ml.rolling_gen import (
     rolling_outcome,
     trace_payload,
 )
+from tradingdev.domain.ml.rolling_gen.scheme import resolve_geometry
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 
 _LOOKBACK = 10
@@ -38,6 +40,14 @@ _WINDOW = 100
 
 class _StubFeatureEngineer(FeatureEngineer):
     """Record training windows and drop one scoring bar on request."""
+
+    @property
+    def minimum_context_rows(self) -> int:
+        return 1
+
+    @property
+    def context_rows(self) -> int:
+        return 21
 
     def __init__(self, drop_label: int | None = None) -> None:
         super().__init__(lookback=_LOOKBACK, target_horizon=1)
@@ -120,11 +130,14 @@ def test_traces_carry_the_declared_window() -> None:
     outcome, _ = _outcome(_sliding())
 
     declared = enumerate_rolls(
-        _sliding(),
+        resolve_geometry(
+            _sliding(),
+            lookback=_LOOKBACK,
+            retrain_interval=_INTERVAL,
+            context=FeatureContext(1, 21),
+        ),
         n_scored_bars=_SCORED,
         history_bars=_HISTORY,
-        lookback=_LOOKBACK,
-        retrain_interval=_INTERVAL,
     )
     assert tuple(trace.window for trace in outcome.rolls) == declared
     assert all(isinstance(trace.window, RollWindow) for trace in outcome.rolls)

@@ -148,6 +148,15 @@ class StrategyLoader:
         self.validate_parameter_overrides(strategy_cfg, selected, {})
         return selected
 
+    def validate_execution(
+        self,
+        strategy_cfg: dict[str, Any],
+        execution: StrategyExecution,
+    ) -> None:
+        """Revalidate captured settings without construction or new defaults."""
+        cls = self._execution_class(strategy_cfg, execution)
+        self._execution_kwargs(cls, execution, None, None, None)
+
     def validate_parameter_overrides(
         self,
         strategy_cfg: dict[str, Any],

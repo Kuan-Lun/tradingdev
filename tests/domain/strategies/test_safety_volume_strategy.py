@@ -22,6 +22,7 @@ from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
 )
 from tradingdev.domain.strategies.bundled.safety_volume_strategy.strategy import (
     SafetyVolumeStrategy,
+    _MLDirection,
 )
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -378,10 +379,11 @@ class TestMLDirectionAlignment:
                 )
 
         strategy = SafetyVolumeStrategy(config=_make_config())
-        strategy._dir_fe = fe
-        strategy._dir_model = cast("XGBoostDirectionModel", _EchoDirectionModel())
+        source = _MLDirection(
+            features=fe, model=cast("XGBoostDirectionModel", _EchoDirectionModel())
+        )
 
-        directions = strategy._compute_ml_directions(df)
+        directions = strategy._ml_directions(df, source)
 
         assert len(directions) == len(df)
         np.testing.assert_array_equal(directions[:offset], 0.0)
@@ -405,10 +407,12 @@ class TestMLDirectionAlignment:
                 return pd.Series(1.0, index=index)
 
         strategy = SafetyVolumeStrategy(config=_make_config())
-        strategy._dir_fe = FeatureEngineer(lookback=12, target_horizon=1)
-        strategy._dir_model = cast("XGBoostDirectionModel", _MismatchedDirectionModel())
+        source = _MLDirection(
+            features=FeatureEngineer(lookback=12, target_horizon=1),
+            model=cast("XGBoostDirectionModel", _MismatchedDirectionModel()),
+        )
         with pytest.raises(RuntimeError, match="do not match the feature rows"):
-            strategy._compute_ml_directions(df)
+            strategy._ml_directions(df, source)
 
     @pytest.mark.parametrize("rows", [0, 15])
     def test_no_complete_features_returns_zero_without_calling_model(
@@ -421,10 +425,12 @@ class TestMLDirectionAlignment:
                 pytest.fail("No feature rows should reach the direction model")
 
         strategy = SafetyVolumeStrategy(config=_make_config())
-        strategy._dir_fe = FeatureEngineer(lookback=12, target_horizon=1)
-        strategy._dir_model = cast("XGBoostDirectionModel", _UnexpectedDirectionModel())
+        source = _MLDirection(
+            features=FeatureEngineer(lookback=12, target_horizon=1),
+            model=cast("XGBoostDirectionModel", _UnexpectedDirectionModel()),
+        )
 
-        directions = strategy._compute_ml_directions(large_ohlcv_df.iloc[:rows])
+        directions = strategy._ml_directions(large_ohlcv_df.iloc[:rows], source)
         np.testing.assert_array_equal(directions, np.zeros(rows))
 
     @pytest.mark.parametrize("time_layout", ["column", "datetime_index", "none"])
@@ -458,11 +464,13 @@ class TestMLDirectionAlignment:
                 )
 
         strategy = SafetyVolumeStrategy(config=_make_config())
-        strategy._dir_fe = FeatureEngineer(lookback=12, target_horizon=1)
-        strategy._dir_model = cast("XGBoostDirectionModel", _CloseDirectionModel())
+        source = _MLDirection(
+            features=FeatureEngineer(lookback=12, target_horizon=1),
+            model=cast("XGBoostDirectionModel", _CloseDirectionModel()),
+        )
 
-        directions = strategy._compute_ml_directions(df)
-        prefix = strategy._compute_ml_directions(df.iloc[:60])
+        directions = strategy._ml_directions(df, source)
+        prefix = strategy._ml_directions(df.iloc[:60], source)
 
         # Warm-up ends at 33; a later flat period makes Bollinger width zero
         # and removes feature rows 89:110, without changing earlier rows.

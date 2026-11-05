@@ -76,11 +76,11 @@ leaves unavailable rows without entry signals, and measures cooldown in source
 bars, including gaps.
 
 SafetyVolume's rolling Risk Gate also predicts only from the current source
-bar's features. If they are unavailable, it keeps the neutral `P(safe)=0.5`
-instead of assigning an earlier bar's probability. Its state machine still uses
-the configured risk threshold and holding rules; a missing risk feature does not
-unconditionally flatten a position. Threshold search continues to evaluate its
-filtered validation feature rows, unlike Quantile's full-frame gap handling.
+bar's features. Unavailable estimates never become probabilities or reuse a neighbouring bar.
+The [SafetyVolume guide](strategies/safety_volume_strategy.md#layer-1-risk-gate-xgboost)
+defines entry, reversal and holding behavior, and the entirely-unscored failure.
+Threshold search continues to evaluate its filtered validation feature rows,
+unlike Quantile's full-frame gap handling.
 
 The XGBoost, LightGBM, CatBoost and FLAML direction model training APIs require at
 least one labelled training row. A supplied validation frame must also be non-empty. Empty inputs
@@ -353,141 +353,111 @@ workspace.
 
 ### Rolling Retraining Schemes
 
-The bundled `XGBoostStrategy` and `SafetyVolumeStrategy` retrain while they
-score: every `retrain_interval` bars the engine attempts a refit, and each bar is
-predicted with whichever model is current. A `rolling_gen` block declares that
-window geometry instead of leaving it inside the strategy loop. It is **off by default**; with `enabled: false` the
-strategy runs its classic retrainer, untouched. `get_ml_contract` advertises the
-schemes under `rolling_schemes` — each entry carries `name`, `description`,
-`rtype` and `default_step`, where a null `default_step` means the cadence follows
-the strategy's own interval — and execution resolves them from the same registry,
-so the menu and the geometry that actually runs cannot drift apart.
+The bundled `XGBoostStrategy` and `SafetyVolumeStrategy` use one rolling
+prediction core. Every scheduled refit uses only preceding, mature labelled
+rows; every prediction uses the current source bar's own features. The
+`rolling_gen` setting selects geometry, not a different execution engine.
+
+With `enabled: false` (the default), automatic geometry uses the strategy's
+`retrain_interval`, requires ten mature training rows and slides a training
+window covering the largest of the retained initial history, ten times lookback,
+and the raw history needed for ten mature observations. With `enabled: true`,
+a named scheme and its overrides determine the training geometry:
 
 ```yaml
 strategy:
   parameters:
     rolling_gen:
-      enabled: true      # off unless set
+      enabled: true
       scheme: roll_sd    # or roll_ex
       step: 720          # optional; follows retrain_interval
-      window_size: 7200  # roll_sd only; follows 10 x lookback
+      window_size: 7200  # roll_sd only; otherwise follows 10 x lookback
 ```
 
-- `roll_sd` slides a training window of `window_size` bars forward with each
-  retrain. Early windows are clipped at the first bar, so they can be shorter
-  than that length; a clipped window below `min_train_bars` skips the refit and
-  keeps a previous model only when one is available.
+- `roll_sd` slides a fixed training window, clipped to available history.
 - `roll_ex` keeps the first bar and expands the window with each retrain.
 
-The scheme name fixes the window shape; there is no separate override, so a name
-cannot describe one geometry while running another. `window_size` is accepted
-only for `roll_sd` and is rejected for an expanding scheme rather than ignored.
+`get_ml_contract` advertises named schemes under `rolling_schemes`, from the
+same registry used for execution. The scheme fixes the window shape;
+`window_size` is invalid for an expanding scheme. Enabled unknown names or
+conflicting shapes fail during configuration validation. Named schemes default
+to `lookback + 10` mature labelled rows unless `min_train_bars` is supplied.
+Disabled scheme overrides have no effect.
 
-`min_train_bars` and `predict_lookback` are optional as well; they follow
-`lookback + 10` labelled rows and `2 x lookback` prior bars of scoring context.
-`predict_lookback` counts bars *before* the scored one, which is then added on
-top, so the default context is up to `2 x lookback + 1` rows, clipped to the
-available history. It must also be at least
-`lookback + 1`, otherwise the context could not cover the feature lookback and
-geometry resolution raises before scoring. Resolution happens during signal
-generation, so `fit()`'s
-initial model already exists at that point; it is the rolling refits that never
-start. Those defaults are derived from the strategy's own lookback on purpose: a
-fixed window shorter than the feature warm-up would leave no labelled rows and
-skip every refit, which the trace records as `trained: false` with the row count
-the window offered. An enabled unknown scheme or a conflicting expanding
-`window_size` is rejected earlier, when strategy configuration is validated.
+Prediction context is owned by the feature pipeline in **both** modes.
+`minimum_context_rows` counts the fewest rows, including the scored bar, that
+can produce every feature. `context_rows` is the preferred length, including
+seed-decay margins. Direction features include RSI/MACD; risk features include
+the fixed 60-bar volatility window, lagged returns and ATR/ADX smoothing.
+Short lookbacks are supported without shortening the fixed feature requirements.
+The preferred history reduces initialization effects but does not guarantee a
+uniform output error against full-history computation. Available history can be
+shorter than the preference and still score once the minimum is reached.
 
-A refit is skipped, and an available previous model kept, when the window holds fewer than
-`min_train_bars` labelled rows or fewer than two bars at all. The trace records
-`trained: false` for that roll, so a carried-over model is never mistaken for one
-that saw the data. The initial fitted model is available only if its entire
-training frame precedes the scored frame. An overlapping training replay waits
-for its first successful refit; clipping history cannot remove future knowledge
-from a fitted model. If no model becomes available during a nonempty replay,
-execution fails with a model-availability error rather than reporting a successful
-all-neutral run. These replay metrics remain in-sample diagnostics: lookback and
-other strategy settings may still have been selected using the full training fold.
+An explicit `predict_lookback` counts **preceding** bars; the engine adds the
+scored bar. It must be at least `minimum_context_rows - 1`. An unset value uses
+`context_rows - 1`, without a separate lookback-multiplier floor. Both bundled
+strategy configurations validate every lookback candidate before market-data
+loading; `fit()` rechecks the same rules before any model training. Direct engine
+callers are validated before rolling refits or scoring.
+Insufficient actual history or missing/degenerate values can still leave a bar
+unavailable even with valid geometry.
 
-Whichever scheme is declared, a training window ends strictly before the bar it
-scores, the scored frame is never concatenated in front of itself, and a bar
-whose features are unavailable is not scored rather than reusing the previous
-bar's value. Those are the same rules the classic retrainer follows in its own
-loop. The classic loop sizes its scoring context from the feature engineer's
-declared `context_rows`. `FeatureEngineer.minimum_context_rows` is the earliest
-point at which every feature can exist; `context_rows` adds a preferred margin
-to reduce the influence of exponential initial values. Other feature engineers
-must declare their own minimum and, where needed, seed-decay margin. Available
-history is still the limit: shorter history can score once complete features
-exist. The decay target bounds individual recursion weights, not the final
-indicator error against a full history; finite-context values remain approximate.
-Missing or degenerate inputs can prevent scoring even above the minimum, and the
-failure message distinguishes this from insufficient history. `2 x lookback + 1` rows
-remain a floor, so a lookback that already covered the requirement keeps the
-context, and the seeded values, it had. The engine keeps the geometry described
-above: `predict_lookback` still follows the lookback, and resolution only
-requires it to cover `lookback + 1`. A scheme whose geometry leaves no bar with a
-complete feature row is therefore not rejected up front — scoring runs to the end
-and fails instead of returning all-zero signals. Which error that is depends on
-whether a model was available: the feature-context failure names
-`predict_lookback` and the field to raise, while a replay that never obtained a
-causal model reports the model-availability error described above, which does not
-name that field. A lookback short enough to need `predict_lookback` raised must
-set it explicitly. For the direction strategy, at least
-`minimum_context_rows - 1` prior bars are needed for complete features to be
-possible; `context_rows - 1` is recommended for the same seed-decay margin as the
-classic loop. The engine adds the scored bar on top. The SafetyVolume risk gate passes a different engineer to the
-same engine, and `RiskFeatureEngineer` declares no equivalent, so its geometry has
-to be sized from that engineer's own windows — its 60-bar volatility window alone
-needs 60 preceding bars, or 61 rows including the scored one. The engine adds one
-rule of its own: a training row whose
-label reads past the last bar of the training window is dropped before fitting,
-whatever the feature engineer returned. The classic retrainer has no such filter
-— it relies on the engineer leaving that tail unlabelled for `dropna` to remove
-— which is why the engine takes `label_horizon` explicitly and why an engineer
-that fills its unlabelled tail cannot smuggle an unrealised outcome into an
-enabled run. A nonempty scored frame in which no bar can be scored fails on both
-paths rather than returning all-zero signals; an empty scored frame simply has
-nothing to score.
+The schedule, execution and saved trace consume one resolved `RollingGeometry`.
+For Python inspection, use `FeatureContext.for_features(fe)` and
+`resolve_geometry(scheme, lookback=..., retrain_interval=..., context=...,
+history_bars=..., label_horizon=...)`, then
+`enumerate_rolls(geometry, n_scored_bars=..., history_bars=...)`.
+Pass `None` as the scheme for automatic geometry. History counts must describe
+rows strictly preceding the scored frame, as determined by
+`align_scoring_history`; the prediction engine performs that alignment itself.
+These entry points live in
+[rolling_gen](../src/tradingdev/domain/ml/rolling_gen/__init__.py) and
+[feature context](../src/tradingdev/domain/ml/features/context.py).
+Schedules describe planned attempts, not proof that a refit or prediction ran.
 
-What an unscored bar becomes differs by consumer: the direction strategy emits
-`0`, while the Safety Volume risk gate keeps its neutral `0.5`. Neither borrows a
-neighbouring bar's value. The neutral score is an input, not a decision: it is
-still compared against the strategy's effective threshold — `risk_threshold`, or
-the value chosen from `risk_threshold_candidates` during `fit()` — so with a
-threshold above `0.5` it blocks a new entry and, once the minimum holding period
-has passed, triggers the configured risk exit for an open position.
+An initial model is available only if its entire training frame precedes the
+scored frame. Overlapping replay discards it and waits for a successful refit on
+preceding rows in either geometry mode. If no model becomes available during a
+nonempty run, execution fails explicitly. Training replay remains an in-sample
+diagnostic because full-fold parameter selection has not been undone.
+A refit retains an available model when too few mature observations survive;
+it never extends its window into the future. The core independently excludes
+labels whose horizon reaches outside the training window and checks feature
+source-row and timestamp identity before fitting or predicting.
 
-The schedule can be printed before anything runs. `enumerate_rolls` returns one
-window per retrain — the training bounds, the bar that triggered it, and the
-interval that model is assigned to score — built from the same geometry the
-engine executes, so it previews the run rather than describing a second one. The
-intervals are planned, not observed: bars whose features are missing are not
-scored, and the trace reports the actual count per roll. Training bounds and
-`combined_idx` use the concatenated history-plus-scored frame; `retrain_bar`
-and `test_start`/`test_end` use positions within the scored frame. Both window
-intervals are half-open. The schedule and saved trace use the same coordinates;
-`retrain_bar` identifies an attempt, while `trained` records whether fitting ran.
+`rolling_outcome` returns a `RollingOutcome` with class-labelled probabilities
+aligned to the input scored frame's index, per-bar availability and roll
+attribution. A scored distribution assigns zero to a class absent from that
+fitted model. An unavailable bar has NaN in every class and a reason distinguishing
+insufficient history, incomplete features and no causal model. Risk consumers
+read class `1` as safe; direction consumers interpret `-1`, `0`, `1` as direction.
+There is no risk probability stored under a directional column name.
+Wrong prediction rows, duplicate or unexpected classes, nonfinite, out-of-range
+or unnormalized probabilities fail instead of being treated as feature gaps.
 
-A run that enables the switch also records what actually happened. Each roll
-reports its window, how many labelled rows it offered, whether a model was fitted
-or the previous one kept, and how many of its bars were actually scored; the bars
-that could not be scored at all are listed separately, so a bar's model can be
-recovered from the trace without storing an entry per bar. A window shorter than
-two raw bars is skipped before any feature work, so its `n_train_rows` is zero
-because nothing was measured, not because it held no labels. The record lands in
-the run's metric metadata as `rolling_trace`, beside `strategy_parameters`; it is
-provenance, not a parameter, and it is absent whenever the switch is off.
-`initial_model_available` records whether the initial fit could be used; before
-the first successful refit, a skipped window can only score if this flag is true.
-Saved traces are independent snapshots even if a strategy reuses its mutable hook
-payload. The bundled strategies require training and therefore support this path
-through walk-forward execution; the generic trace hook does not add simple
-backtest or optimization support to them.
-Metric queries return compact trace summaries and a reference to the full saved
-artifact, so long histories do not expand every roll into the model context.
-See [performance artifacts](performance_artifacts.md#performance-scopes-and-provenance)
-for the summary fields and paged evidence retrieval.
+A nonempty interval with no scored bars fails with a model-availability,
+history or feature diagnostic. An empty interval yields no predictions. Direction
+consumers emit no entry for unavailable bars; cooldown is applied **after**
+prediction and never determines which bars are scored. SafetyVolume applies its
+[Risk Gate](strategies/safety_volume_strategy.md#layer-1-risk-gate-xgboost)
+holding policy. Neither consumer borrows a neighbouring score or substitutes a
+numerical probability for an unavailable estimate.
+
+Both geometry modes record `rolling_trace` in metric metadata. Each roll reports
+its training window, mature row count, whether it fitted a model and how many
+bars it scored. Windows too short for even one mature feature row are skipped
+before transformation and record zero measured training rows. Unscored positions
+and reason counts remain available in the trace. An unsuccessful scoring call
+clears the strategy's previous trace rather than exposing stale evidence.
+Saved traces are independent snapshots for each walk-forward train/test frame.
+SafetyVolume's optional ML direction also uses this core and records its own
+trace under `direction`; both models obey the same replay causality boundary.
+These bundled strategies still require training and support walk-forward
+execution; the trace hook does not add simple backtest or optimization support.
+Metric queries return compact summaries and a reference to the complete saved
+artifact. [Performance artifacts](performance_artifacts.md#performance-scopes-and-provenance)
+defines trace fields, coordinates and paged evidence retrieval.
 
 This is not fold validation. `validation_schemes` cut one dataset into
 train/test folds to estimate the training procedure; `rolling_gen` decides how

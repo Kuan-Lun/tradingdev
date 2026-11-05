@@ -608,6 +608,11 @@ def test_simple_backtest_refuses_an_untrained_quantile_strategy(
         def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
             return StrategyExecution(kind="bundled", constructor_kwargs={})
 
+        def validate_execution(
+            self, strategy_cfg: dict[str, Any], execution: StrategyExecution
+        ) -> None:
+            """This fixture already carries a strategy with validated config."""
+
     rows = 80
     closes = [100.0 + (index % 7) for index in range(rows)]
     frame = pd.DataFrame(

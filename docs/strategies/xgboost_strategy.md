@@ -70,8 +70,9 @@ designed for research on market-making volume targets, not live execution.
 
 ## Declarative Rolling Schemes
 
-`rolling_gen` replaces the rolling retrainer with a named window geometry. It is
-off unless enabled, and while it is off the classic loop above is what runs. The
+`rolling_gen` selects a named training geometry when enabled; otherwise the
+shared core uses automatic geometry. Both modes use feature-owned prediction
+context, causal refits and saved execution traces. The
 schemes, their optional fields and the causal boundary are described once in the
 [ML research contract](../ml_research.md#rolling-retraining-schemes); this
 strategy needs only the switch:

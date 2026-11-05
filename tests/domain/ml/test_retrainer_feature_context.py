@@ -21,7 +21,7 @@ import pytest
 
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
-from tradingdev.domain.ml.retrainer import RollingRetrainer
+from tradingdev.domain.ml.rolling_gen import run_rolling
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.strategies.bundled.xgboost_strategy.config import (
     XGBoostStrategyConfig,
@@ -115,13 +115,19 @@ def test_the_shortest_default_candidate_predicts_on_every_bar(
 
     monkeypatch.setattr(XGBoostDirectionModel, "predict_proba", predict_proba)
 
-    signals = RollingRetrainer(
-        XGBoostModelConfig(n_estimators=3, n_jobs=1, max_depth=2),
+    signals = run_rolling(
+        history,
+        scored,
+        None,
+        model=_CountingModel(),
+        fe=FeatureEngineer(lookback=12),
+        label_horizon=(FeatureEngineer(lookback=12)).target_horizon,
+        model_config=XGBoostModelConfig(n_estimators=3, n_jobs=1, max_depth=2),
         retrain_interval=10_000,
         threshold=0.55,
         cooldown=1,
         lookback=12,
-    ).run(scored, history, _CountingModel(), FeatureEngineer(lookback=12))
+    )
 
     assert len(calls) == _SCORED_BARS
     np.testing.assert_array_equal(signals, np.ones(_SCORED_BARS, dtype=int))
@@ -149,13 +155,19 @@ def test_the_scored_row_agrees_with_a_full_history_computation(
     monkeypatch.setattr(XGBoostDirectionModel, "predict_proba", predict_proba)
     fe = FeatureEngineer(lookback=12)
 
-    RollingRetrainer(
-        XGBoostModelConfig(n_estimators=3, n_jobs=1, max_depth=2),
+    run_rolling(
+        history,
+        scored,
+        None,
+        model=_CountingModel(),
+        fe=fe,
+        label_horizon=(fe).target_horizon,
+        model_config=XGBoostModelConfig(n_estimators=3, n_jobs=1, max_depth=2),
         retrain_interval=10_000,
         threshold=0.55,
         cooldown=1,
         lookback=12,
-    ).run(scored, history, _CountingModel(), fe)
+    )
 
     reference = fe.transform(frame, include_target=False)
     columns = fe.get_feature_names()
@@ -186,13 +198,19 @@ def test_the_context_covers_the_settling_margin_and_ends_on_the_scored_bar() -> 
     history, scored = _split(frame)
     fe = _RecordingFeatureEngineer(lookback=12)
 
-    RollingRetrainer(
-        XGBoostModelConfig(),
+    run_rolling(
+        history,
+        scored,
+        None,
+        model=_CountingModel(),
+        fe=fe,
+        label_horizon=(fe).target_horizon,
+        model_config=XGBoostModelConfig(),
         retrain_interval=10_000,
         threshold=0.55,
         cooldown=1,
         lookback=12,
-    ).run(scored, history, _CountingModel(), fe)
+    )
 
     assert len(fe.contexts) == _SCORED_BARS
     assert all(len(context) == _SETTLED_ROWS for context in fe.contexts)
@@ -204,26 +222,27 @@ def test_the_context_covers_the_settling_margin_and_ends_on_the_scored_bar() -> 
         assert (context["timestamp"] <= frame["timestamp"].iloc[bar]).all()
 
 
-def test_a_longer_lookback_keeps_the_context_it_already_had() -> None:
-    """Raising the floor must not shorten a context that already covered it.
-
-    ``lookback=168`` asked for 337 rows before this change and still does, so
-    the indicator seeds, and therefore the signals, of an existing run are
-    unchanged.
-    """
+def test_a_longer_lookback_uses_its_actual_feature_requirement() -> None:
+    """Lag 168 reads a return and its preceding price: exactly 170 rows."""
     frame = _market_frame(_FIT_BARS + _SCORED_BARS)
     history, scored = _split(frame)
     fe = _RecordingFeatureEngineer(lookback=168)
 
-    RollingRetrainer(
-        XGBoostModelConfig(),
+    run_rolling(
+        history,
+        scored,
+        None,
+        model=_CountingModel(),
+        fe=fe,
+        label_horizon=(fe).target_horizon,
+        model_config=XGBoostModelConfig(),
         retrain_interval=10_000,
         threshold=0.55,
         cooldown=1,
         lookback=168,
-    ).run(scored, history, _CountingModel(), fe)
+    )
 
-    assert {len(context) for context in fe.contexts} == {2 * 168 + 1}
+    assert {len(context) for context in fe.contexts} == {170}
 
 
 def test_a_frame_that_never_completes_a_feature_row_fails() -> None:
@@ -232,13 +251,19 @@ def test_a_frame_that_never_completes_a_feature_row_fails() -> None:
     model = _CountingModel()
 
     with pytest.raises(ValueError, match="scored none of 20 bars") as rejected:
-        RollingRetrainer(
-            XGBoostModelConfig(),
+        run_rolling(
+            frame.iloc[:10],
+            frame.iloc[10:],
+            None,
+            model=model,
+            fe=FeatureEngineer(lookback=12),
+            label_horizon=(FeatureEngineer(lookback=12)).target_horizon,
+            model_config=XGBoostModelConfig(),
             retrain_interval=10_000,
             threshold=0.55,
             cooldown=1,
             lookback=12,
-        ).run(frame.iloc[10:], frame.iloc[:10], model, FeatureEngineer(lookback=12))
+        )
 
     assert "provide more history" in str(rejected.value)
     assert model.frames == []
@@ -262,17 +287,18 @@ def test_a_complete_history_that_still_yields_no_row_does_not_blame_it(
     model = _CountingModel()
 
     with pytest.raises(ValueError, match="incomplete for another reason") as rejected:
-        RollingRetrainer(
-            XGBoostModelConfig(),
+        run_rolling(
+            frame.iloc[:history_rows],
+            frame.iloc[history_rows:],
+            None,
+            model=model,
+            fe=FeatureEngineer(lookback=12),
+            label_horizon=(FeatureEngineer(lookback=12)).target_horizon,
+            model_config=XGBoostModelConfig(),
             retrain_interval=10_000,
             threshold=0.55,
             cooldown=1,
             lookback=12,
-        ).run(
-            frame.iloc[history_rows:],
-            frame.iloc[:history_rows],
-            model,
-            FeatureEngineer(lookback=12),
         )
 
     assert "provide more history" not in str(rejected.value)
@@ -291,13 +317,19 @@ def test_only_the_bars_that_reach_the_warmup_are_scored() -> None:
     history, scored = frame.iloc[:history_rows].copy(), frame.iloc[history_rows:]
     model = _CountingModel()
 
-    signals = RollingRetrainer(
-        XGBoostModelConfig(),
+    signals = run_rolling(
+        history,
+        scored,
+        None,
+        model=model,
+        fe=FeatureEngineer(lookback=12),
+        label_horizon=(FeatureEngineer(lookback=12)).target_horizon,
+        model_config=XGBoostModelConfig(),
         retrain_interval=10_000,
         threshold=0.55,
         cooldown=1,
         lookback=12,
-    ).run(scored, history, model, FeatureEngineer(lookback=12))
+    )
 
     assert len(model.frames) == 1
     assert model.frames[0].index.tolist() == [len(frame) - 1]

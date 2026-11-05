@@ -10,7 +10,7 @@ from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
-from tradingdev.domain.ml.retrainer import RollingRetrainer
+from tradingdev.domain.ml.rolling_gen import run_rolling
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.ml.threshold_optimizer import ThresholdOptimizer
 
@@ -34,6 +34,9 @@ class _PredictionRecorder(XGBoostDirectionModel):
     def __init__(self) -> None:
         super().__init__(XGBoostModelConfig())
         self.frames: list[pd.DataFrame] = []
+
+    def train(self, df: pd.DataFrame, eval_df: pd.DataFrame | None = None) -> None:
+        pass
 
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
         self.frames.append(df.copy(deep=True))
@@ -115,9 +118,21 @@ def test_rolling_prediction_requires_the_current_source_row(
     frame = _gapped_frame()
     original = frame.copy(deep=True)
     model = _PredictionRecorder()
-    retrainer = RollingRetrainer(XGBoostModelConfig(), 1000, 0.6, 0, 24)
 
-    signals = retrainer.run(frame, frame.iloc[:0], model, FeatureEngineer(24))
+    signals = run_rolling(
+        frame.iloc[:0],
+        frame,
+        None,
+        model=model,
+        fe=FeatureEngineer(24),
+        label_horizon=(FeatureEngineer(24)).target_horizon,
+        model_config=XGBoostModelConfig(),
+        retrain_interval=10,
+        model_factory=lambda _: model,
+        threshold=0.6,
+        cooldown=0,
+        lookback=24,
+    )
 
     predicted = [int(request.index[0]) for request in model.frames]
     assert (position in predicted) is bool(expected)

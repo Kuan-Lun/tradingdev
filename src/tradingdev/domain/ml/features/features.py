@@ -49,6 +49,8 @@ def _sampled_lags(lookback: int) -> list[int]:
 class FeatureEngineer:
     """Generate feature matrices from OHLCV data."""
 
+    target_classes = (-1, 0, 1)
+
     def __init__(self, lookback: int = 24, target_horizon: int = 1) -> None:
         self._lookback = lookback
         self._target_horizon = target_horizon

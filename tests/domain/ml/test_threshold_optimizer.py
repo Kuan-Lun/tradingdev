@@ -47,7 +47,11 @@ def test_threshold_search_uses_net_pnl_and_handles_unavailable_returns(
     )
     model = cast(
         "XGBoostDirectionModel",
-        SimpleNamespace(predict_proba=lambda frame: pd.DataFrame({1: [0.95, 0.95]})),
+        SimpleNamespace(
+            predict_proba=lambda frame: pd.DataFrame(
+                {0: [0.05, 0.05], 1: [0.95, 0.95]}, index=frame.index
+            )
+        ),
     )
     features = cast(
         "FeatureEngineer", SimpleNamespace(transform=lambda frame, **kwargs: frame)
@@ -81,7 +85,11 @@ def test_safety_volume_threshold_selects_highest_pnl_without_capital(
     )
     model = cast(
         "XGBoostDirectionModel",
-        SimpleNamespace(predict_proba=lambda frame: pd.DataFrame({1: [0.95, 0.95]})),
+        SimpleNamespace(
+            predict_proba=lambda frame: pd.DataFrame(
+                {0: [0.05, 0.05], 1: [0.95, 0.95]}, index=frame.index
+            )
+        ),
     )
     features = cast(
         "RiskFeatureEngineer", SimpleNamespace(transform=lambda frame, **kwargs: frame)

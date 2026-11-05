@@ -27,7 +27,8 @@ indicator's nonlinear transformations.
 """
 
 
-def _settle_bars(alpha: float) -> int:
+def seed_decay_bars(alpha: float) -> int:
+    """Bars needed to reduce one recursion's seed weight below the target."""
     """Bars after which an exponential seed keeps less than the tolerance."""
     return math.ceil(math.log(_EMA_SEED_TOLERANCE) / math.log1p(-alpha))
 
@@ -46,8 +47,8 @@ strategy's ``lookback``.
 """
 
 TA_SETTLED_CONTEXT_ROWS = max(
-    RSI_LENGTH + 1 + _settle_bars(1.0 / RSI_LENGTH),
-    MACD_SLOW + MACD_SIGNAL - 1 + _settle_bars(2.0 / (MACD_SLOW + 1)),
+    RSI_LENGTH + 1 + seed_decay_bars(1.0 / RSI_LENGTH),
+    MACD_SLOW + MACD_SIGNAL - 1 + seed_decay_bars(2.0 / (MACD_SLOW + 1)),
     BOLLINGER_LENGTH,
 )
 """Preferred rows, including the bar, to reduce indicator seed effects.
