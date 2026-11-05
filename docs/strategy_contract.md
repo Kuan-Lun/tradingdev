@@ -757,17 +757,14 @@ session, including waits between calls; training state and RNG streams stay in
 that session. Input/output messages have a byte cap and fail rather than truncate
 results. Diagnostics retain a bounded tail and explicitly indicate truncation.
 
-The data-only protocol never unpickles worker data on the host. Its
-[`FramePayload`](../src/tradingdev/adapters/execution/frame_codec.py) preserves
-numeric precision, nullable values, datetime units/timezones, supported index
-metadata and string storage types. Columns must have unique string names. Range,
-datetime and ordinary numeric/string indexes are supported; MultiIndex,
-categorical/custom extension dtypes and arbitrary Python objects are rejected.
-Timezones use installed IANA names or explicit UTC offsets; path-based dateutil
-names and arbitrary timezone objects are rejected before pandas conversion.
-Object cells and frame attributes must contain finite JSON values. Input-mutation
-checks run inside the worker as well as structural checks on returned frames, so
-copying data across the boundary cannot conceal an in-place strategy mutation.
+The data-only protocol never unpickles worker data on the host or accepts arbitrary
+object deserialization. Frame data limits and rejection rules are described in the
+[container execution adapter](../ARCHITECTURE.md#容器執行-adapter), with formal
+definitions in [`FramePayload`, `encode_frame` and `decode_frame`](../src/tradingdev/adapters/execution/frame_codec.py).
+Timezone input is validated before pandas conversion; path-based dateutil names
+and arbitrary timezone objects are rejected. Input-mutation checks run inside the
+worker as well as structural checks on returned frames, so copying data across the
+boundary cannot conceal an in-place strategy mutation.
 
 Validation/dry-run retain their outer supervised request budget (60 seconds by
 default, excluding earlier quality checks and subsequent cleanup); direct

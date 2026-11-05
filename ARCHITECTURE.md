@@ -445,11 +445,24 @@ Supervisor 停止 host worker 後，依[容器執行 adapter](#容器執行-adap
 [策略安全模型](docs/strategy_contract.md#security-model)說明；
 建置映像、環境設定與測試操作見[開發指南](docs/development.md#容器建置與驗證)。
 
-生成策略透過
+產品 `StrategyFactory` 透過
 [`generated_strategy.inspect_parameters` 與 `open_strategy`](src/tradingdev/adapters/execution/generated_strategy.py)
-使用此 adapter：前者擷取或驗證建構參數，後者在 context 內保留訓練狀態與亂數序列，
+操作容器中的生成策略；整合者或測試也可直接呼叫這些 helper。前者擷取或驗證建構參數，
+後者在 context 內保留訓練狀態與亂數序列，
 離開時確認容器清理。兩者接收已固定來源雜湊、類別與 runtime 的
 [`GeneratedProgram`](src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
+
+DataFrame 透過 [`FramePayload`、`encode_frame` 與 `decode_frame`](src/tradingdev/adapters/execution/frame_codec.py)
+跨越邊界。欄名必須是唯一字串，index／columns 的名稱只能是字串或 `None`。
+支援 RangeIndex、DatetimeIndex 及一般數值／字串 index；MultiIndex、categorical／自訂
+extension dtype 與任意 Python 物件不受支援。`attrs` 與 object 儲存格須為有限 JSON 值。
+數值、nullable、datetime 與字串的支援型別由該 codec 定義；無法表示的型別或值會失敗，
+不以字串化或截斷替代。時區限已安裝的 IANA 名稱或明示 UTC offset，不接受 dateutil
+路徑或任意 timezone 物件。
+
+[`strategy_worker.serve`](src/tradingdev/adapters/execution/strategy_worker.py) 回報操作錯誤後
+會結束該 session；呼叫端須離開 context 完成清理後重新開啟，不能沿用已失敗實例的
+訓練狀態繼續操作。底層傳輸或程序失敗也不保證可恢復同一實例。
 底層容器呼叫契約如下。
 
 1. 建立 `DockerRuntime(control_root)`，以可保留的獨立目錄保存執行歸屬紀錄。
