@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -22,7 +23,9 @@ if TYPE_CHECKING:
 
 def _manifest(*, fees: float = 0.0006) -> ExecutionManifest:
     return ExecutionManifest.create(
-        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+        strategy_execution=StrategyExecution(
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+        ),
         kind="backtest",
         config={
             "strategy": {"id": "fixture"},

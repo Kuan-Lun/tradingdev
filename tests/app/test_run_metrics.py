@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.performance import PerformanceStore
@@ -852,7 +853,9 @@ def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
     manifest = ExecutionManifest.create(
         kind="walk_forward" if walk_forward else "backtest",
         config=config,
-        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+        strategy_execution=StrategyExecution(
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+        ),
     )
     pipeline = PipelineResult(
         mode="walk_forward" if walk_forward else "simple",

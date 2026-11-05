@@ -16,8 +16,8 @@ from tradingdev.domain.execution import ManifestError
 from tradingdev.domain.strategies.schemas import StrategyMetadata
 
 if TYPE_CHECKING:
+    from tradingdev.adapters.execution.strategy_factory import StrategyFactory
     from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
-    from tradingdev.domain.strategies.loader import StrategyLoader
     from tradingdev.domain.strategies.schemas import StrategySpec
 
 
@@ -153,7 +153,7 @@ def apply_backtest_overrides(
 
 
 def validate_optimization_grid(
-    loader: StrategyLoader,
+    loader: StrategyFactory,
     manifest: ExecutionManifest,
     optimization: OptimizationSpec,
 ) -> None:

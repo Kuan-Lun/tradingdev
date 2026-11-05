@@ -46,15 +46,14 @@ if fault != 'success':
     if fault.startswith('import_'):
         code += '\\n' + statement.replace('                pass', '    pass') + '\\n'
     elif fault.startswith('constructor_'):
-        code = code.replace('        self._engine = backtest_engine',
+        code = code.replace('        self._fast_period = fast_period',
             f'        if fast_period > 0:\\n            {statement}\\n'
-            '        self._engine = backtest_engine')
+            '        self._fast_period = fast_period')
     else:
         code = code.replace('        result = df.copy()\\n',
             f'        if len(df) > {limit}:\\n            {statement}\\n'
             '        result = df.copy()\\n')
-options = {'contract_timeout_seconds': 3} if fault.endswith('timeout') else {}
-service = StrategyService(WorkspacePaths(root / 'workspace'), **options)
+service = StrategyService(WorkspacePaths(root / 'workspace'))
 saved = service.save_draft(code, example['example_yaml_config'], NewResearchSpec(
     strategy_outline='runtime fault isolation', symbol='BTC/USDT', timeframe='1h',
     start_date='2024-01-01', end_date='2024-12-31', init_cash=10000,
@@ -64,6 +63,9 @@ assert saved.success, saved.error
 if phase == 'dry_run':
     validated = service.validate(saved.strategy_id, saved.revision_id)
     assert validated['success'], validated
+if fault.endswith('timeout'):
+    service = StrategyService(WorkspacePaths(root / 'workspace'),
+        contract_timeout_seconds=10)
 result = getattr(service, phase)(saved.strategy_id, saved.revision_id)
 stored = service.get_strategy(saved.strategy_id, saved.revision_id)
 print(json.dumps({'result': result, 'stored': stored}))
@@ -126,8 +128,8 @@ def test_service_survives_runtime_failure(phase: str, fault: str) -> None:
         assert evidence["revision_id"] == result["revision_id"]
         if fault != "success":
             expected_code = {
-                "exception": "contract_execution_error",
-                "system_exit": "strategy_check_failed",
+                "exception": "strategy_execution_failed",
+                "system_exit": "strategy_execution_failed",
                 "timeout": "strategy_check_timeout",
             }[fault.removeprefix("import_").removeprefix("constructor_")]
             assert any(item["code"] == expected_code for item in result["diagnostics"])
@@ -170,7 +172,8 @@ async def test_real_mcp_survives_exit_and_accepts_repaired_revision(
         rejected = await client.call(phase, **selected)
         assert rejected["success"] is False
         assert any(
-            item["code"] == "strategy_check_failed" for item in rejected["diagnostics"]
+            item["code"] == "strategy_execution_failed"
+            for item in rejected["diagnostics"]
         )
         read = await client.call("get_strategy", **selected)
         assert read["success"] and read["revision_id"] == selected["revision_id"]

@@ -63,8 +63,9 @@ flowchart LR
 
 這是目前實作的責任分組，尚未形成全面的依賴反轉。
 Application services 直接使用具體的儲存與程序 adapters；`domain/data` 內的
-crawlers 與 loader 仍執行網路及檔案 I/O，StrategyLoader 也會
-讀取、載入策略檔案。`domain/ml/registry` 的模型、特徵快取與排行榜 stores
+crawlers 與 loader 仍執行網路及檔案 I/O。策略檔案讀取與實例生命週期由
+`adapters/execution/strategy_factory.py` 負責，domain 的訊號檢查依賴 factory port。
+`domain/ml/registry` 的模型、特徵快取與排行榜 stores
 也執行檔案 I/O；ML dataset store 位於 `adapters/storage`。
 最佳化的完整流程仍由 worker 協調，尚未全部收斂到 app。
 修改這些模組時，不能假設 domain 全部都是無副作用的純計算。
@@ -166,8 +167,9 @@ stateDiagram-v2
 ```
 
 驗證先做靜態政策與共用 Ruff／Mypy 檢查，再由 StrategyContractService 透過具期限的
-worker 執行 SignalContractChecker，在合成資料上檢查匯入、建構子、設定與訊號；
-dry-run 使用較長 fixture。回覆綁定原請求，確認 supervisor 持有的程序群組清理後才保存證據；
+worker 執行 SignalContractChecker。StrategyFactory 從首次匯入起把生成程式放入獨立
+Linux 執行單元，在合成資料上檢查建構子、設定與訊號；dry-run 使用較長 fixture。
+回覆綁定原請求，確認 host worker 與隔離單元清理後才保存證據；
 異常退出、逾時及清理失敗皆不授予執行資格。實際執行也套用共用訊號框架檢查，
 防止缺列、索引錯位、輸入修改或無效訊號進入引擎。檢查不證明沒有前視或符合自然語言構想。
 
@@ -223,7 +225,8 @@ JobService 與 OptimizationService 共用 ExecutionSubmissionService；提交使
 
 固定比較由 ComparisonService 使用一份不可變行情快照，逐組重新解碼並建立獨立策略、
 引擎、資金與亂數串流。ComparisonStore 保存全部候選帳本，RunPublisher 核對父子身分
-後發布成功結果；失敗與未執行組別不被省略。此流程限普通回測，不提供全域 Python 狀態隔離。
+後發布成功結果；失敗與未執行組別不被省略。此流程限普通回測。生成策略實例各自有獨立
+程序；內建策略與可信主程式的任意 Python 全域狀態不在隔離保證內。
 範圍與恢復規則見[固定比較證據](docs/run_artifacts.md#fixed-comparison-evidence)。
 
 CLI 直接同步呼叫 BacktestService，再透過 ArtifactService 保存；命令本身是明確執行
@@ -422,10 +425,20 @@ JobService 在狀態查詢時先透過 JobLifecycle 恢復失聯 worker 的狀�
 JobQueries 讀取結果明細與組裝回覆；清單查詢只讀取已保存狀態。取消與恢復都保留
 清理後的狀態重讀及 store 的終態保護，避免覆寫並行完成的工作。
 
-監督依賴 POSIX process groups 與 `waitid(WNOWAIT)`，以尚未回收的直屬 child 維持身分。
-策略 validate／dry-run（含直接 StrategyService 呼叫）及 MCP preflight 受此監督；
-直接 Python API／CLI 的執行設定捕捉不因此受到監督。外部強殺 supervisor 或後代
-自行脫離 session 不在清理保證內。
+可信 host worker 的監督依賴 POSIX process groups 與 `waitid(WNOWAIT)`，
+以尚未回收的直屬 child 維持身分。生成 Python 不進入這些 host 程序：所有入口共用
+StrategyFactory 的 context-managed 生命週期，透過有界資料協定呼叫容器中的實例。
+fit 狀態與亂數 context 保留於同一實例；主程式不反序列化 worker 提供的 Python 物件。
+
+DockerRuntime 以 daemon 身分、不可變 container ID、owner label 與檔案鎖 lease 記錄
+歸屬。先停止直屬 attach client 解除輸出回壓，再移除並核對隔離單元；無法確認時保留
+控制紀錄並回報失敗。Supervisor 停止 host worker 後另恢復該次工作的容器控制紀錄，
+不以程序群組已空代替容器清理。跨 MCP session 的取消沿用同一 launch 控制身分。
+
+隔離單元由不同 UID 的可信 PID 1 持有獨立期限。PID namespace 結束時，Linux 核心
+一併停止另開 session 的策略後代；即使外部強殺 host controller，這個期限仍存在。
+強殺 host supervisor 仍可能使可信 host worker 的清理證據缺失；不得據此宣稱整個工作
+已清理。Daemon 或核心故障時不承諾立即清理，必須保留紀錄並恢復可核對的控制環境。
 控制檔案與證據見[Workspace Layout](docs/run_artifacts.md#workspace-layout)。
 
 ### 可重現性與策略執行安全
@@ -434,7 +447,8 @@ JobQueries 讀取結果明細與組裝回覆；清單查詢只讀取已保存狀
 按 fold 順序共用該次串流，trial 各自獨立。策略須使用 domain.randomness，第三方種子須
 明確傳入；不控制任意全域 RNG。獨立 ML 訓練另用模型的 `random_state`，不能互相推斷。
 
-Manifest、來源 hash、資料指紋及版本提供追蹤，沒有封存全部依賴與執行環境，不承諾
-跨環境完全重現。舊結果缺少證據時明確回報，不能猜測或自動重算。
-靜態驗證、workspace 路徑與程序監督都不是完整 sandbox；生成 Python 的匯入、建構
-與訊號檢查仍會執行程式。適用路徑及限制見[策略安全模型](docs/strategy_contract.md#security-model)。
+Manifest、來源 hash、資料指紋及版本提供追蹤；生成策略另固定容器 image ID 與資源政策。
+可信 host 依賴、硬體與任意全域 RNG 並未全部封存，不承諾跨環境完全重現。
+舊結果缺少證據時明確回報，不能猜測或自動重算。
+生成程式使用無主機掛載、無外部網路及有資源上限的 Linux 容器；workspace、靜態驗證
+與操作同意本身不是隔離。信任邊界及限制見[策略安全模型](docs/strategy_contract.md#security-model)。

@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.domain.comparison import ComparisonCandidate, ComparisonManifest
 from tradingdev.domain.execution import ExecutionManifest
@@ -42,7 +43,9 @@ def candidate(index: int, period: int, **changes: Any) -> ComparisonCandidate:
         kind="backtest",
         config=config,
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs={"period": period}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"period": period},
         ),
     )
     return ComparisonCandidate(

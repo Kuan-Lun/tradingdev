@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pytest
@@ -13,6 +14,7 @@ import yaml
 from tests.app.test_generated_strategy_job import FakeRunner
 from tests.research_fixtures import research_for_config, with_fixture_market_source
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
@@ -23,8 +25,13 @@ from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.performance.artifacts import bundles_from_pipeline
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.mcp.workers import optimization
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from tradingdev.domain.strategies.base import BaseStrategy
+    from tradingdev.domain.strategies.execution import StrategyExecution
 
 _CODE = """\
 from typing import Any
@@ -62,7 +69,7 @@ class ExperimentStrategy(BaseStrategy):
 class Experiment:
     workspace: WorkspacePaths
     strategies: StrategyService
-    loader: StrategyLoader
+    loader: StrategyFactory
     data: DataService
     service: BacktestService
     jobs: JobService
@@ -75,7 +82,9 @@ class Experiment:
 
 
 @pytest.fixture
-def experiment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Experiment:
+def experiment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Experiment:
     workspace = WorkspacePaths(tmp_path / "workspace")
     monkeypatch.setenv("TRADINGDEV_WORKSPACE", str(workspace.root))
     strategies = StrategyService(workspace)
@@ -99,8 +108,16 @@ def experiment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Experiment:
         "validation": {"mode": "automatic", "n_splits": 2, "train_ratio": 0.5},
         "random_seed": 42,
     }
+    code = _CODE
+    if getattr(request, "param", None) == "fitted":
+        code = code.replace(
+            "    def generate_signals",
+            "    def fit(self, df: pd.DataFrame) -> None:\n"
+            '        self.settings["offset"] += 1\n\n'
+            "    def generate_signals",
+        )
     saved = strategies.save_draft(
-        _CODE,
+        code,
         with_fixture_market_source(yaml.safe_dump(config)),
         research_for_config(config),
         strategy_id="experiment",
@@ -115,7 +132,7 @@ def experiment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Experiment:
         for path in workspace.generated_strategies.rglob("*")
         if path.is_file()
     }
-    loader = StrategyLoader(workspace_root=workspace.root)
+    loader = StrategyFactory(workspace_root=workspace.root)
     data = DataService(workspace)
     loads: list[dict[str, Any]] = []
     prices = pd.Series([100.0 + i for i in range(80)])
@@ -347,20 +364,29 @@ def test_manifest_uses_frozen_defaults_during_check_and_actual_execution(
     manifest = experiment.service.prepare_execution(
         experiment.config, kind="walk_forward"
     )
-    cls = experiment.loader.load_class(manifest.config_copy()["strategy"])
     actual: list[int] = []
-    original: Any = cls.__init__
+    monkeypatch.setenv(
+        "TRADINGDEV_STRATEGY_IMAGE", "missing-image-must-not-be-resolved"
+    )
+    monkeypatch.setenv("TRADINGDEV_RUNTIME_LIMITS", '{"max_seconds": 0.01}')
+    factory = StrategyFactory(workspace_root=experiment.workspace.root)
+    original = factory.open_from_execution
 
-    def constructor(
-        self: Any, settings: dict[str, int], failure: str = "none", scale: int = 999
-    ) -> None:
+    @contextmanager
+    def observe(
+        config: dict[str, Any], execution: StrategyExecution, *args: Any, **kwargs: Any
+    ) -> Iterator[BaseStrategy]:
+        scale = execution.constructor_kwargs["scale"]
+        assert isinstance(scale, int)
         actual.append(scale)
-        original(self, settings=settings, failure=failure, scale=scale)
+        with original(config, execution, *args, **kwargs) as strategy:
+            yield strategy
 
-    monkeypatch.setattr(cls, "__init__", constructor)
-    monkeypatch.setattr(experiment.loader, "load_class", lambda _cfg: cls)
-    experiment.service.run_manifest(manifest)
+    monkeypatch.setattr(factory, "open_from_execution", observe)
+    monkeypatch.setattr(experiment.service, "_strategy_loader", factory)
+    run = experiment.service.run_manifest(manifest)
     assert actual == [2, 2, 2]
+    assert all(fold.strategy_params["scale"] == 2 for fold in run.pipeline.fold_results)
     _assert_revision_unchanged(experiment)
 
 
@@ -386,17 +412,10 @@ def test_optimization_candidates_recheck_actual_parameters(
     _assert_revision_unchanged(experiment)
 
 
+@pytest.mark.parametrize("experiment", ["fitted"], indirect=True)
 def test_walk_forward_keeps_each_fitted_parameter_snapshot(
     experiment: Experiment,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cls = experiment.loader.load_class(experiment.config["strategy"])
-
-    def fit(self: Any, _df: pd.DataFrame) -> None:
-        self.settings["offset"] += 1
-
-    monkeypatch.setattr(cls, "fit", fit)
-    monkeypatch.setattr(experiment.loader, "load_class", lambda _cfg: cls)
     run = experiment.service.run_raw_config(experiment.config, walk_forward=True)
     artifacts = bundles_from_pipeline("fitted", run.pipeline, run.metrics)
     for index, expected_offset in enumerate((6, 7)):

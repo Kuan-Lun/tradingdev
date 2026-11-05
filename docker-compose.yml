@@ -5,6 +5,8 @@ services:
     init: true
     restart: unless-stopped
     user: "${TRADINGDEV_UID:-1000}:${TRADINGDEV_GID:-1000}"
+    group_add:
+      - "${TRADINGDEV_DOCKER_GID:-0}"
     ports:
       - "${MCP_BIND_IP:-127.0.0.1}:${MCP_PORT:-8000}:8000"
     volumes:
@@ -13,8 +15,18 @@ services:
         target: /workspace
         bind:
           create_host_path: false
+      - type: bind
+        source: ${TRADINGDEV_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       FORWARDED_ALLOW_IPS: ${MCP_TRUSTED_PROXIES:-127.0.0.1}
+      DOCKER_HOST: unix:///var/run/docker.sock
+      TRADINGDEV_STRATEGY_IMAGE: ${TRADINGDEV_STRATEGY_IMAGE:-tradingdev-strategy-runtime:0.1.0}
+      # Null passes through the shell/.env value; unresolved means unset.
+      TRADINGDEV_RUNTIME_LIMITS: null
     command:
       - --web
       - --transport

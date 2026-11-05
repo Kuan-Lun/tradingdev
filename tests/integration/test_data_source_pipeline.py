@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from tests.data_cache import cached_market_path
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.strategy_service import StrategyService
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -68,7 +68,7 @@ def _service(tmp_path: Path) -> tuple[BacktestService, WorkspacePaths]:
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = BacktestService(
         data_service=DataService(workspace),
-        strategy_loader=StrategyLoader(workspace_root=workspace.root),
+        strategy_loader=StrategyFactory(workspace_root=workspace.root),
         strategy_gate=StrategyService(workspace),
     )
     return service, workspace

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, cast
@@ -15,6 +16,7 @@ from tests.app.test_backtest_service import (
     _service,
     _SignalStrategy,
 )
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_dataset import ExecutionDataset, execution_data_binding
@@ -25,6 +27,7 @@ from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.signals import SignalContractError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from tradingdev.app.data_service import LoadedDataset
@@ -41,7 +44,7 @@ def _candidate(
         kind=manifest.kind,
         config=config,
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs=parameters
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs=parameters
         ),
     )
 
@@ -67,7 +70,7 @@ def test_capture_contains_real_merged_features_and_loads_only_once(
 
     monkeypatch.setattr(data, "load", load)
     monkeypatch.setattr(
-        loader, "create_from_execution", lambda *_args: _SignalStrategy()
+        loader, "open_from_execution", lambda *_args: nullcontext(_SignalStrategy())
     )
     config = _raw_config(
         data={
@@ -210,19 +213,20 @@ def test_candidate_mutation_cannot_contaminate_next_candidate(
                     raise ValueError("candidate failed after mutation")
             return super().generate_signals(df)
 
+    @contextmanager
     def create(
         _config: dict[str, Any],
         execution: StrategyExecution,
         engine: BaseBacktestEngine | None,
         _parallel: ParallelConfig,
-    ) -> Candidate:
+    ) -> Iterator[Candidate]:
         candidate = Candidate(bool(execution.constructor_kwargs["mutate"]))
         if engine is not None:
             strategies.append(candidate)
             engines.append(engine)
-        return candidate
+        yield candidate
 
-    monkeypatch.setattr(loader, "create_from_execution", create)
+    monkeypatch.setattr(loader, "open_from_execution", create)
     mutating = _candidate(manifest, {"mutate": True})
     healthy = _candidate(manifest, {"mutate": False})
     if fail_after_mutation:
@@ -300,7 +304,7 @@ def test_capture_checks_execution_before_loading_data(
                 return result
 
         monkeypatch.setattr(
-            loader, "create_from_execution", lambda *_args: InvalidStrategy()
+            loader, "open_from_execution", lambda *_args: nullcontext(InvalidStrategy())
         )
     with pytest.raises(expected):
         service.load_execution_dataset(manifest)
@@ -369,9 +373,9 @@ def test_shared_snapshot_replays_rng_independently_of_candidate_order_and_failur
 
     monkeypatch.setattr(
         loader,
-        "create_from_execution",
-        lambda _config, execution, *_args: RandomCandidate(
-            bool(execution.constructor_kwargs["fail"])
+        "open_from_execution",
+        lambda _config, execution, *_args: nullcontext(
+            RandomCandidate(bool(execution.constructor_kwargs["fail"]))
         ),
     )
     healthy = _candidate(manifest, {"fail": False})

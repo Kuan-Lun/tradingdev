@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.domain import execution as execution_module
 from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
@@ -31,7 +32,9 @@ from tradingdev.domain.strategies.execution import StrategyExecution
 
 def _strategy_execution() -> StrategyExecution:
     return StrategyExecution(
-        kind="generated", constructor_kwargs={"parameters": {"windows": [2, 10]}}
+        kind="generated",
+        program=GENERATED_PROGRAM,
+        constructor_kwargs={"parameters": {"windows": [2, 10]}},
     )
 
 
@@ -105,6 +108,51 @@ def test_manifest_roundtrip_and_independent_canonical_digest() -> None:
     assert ExecutionManifest.model_validate_json(manifest.model_dump_json()) == manifest
     manifest.verify(expected_hash=manifest.manifest_hash)
     assert "job_id" not in payload
+
+
+def test_generated_manifest_without_runtime_identity_cannot_authorize_execution() -> (
+    None
+):
+    manifest = ExecutionManifest.create(
+        strategy_execution=_strategy_execution(), kind="backtest", config=_config()
+    )
+    payload = manifest.model_dump(mode="json")
+    del payload["strategy_execution"]["program"]
+    with pytest.raises(ValidationError, match="require a fixed source"):
+        ExecutionManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["source_hash", "image_id", "max_seconds"])
+def test_generated_program_and_policy_are_bound_to_the_manifest_hash(
+    field: str,
+) -> None:
+    original = ExecutionManifest.create(
+        strategy_execution=_strategy_execution(), kind="backtest", config=_config()
+    )
+    payload = original.model_dump(mode="json")
+    program = payload["strategy_execution"]["program"]
+    if field == "source_hash":
+        program["source_hash"] = "c" * 64
+    elif field == "image_id":
+        program["runtime"]["image_id"] = "sha256:" + "d" * 64
+    else:
+        program["runtime"]["limits"]["max_seconds"] = 123
+    with pytest.raises(ValidationError, match="hash does not match"):
+        ExecutionManifest.model_validate(payload)
+    changed = ExecutionManifest.create(
+        strategy_execution=StrategyExecution.model_validate(
+            payload["strategy_execution"]
+        ),
+        kind="backtest",
+        config=_config(),
+    )
+    assert changed.manifest_hash != original.manifest_hash
+    assert (
+        ExecutionManifest.model_validate_json(
+            changed.model_dump_json()
+        ).strategy_execution.program
+        == changed.strategy_execution.program
+    )
     assert "created_at" not in payload
 
 
@@ -296,7 +344,9 @@ def test_resolved_strategy_parameters_are_independent_from_revision_declaration(
         kind="backtest", config=config, strategy_execution=strategy
     )
     changed_strategy = StrategyExecution(
-        kind="generated", constructor_kwargs={"parameters": {"windows": [3, 10]}}
+        kind="generated",
+        program=GENERATED_PROGRAM,
+        constructor_kwargs={"parameters": {"windows": [3, 10]}},
     )
     changed = ExecutionManifest.create(
         kind="backtest", config=config, strategy_execution=changed_strategy
@@ -333,7 +383,9 @@ def test_nested_non_json_mutation_cannot_hide_behind_date_canonicalization(
         kind="optimization",
         config=_config(),
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs={"day": "2024-01-01"}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"day": "2024-01-01"},
         ),
         optimization=_search(param_ranges={"day": ["2024-01-01"]}),
     )

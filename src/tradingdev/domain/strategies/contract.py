@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import ExitStack
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,9 +14,10 @@ from pydantic import ValidationError
 
 from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
 from tradingdev.domain.randomness import execution_randomness
+from tradingdev.domain.runtime import IsolatedRuntimeError
 from tradingdev.domain.strategies.base import BaseStrategy
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.signals import (
+    SignalContractError,
     check_signal_frame,
     copy_signal_frame,
     signal_analysis,
@@ -24,6 +26,7 @@ from tradingdev.domain.strategies.validator import diagnostic
 
 if TYPE_CHECKING:
     from tradingdev.domain.strategies.execution import StrategyExecution
+    from tradingdev.domain.strategies.factory import StrategyFactoryPort
     from tradingdev.domain.strategies.schemas import (
         StrategyDiagnostic,
         StrategyMetadata,
@@ -41,8 +44,8 @@ class SignalContractChecker:
     (input preservation, aligned market rows and finite signals in -1/0/1).
     """
 
-    def __init__(self, loader: StrategyLoader | None = None) -> None:
-        self._loader = loader or StrategyLoader()
+    def __init__(self, loader: StrategyFactoryPort) -> None:
+        self._loader = loader
 
     def check(
         self,
@@ -127,10 +130,10 @@ class SignalContractChecker:
             effective_config["parallel"] = (
                 run_config.parallel or ParallelConfig()
             ).model_dump(mode="json")
-            with execution_randomness(run_config.random_seed):
+            with execution_randomness(run_config.random_seed), ExitStack() as stack:
                 if execution is None:
-                    strategy = self._loader.create_from_config(
-                        effective_config, engine=None
+                    strategy = stack.enter_context(
+                        self._loader.open_from_config(effective_config, engine=None)
                     )
                 else:
                     selected = execution
@@ -138,11 +141,13 @@ class SignalContractChecker:
                         selected = self._loader.override_execution(
                             effective_config["strategy"], execution, parameter_overrides
                         )
-                    strategy = self._loader.create_from_execution(
-                        effective_config["strategy"],
-                        selected,
-                        None,
-                        run_config.parallel or ParallelConfig(),
+                    strategy = stack.enter_context(
+                        self._loader.open_from_execution(
+                            effective_config["strategy"],
+                            selected,
+                            None,
+                            run_config.parallel or ParallelConfig(),
+                        )
                     )
                 if not isinstance(strategy, BaseStrategy):
                     diagnostics.append(
@@ -174,6 +179,25 @@ class SignalContractChecker:
                 "signal_analysis": signal_analysis(result),
                 "effective_config": effective_config,
             }
+        except SignalContractError as exc:
+            diagnostics.extend(exc.diagnostics)
+            return {
+                "diagnostics": diagnostics,
+                "signal_analysis": exc.analysis,
+                "effective_config": effective_config,
+            }
+        except IsolatedRuntimeError as exc:
+            diagnostics.append(
+                _contract_diagnostic(
+                    code=exc.code,
+                    message=str(exc),
+                    fix=(
+                        "Check the isolated runtime or repair the generated strategy "
+                        "and retry."
+                    ),
+                )
+            )
+            return {"diagnostics": diagnostics, "effective_config": effective_config}
         except Exception as exc:  # noqa: BLE001
             diagnostics.append(
                 _contract_diagnostic(

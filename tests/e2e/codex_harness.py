@@ -17,6 +17,7 @@ from tooling.process_guard import process_descendants, process_identity, termina
 from tests.e2e.codex_app_server import CodexAppServer
 from tests.integration.mcp_harness import MCPWorkspace
 from tests.llm_plugin import codex_settings
+from tests.runtime_cleanup import recover_test_strategy_units
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -289,6 +290,7 @@ def verify_generated_strategy(
             terminate_tree(identity)
         finally:
             process.communicate(timeout=3)
+        recover_test_strategy_units(root)
 
 
 def completed_mcp_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

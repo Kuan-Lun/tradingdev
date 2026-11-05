@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.contract import SignalContractChecker
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.signals import (
     SignalContractError,
     generate_checked_signals,
@@ -135,8 +136,10 @@ def test_same_fault_is_rejected_in_program_checks_and_actual_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, code: str
 ) -> None:
     strategy = _FaultyStrategy(fault)
-    loader = StrategyLoader(workspace_root=tmp_path)
-    monkeypatch.setattr(loader, "create_from_config", lambda *a, **kw: strategy)
+    loader = StrategyFactory(workspace_root=tmp_path)
+    monkeypatch.setattr(
+        loader, "open_from_config", lambda *a, **kw: nullcontext(strategy)
+    )
     checked = SignalContractChecker(loader).check_config(
         {
             "strategy": {"class_name": "Fixture"},

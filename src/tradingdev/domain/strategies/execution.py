@@ -5,7 +5,14 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 from tradingdev.domain.runtime import RuntimeSpec
 
@@ -84,6 +91,18 @@ class StrategyExecution(BaseModel):
 
     kind: Literal["bundled", "generated"]
     constructor_kwargs: dict[str, JsonValue]
+    program: GeneratedProgram | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def require_program_identity(self) -> StrategyExecution:
+        if (self.kind == "generated") != (self.program is not None):
+            raise ValueError(
+                "Generated executions require a fixed source and isolated runtime; "
+                "bundled executions cannot include a generated program"
+            )
+        return self
 
     @field_validator("constructor_kwargs", mode="before")
     @classmethod

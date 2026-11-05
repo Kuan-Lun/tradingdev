@@ -16,6 +16,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from mcp_types import CallToolResult
 from pydantic import ValidationError
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
@@ -88,7 +89,7 @@ def _publish(
         kind="backtest",
         config=config,
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs=params
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs=params
         ),
     )
     path = ExecutionManifestStore(workspace).publish(run_id, manifest)

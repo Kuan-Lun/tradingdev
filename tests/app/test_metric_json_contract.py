@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -148,7 +149,7 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
         manifest = ExecutionManifest.create(
             kind="walk_forward",
             strategy_execution=StrategyExecution(
-                kind="generated", constructor_kwargs={}
+                kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
             ),
             config={
                 "strategy": {"id": "cli_fixture"},
