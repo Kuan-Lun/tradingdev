@@ -26,6 +26,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.probabilities import validate_probabilities
 from tradingdev.domain.ml.rolling_gen.schedule import RollWindow, enumerate_rolls
 from tradingdev.domain.ml.rolling_gen.scheme import (
     RollingGeometry,
@@ -252,7 +253,8 @@ class _Retrainer:
         features = self.fe.transform(context, include_target=False)
         if combined_idx not in features.index:
             return False
-        proba = model.predict_proba(features.loc[[combined_idx]])
+        row = features.loc[[combined_idx]]
+        proba = validate_probabilities(model.predict_proba(row), row)
         # A class the model never saw keeps probability 0 rather than a guess.
         probabilities[bar, 0] = float(proba[1].iloc[0]) if 1 in proba.columns else 0.0
         probabilities[bar, 1] = float(proba[-1].iloc[0]) if -1 in proba.columns else 0.0

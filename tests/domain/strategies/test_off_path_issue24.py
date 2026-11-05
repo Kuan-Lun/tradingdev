@@ -8,7 +8,7 @@ stay green while checking something else.
 
 Expected values are arithmetic on the fixture (bar offset plus a per-label
 rule), never copied from a run.  The issue's two hard numbers are reproduced
-here as assertions: a missing bar must keep the documented neutral ``0.5``, and
+here as assertions: a missing bar must keep the explicit missing value, and
 no prediction may move to a different bar.
 """
 
@@ -39,7 +39,7 @@ from tradingdev.domain.strategies.bundled.xgboost_strategy.strategy import (
 _FIT_BARS = 150
 """History length used by the replay and mixed-representation tests."""
 
-_NEUTRAL_P_SAFE = 0.5
+_UNAVAILABLE_P_SAFE = np.nan
 """The documented fallback when a bar's risk features are missing."""
 
 
@@ -233,7 +233,7 @@ class _LabelEchoModel(XGBoostDirectionModel):
 
     Encoding the label into the value makes both issue #24 symptoms visible at
     once: a shifted prediction reads the wrong label, and a reused prediction
-    reports a neighbour's value instead of the neutral fallback.
+    reports a neighbour's value instead of the missing value.
     """
 
     def __init__(self) -> None:
@@ -267,7 +267,7 @@ def test_risk_gate_neither_shifts_nor_reuses_a_score() -> None:
 
     The expected series is arithmetic: bar ``i`` of the scored frame carries the
     concatenated label ``150 + i``, so its score is ``0.10 + label % 8 / 100``,
-    except at the hole, which must stay at the documented neutral value.
+    except at the hole, which must stay at the explicit missing value.
     """
     frame = _market_frame(200)
     history = frame.iloc[:_FIT_BARS].copy()
@@ -295,6 +295,6 @@ def test_risk_gate_neither_shifts_nor_reuses_a_score() -> None:
     expected = np.array(
         [0.10 + ((_FIT_BARS + bar) % 8) / 100.0 for bar in range(len(scored))]
     )
-    expected[hole] = _NEUTRAL_P_SAFE
+    expected[hole] = _UNAVAILABLE_P_SAFE
     np.testing.assert_allclose(scores, expected)
-    assert _NEUTRAL_P_SAFE not in expected[np.arange(len(expected)) != hole]
+    assert np.isfinite(expected[np.arange(len(expected)) != hole]).all()

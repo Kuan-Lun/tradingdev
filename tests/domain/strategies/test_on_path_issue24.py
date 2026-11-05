@@ -32,7 +32,7 @@ from tradingdev.domain.strategies.bundled.xgboost_strategy.strategy import (
 )
 
 _FIT_BARS = 150
-_NEUTRAL_P_SAFE = 0.5
+_UNAVAILABLE_P_SAFE = np.nan
 
 
 def _market_frame(rows: int) -> pd.DataFrame:
@@ -231,7 +231,7 @@ def test_risk_gate_neither_shifts_nor_reuses_a_score() -> None:
 
     The expected series is the same arithmetic as the off-path test: bar ``i``
     carries the concatenated label ``150 + i``, so its score is
-    ``0.10 + label % 8 / 100``, except at the hole, which stays neutral.
+    ``0.10 + label % 8 / 100``, except at the hole, which stays unavailable.
     """
     frame = _market_frame(200)
     history = frame.iloc[:_FIT_BARS].copy()
@@ -259,5 +259,5 @@ def test_risk_gate_neither_shifts_nor_reuses_a_score() -> None:
     expected = np.array(
         [0.10 + ((_FIT_BARS + bar) % 8) / 100.0 for bar in range(len(scored))]
     )
-    expected[hole] = _NEUTRAL_P_SAFE
+    expected[hole] = _UNAVAILABLE_P_SAFE
     np.testing.assert_allclose(scores, expected)

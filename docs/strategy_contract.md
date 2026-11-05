@@ -278,9 +278,11 @@ behavior, read its
 Direction scoring that leaves a non-empty scored frame with no scored bar fails
 with `ValueError` rather than returning all-zero signals: `RollingRetrainer`, and
 the `rolling_gen` engine whichever strategy runs it, both refuse. A single bar
-without a complete feature row is still skipped. The SafetyVolume Risk Gate keeps
-its neutral `P(safe)` per bar, so only its classic loop can finish such a frame;
-with `rolling_gen` enabled it runs the same engine and inherits the failure.
+without a complete feature row is still skipped. The SafetyVolume Risk Gate also refuses an entirely unscored non-empty frame.
+Individual unavailable risk estimates block entry and reversal; an open position
+exits once its minimum holding period has elapsed. They are never substituted
+with a probability. Its [strategy guide](strategies/safety_volume_strategy.md#layer-1-risk-gate-xgboost)
+covers the feature context and model-output checks.
 [Rolling retraining](ml_research.md#rolling-retraining-schemes) covers which error
 each path reports.
 

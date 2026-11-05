@@ -76,11 +76,11 @@ leaves unavailable rows without entry signals, and measures cooldown in source
 bars, including gaps.
 
 SafetyVolume's rolling Risk Gate also predicts only from the current source
-bar's features. If they are unavailable, it keeps the neutral `P(safe)=0.5`
-instead of assigning an earlier bar's probability. Its state machine still uses
-the configured risk threshold and holding rules; a missing risk feature does not
-unconditionally flatten a position. Threshold search continues to evaluate its
-filtered validation feature rows, unlike Quantile's full-frame gap handling.
+bar's features. Unavailable estimates never become probabilities or reuse a neighbouring bar.
+The [SafetyVolume guide](strategies/safety_volume_strategy.md#layer-1-risk-gate-xgboost)
+defines entry, reversal and holding behavior, and the entirely-unscored failure.
+Threshold search continues to evaluate its filtered validation feature rows,
+unlike Quantile's full-frame gap handling.
 
 The XGBoost, LightGBM, CatBoost and FLAML direction model training APIs require at
 least one labelled training row. A supplied validation frame must also be non-empty. Empty inputs
@@ -437,9 +437,10 @@ set it explicitly. For the direction strategy, at least
 `minimum_context_rows - 1` prior bars are needed for complete features to be
 possible; `context_rows - 1` is recommended for the same seed-decay margin as the
 classic loop. The engine adds the scored bar on top. The SafetyVolume risk gate passes a different engineer to the
-same engine, and `RiskFeatureEngineer` declares no equivalent, so its geometry has
-to be sized from that engineer's own windows — its 60-bar volatility window alone
-needs 60 preceding bars, or 61 rows including the scored one. The engine adds one
+same engine, and `RiskFeatureEngineer` declares its own minimum and preferred context, including
+its 60-bar volatility window (61 rows including the scored bar), lag requirements
+and ATR/ADX seed-decay margins. Its classic loop uses that preferred context; an
+explicit scheme must supply enough prior bars for that engineer. The engine adds one
 rule of its own: a training row whose
 label reads past the last bar of the training window is dropped before fitting,
 whatever the feature engineer returned. The classic retrainer has no such filter
@@ -450,13 +451,9 @@ enabled run. A nonempty scored frame in which no bar can be scored fails on both
 paths rather than returning all-zero signals; an empty scored frame simply has
 nothing to score.
 
-What an unscored bar becomes differs by consumer: the direction strategy emits
-`0`, while the Safety Volume risk gate keeps its neutral `0.5`. Neither borrows a
-neighbouring bar's value. The neutral score is an input, not a decision: it is
-still compared against the strategy's effective threshold — `risk_threshold`, or
-the value chosen from `risk_threshold_candidates` during `fit()` — so with a
-threshold above `0.5` it blocks a new entry and, once the minimum holding period
-has passed, triggers the configured risk exit for an open position.
+An unscored direction bar emits `0`. An unavailable SafetyVolume risk estimate
+remains missing and is handled by its [Risk Gate](strategies/safety_volume_strategy.md#layer-1-risk-gate-xgboost),
+independently of the numerical threshold. Neither borrows a neighbouring score.
 
 The schedule can be printed before anything runs. `enumerate_rolls` returns one
 window per retrain — the training bounds, the bar that triggered it, and the

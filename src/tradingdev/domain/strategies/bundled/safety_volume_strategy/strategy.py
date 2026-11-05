@@ -13,9 +13,14 @@ from sklearn.metrics import roc_auc_score
 from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.probabilities import class_probability, validate_probabilities
 from tradingdev.domain.ml.scoring_history import align_scoring_history
 from tradingdev.domain.optimization.grid_search import finite_metric_value
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.safety_volume_strategy.risk_gate import (
+    RiskDecision,
+    evaluate_risk,
+)
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -225,15 +230,9 @@ class SafetyVolumeStrategy(BaseStrategy):
             model.train(feat_train, eval_df=feat_val)
 
             # Use AUC-ROC (handles class imbalance better)
-            proba = model.predict_proba(feat_val)
+            proba = validate_probabilities(model.predict_proba(feat_val), feat_val)
             y_true = np.asarray(feat_val["target"].values)
-            # P(safe) = probability of class 1
-            if 1 in proba.columns:
-                p_safe = np.asarray(proba[1].values)
-            else:
-                p_safe = 1.0 - np.asarray(
-                    proba.iloc[:, 0].values,
-                )
+            p_safe = class_probability(proba, 1).to_numpy()
 
             unique_classes = np.unique(y_true)
             if len(unique_classes) < 2:
@@ -334,13 +333,8 @@ class SafetyVolumeStrategy(BaseStrategy):
             self._config.risk_threshold_candidates or [],
         )
         feat_val = fe.transform(val_df, include_target=False)
-        proba = model.predict_proba(feat_val)
-        if 1 in proba.columns:
-            p_safe = np.asarray(proba[1].values)
-        else:
-            p_safe = 1.0 - np.asarray(
-                proba.iloc[:, 0].values,
-            )
+        proba = validate_probabilities(model.predict_proba(feat_val), feat_val)
+        p_safe = class_probability(proba, 1).to_numpy()
 
         directions = self._validation_directions(
             feat_val,
@@ -423,7 +417,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         window_size = max(lookback * 10, len(history))
 
         total_bars = len(scored)
-        p_safe_arr = np.full(total_bars, 0.5)
+        p_safe_arr = np.full(total_bars, np.nan)
         current_model = self._risk_model
 
         t_start = time.monotonic()
@@ -468,24 +462,16 @@ class SafetyVolumeStrategy(BaseStrategy):
                         )
 
             # --- predict bar ---
-            ctx_start = max(0, combined_idx - lookback * 2)
+            ctx_start = max(0, combined_idx - self._risk_fe.context_rows + 1)
             ctx = combined.iloc[ctx_start : combined_idx + 1].copy()
             feat_pred = self._risk_fe.transform(
                 ctx,
                 include_target=False,
             )
             if combined_idx in feat_pred.index:
-                proba = current_model.predict_proba(
-                    feat_pred.loc[[combined_idx]],
-                )
-                if 1 in proba.columns:
-                    p_safe_arr[i] = np.float64(
-                        proba[1].iloc[0],
-                    )
-                else:
-                    p_safe_arr[i] = 1.0 - np.float64(
-                        proba.iloc[:, 0].iloc[0],
-                    )
+                row = feat_pred.loc[[combined_idx]]
+                proba = validate_probabilities(current_model.predict_proba(row), row)
+                p_safe_arr[i] = class_probability(proba, 1).iloc[0]
 
             # --- progress ---
             if i > 0 and i % log_interval == 0:
@@ -508,6 +494,18 @@ class SafetyVolumeStrategy(BaseStrategy):
             elapsed,
             total_bars / elapsed if elapsed > 0 else 0,
         )
+        if total_bars and np.isnan(p_safe_arr).all():
+            needed = self._risk_fe.minimum_context_rows
+            reason = (
+                "provide more history before the scored window"
+                if len(combined) < needed
+                else "features are incomplete despite sufficient history; "
+                "check missing or degenerate data"
+            )
+            raise ValueError(
+                f"Risk prediction scored none of {total_bars} bars; "
+                f"features need at least {needed} rows; {reason}"
+            )
         return p_safe_arr
 
     def _predict_risk_with_scheme(
@@ -517,8 +515,8 @@ class SafetyVolumeStrategy(BaseStrategy):
         """Predict P(safe) with the declared rolling scheme.
 
         Reached only when ``rolling_gen`` is enabled.  A bar whose features are
-        missing keeps the neutral 0.5 the classic loop starts from, so the Risk
-        Gate never borrows a neighbouring bar's score.
+        missing remains unavailable, so the Risk Gate never borrows a neighbouring
+        bar's score or invents a probability.
         """
         assert self._risk_fe is not None
         assert self._risk_model is not None
@@ -541,7 +539,7 @@ class SafetyVolumeStrategy(BaseStrategy):
             label_horizon=self._config.target_holding_bars,
         )
         self._rolling_trace = trace_payload(outcome)
-        return outcome.probabilities["p_long"].fillna(0.5).to_numpy(dtype=np.float64)
+        return outcome.probabilities["p_long"].to_numpy(dtype=np.float64)
 
     def rolling_trace(self) -> dict[str, Any] | None:
         """Return the rolls that scored the last run, if the switch was on."""
@@ -670,18 +668,19 @@ class SafetyVolumeStrategy(BaseStrategy):
         - -1 = short position
         - 0 = flat (no position)
         """
-        n = len(risk_scores)
+        decisions = evaluate_risk(risk_scores, threshold)
+        n = len(decisions)
         signals: npt.NDArray[np.int_] = np.zeros(n, dtype=int)
         state = 0
         bars_in_pos = 0
 
         for i in range(n):
-            p_safe = risk_scores[i]
+            decision = decisions[i]
             d = int(directions[i])
 
             if state == 0:
                 # FLAT: enter if safe and have direction
-                if p_safe >= threshold and d != 0:
+                if decision == RiskDecision.ALLOW and d != 0:
                     state = d
                     bars_in_pos = 0
             else:
@@ -691,8 +690,8 @@ class SafetyVolumeStrategy(BaseStrategy):
                     pass  # hold through min period
                 elif bars_in_pos >= max_hold:
                     state = 0  # forced exit
-                elif p_safe < threshold:
-                    state = 0  # risk exit
+                elif decision != RiskDecision.ALLOW:
+                    state = 0  # blocked or unavailable after the minimum hold
                 elif d != 0 and d != state:
                     # direction reversal → generates 2x volume
                     state = d

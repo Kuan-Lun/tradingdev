@@ -260,7 +260,8 @@ def test_safety_risk_scoring_keeps_preceding_history() -> None:
     assert pd.Timestamp(first["timestamp"].iloc[-1]) == pd.Timestamp(
         scored["timestamp"].iloc[0]
     )
-    assert len(first) == len(history) + 1
+    assert len(first) == recorder.context_rows
+    pd.testing.assert_frame_equal(first.iloc[:-1], history.iloc[-215:])
     _assert_chronological(recorder.contexts)
 
 
