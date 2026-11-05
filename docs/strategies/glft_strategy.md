@@ -154,10 +154,10 @@ sigma_per_bar = DVOL / 100 / sqrt(525960)
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `signal_agg_minutes` | 1 | 信號聚合時間（分鐘）；1=不聚合，5=5 分鐘 EMA |
-| `signal_agg_minutes_candidates` | [1] | Grid search 候選值 |
+| `signal_agg_bars` | 1 | 信號聚合根數；1=不聚合，5=每 5 根輸入 K 棒聚合 |
+| `signal_agg_bars_candidates` | [1] | Grid search 候選值 |
 
-當 `signal_agg_minutes > 1` 時，EMA 在聚合後的 N 分鐘 K 棒上計算，再映射回 1 分鐘解析度；每根 1 分鐘 bar 只使用已收完的聚合 K 棒，第一根聚合 K 棒收完之前為 NaN，不進場。執行仍在 1 分鐘精度。效果：偏離度更大、信號更穩定。
+當 `signal_agg_bars > 1` 時，從輸入第一根開始，每 N 根 K 棒組成一組，取完整組的最後收盤價計算 EMA，再映射回原始 K 棒。分組不對齊時鐘整點；尾端不足 N 根不更新 EMA。每根只使用已收完的完整組，暖機完成前為 NaN，不進場。兩個聚合參數均只接受正整數；舊的 `signal_agg_minutes`／`signal_agg_minutes_candidates` 已移除，1m 設定可改名並保留原數值。
 
 ### Entry
 
@@ -375,8 +375,8 @@ strategy:
     strategy_sl: 0.01
 
     # Multi-timeframe
-    signal_agg_minutes: 1
-    signal_agg_minutes_candidates: [1]
+    signal_agg_bars: 1
+    signal_agg_bars_candidates: [1]
 
     # Position & volume
     position_size: 10000.0

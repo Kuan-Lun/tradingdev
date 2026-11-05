@@ -44,6 +44,22 @@ def _make_config(**overrides: object) -> GLFTStrategyConfig:
 
 
 class TestGLFTStrategyConfig:
+    @pytest.mark.parametrize(
+        "parameters",
+        [
+            {"signal_agg_minutes": 5},
+            {"signal_agg_minutes_candidates": [5]},
+            {"signal_agg_bars": 0},
+            {"signal_agg_bars": 1.5},
+            {"signal_agg_bars_candidates": [1, -1]},
+        ],
+    )
+    def test_aggregation_rejects_obsolete_names_and_invalid_counts(
+        self, parameters: dict[str, object]
+    ) -> None:
+        with pytest.raises(ValidationError):
+            GLFTStrategyConfig.model_validate(parameters)
+
     def test_default_values(self) -> None:
         """Default config should have valid parameter values."""
         config = GLFTStrategyConfig()
@@ -677,14 +693,14 @@ class TestGLFTDynamicSizing:
 class TestIndicatorWarmup:
     def test_compute_ema_is_nan_until_window_completes(self) -> None:
         close = np.linspace(100.0, 110.0, 50)
-        ema = GLFTStrategy._compute_ema(close, ema_window=10, agg_minutes=1)
+        ema = GLFTStrategy._compute_ema(close, ema_window=10, agg_bars=1)
         assert np.isnan(ema[:9]).all()
         assert np.isfinite(ema[9:]).all()
 
     def test_compute_ema_aggregated_is_nan_until_enough_bars(self) -> None:
         close = np.linspace(100.0, 110.0, 120)
-        ema = GLFTStrategy._compute_ema(close, ema_window=5, agg_minutes=5)
-        # Five aggregated 5-minute bars need 25 one-minute bars; bar 24 is the
+        ema = GLFTStrategy._compute_ema(close, ema_window=5, agg_bars=5)
+        # Five aggregated 5-bar groups need 25 input bars; bar 24 is the
         # first whose most recently completed window has a finite EMA.
         assert np.isnan(ema[:24]).all()
         assert np.isfinite(ema[24:]).all()
@@ -732,7 +748,7 @@ class TestIndicatorWarmup:
     def test_aggregated_ema_never_uses_a_future_aggregate(self) -> None:
         """Regression: negative aggregate indices were clipped to the first one."""
         close = np.arange(100.0, 120.0)
-        ema = GLFTStrategy._compute_ema(close, ema_window=2, agg_minutes=5)
+        ema = GLFTStrategy._compute_ema(close, ema_window=2, agg_bars=5)
         # The seed requires two completed aggregates (closes 104 and 109).
         assert np.isnan(ema[:9]).all()
         np.testing.assert_array_equal(ema[9:14], np.full(5, 106.5))
@@ -740,7 +756,7 @@ class TestIndicatorWarmup:
 
     def test_aggregated_ema_with_fewer_bars_than_one_aggregate(self) -> None:
         close = np.arange(100.0, 103.0)
-        ema = GLFTStrategy._compute_ema(close, ema_window=2, agg_minutes=5)
+        ema = GLFTStrategy._compute_ema(close, ema_window=2, agg_bars=5)
         assert ema.shape == (3,)
         assert np.isnan(ema).all()
 
@@ -749,10 +765,10 @@ class TestIndicatorWarmup:
         """A prefix of the series must reproduce the prefix of the result."""
         rng = np.random.default_rng(7)
         close = 100.0 + np.cumsum(rng.normal(0.0, 0.5, 60))
-        full = GLFTStrategy._compute_ema(close, ema_window=ema_window, agg_minutes=5)
+        full = GLFTStrategy._compute_ema(close, ema_window=ema_window, agg_bars=5)
         for m in (3, 4, 5, 9, 10, 14, 15, 23, 60):
             partial = GLFTStrategy._compute_ema(
-                close[:m], ema_window=ema_window, agg_minutes=5
+                close[:m], ema_window=ema_window, agg_bars=5
             )
             np.testing.assert_array_equal(partial, full[:m])
 
@@ -762,7 +778,7 @@ class TestIndicatorWarmup:
         assert_no_look_ahead: Callable[..., None],
     ) -> None:
         strategy = GLFTStrategy(
-            config=_make_config(ema_window=2, signal_agg_minutes=5),
+            config=_make_config(ema_window=2, signal_agg_bars=5),
         )
         assert_no_look_ahead(
             strategy,

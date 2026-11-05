@@ -83,7 +83,7 @@ def _evaluate_glft_combo(
     trial._best_min_entry_edge = entry_edge
     trial._best_trend_ema_window = trend_ema
     trial._best_profit_target_ratio = pt_ratio
-    trial._best_signal_agg_minutes = sig_agg
+    trial._best_signal_agg_bars = sig_agg
     trial._best_edge_for_full_size = efs
 
     signals = generate_checked_signals(trial, df)
@@ -122,7 +122,7 @@ class GLFTStrategy(BaseStrategy):
         self._best_min_entry_edge: float = config.min_entry_edge
         self._best_trend_ema_window: int = config.trend_ema_window
         self._best_profit_target_ratio: float = config.profit_target_ratio
-        self._best_signal_agg_minutes: int = config.signal_agg_minutes
+        self._best_signal_agg_bars: int = config.signal_agg_bars
         self._best_edge_for_full_size: float = config.edge_for_full_size
 
     # ------------------------------------------------------------------
@@ -152,7 +152,7 @@ class GLFTStrategy(BaseStrategy):
         best_entry_edge = self._config.min_entry_edge
         best_trend_ema = self._config.trend_ema_window
         best_pt_ratio = self._config.profit_target_ratio
-        best_sig_agg = self._config.signal_agg_minutes
+        best_sig_agg = self._config.signal_agg_bars
         best_efs = self._config.edge_for_full_size
         target = self._config.target_metric
         direction = metric_direction(target)
@@ -182,7 +182,7 @@ class GLFTStrategy(BaseStrategy):
                 self._config.min_entry_edge_candidates,
                 self._config.trend_ema_candidates,
                 self._config.profit_target_ratio_candidates,
-                self._config.signal_agg_minutes_candidates,
+                self._config.signal_agg_bars_candidates,
                 efs_candidates,
             )
         ]
@@ -256,7 +256,7 @@ class GLFTStrategy(BaseStrategy):
         self._best_min_entry_edge = best_entry_edge
         self._best_trend_ema_window = best_trend_ema
         self._best_profit_target_ratio = best_pt_ratio
-        self._best_signal_agg_minutes = best_sig_agg
+        self._best_signal_agg_bars = best_sig_agg
         self._best_edge_for_full_size = best_efs
 
         logger.info(
@@ -295,7 +295,7 @@ class GLFTStrategy(BaseStrategy):
         ema = self._compute_ema(
             close,
             self._best_ema_window,
-            self._best_signal_agg_minutes,
+            self._best_signal_agg_bars,
         )
         sigma = self._compute_volatility(close, high, low, dvol=dvol)
 
@@ -350,7 +350,7 @@ class GLFTStrategy(BaseStrategy):
         params["best_min_entry_edge"] = self._best_min_entry_edge
         params["best_trend_ema_window"] = self._best_trend_ema_window
         params["best_profit_target_ratio"] = self._best_profit_target_ratio
-        params["best_signal_agg_minutes"] = self._best_signal_agg_minutes
+        params["best_signal_agg_bars"] = self._best_signal_agg_bars
         params["best_edge_for_full_size"] = self._best_edge_for_full_size
         return params
 
@@ -362,30 +362,30 @@ class GLFTStrategy(BaseStrategy):
     def _compute_ema(
         close: npt.NDArray[np.floating[Any]],
         ema_window: int,
-        agg_minutes: int,
+        agg_bars: int,
     ) -> npt.NDArray[np.floating[Any]]:
-        """Compute EMA, optionally on aggregated N-min bars.
+        """Compute EMA on groups of N consecutive input bars.
 
-        When ``agg_minutes > 1``, the close series is resampled to
-        N-minute bars (taking the last close in each window), the
+        When ``agg_bars > 1``, the close series is resampled to
+        N-bar groups (taking the last close in each window), the
         EMA is computed on these resampled values, and the result
-        is mapped back to 1-minute resolution using only aggregated
+        is mapped back to input-bar resolution using only aggregated
         bars that have already closed. Bars before the first
-        aggregated bar closes, and bars inside the EMA warm-up, are
+        aggregated group closes, and bars inside the EMA warm-up, are
         NaN so the strategy stays flat there.
 
         Returns an array of the same length as *close*.
         """
-        if agg_minutes <= 1:
+        if agg_bars <= 1:
             return np.asarray(
                 indicators.ema(pd.Series(close), ema_window),
                 dtype=np.float64,
             )
 
         n = len(close)
-        ag = agg_minutes
+        ag = agg_bars
 
-        # Resample: take close at end of each N-min window
+        # Group from the first input row; take each complete group's last close
         # Indices: ag-1, 2*ag-1, 3*ag-1, ...
         n_complete = (n // ag) * ag
         agg_close = close[ag - 1 : n_complete : ag]
@@ -396,8 +396,8 @@ class GLFTStrategy(BaseStrategy):
             dtype=np.float64,
         )
 
-        # Map back to 1-min resolution.
-        # At 1-min bar i, the most recently completed N-min bar
+        # Map back to input-bar resolution.
+        # At input bar i, the most recently completed N-bar group
         # has index k = (i + 1) // ag - 1. k < 0 for bars before the
         # first window completes; those bars stay NaN so a later
         # bar's value is never used. The largest k is the last

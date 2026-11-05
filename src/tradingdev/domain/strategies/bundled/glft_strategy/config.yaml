@@ -50,10 +50,10 @@ strategy:
     # Entry: momentum guard — only enter when deviation is narrowing
     momentum_guard: false
 
-    # Multi-timeframe: aggregate N 1-min bars for EMA computation
-    # 1 = no aggregation; 5 = 5-min EMA with 1-min execution
-    signal_agg_minutes: 1
-    signal_agg_minutes_candidates: [1]
+    # Multi-timeframe: aggregate N input bars for EMA computation
+    # 1 = no aggregation; 5 = EMA over groups of 5 bars; execute on each input bar
+    signal_agg_bars: 1
+    signal_agg_bars_candidates: [1]
 
     # Position & volume
     position_size: 10000.0
