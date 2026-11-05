@@ -43,8 +43,9 @@ ML 方向與 Risk Gate 共用滾動核心，各自依特徵需求建立上下文
 那根 bar，不會因中間缺列移動其他預測。若模型回傳的列數或來源索引與特徵列不一致，
 執行會以 `RuntimeError` 停止，不會截短或猜測對齊。
 
-執行 trace 的主體記錄 Risk Gate，啟用 ML 方向時另在 `direction` 保存其完整 trace。
-任一模型失敗時不保留該次部分執行的 trace。
+需要追溯風險與方向模型各自的訓練範圍及評分狀態時，依
+[績效產物契約](../performance_artifacts.md#performance-scopes-and-provenance)
+讀取已保存的執行證據。
 
 方向特徵只讀 `timestamp`、開高低收與成交量；輸入框架即使已帶 `log_return`、
 `ret_lag_*` 等同名特徵欄位，也不會被併入方向特徵，因此不會產生重複欄位。
