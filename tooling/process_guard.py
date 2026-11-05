@@ -209,6 +209,10 @@ def _run(
                 raise ProcessCleanupError(
                     "Process inspection access is required to track check subprocesses"
                 )
+            # Inspection can outlast the command. Preserve an observed exit
+            # before attributing the observer's delay to the child timeout.
+            if process.poll() is not None:
+                break
             if time.monotonic() >= deadline:
                 raise subprocess.TimeoutExpired(command, timeout)
             time.sleep(_POLL_SECONDS)
