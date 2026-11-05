@@ -25,7 +25,7 @@ from pydantic import (
 from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution_target import ExecutionTarget  # noqa: TC001
 from tradingdev.domain.parameter_values import effective_candidates, parameter_leaves
-from tradingdev.domain.presentation.confirmation import (
+from tradingdev.domain.presentation.confirmation_contract import (
     MAX_PRESENTATION_PARAMETER_DESCRIPTIONS,
     ConfirmationPresentation,
     PresentationExplanation,

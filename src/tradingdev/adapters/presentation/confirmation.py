@@ -10,7 +10,7 @@ from tradingdev.adapters.presentation.html import escape, render_html_document
 if TYPE_CHECKING:
     from typing import Literal
 
-    from tradingdev.domain.presentation.confirmation import (
+    from tradingdev.domain.presentation.confirmation_contract import (
         ConfirmationDocument,
         ConfirmationField,
     )

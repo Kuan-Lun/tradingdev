@@ -77,7 +77,7 @@ def _service(
         )
     crawler = _crawler()
     monkeypatch.setattr(
-        "tradingdev.app.data_service.DeribitDVOLCrawler", lambda: crawler
+        "tradingdev.app.feature_data.DeribitDVOLCrawler", lambda: crawler
     )
     return service, config, crawler
 

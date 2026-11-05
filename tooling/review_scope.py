@@ -361,6 +361,8 @@ _PREFIX_SCOPES: tuple[tuple[str, str], ...] = (
 _EXACT_SCOPES = {
     **{path: scopes[0] for path, scopes in DOCUMENT_SCOPES.items()},
     "tooling/presentations.py": "presentation",
+    "tooling/presentation_errors.py": "presentation",
+    "tooling/presentation_html.py": "presentation",
     "scripts/presentations.sh": "presentation",
     "scripts/check-presentations.sh": "presentation",
     "tests/tooling/test_presentations.py": "presentation",
@@ -387,6 +389,7 @@ _MODULE_EXACT_SCOPES = {
     "domain/backtest/metrics.py": "results",
     "domain/backtest/test_performance_metrics.py": "results",
     "domain/presentation/confirmation.py": "execution",
+    "domain/presentation/confirmation_contract.py": "execution",
     "adapters/presentation/confirmation.py": "execution",
 }
 _MODULE_PREFIX_SCOPES = (

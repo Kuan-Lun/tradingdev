@@ -152,6 +152,8 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
             "__init__.py",
             "process_guard.py",
             "presentations.py",
+            "presentation_errors.py",
+            "presentation_html.py",
             "requirements.py",
             "documentation.py",
             "review_options.py",

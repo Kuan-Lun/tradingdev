@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 
 from tests.integration.execution_fixtures import confirmation_presentation
 from tradingdev.app.contracts.research_evidence import ResearchEvidenceSaved
-from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
+from tradingdev.domain.presentation.confirmation_contract import (
+    ConfirmationPresentation,
+)
 from tradingdev.domain.research_evidence import (
     ResearchEvidenceDraft,
     enumerate_parameter_bindings,

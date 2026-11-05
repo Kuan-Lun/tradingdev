@@ -43,8 +43,10 @@ from tradingdev.domain.performance.artifacts import (
 )
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.presentation.confirmation import (
-    ConfirmationPresentation,
     build_confirmation_document,
+)
+from tradingdev.domain.presentation.confirmation_contract import (
+    ConfirmationPresentation,
 )
 from tradingdev.domain.presentation.research_confirmation import (
     enrich_research_confirmation,

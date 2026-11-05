@@ -236,7 +236,13 @@ def test_snapshot_retains_workspace_when_real_presentation_cli_reports_cleanup_e
     (source / "tooling").mkdir()
     (source / "scripts").mkdir()
     project = Path(presentations.__file__).resolve().parent
-    for name in ("__init__.py", "presentations.py", "process_guard.py"):
+    for name in (
+        "__init__.py",
+        "presentations.py",
+        "presentation_errors.py",
+        "presentation_html.py",
+        "process_guard.py",
+    ):
         _commit(source, f"tooling/{name}", (project / name).read_text())
     _commit(
         source,
