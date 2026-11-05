@@ -76,8 +76,10 @@ export TRADINGDEV_STRATEGY_IMAGE=tradingdev-strategy-runtime:dev
 macOS 可使用 Docker Desktop 提供的 Linux Engine。
 測試本身不下載映像；缺少 daemon、
 必要能力或預建映像會失敗。`TRADINGDEV_STRATEGY_IMAGE` 可指定專用測試標籤，執行前
-會解析為固定 image ID。資源政策的正式定義見
-[`RuntimeLimits`](../src/tradingdev/domain/runtime.py)；傳輸、程序身分與故障清理分別由
+會解析為固定 image ID。`DockerRuntime.resolve()` 未明示 `limits` 時，會讀取
+`TRADINGDEV_RUNTIME_LIMITS` 的 JSON 物件；未設定時使用預設政策。可設定欄位、預設值及
+欄位間限制以 [`RuntimeLimits`](../src/tradingdev/domain/runtime.py) 為準。
+傳輸、程序身分與故障清理分別由
 替代 daemon 的 adapter 測試及
 [真實容器測試](../tests/integration/test_strategy_isolation.py) 驗證。
 
