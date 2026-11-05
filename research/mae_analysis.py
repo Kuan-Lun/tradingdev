@@ -47,10 +47,12 @@ def compute_mae(
       - mae_short: (rolling_max(high) - entry) / entry
       - mae_worst: max(mae_long, mae_short)
 
-    Only entries with a full future window in the selected period are returned.
+    Dates are inclusive UTC calendar dates. Only entries with a full future
+    window inside that period are returned.
     """
+    end_exclusive = pd.Timestamp(end_date, tz="UTC") + pd.Timedelta(days=1)
     mask = (df["timestamp"] >= pd.Timestamp(start_date, tz="UTC")) & (
-        df["timestamp"] <= pd.Timestamp(end_date, tz="UTC")
+        df["timestamp"] < end_exclusive
     )
     data = df.loc[mask].copy().reset_index(drop=True)
 

@@ -58,6 +58,52 @@ def test_window_maturity_uses_only_the_selected_data() -> None:
     assert result.empty
 
 
+@pytest.mark.parametrize(
+    "start_date, positions", [("2024-01-01", [1, 2]), ("2024-01-02", [2])]
+)
+def test_date_range_includes_the_end_day_and_excludes_the_next_midnight(
+    start_date: str, positions: list[int]
+) -> None:
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [
+                    "2023-12-31T23:59:59.999999999Z",
+                    "2024-01-01T12:00:00Z",
+                    "2024-01-02T00:00:00Z",
+                    "2024-01-02T23:59:59.999999999Z",
+                    "2024-01-03T00:00:00Z",
+                    "2024-01-03T00:01:00Z",
+                ],
+                format="ISO8601",
+                utc=True,
+            ),
+            "close": 100.0,
+            "low": [1.0, 99.0, 98.0, 90.0, 1.0, 1.0],
+            "high": [1000.0, 101.0, 102.0, 120.0, 1000.0, 1000.0],
+        }
+    )
+    result = unwrap(mae_analysis.compute_mae)(frame, 1, start_date, "2024-01-02")
+    expected = frame["timestamp"].take(positions).reset_index(drop=True)
+    pd.testing.assert_series_equal(result["timestamp"], expected)
+    # The final end-day observation belongs to the future window, not an entry.
+    assert result["mae_long"].tolist() == pytest.approx([0.02, 0.10][-len(positions) :])
+    assert result["mae_short"].tolist() == pytest.approx(
+        [0.02, 0.20][-len(positions) :]
+    )
+
+
+@pytest.mark.parametrize("holding_bars", [2, 3])
+def test_next_day_data_cannot_complete_an_immature_entry(holding_bars: int) -> None:
+    frame = _prices(6).assign(
+        timestamp=pd.date_range("2024-01-01T23:58:00Z", periods=6, freq="min")
+    )
+    result = unwrap(mae_analysis.compute_mae)(
+        frame, holding_bars, "2024-01-01", "2024-01-01"
+    )
+    assert result.empty
+
+
 def _check_app() -> None:
     from streamlit.testing.v1 import AppTest
 
@@ -104,7 +150,24 @@ def _check_empty_app() -> None:
     assert not app.get("plotly_chart")
 
 
-@pytest.mark.parametrize("check", ["_check_app", "_check_empty_app"])
+def _check_single_day_app() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    mae_analysis.DATA_PATH.parent.mkdir(parents=True)
+    _prices(31).to_parquet(mae_analysis.DATA_PATH)
+    app = AppTest.from_file(mae_analysis.__file__, default_timeout=15).run()
+    assert not app.exception
+    assert not app.warning
+    assert len(app.success) == 1
+    assert app.success[0].value == "Analyzed **1** hypothetical entries"
+    assert len(app.metric) == 1
+    assert len(app.dataframe) == 1
+    assert len(app.get("plotly_chart")) == 3
+
+
+@pytest.mark.parametrize(
+    "check", ["_check_app", "_check_empty_app", "_check_single_day_app"]
+)
 def test_app_handles_data_availability(check: str) -> None:
     # Reuse the supervised runner's tested success/failure/timeout cleanup.
     with process_workspace(prefix="mae-app-test-", label="MAE AppTest") as root:

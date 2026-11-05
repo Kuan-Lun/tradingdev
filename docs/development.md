@@ -211,6 +211,7 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 ```
 
 開啟終端機顯示的網址；結束按 `Ctrl+C`。此入口不下載行情。
+日期範圍包含起訖日的 UTC 全日，以結束日次日 00:00 為排他上界。
 分析只保留所選期間內具完整未來持倉視窗的進場點；資料不足時顯示警告，
 不產生分位數或停損觸發率。可擴大日期範圍或縮短持倉視窗後重新分析。
 
