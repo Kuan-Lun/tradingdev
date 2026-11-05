@@ -62,14 +62,18 @@ ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定�
 映像採多階段建置，執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
 
 獨立策略 worker 使用 `strategy-runtime` target。完整離線測試包含真實 Linux 容器邊界
-檢查，需先準備可連線、支援 cgroup v2 資源限制的 Docker Engine 與此映像：
+檢查，需先準備可透過本機 Unix socket 連線、支援 cgroup v2 資源限制的 Docker Engine
+與此映像；所有支援平台都不接受 SSH 或 TCP 遠端端點：
 
 ```bash
 docker build --target strategy-runtime -t tradingdev-strategy-runtime:dev .
 export TRADINGDEV_STRATEGY_IMAGE=tradingdev-strategy-runtime:dev
 ```
 
-macOS 可使用 Docker Desktop 的 Linux Engine，透過本機 Unix socket 連線。
+此映像供 `DockerRuntime` 的直接呼叫與測試使用；產品策略流程目前仍由既有
+`ProcessRunner` 監督，尚未改接容器 adapter。
+
+macOS 可使用 Docker Desktop 提供的 Linux Engine。
 測試本身不下載映像；缺少 daemon、
 必要能力或預建映像會失敗。`TRADINGDEV_STRATEGY_IMAGE` 可指定專用測試標籤，執行前
 會解析為固定 image ID。資源政策的正式定義見
