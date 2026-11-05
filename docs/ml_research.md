@@ -397,8 +397,9 @@ shorter than the preference and still score once the minimum is reached.
 An explicit `predict_lookback` counts **preceding** bars; the engine adds the
 scored bar. It must be at least `minimum_context_rows - 1`. An unset value uses
 `context_rows - 1`, without a separate lookback-multiplier floor. Both bundled
-strategies validate the geometry of every lookback candidate before any model
-training. Direct engine callers are validated before rolling refits or scoring.
+strategy configurations validate every lookback candidate before market-data
+loading; `fit()` rechecks the same rules before any model training. Direct engine
+callers are validated before rolling refits or scoring.
 Insufficient actual history or missing/degenerate values can still leave a bar
 unavailable even with valid geometry.
 

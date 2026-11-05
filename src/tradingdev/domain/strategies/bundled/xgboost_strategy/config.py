@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Self
 
-from tradingdev.domain.ml.rolling_gen import RollingGenConfig
+from pydantic import BaseModel, model_validator
+
+from tradingdev.domain.ml.features.context import FeatureContext
+from tradingdev.domain.ml.features.features import FeatureEngineer
+from tradingdev.domain.ml.rolling_gen import RollingGenConfig, resolve_geometry
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 
 
@@ -22,3 +26,22 @@ class XGBoostStrategyConfig(BaseModel):
     monthly_volume_target: float | None = None
     rolling_gen: RollingGenConfig = RollingGenConfig()
     """Optional declarative rolling geometry; disabled unless enabled is set."""
+
+    @model_validator(mode="after")
+    def _validate_rolling_configuration(self) -> Self:
+        self.validate_rolling_geometry()
+        return self
+
+    def validate_rolling_geometry(self) -> None:
+        """Reject impossible feature contexts without loading market data."""
+        if not self.lookback_candidates:
+            raise ValueError("lookback_candidates must not be empty")
+        scheme = self.rolling_gen.resolve() if self.rolling_gen.enabled else None
+        for lookback in self.lookback_candidates:
+            resolve_geometry(
+                scheme,
+                lookback=lookback,
+                retrain_interval=self.retrain_interval,
+                context=FeatureContext.for_features(FeatureEngineer(lookback=lookback)),
+                label_horizon=self.target_horizon,
+            )

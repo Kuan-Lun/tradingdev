@@ -7,11 +7,9 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd  # noqa: TC002
 from sklearn.metrics import accuracy_score
 
-from tradingdev.domain.ml.features.context import FeatureContext
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.ml.rolling_gen import (
-    resolve_geometry,
     rolling_outcome,
     signals_from_probabilities,
     trace_payload,
@@ -52,21 +50,7 @@ class XGBoostStrategy(BaseStrategy):
 
     def fit(self, df: pd.DataFrame) -> None:
         """Optimise lookback and train the XGBoost model."""
-        # Validate every candidate's geometry before any model is trained.
-        scheme = (
-            self._config.rolling_gen.resolve()
-            if self._config.rolling_gen.enabled
-            else None
-        )
-        for lookback in self._config.lookback_candidates:
-            resolve_geometry(
-                scheme,
-                lookback=lookback,
-                retrain_interval=self._config.retrain_interval,
-                context=FeatureContext.for_features(FeatureEngineer(lookback=lookback)),
-                history_bars=len(df),
-                label_horizon=self._config.target_horizon,
-            )
+        self._config.validate_rolling_geometry()
         val_ratio = self._config.validation_ratio
         split_idx = int(len(df) * (1 - val_ratio))
         train_df = df.iloc[:split_idx]

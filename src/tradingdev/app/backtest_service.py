@@ -276,6 +276,10 @@ class BacktestService:
         ensure_execution_mode(
             spec.strategy_id, spec.execution_capabilities, manifest.kind
         )
+        if manifest.strategy_execution.kind == "bundled":
+            self._strategy_loader.validate_execution(
+                raw_config["strategy"], manifest.strategy_execution
+            )
         self.check_execution(raw_config, manifest.strategy_execution)
 
     def run_manifest(

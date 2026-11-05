@@ -126,29 +126,40 @@ def test_malformed_probabilities_fail_instead_of_becoming_unavailable(
         )
 
 
-@pytest.mark.parametrize("strategy_name", ["risk", "direction"])
+@pytest.mark.parametrize(
+    ("strategy_name", "lookbacks", "prior_bars"),
+    [
+        ("risk", [24], 48),
+        ("direction", [12], 20),
+        ("risk", [12, 72], 60),
+        ("direction", [12, 72], 40),
+    ],
+)
+@pytest.mark.parametrize("phase", ["configuration", "mutated_fit"])
 def test_explicit_short_context_is_rejected_before_any_training(
     strategy_name: str,
+    lookbacks: list[int],
+    prior_bars: int,
+    phase: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def forbidden(*args: object, **kwargs: object) -> None:
         raise AssertionError("training must not start for impossible geometry")
 
     monkeypatch.setattr(XGBoostDirectionModel, "train", forbidden)
-    strategy = (
-        SafetyVolumeStrategy(
-            SafetyVolumeStrategyConfig(
-                lookback_candidates=[24],
-                rolling_gen={"enabled": True, "predict_lookback": 48},
-            )
-        )
-        if strategy_name == "risk"
-        else XGBoostStrategy(
-            XGBoostStrategyConfig(
-                lookback_candidates=[12],
-                rolling_gen={"enabled": True, "predict_lookback": 20},
-            )
-        )
-    )
+    values = {
+        "lookback_candidates": lookbacks,
+        "rolling_gen": {
+            "enabled": True,
+            "predict_lookback": prior_bars if phase == "configuration" else None,
+        },
+    }
     with pytest.raises(ValueError, match="predict_lookback must be at least"):
-        strategy.fit(_frame())
+        if strategy_name == "risk":
+            risk_config = SafetyVolumeStrategyConfig.model_validate(values)
+            risk_config.rolling_gen.predict_lookback = prior_bars
+            SafetyVolumeStrategy(risk_config).fit(_frame())
+        else:
+            direction_config = XGBoostStrategyConfig.model_validate(values)
+            direction_config.rolling_gen.predict_lookback = prior_bars
+            XGBoostStrategy(direction_config).fit(_frame())

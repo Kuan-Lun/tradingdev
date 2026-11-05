@@ -9,12 +9,10 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 
 from tradingdev.domain import indicators
-from tradingdev.domain.ml.features.context import FeatureContext
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.ml.probabilities import class_probability, validate_probabilities
 from tradingdev.domain.ml.rolling_gen import (
-    resolve_geometry,
     rolling_outcome,
     trace_payload,
 )
@@ -111,23 +109,7 @@ class SafetyVolumeStrategy(BaseStrategy):
                 labels are not unique, because the scored validation rows could
                 not be mapped back to the bars their directions come from.
         """
-        # Validate every candidate's geometry before any model is trained.
-        scheme = (
-            self._config.rolling_gen.resolve()
-            if self._config.rolling_gen.enabled
-            else None
-        )
-        for lookback in self._config.lookback_candidates:
-            resolve_geometry(
-                scheme,
-                lookback=lookback,
-                retrain_interval=self._config.retrain_interval,
-                context=FeatureContext.for_features(
-                    RiskFeatureEngineer(lookback=lookback)
-                ),
-                history_bars=len(df),
-                label_horizon=self._config.target_holding_bars,
-            )
+        self._config.validate_rolling_geometry()
         val_ratio = self._config.validation_ratio
         split_idx = int(len(df) * (1 - val_ratio))
         train_df = df.iloc[:split_idx]
