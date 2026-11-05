@@ -54,6 +54,12 @@ repository；GitHub 授權範圍只選需要發布的 repository。設定如下�
 | Root directory | repository 根目錄。 |
 | Build command | 下方的複製指令。 |
 | Deploy command | `npx wrangler deploy`。 |
+| Preview command（非正式分支） | 啟用分支預覽時使用 `npx wrangler preview`。 |
+
+Cloudflare Workers Builds 的 `Preview command` 契約說明此命令建立或更新預覽，
+並產生預覽網址，原文節錄：
+
+> It defaults to `npx wrangler preview`, which creates or updates a Preview and produces a Preview URL.
 
 Build command：
 
@@ -65,6 +71,15 @@ mkdir -p site-dist/tradingdev && cp docs/talks/tradingdev-introduction/index.htm
 `SKIP_DEPENDENCY_INSTALL=1`，停用自動安裝專案依賴。部署仍會使用 Wrangler；
 Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
 `site-dist/` 是忽略的發布產物，只包含要公開的 HTML；不會將整個 `docs/` 發布。
+
+分支預覽使用 `wrangler.jsonc` 的 `previews` 區塊；即使沒有獨立設定，也須保留空物件。
+Cloudflare 的 Wrangler 預覽設定契約明定此要求，原文節錄：
+
+> The `previews` block is required, but it can be empty if your Preview does not need separate settings.
+
+靜態資源仍使用頂層 `assets`，正式網域的 `routes` 不放入 `previews`。
+在建置記錄確認分支與 commit，成功後開啟產生的預覽網址並加上 `/tradingdev/` 查看簡報。
+分支預覽與 `main` 正式部署是兩次獨立建置，須分別核對結果；本機簡報檢查不代表雲端部署成功。
 
 若建置設定顯示 Git 帳戶中斷連線，按 Git repository 旁的 **Manage**，在 GitHub
 完成必要的重新驗證，確認 Cloudflare 應用程式仍可存取本 repository，再回到
