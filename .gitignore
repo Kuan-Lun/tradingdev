@@ -53,3 +53,6 @@ catboost_info/
 
 # Locked presentation compiler (install with scripts/presentations.sh setup)
 tooling/marp/node_modules/
+
+# Cloudflare static presentation deployment output
+/site-dist/
