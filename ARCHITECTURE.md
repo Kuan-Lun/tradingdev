@@ -442,6 +442,11 @@ JobQueries 讀取結果明細與組裝回覆；清單查詢只讀取已保存狀
 離開時確認容器清理。兩者接收已固定來源雜湊、類別與 runtime 的
 [`GeneratedProgram`](src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
 
+跨容器訊息由 [`StrategyRequest`、`StrategyResponse` 與 `Operation`](src/tradingdev/adapters/execution/strategy_protocol.py)
+定義請求／回覆 schema、協定版本及可用操作；整合者應使用這些正式定義編解碼，
+而非自行維護欄位或操作清單。Proxy 逐次核對 request ID、操作、來源雜湊與類別名稱，
+拒絕不屬於該次請求或固定策略身分的回覆。
+
 直接呼叫時，`inspect_parameters(..., capture=True)` 擷取缺少的宣告預設、核對 keyword
 binding 並回傳完整設定 dict；它不呼叫建構子，但仍會載入及執行模組層程式。
 `capture=False` 與 `open_strategy` 要求每個具名參數都有顯式值，包括已有預設的參數。
