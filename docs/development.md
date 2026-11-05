@@ -70,8 +70,8 @@ docker build --target strategy-runtime -t tradingdev-strategy-runtime:dev .
 export TRADINGDEV_STRATEGY_IMAGE=tradingdev-strategy-runtime:dev
 ```
 
-此映像供 `DockerRuntime` 的直接呼叫與測試使用；產品策略流程目前仍由既有
-`ProcessRunner` 監督，尚未改接容器 adapter。
+此映像供 `DockerRuntime` 的直接呼叫與測試使用，尚未接入產品策略流程；既有入口的
+監督範圍與限制見[策略安全模型](strategy_contract.md#security-model)。
 
 macOS 可使用 Docker Desktop 提供的 Linux Engine。
 測試本身不下載映像；缺少 daemon、
@@ -79,8 +79,28 @@ macOS 可使用 Docker Desktop 提供的 Linux Engine。
 會解析為固定 image ID。`DockerRuntime.resolve()` 未明示 `limits` 時，會讀取
 `TRADINGDEV_RUNTIME_LIMITS` 的 JSON 物件；未設定時使用預設政策。可設定欄位、預設值及
 欄位間限制以 [`RuntimeLimits`](../src/tradingdev/domain/runtime.py) 為準。
-傳輸、程序身分與故障清理分別由
-替代 daemon 的 adapter 測試及
+
+直接整合或驗證 adapter 時，使用
+[`container_runtime.py`](../src/tradingdev/adapters/execution/container_runtime.py) 的以下入口：
+
+1. 建立 `DockerRuntime(control_root)`，以可保留的獨立目錄保存歸屬紀錄；
+   `resolve(image=..., limits=...)` 核對 daemon 能力與預建映像，回傳固定 image ID
+   及有效政策的 `RuntimeSpec`，不自動下載映像。
+2. 使用 `with runtime.open(spec, command) as session` 啟動映像內的命令及管理生命週期；
+   `command` 是程式與參數序列，檔案須已在映像內，不掛載 host 工作區。
+   `session.exchange(message)` 依序交換單行 `bytes`：傳入內容不含換行，回傳內容移除
+   結尾換行。命令須每次輸入只產生一行 stdout，診斷使用 stderr；超量與已偵測的
+   額外 stdout 會失敗。診斷保留有上限的尾端，發生截斷時標示。
+3. Context 結束時，先停止 attach client，再移除並核對整個執行單元。發生
+   `IsolatedRuntimeError` 時檢查 `cleanup_verified` 與 `control_path`；清理未確認就保留
+   控制目錄。原呼叫端停止後，可在原 daemon 上呼叫 `runtime.recover_abandoned()`
+   重試復原；它跳過仍持有 lease 的單元，不清除無法核對的紀錄。
+
+單元有私有 PID namespace、唯讀映像、無外部網路及有上限的暫存空間；生成程序不繼承
+host secrets，受 CPU、記憶體、程序數與訊息上限約束。整個 session（含呼叫間等待）
+共用期限，可信 PID 1 在控制端消失後仍會到期終止包含另開 session 的後代。
+這依賴可信映像、Docker daemon 與 Linux 核心；daemon 不可用或清理身分不明時回報失敗，
+不承諾立即清理。傳輸、程序身分與故障清理由替代 daemon 的 adapter 測試及
 [真實容器測試](../tests/integration/test_strategy_isolation.py) 驗證。
 
 驗證生成策略 worker 協定時，可直接使用

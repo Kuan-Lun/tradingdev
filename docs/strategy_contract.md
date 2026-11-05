@@ -714,6 +714,12 @@ back to legacy files. Historical runs without revisions retain `revision_id: nul
 
 ## Security Model
 
+This section describes the current product strategy paths: validation, dry-run,
+preflight/preparation and formal execution. The independent `DockerRuntime`
+adapter provides container isolation for direct callers and tests, but these
+product paths do not use it yet. Its operations, guarantees and cleanup limits
+are described in the [development guide](development.md#容器建置與驗證).
+
 The [static policy reference](#contract-references) supplies the enforced import
 and call restrictions. Static-policy or quality failures stop validation before
 generated code is imported or executed.
@@ -744,4 +750,5 @@ before their actual runs.
 Supervision does not isolate filesystem or network access, and a workspace is
 only an output location. User approval controls formal submission; it does not
 make earlier code execution safe. Review generated Python as runtime code at
-every boundary until a dedicated isolation layer exists.
+every product boundary; the independent container adapter does not change the
+guarantees of paths that have not been connected to it.
