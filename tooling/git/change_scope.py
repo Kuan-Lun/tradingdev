@@ -15,6 +15,7 @@ from tooling.presentations import (
     is_presentation_path,
     presentation_change_allowed,
 )
+from tooling.requirements import is_requirements_path
 
 # These tools do not implement product behavior or shared product-test facilities.
 # New/unknown tools remain on the full path until their consumers are reviewed.
@@ -23,6 +24,7 @@ _TOOLING_FILES = frozenset(
         "AGENTS.md",
         "CLAUDE.md",
         "tooling/documentation.py",
+        "tooling/requirements.py",
         "tooling/quality.py",
         "tooling/presentations.py",
         "tooling/presentation_html.py",
@@ -67,6 +69,7 @@ _TOOLING_SCRIPTS = frozenset(
 class ChangeScope:
     kind: Literal["docs", "presentations", "tooling", "code"]
     presentations_changed: bool = False
+    requirements_changed: bool = False
 
     @property
     def commit_profile(self) -> str:
@@ -79,7 +82,10 @@ class ChangeScope:
     @property
     def candidate_checks(self) -> tuple[str, ...]:
         if self.kind in {"docs", "presentations"}:
-            return (self.kind,)
+            return (
+                self.kind,
+                *(("documentation_review",) if self.requirements_changed else ()),
+            )
         return (
             *(("presentations",) if self.presentations_changed else ()),
             "documentation_review",
@@ -162,11 +168,13 @@ def _classify_diff(repository: Path, output: str) -> ChangeScope:
     if fields.pop() != "" or len(fields) % 2:
         raise RuntimeError("Cannot classify the Git candidate changes.")
     code_changed = presentations_changed = tooling_changed = False
+    requirements_changed = False
     for metadata, name in zip(fields[::2], fields[1::2], strict=True):
         parts = metadata.split()
         if len(parts) != 5 or not parts[0].startswith(":"):
             raise RuntimeError("Cannot classify the Git candidate changes.")
         old_mode, new_mode, old_blob, new_blob, status = parts
+        requirements_changed |= is_requirements_path(name)
         presentation = is_presentation_path(name)
         presentations_changed |= presentation
         modes = {"000000", "100644"}
@@ -189,11 +197,13 @@ def _classify_diff(repository: Path, output: str) -> ChangeScope:
         elif not _documentation_path(name):
             code_changed = True
     if code_changed:
-        return ChangeScope("code", presentations_changed)
+        return ChangeScope("code", presentations_changed, requirements_changed)
     if tooling_changed:
-        return ChangeScope("tooling", presentations_changed)
+        return ChangeScope("tooling", presentations_changed, requirements_changed)
     return ChangeScope(
-        "presentations" if presentations_changed else "docs", presentations_changed
+        "presentations" if presentations_changed else "docs",
+        presentations_changed,
+        requirements_changed,
     )
 
 

@@ -1894,3 +1894,49 @@ def test_presentation_refresh_failure_preserves_cleanup_policy(
             if root.exists():
                 shutil.rmtree(root)
     _assert_cleaned(scenario)
+
+
+@pytest.mark.parametrize("failure", [None, "docs", "review"])
+def test_srs_candidate_runs_snapshot_then_semantic_review_without_pytest(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    failure: str | None,
+) -> None:
+    _git(tmp_path, "init", "--quiet", "--template=")
+    (tmp_path / "README.md").write_text("# Product\n")
+    _git(tmp_path, "add", ".")
+    base = _git(tmp_path, "write-tree")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/requirements.md").write_text("# SRS\n")
+    _git(tmp_path, "add", ".")
+    tree = _git(tmp_path, "write-tree")
+    observed: list[str] = []
+
+    def snapshot(actual: str, profile: str, **kwargs: object) -> None:
+        assert actual == tree and kwargs["repo"] == tmp_path
+        observed.append(profile)
+        if failure == "docs":
+            raise RuntimeError("snapshot rejected")
+
+    def review(command: list[str], **kwargs: object) -> None:
+        assert "tooling.review_docs" in command
+        assert command[command.index("--tree") + 1] == tree
+        assert command[command.index("--base") + 1] == base
+        observed.append("review")
+        if failure == "review":
+            raise RuntimeError("review rejected")
+
+    monkeypatch.setattr(candidates, "check_snapshot", snapshot)
+    monkeypatch.setattr(candidates, "run", review)
+    candidate = candidates.MergeCandidate(tmp_path, base, tree, tree)
+    if failure:
+        with pytest.raises(RuntimeError, match="rejected"):
+            candidates.verify_candidate(candidate)
+        assert "passed" not in capsys.readouterr().out
+    else:
+        candidates.verify_candidate(candidate)
+        output = capsys.readouterr().out
+        assert "docs snapshot checks passed" in output
+        assert "pytest passed" not in output
+    assert observed == (["docs"] if failure == "docs" else ["docs", "review"])

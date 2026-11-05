@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
 
+from tooling.documentation import markdown_heading_locations
+from tooling.requirements import DOCUMENT_SCOPES
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -317,6 +320,7 @@ _DOC_HEADINGS["docs/execution_plans.md"].update(
 # are deliberately not matched by a wildcard: an unfamiliar document widens
 # context until its responsibility has been reviewed and registered.
 _WHOLE_DOC_SCOPES: dict[str, frozenset[str]] = {
+    **{path: frozenset(scopes) for path, scopes in DOCUMENT_SCOPES.items()},
     **dict.fromkeys(
         (
             "docs/strategies/README.md",
@@ -355,6 +359,7 @@ _PREFIX_SCOPES: tuple[tuple[str, str], ...] = (
     ("configs/strategies/", "strategy"),
 )
 _EXACT_SCOPES = {
+    **{path: scopes[0] for path, scopes in DOCUMENT_SCOPES.items()},
     "tooling/presentations.py": "presentation",
     "tooling/presentation_errors.py": "presentation",
     "tooling/presentation_html.py": "presentation",
@@ -617,4 +622,41 @@ def sections_for_scope(scope: str, path: str, text: str) -> tuple[MarkdownSectio
                 if sections[previous].headings == headings[:length]:
                     selected.add(previous)
                     break
+    return tuple(section for index, section in enumerate(sections) if index in selected)
+
+
+def sections_for_reference(
+    path: str, text: str, fragment: str
+) -> tuple[MarkdownSection, ...]:
+    """Keep the cited original subtree, its ancestors and reference definitions."""
+    sections, references = _parse_sections(path, text)
+    if not fragment:
+        return sections
+    line = markdown_heading_locations(text).get(fragment)
+    if line is None:
+        raise ValueError(f"Missing SRS contract heading: {path}#{fragment}")
+    target = next(
+        index
+        for index, section in enumerate(sections)
+        if section.start_line <= line <= section.end_line
+    )
+    headings = sections[target].headings
+    selected = {target}
+    # Container headings belong to their enclosing section, not its later siblings.
+    if headings and line == sections[target].start_line:
+        for index in range(target + 1, len(sections)):
+            if len(sections[index].headings) <= len(headings):
+                break
+            selected.add(index)
+    for length in range(1, len(headings)):
+        for index in range(target - 1, -1, -1):
+            if sections[index].headings == headings[:length]:
+                selected.add(index)
+                break
+    selected.update(
+        index
+        for index, section in enumerate(sections)
+        if not section.headings
+        or any(section.start_line <= line <= section.end_line for line in references)
+    )
     return tuple(section for index, section in enumerate(sections) if index in selected)

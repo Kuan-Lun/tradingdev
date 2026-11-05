@@ -13,6 +13,8 @@ from urllib.parse import unquote, urlsplit
 
 from markdown_it import MarkdownIt
 
+from tooling.requirements import RequirementsError, check_requirements
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -47,7 +49,7 @@ def _heading_text(tokens: Iterable[Token]) -> str:
     )
 
 
-def _slug(text: str) -> str:
+def heading_slug(text: str) -> str:
     # GitHub-style Markdown headings retain letters, numbers, marks, '_' and '-'.
     # Punctuation is discarded; spaces become hyphens without being collapsed.
     return "".join(
@@ -59,24 +61,39 @@ def _slug(text: str) -> str:
     )
 
 
+def _heading_locations(tokens: list[Token]) -> dict[str, int]:
+    anchors: dict[str, int] = {}
+    for index, token in enumerate(tokens):
+        if (
+            token.type != "inline"
+            or not index
+            or tokens[index - 1].type != "heading_open"
+        ):
+            continue
+        base = heading_slug(_heading_text(token.children or []))
+        anchor = base
+        suffix = 0
+        while anchor in anchors:
+            suffix += 1
+            anchor = f"{base}-{suffix}"
+        anchors[anchor] = token.map[0] + 1 if token.map else 1
+    return anchors
+
+
+def markdown_heading_locations(text: str) -> dict[str, int]:
+    """Match link validation, including headings inside quotes and lists."""
+    return _heading_locations(MarkdownIt("commonmark").parse(text))
+
+
 def _read_document(path: Path) -> MarkdownDocument:
     tokens = MarkdownIt("commonmark").parse(path.read_text(encoding="utf-8"))
-    anchors: set[str] = set()
+    anchors = _heading_locations(tokens)
     links: list[tuple[int, str]] = []
-    for index, token in enumerate(tokens):
+    for token in tokens:
         if token.type != "inline":
             continue
-        children = token.children or []
-        if index and tokens[index - 1].type == "heading_open":
-            base = _slug(_heading_text(children))
-            anchor = base
-            suffix = 0
-            while anchor in anchors:
-                suffix += 1
-                anchor = f"{base}-{suffix}"
-            anchors.add(anchor)
         line = token.map[0] + 1 if token.map else 1
-        for child in children:
+        for child in token.children or []:
             attribute = {"link_open": "href", "image": "src"}.get(child.type)
             if attribute is not None:
                 destination = child.attrGet(attribute)
@@ -137,6 +154,7 @@ def check_documents(root: Path) -> None:
     root = root.resolve()
     paths = markdown_paths(root)
     check_local_links(root, paths)
+    requirements = check_requirements(root)
     if paths:
         subprocess.run(
             [
@@ -153,6 +171,8 @@ def check_documents(root: Path) -> None:
             check=True,
         )
     print(f"Markdown formatting and local links passed ({len(paths)} documents).")
+    if requirements:
+        print(f"SRS structure and references passed ({requirements} requirements).")
 
 
 def main() -> int:
@@ -160,7 +180,7 @@ def main() -> int:
         check_documents(Path(__file__).resolve().parents[1])
     except subprocess.CalledProcessError as error:
         return error.returncode
-    except (DocumentationError, OSError, ValueError) as error:
+    except (DocumentationError, RequirementsError, OSError, ValueError) as error:
         print(f"Documentation checks failed: {error}", file=sys.stderr)
         return 1
     return 0

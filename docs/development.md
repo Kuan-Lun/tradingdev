@@ -27,7 +27,7 @@ uv sync --locked --all-extras --python 3.14
 | --- | --- | --- |
 | `scripts/rebuild-env.sh` | 依 lock 重建本專案 `.venv`。 | 依賴變更同步設定、lock 及受影響套件測試。 |
 | `scripts/format.sh` | 修改程式碼的 lint／格式修正。 | 品質政策維護於 `pyproject.toml`，流程實作見 `tooling/quality.py`。 |
-| `scripts/check-docs.sh` | Markdown 格式與本機檔案／標題連結。 | 改檢查器時維護 `tests/tooling/test_documentation.py`；文件語意由差異審閱確認。 |
+| `scripts/check-docs.sh` | Markdown、連結及 SRS 結構與追溯引用。 | 改檢查器時維護 `tests/tooling/test_documentation.py`、`test_requirements.py`；不執行引用的測試。 |
 | `scripts/check-presentations.sh` | 文件品質、簡報重建一致性、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；視覺與瀏覽器操作另行確認。 |
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
@@ -108,6 +108,7 @@ ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定�
 
 | 文件 | 維護責任 |
 | --- | --- |
+| [軟體需求規格](requirements.md) | 產品需求、驗收條件與契約／驗證入口；按責任分冊。 |
 | [README](../README.md) | 使用者安裝、操作與結果解讀。 |
 | [架構](../ARCHITECTURE.md) | 模組責任與跨層流程。 |
 | [策略契約](strategy_contract.md) | 策略作者的 Python／YAML、訊號、訓練與 revision 要求。 |
@@ -141,6 +142,25 @@ PR 文件 reviewer 無法自行開啟參照。審查需要的正式定義若未�
 檢查，其餘程式／依賴或未知變更走完整檢查。分類規則見
 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
 文件檢查不執行文件中的命令或驗證外部網址，也不代替語意與操作審閱。
+
+### SRS 維護與檢核
+
+`scripts/check-docs.sh` 自動檢查 `docs/requirements.md` 與 `docs/requirements/`
+中的需求。規則及審查責任唯一來源是 [requirements.py](../tooling/requirements.py)：
+`check_requirements` 拒絕重複／格式錯誤的編號、缺少需求／驗收／契約／驗證欄位、
+未從入口連到的章節，以及未登錄於 `DOCUMENT_SCOPES` 的需求文件。
+同一份責任登錄直接供 reviewer 選取文件，不另維護第二份章節清單。
+
+需求使用二級標題 `FR-EXEC-001 名稱` 或 `NFR-UI-001 名稱`，四個頂層清單欄位以
+`**需求**：`、`**驗收**：`、`**契約**：`、`**驗證**：` 開始。
+契約欄連到本機 Markdown 詳細契約，驗證欄連到 `tests/` 中的 `test_*.py`；
+沒有自動化證據時，可用 `人工驗收：` 說明操作、預期結果與限制。
+檢查器核對這些格式與引用存在性，失敗會指出檔案、需求及原因；不匯入或執行測試，
+不驗證測試函式、驗收文字的語意或覆蓋充分性。引用是查核入口，不是通過收據。
+SRS 入口與章節都不存在時允許尚未引入 SRS 的版本；部分缺失或導航斷裂則失敗。
+
+SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入既有候選審查，
+操作及限制見[PR 檢查](#2-在-github-建立-pr交由審閱者檢查)。
 
 ### 簡報的編輯與輸出
 
@@ -384,8 +404,8 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 
 | 候選變更 | 執行檢查 |
 | --- | --- |
-| 一般文件 | 文件格式與連結。 |
-| 已登錄簡報 | 文件與簡報專項；視覺操作仍須人工確認。 |
+| 一般文件 | 文件格式、連結與 SRS 結構；涉及 SRS 時再執行 Codex 一致性審查。 |
+| 已登錄簡報 | 文件與簡報專項；混合 SRS 時再執行 Codex 審查；視覺操作仍須人工確認。 |
 | 開發政策／已登錄開發工具 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
 | 產品／依賴／共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
@@ -402,7 +422,7 @@ PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分�
 也不適用，因為不同檔案可能互為審查脈絡。補驗證期間再次變動也會失敗。
 此路徑不重用跨次執行的 receipt，檢查結束後仍須依下節核對即時版本。
 
-真實模型策略測試另依變更選取。開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
+真實模型策略測試另依變更選取。涉及 SRS 的文件／簡報、開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
 這一步預設使用 `gpt-6-luna` 與 `high`；以 `TRADINGDEV_DOC_REVIEW_MODEL`、
 `TRADINGDEV_DOC_REVIEW_REASONING_EFFORT` 分別覆寫模型及推理強度，例如：
 
