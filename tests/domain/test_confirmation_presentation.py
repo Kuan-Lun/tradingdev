@@ -23,12 +23,14 @@ from tradingdev.domain.execution_assumptions import (
 )
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.presentation.confirmation import (
+    build_confirmation_document,
+)
+from tradingdev.domain.presentation.confirmation_contract import (
     SECTION_TITLES,
     ConfirmationDocument,
     ConfirmationPresentation,
     ConfirmationPresentationError,
     ParameterDescription,
-    build_confirmation_document,
     parameter_paths,
     validate_presentation,
 )

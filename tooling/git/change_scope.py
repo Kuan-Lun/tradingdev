@@ -27,6 +27,8 @@ _TOOLING_FILES = frozenset(
         "tooling/requirements.py",
         "tooling/quality.py",
         "tooling/presentations.py",
+        "tooling/presentation_html.py",
+        "tooling/presentation_errors.py",
         "tooling/review_docs.py",
         "tooling/review_evidence.py",
         "tooling/review_options.py",

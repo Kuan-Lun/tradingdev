@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from tradingdev.domain.presentation.confirmation import (
+from tradingdev.domain.presentation.confirmation_contract import (
     ConfirmationDocument,
     ConfirmationField,
     ConfirmationSection,

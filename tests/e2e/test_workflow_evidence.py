@@ -11,7 +11,7 @@ import pytest
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
-from tests.e2e.test_llm_workflows import assert_workflow
+from tests.e2e.workflow_evidence import assert_workflow
 from tests.integration.execution_fixtures import (
     execution_evidence_draft,
     synthetic_preflight_receipt,
@@ -805,3 +805,27 @@ def test_history_workflow_accepts_sdk_encoded_report_and_query_arguments() -> No
     calls[-1].arguments["run_ids"] = '["another-run"]'
     with pytest.raises(AssertionError, match="generate_report"):
         assert_workflow(calls, scenario)
+
+
+@pytest.mark.parametrize(
+    ("tool", "field", "invalid", "expected_excerpt"),
+    [
+        ("get_job_status", "revision_id", "revision_b", "revision_a"),
+        ("submit_execution_decision", "manifest_hash", "b" * 64, "a" * 12),
+        ("get_run_metrics", "scope", "training", "full"),
+    ],
+    ids=["revision", "manifest", "metric-scope"],
+)
+def test_workflow_failure_message_retains_actual_and_expected_values(
+    tool: str, field: str, invalid: str, expected_excerpt: str
+) -> None:
+    calls = _repair_evidence()
+    selected = next(call for call in calls if call.name == tool)
+    selected.result[field] = invalid
+
+    with pytest.raises(AssertionError) as failure:
+        assert_workflow(calls, SCENARIOS["repair"])
+
+    message = str(failure.value)
+    assert invalid[:12] in message
+    assert expected_excerpt in message

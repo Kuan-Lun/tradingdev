@@ -188,6 +188,9 @@ ExecutionPlanService 經 PreflightService 在受監督的子程序檢查程式�
 
 模型提供白話規則與參數說明，後端提供有效值、執行假設及檢查證據；兩者共同固定於
 確認文件。助手交付摘要與 HTML 連結，結束回合等待後續明確決策。
+`domain.presentation.confirmation_contract` 定義確認文件型別、固定章節及參數說明的
+完整性驗證；`confirmation.build_confirmation_document` 將固定設定與檢查證據轉成
+該文件。文字與 HTML adapters 共用同一份確認文件。
 `submit_execution_decision` 只在同意時提交原計畫；拒絕或修改要求取消計畫。
 修改需重新準備、檢查與確認。最初請求、提問或沉默不構成同意。
 
