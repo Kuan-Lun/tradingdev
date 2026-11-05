@@ -15,6 +15,9 @@
   限制；單次工作的選型過程、驗證結果、耗時及修復經過留在 PR 與對話回報。
   開發政策與指南不加入外部文件或延伸閱讀連結；操作所需資訊由本 repository
   的既有負責文件或正式定義提供。代理開發政策仍以本檔為唯一來源。
+- SRS 維護產品需求、驗收條件與契約／驗證入口，依責任拆分並保留整體導航；
+  不重抄 schema 或把驗證引用當作通過證據。需求與對外行為改變才更新相關需求，
+  實作現況不自動成為新增產品承諾。
 - 更新文件前先判斷讀者與用途。README 以使用者要完成的任務、操作結果及
   必要限制為主；有命令或設定範例不代表是開發文件。API／schema、儲存格式、
   內部流程與實作細節依責任更新既有架構或契約文件，不因功能異動就一併追加
@@ -120,6 +123,7 @@
   型別依賴例外須逐模組指定並有依據，不得全域放寬以讓檢查通過。
 - `scripts/format.sh` 明確執行會修改檔案的 fixer／formatter。
 - `scripts/check-docs.sh` 執行唯讀 Markdown 與本機檔案／標題連結檢查；
+  另檢查 SRS 編號、必要欄位、章節導航與本機證據引用；不執行引用的測試。
   不執行文件中的命令，也不連線檢測外部 URL。Markdown 使用專案 PyMarkdown；
   中文敘述與表格不套用 ASCII 行寬限制。
 - `scripts/check-presentations.sh` 檢查文件及已登錄簡報，以鎖定的 Marp 工具鏈
@@ -306,11 +310,15 @@
   不得把 hook 描述為遠端強制門禁。
 - 準備決定合併的審閱者，明確執行 `scripts/check-pr.sh <PR編號>`。
   不自動猜測開發完成時機。使用本機 GitHub CLI 讀取 PR；開發工具與完整程式分流另需
-  已登入的 Codex CLI。檢查本身不建立 PR、發送評論、push 或合併。
+  已登入的 Codex CLI；涉及 SRS 的文件／簡報候選也需要。檢查本身不建立 PR、發送評論、push 或合併。
 - PR 檢查 fetch 主線與 PR head 至獨立臨時 Git repository，計算合併候選
   tree；不切換或更新開發者的分支。衝突或讀取版本不一致直接失敗。
 - PR 與本機合併候選依相對主線 tree 的差異採相同分類。一般文件只執行文件
-  snapshot；簡報專項執行簡報 snapshot，不呼叫 Codex、不跑 Python 全套。
+  snapshot；簡報專項執行簡報 snapshot。未涉及 SRS 時不呼叫 Codex，兩者不跑 Python 全套。
+  涉及 `docs/requirements.md` 或 `docs/requirements/**/*.md` 的新增、修改、
+  刪除或改名時，文件／簡報 snapshot 通過後另執行既有 Codex 語意審查，
+  核對需求、契約、驗收及所需來源；不因此加入 Ruff、Mypy 或產品 pytest。
+  此例外僅用於明確執行的 PR／本機候選檢查，commit／push 不呼叫模型。
   差異審閱仍須確認語意、命令、讀者用途與必要的視覺／操作行為。
 - 開發工具與完整程式候選若涉及簡報、其編譯模組／scripts 或 `tooling/marp/`，
   先執行簡報 snapshot；失敗即停止，不進入 Codex 或 pytest。其後由 Codex
