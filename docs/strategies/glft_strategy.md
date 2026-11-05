@@ -117,6 +117,15 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 | `vol_window` | 30 | 滾動波動率估計窗口（`implied` 時不使用） |
 | `vol_type` | "implied" | `"realized"` / `"parkinson"` / `"implied"` |
 
+### Historical Volatility
+
+純 GLFT 與 GLFT-ML 共用波動率定義：`realized` 使用收盤對數報酬的樣本標準差，
+`parkinson` 使用高低價範圍，計算 `sqrt(mean(log(high / low)^2) / (4 * log(2)))`。
+兩者的滾動窗口皆以 `vol_window` 根內的有效觀察計算，不等待整個窗口填滿；
+Parkinson 可從第一筆有效高低價計算，realized 至少需兩筆報酬觀察，首筆報酬設為零。
+窗口內不足有效觀察時保留缺值，不把未知波動率當成零；非正的估計值才套用極小正值下限。
+參數搜尋與正式訊號生成使用相同算法，純 GLFT 使用搜尋選定的窗口，GLFT-ML 使用設定窗口。
+
 ### Implied Volatility (DVOL)
 
 當 `vol_type: "implied"` 時，策略使用 DataFrame 中的 `dvol` 欄位作為波動度來源，而非從歷史價格估計。DVOL 檔案路徑由 `data.requirements.features` 宣告，策略參數不保存資料路徑。

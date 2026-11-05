@@ -26,6 +26,9 @@ from tradingdev.domain.optimization.grid_search import (
     tuple_grid,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.glft_volatility import (
+    compute_glft_volatility,
+)
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -398,8 +401,6 @@ class GLFTMLStrategy(BaseStrategy):
     # Volatility estimation
     # ------------------------------------------------------------------
 
-    _MINUTES_PER_YEAR: float = 525_960.0
-
     def _compute_volatility(
         self,
         close: npt.NDArray[np.floating[Any]],
@@ -408,20 +409,14 @@ class GLFTMLStrategy(BaseStrategy):
         dvol: npt.NDArray[np.floating[Any]] | None = None,
     ) -> npt.NDArray[np.floating[Any]]:
         """Compute per-bar volatility sigma."""
-        if self._config.vol_type == "implied":
-            if dvol is None:
-                msg = "dvol array is required when vol_type is 'implied'"
-                raise ValueError(msg)
-            sigma = dvol / 100.0 / np.sqrt(self._MINUTES_PER_YEAR)
-        else:
-            window = self._config.vol_window
-            log_ret = np.diff(np.log(np.maximum(close, 1e-10)))
-            log_ret = np.concatenate([[0.0], log_ret])
-            sigma = pd.Series(log_ret).rolling(window, min_periods=1).std().values
-
-        # Keep unknown volatility missing; only floor nonpositive observations.
-        sigma = np.where(sigma <= 0, 1e-10, sigma)
-        return np.asarray(sigma, dtype=np.float64)
+        return compute_glft_volatility(
+            close,
+            high,
+            low,
+            vol_type=self._config.vol_type,
+            window=self._config.vol_window,
+            dvol=dvol,
+        )
 
     # ------------------------------------------------------------------
     # ML-filtered GLFT state machine
