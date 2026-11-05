@@ -332,6 +332,12 @@ docker compose up -d --build
 > 請解讀剛才的結果，列出回測設定、成本與資料期間。哪些指標無法計算？
 > 請說明原因，並找出值得進一步驗證的地方。
 
+GLFT 的 EMA 聚合設定使用 `signal_agg_bars` 與 `signal_agg_bars_candidates`，單位是
+輸入 K 棒根數。舊的 `signal_agg_minutes` 同名系列須改名；1m 可保留原數值。
+舊的固定執行設定不會自動遷移，請用更新後設定建立新研究。兩個 GLFT 策略都要求
+固定間距的時間戳，變更 K 棒頻率也會改變持倉與預測的實際時長；詳見
+[時間尺度與資料限制](docs/strategies/glft_strategy.md#時間尺度)。
+
 ## 建立與研究自己的策略
 
 ### 把交易規則交給助手

@@ -39,10 +39,10 @@ def test_parkinson_uses_the_high_low_range_when_closes_are_constant(ml: bool) ->
     parkinson = _strategy(ml, "parkinson", 3)
     realized = _strategy(ml, "realized", 3)
 
-    sigma = parkinson._compute_volatility(close, high, low)
+    sigma = parkinson._compute_volatility(close, high, low, bar_seconds=60)
     expected = math.log(110 / 90) / math.sqrt(4 * math.log(2))
     np.testing.assert_allclose(sigma, expected)
-    actual_realized = realized._compute_volatility(close, high, low)
+    actual_realized = realized._compute_volatility(close, high, low, bar_seconds=60)
     assert np.isnan(actual_realized[0])
     np.testing.assert_array_equal(actual_realized[1:], 1e-10)
 
@@ -56,7 +56,9 @@ def test_parkinson_rolls_the_effective_window_and_preserves_unknown_values(
     if isinstance(strategy, GLFTStrategy):
         strategy._best_vol_window = 2
     log_ranges = np.array([np.nan, 1.0, 2.0, np.nan, 3.0, np.nan, np.nan, 0.0])
-    sigma = strategy._compute_volatility(np.ones(8), np.exp(log_ranges), np.ones(8))
+    sigma = strategy._compute_volatility(
+        np.ones(8), np.exp(log_ranges), np.ones(8), bar_seconds=60
+    )
     # Independent means of the last two squared log ranges (skip missing).
     expected = np.sqrt(
         np.array([np.nan, 1.0, 2.5, 4.0, 9.0, 9.0, np.nan, 0.0]) / (4 * math.log(2))
@@ -69,7 +71,7 @@ def test_parkinson_rolls_the_effective_window_and_preserves_unknown_values(
 def test_realized_sample_deviation_and_warmup_are_preserved(ml: bool) -> None:
     strategy = _strategy(ml, "realized", 2)
     close = np.exp(np.array([0.0, 1.0, 3.0, 6.0]))
-    result = strategy._compute_volatility(close, close, close)
+    result = strategy._compute_volatility(close, close, close, bar_seconds=60)
     np.testing.assert_allclose(result, [np.nan, *(3 * [math.sqrt(0.5)])])
 
 
@@ -78,10 +80,12 @@ def test_implied_ignores_window_and_keeps_missing_volatility(ml: bool) -> None:
     strategy = _strategy(ml, "implied", 0)
     close = np.full(3, 100.0)
     dvol = np.array([50.0, np.nan, 0.0])
-    result = strategy._compute_volatility(close, close, close, dvol=dvol)
+    result = strategy._compute_volatility(
+        close, close, close, dvol=dvol, bar_seconds=60
+    )
     np.testing.assert_allclose(result, [0.5 / math.sqrt(525_960), np.nan, 1e-10])
     with pytest.raises(ValueError, match="dvol array is required"):
-        strategy._compute_volatility(close, close, close)
+        strategy._compute_volatility(close, close, close, bar_seconds=60)
 
 
 @pytest.mark.parametrize("vol_type, enters", [("realized", True), ("parkinson", False)])

@@ -23,6 +23,10 @@ from tradingdev.domain.optimization.grid_search import (
     tuple_grid,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.glft_time import (
+    ensure_glft_fit_scale,
+    glft_bar_seconds,
+)
 from tradingdev.domain.strategies.bundled.glft_volatility import (
     compute_glft_volatility,
 )
@@ -100,6 +104,10 @@ class GLFTStrategy(BaseStrategy):
     - **Reservation price**: mid-price adjusted for inventory risk
     - **Optimal spread**: adapts to volatility and time horizon
 
+    Windows, holding horizons and aggregation are measured in input bars.
+    Timestamps must have a uniform interval (at least two bars); gaps are errors.
+    Annualized DVOL is converted to that per-bar scale using a 365.25-day year.
+    After fit(), generating signals at a different bar duration requires refitting.
     The strategy is purely analytical -- no ML model required.
     """
 
@@ -109,6 +117,7 @@ class GLFTStrategy(BaseStrategy):
         backtest_engine: BaseBacktestEngine | None = None,
         parallel_config: ParallelConfig | None = None,
     ) -> None:
+        self._fitted_bar_seconds: float | None = None
         self._config = config
         self._backtest_engine = backtest_engine
         self._parallel_config = parallel_config
@@ -137,6 +146,7 @@ class GLFTStrategy(BaseStrategy):
         threshold are considered.  Among those, the combination with the
         best ``target_metric`` according to the metric catalog is selected.
         """
+        bar_seconds = glft_bar_seconds(df)
         if self._backtest_engine is None:
             logger.warning(
                 "No backtest engine; skipping fit()",
@@ -248,6 +258,7 @@ class GLFTStrategy(BaseStrategy):
                 "No GLFT parameter combination has a finite eligible objective"
             )
 
+        self._fitted_bar_seconds = bar_seconds
         self._best_gamma = best_gamma
         self._best_kappa = best_kappa
         self._best_ema_window = best_ema
@@ -279,7 +290,9 @@ class GLFTStrategy(BaseStrategy):
         )
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate position-state signals via the GLFT model."""
+        """Generate signals using uniform input bars as the common time unit."""
+        bar_seconds = glft_bar_seconds(df)
+        ensure_glft_fit_scale(bar_seconds, self._fitted_bar_seconds)
         close = np.asarray(df["close"].astype(float).values)
         high = np.asarray(df["high"].astype(float).values)
         low = np.asarray(df["low"].astype(float).values)
@@ -297,7 +310,9 @@ class GLFTStrategy(BaseStrategy):
             self._best_ema_window,
             self._best_signal_agg_bars,
         )
-        sigma = self._compute_volatility(close, high, low, dvol=dvol)
+        sigma = self._compute_volatility(
+            close, high, low, dvol=dvol, bar_seconds=bar_seconds
+        )
 
         # Trend filter: slow EMA direction (+1=up, -1=down, 0=flat,
         # NaN while the slow EMA is still warming up)
@@ -418,6 +433,8 @@ class GLFTStrategy(BaseStrategy):
         high: npt.NDArray[np.floating[Any]],
         low: npt.NDArray[np.floating[Any]],
         dvol: npt.NDArray[np.floating[Any]] | None = None,
+        *,
+        bar_seconds: float,
     ) -> npt.NDArray[np.floating[Any]]:
         """Compute volatility (sigma).
 
@@ -432,6 +449,7 @@ class GLFTStrategy(BaseStrategy):
             vol_type=self._config.vol_type,
             window=self._best_vol_window,
             dvol=dvol,
+            bar_seconds=bar_seconds,
         )
 
     # ------------------------------------------------------------------

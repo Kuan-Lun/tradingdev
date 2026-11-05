@@ -50,7 +50,8 @@ strategy:
     # Entry: momentum guard — only enter when deviation is narrowing
     momentum_guard: false
 
-    # Multi-timeframe: aggregate N input bars for EMA computation
+    # Multi-timeframe: aggregate N input bars from the first row, not clock buckets
+    # Replaces signal_agg_minutes / signal_agg_minutes_candidates (no aliases).
     # 1 = no aggregation; 5 = EMA over groups of 5 bars; execute on each input bar
     signal_agg_bars: 1
     signal_agg_bars_candidates: [1]

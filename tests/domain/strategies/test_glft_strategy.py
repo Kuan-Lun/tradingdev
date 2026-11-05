@@ -455,7 +455,9 @@ class TestGLFTImpliedVolatility:
         high = close.copy()
         low = close.copy()
 
-        sigma = strategy._compute_volatility(close, high, low, dvol=dvol)
+        sigma = strategy._compute_volatility(
+            close, high, low, dvol=dvol, bar_seconds=60
+        )
 
         expected = dvol / 100.0 / np.sqrt(525_960.0)
         np.testing.assert_allclose(sigma, expected, rtol=1e-10)
@@ -472,7 +474,7 @@ class TestGLFTImpliedVolatility:
         low = close.copy()
 
         with pytest.raises(ValueError, match="dvol array"):
-            strategy._compute_volatility(close, high, low)
+            strategy._compute_volatility(close, high, low, bar_seconds=60)
 
     def test_generate_signals_with_dvol(
         self,
