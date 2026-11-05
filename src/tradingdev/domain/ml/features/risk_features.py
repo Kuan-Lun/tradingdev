@@ -44,6 +44,8 @@ class RiskFeatureEngineer:
     features rather than directional prediction.
     """
 
+    target_classes = (0, 1)
+
     def __init__(
         self,
         lookback: int = 24,

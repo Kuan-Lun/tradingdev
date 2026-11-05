@@ -9,7 +9,7 @@ import pytest
 
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
-from tradingdev.domain.ml.retrainer import RollingRetrainer
+from tradingdev.domain.ml.rolling_gen import run_rolling
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.strategies.bundled.xgboost_strategy.config import (
     XGBoostStrategyConfig,
@@ -159,6 +159,14 @@ class TestXGBoostStrategy:
 class _StubFeatureEngineer(FeatureEngineer):
     """Feature engineer stand-in that passes bars through unchanged."""
 
+    @property
+    def minimum_context_rows(self) -> int:
+        return 1
+
+    @property
+    def context_rows(self) -> int:
+        return 5
+
     def transform(
         self, df: pd.DataFrame, *, include_target: bool = True
     ) -> pd.DataFrame:
@@ -183,13 +191,7 @@ class TestRollingRetrainerSignalMapping:
     def test_probabilities_map_to_long_short_and_flat(self) -> None:
         """The tri-state mapping must emit exactly -1, 0, and 1."""
         model = _StubDirectionModel([(0.9, 0.1), (0.1, 0.9), (0.5, 0.5)])
-        retrainer = RollingRetrainer(
-            model_config=XGBoostModelConfig(),
-            retrain_interval=1000,
-            threshold=0.6,
-            cooldown=0,
-            lookback=1000,
-        )
+
         test_df = pd.DataFrame(
             {
                 "timestamp": pd.date_range("2025-01-02", periods=3, freq="h", tz="UTC"),
@@ -203,11 +205,18 @@ class TestRollingRetrainerSignalMapping:
             }
         )
 
-        signals = retrainer.run(
-            test_df,
+        signals = run_rolling(
             train_df,
-            model,
-            _StubFeatureEngineer(),
+            test_df,
+            None,
+            model=model,
+            fe=_StubFeatureEngineer(),
+            label_horizon=(_StubFeatureEngineer()).target_horizon,
+            model_config=XGBoostModelConfig(),
+            retrain_interval=1000,
+            threshold=0.6,
+            cooldown=0,
+            lookback=1000,
         )
 
         assert signals.tolist() == [1, -1, 0]

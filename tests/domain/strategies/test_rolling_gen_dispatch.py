@@ -1,10 +1,4 @@
-"""The rolling switch: off means the classic loop, on means the declared scheme.
-
-The point of these tests is the boundary, not the numbers.  While the switch is
-off, the declared engine must not be reached at all; while it is on, the same
-strategy must actually go through it.  Nothing here changes what the classic
-retrainer does, so ``test_train_replay_context.py`` stays the authority on that.
-"""
+"""Automatic and declared geometry share one risk/direction execution core."""
 
 from __future__ import annotations
 
@@ -61,25 +55,17 @@ def _fitted_xgboost(df: pd.DataFrame, *, enabled: bool) -> XGBoostStrategy:
     return strategy
 
 
-def test_the_switch_decides_which_loop_runs(
+@pytest.mark.parametrize("enabled", [False, True])
+def test_the_switch_selects_geometry_in_the_shared_core(
     large_ohlcv_df: pd.DataFrame,
-    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
 ) -> None:
-    """Disabled runs never reach the declared engine; enabled runs do."""
-
-    def _called(*args: object, **kwargs: object) -> None:
-        raise AssertionError("the declared rolling engine was called")
-
-    monkeypatch.setattr("tradingdev.domain.ml.rolling_gen.rolling_outcome", _called)
-
-    disabled = _fitted_xgboost(large_ohlcv_df, enabled=False)
-    result = disabled.generate_signals(large_ohlcv_df.iloc[_FIT_BARS:])
-
-    assert set(result["signal"].unique()).issubset({-1, 0, 1})
-
-    enabled = _fitted_xgboost(large_ohlcv_df, enabled=True)
-    with pytest.raises(AssertionError, match="declared rolling engine was called"):
-        enabled.generate_signals(large_ohlcv_df.iloc[_FIT_BARS:])
+    strategy = _fitted_xgboost(large_ohlcv_df, enabled=enabled)
+    strategy.generate_signals(large_ohlcv_df.iloc[_FIT_BARS:])
+    trace = strategy.rolling_trace()
+    assert trace is not None
+    assert trace["scheme"] == ("roll_ex" if enabled else "automatic")
+    assert trace["rtype"] == ("ROLL_EX" if enabled else "ROLL_SD")
 
 
 def test_enabled_run_keeps_the_input_frame_and_emits_valid_signals(
@@ -105,17 +91,6 @@ def test_enabled_run_has_no_look_ahead(
     scored = large_ohlcv_df.iloc[_FIT_BARS:].reset_index(drop=True)
 
     assert_no_look_ahead(strategy, scored, check_points=[60, 120, 199])
-
-
-def test_the_trace_is_absent_while_the_switch_is_off(
-    large_ohlcv_df: pd.DataFrame,
-) -> None:
-    """No provenance record is invented for a run that never rolled."""
-    strategy = _fitted_xgboost(large_ohlcv_df, enabled=False)
-
-    strategy.generate_signals(large_ohlcv_df.iloc[_FIT_BARS:])
-
-    assert strategy.rolling_trace() is None
 
 
 def test_a_strategy_that_never_rolls_has_no_trace() -> None:
@@ -152,7 +127,7 @@ class _AlwaysSafe(XGBoostDirectionModel):
         return None
 
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
-        return pd.DataFrame({-1: 0.0, 1: 1.0}, index=df.index)
+        return pd.DataFrame({0: 0.0, 1: 1.0}, index=df.index)
 
 
 def _fitted_safety(
@@ -210,19 +185,14 @@ def test_safety_risk_records_the_rolls_it_ran(
     assert trace["bars_scored"] == len(scored)
 
 
-def test_safety_risk_switch_off_never_reaches_the_declared_engine(
+@pytest.mark.parametrize("enabled", [False, True])
+def test_safety_risk_selects_geometry_in_the_shared_core(
     large_ohlcv_df: pd.DataFrame,
-    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
 ) -> None:
-    def _called(*args: object, **kwargs: object) -> None:
-        raise AssertionError("the declared rolling engine was called")
-
-    monkeypatch.setattr("tradingdev.domain.ml.rolling_gen.rolling_outcome", _called)
-
-    train = large_ohlcv_df.iloc[:300].copy()
-    scored = large_ohlcv_df.iloc[300:500].copy()
-    strategy, _ = _fitted_safety(train, enabled=False)
-
-    scores = strategy._predict_risk_rolling(scored)
-
-    assert len(scores) == len(scored)
+    strategy, _ = _fitted_safety(large_ohlcv_df.iloc[:300], enabled=enabled)
+    strategy._predict_risk_rolling(large_ohlcv_df.iloc[300:500])
+    trace = strategy.rolling_trace()
+    assert trace is not None
+    assert trace["scheme"] == ("roll_ex" if enabled else "automatic")
+    assert trace["bars_scored"] == 200

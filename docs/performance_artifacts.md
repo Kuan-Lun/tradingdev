@@ -79,8 +79,8 @@ window, labelled rows, whether a model was fitted, and how many bars it scored.
 The optional trace hook is saved beside `strategy_parameters` for a full backtest,
 each walk-forward fold frame, each fixed-comparison candidate, each optimization
 training trial and the optimization's selected `test` evaluation. For bundled
-ML strategies it is absent when the switch is off; other strategies that do not
-implement the hook retain their existing metadata. These
+ML strategies it is recorded for both automatic and named geometry; other
+strategies that do not implement the hook retain their existing metadata. These
 bundled strategies require training and support walk-forward execution only;
 the hook on the other paths does not expand their supported modes. A supported
 comparison candidate is a backtest in its own right, so its `full` scope can
@@ -88,10 +88,13 @@ carry the trace.
 A fold captures an independent deep snapshot of the trace of each
 frame separately, because the training replay and the evaluation frame call
 `generate_signals` in turn and each produces its own schedule.
+SafetyVolume's top-level trace describes its risk model. When ML direction is
+enabled, `direction` contains another complete trace for that model; it remains
+available in the saved artifact rather than in the compact query projection.
 
 | Field | Meaning |
 | --- | --- |
-| `scheme` | The declared scheme name. |
+| `scheme` | `automatic` or the declared scheme name. |
 | `rtype` | Effective window shape: `ROLL_SD` slides, `ROLL_EX` expands. |
 | `step` | Effective bars between retrains, after defaults were resolved. |
 | `window_size` | Effective sliding length, or null for an expanding window. |
@@ -102,6 +105,7 @@ frame separately, because the training replay and the evaluation frame call
 | `bars` | All bars in the scored frame, including unscored bars; overlap is removed from training history, not this frame. |
 | `bars_scored` | Bars it actually scored; missing features or no available model leave the remainder. |
 | `unscored_bars` | Positions that could not be scored; empty when every bar was. |
+| `unavailable_counts` | Counts by unavailable reason; definitions are maintained in [UnavailableReason](../src/tradingdev/domain/ml/rolling_gen/engine.py). |
 | `rolls` | One entry per roll, in order. |
 
 Each `rolls` entry carries `index`; `retrain_bar`, its position in the scored
@@ -109,7 +113,8 @@ frame of the scheduled retrain attempt (fitting can be skipped); `train_start` a
 positions in the concatenated history-plus-scored frame, ending at the bar being
 scored; `test_start` and `test_end`, the scored-frame interval that model was
 assigned to score; `n_train_rows`, the labelled rows the window offered — zero
-when the raw window was shorter than two bars, because nothing was transformed;
+when the raw window could not contain one mature feature row and transformation
+was not attempted;
 `trained`, false when the window was too small and the previous model was kept;
 and `bars_scored`, the subset of its interval that was actually scored.
 

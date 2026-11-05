@@ -208,7 +208,7 @@ class _LabelEchoModel(XGBoostDirectionModel):
 
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
         p_safe = 0.10 + (int(df.index[0]) % 8) / 100.0
-        return pd.DataFrame({-1: 1.0 - p_safe, 1: p_safe}, index=df.index)
+        return pd.DataFrame({0: 1.0 - p_safe, 1: p_safe}, index=df.index)
 
 
 class _DroppingRiskFeatureEngineer(RiskFeatureEngineer):
@@ -222,7 +222,7 @@ class _DroppingRiskFeatureEngineer(RiskFeatureEngineer):
         self, df: pd.DataFrame, *, include_target: bool = True
     ) -> pd.DataFrame:
         if include_target:
-            return df.copy()
+            return df.iloc[:0].copy()
         return df.drop(index=self._drop_label, errors="ignore").copy()
 
 

@@ -280,6 +280,10 @@ adapter 分批讀 Parquet；crawler 的 `fetch_sample` 在請求與解析階段�
 
 ## ML 訊號研究
 
+XGBoost 與 SafetyVolume 的逐棒重訓與評分共用 `domain/ml/rolling_gen` 核心；
+特徵元件宣告上下文需求，解析後的視窗供規劃、執行與紀錄共用。核心保存類別機率與
+不可用狀態，策略負責方向決策或 Risk Gate／持倉管理；規則見 [ML 研究契約](docs/ml_research.md#rolling-retraining-schemes)。
+
 `mcp/tools/ml.py` 透過 MLService 與 MLTrainingService 協調已登錄特徵、資料集、
 模型與評估，`app/contracts/ml.py` 驗證回覆。這是同步研究介面，沒有 execution plan、
 背景 backtest run，亦未接入回測 CLI／Dashboard；資料集、模型與排行榜 stores 不使用

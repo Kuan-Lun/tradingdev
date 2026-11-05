@@ -248,14 +248,14 @@ strategy-specific readiness and fallback behavior belong in each strategy's guid
 
 Scoring a window that overlaps the training history must not duplicate that
 history or replay future bars into it. `QuantileStrategy.generate_signals()`,
-`XGBoostStrategy.generate_signals()` (through `RollingRetrainer`) and the
-SafetyVolume Risk Gate loop keep only the training rows that strictly precede
+`XGBoostStrategy.generate_signals()` and SafetyVolume (through the shared
+rolling prediction core) keep only the training rows that strictly precede
 the scored frame. Scoring the training frame itself therefore contributes no
 history, so its prediction contexts stay chronological instead of continuing
 from the tail of one copy into the head of the next.
 
 This context correction does not make training-frame scores out-of-sample:
-the initial model has already been fitted on that training window. Walk-forward
+strategy parameters may already have been selected using that training window. Walk-forward
 `train_metrics` remain in-sample diagnostics; use the held-out `test_metrics`
 to assess generalization.
 
@@ -269,16 +269,17 @@ the input uses a `DatetimeIndex`; the original frames are unchanged. Naive
 values are interpreted as UTC. A frame with no
 identity, or with duplicated or decreasing timestamps, raises `ValueError`.
 
-An empty scored frame produces no signals. `RollingRetrainer` and the SafetyVolume
-Risk Gate return before validating either frame; Quantile validates both time
+An empty scored frame produces no signals. The shared rolling core used by
+XGBoost and SafetyVolume returns before validating either frame; Quantile validates both time
 identities before returning. For Quantile's readiness and unavailable-feature
 behavior, read its
 [signal logic](strategies/quantile_strategy.md#signal-logic).
 
 Direction scoring that leaves a non-empty scored frame with no scored bar fails
-with `ValueError` rather than returning all-zero signals: `RollingRetrainer`, and
-the `rolling_gen` engine whichever strategy runs it, both refuse. A single bar
-without a complete feature row is still skipped. The SafetyVolume Risk Gate also refuses an entirely unscored non-empty frame.
+with `ValueError` rather than returning all-zero signals: the shared
+rolling core refuses in both automatic and named geometry modes. A single bar
+without a complete feature row is still skipped. The SafetyVolume Risk Gate and
+optional ML direction also refuse an entirely unscored non-empty frame.
 Individual unavailable risk estimates block entry and reversal; an open position
 exits once its minimum holding period has elapsed. They are never substituted
 with a probability. Its [strategy guide](strategies/safety_volume_strategy.md#layer-1-risk-gate-xgboost)
@@ -296,8 +297,8 @@ being treated as a feature gap.
 
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
-The optional `rolling_gen` engine is stricter during overlapping replay: it
-discards the initial model and waits for a successful refit on preceding rows.
+The shared rolling core discards the initial model during overlapping replay
+and waits for a successful refit on preceding rows, in both geometry modes.
 If none becomes available it fails explicitly. Full-fold parameter selection
 still makes training replay an in-sample diagnostic; see
 [rolling retraining](ml_research.md#rolling-retraining-schemes).

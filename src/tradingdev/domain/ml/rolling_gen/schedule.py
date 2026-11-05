@@ -1,28 +1,15 @@
-"""Enumerate the rolls a scheme will run, before running any of them.
+"""Enumerate the resolved geometry consumed by the prediction engine.
 
-qlib's ``RollingGen.generate`` returns a list of tasks; this returns a list of
-windows.  Either way the point is the same: a declared schedule should be
-inspectable without fitting a model, so a reviewer can see the geometry instead
-of trusting the loop.
-
-This module deliberately owns no geometry of its own.  It asks
-:func:`resolve_geometry` for the window rules and :meth:`RollingGeometry.
-train_window` for the bounds, exactly as the engine does, so a schedule cannot
-describe something the run will not do.  What remains duplicated is the roll
-cadence -- ``step`` bars between retrains, and the last roll being clipped at the
-end of the scored frame -- and ``test_the_schedule_is_what_the_engine_runs``
-pins that against recorded retrains.
+The same windows drive execution, so preview and trace cannot drift apart.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from tradingdev.domain.ml.rolling_gen.scheme import (
-    RollingGeometry,
-    RollingScheme,
-    resolve_geometry,
-)
+if TYPE_CHECKING:
+    from tradingdev.domain.ml.rolling_gen.scheme import RollingGeometry
 
 
 @dataclass(frozen=True)
@@ -61,22 +48,18 @@ class RollWindow:
 
 
 def enumerate_rolls(
-    scheme: RollingScheme,
+    geometry: RollingGeometry,
     *,
     n_scored_bars: int,
     history_bars: int,
-    lookback: int,
-    retrain_interval: int,
 ) -> tuple[RollWindow, ...]:
     """Return every roll the scheme would run, in order.
 
     Args:
-        scheme: The declared geometry.
+        geometry: The already resolved geometry shared with execution.
         n_scored_bars: Bars to score.
         history_bars: Training rows retained after overlap with the scored frame
             is dropped, i.e. the scored frame's offset in the concatenated one.
-        lookback: The strategy's feature lookback, used for unset scheme fields.
-        retrain_interval: The strategy's classic cadence, used for an unset step.
 
     Returns:
         One entry per retrain. Rolls are contiguous and cover the scored frame
@@ -93,11 +76,6 @@ def enumerate_rolls(
         msg = f"history_bars must not be negative, got {history_bars}"
         raise ValueError(msg)
 
-    geometry: RollingGeometry = resolve_geometry(
-        scheme,
-        lookback=lookback,
-        retrain_interval=retrain_interval,
-    )
     rolls: list[RollWindow] = []
     for index, retrain_bar in enumerate(range(0, n_scored_bars, geometry.step)):
         combined_idx = history_bars + retrain_bar

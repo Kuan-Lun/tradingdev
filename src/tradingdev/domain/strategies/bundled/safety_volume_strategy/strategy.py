@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from tradingdev.domain import indicators
+from tradingdev.domain.ml.features.context import FeatureContext
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.ml.probabilities import class_probability, validate_probabilities
-from tradingdev.domain.ml.scoring_history import align_scoring_history
+from tradingdev.domain.ml.rolling_gen import (
+    resolve_geometry,
+    rolling_outcome,
+    trace_payload,
+)
 from tradingdev.domain.optimization.grid_search import finite_metric_value
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.safety_volume_strategy.risk_gate import (
@@ -25,6 +28,7 @@ from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
     import numpy.typing as npt
+    import pandas as pd
 
     from tradingdev.domain.backtest.base_engine import (
         BaseBacktestEngine,
@@ -107,6 +111,23 @@ class SafetyVolumeStrategy(BaseStrategy):
                 labels are not unique, because the scored validation rows could
                 not be mapped back to the bars their directions come from.
         """
+        # Validate every candidate's geometry before any model is trained.
+        scheme = (
+            self._config.rolling_gen.resolve()
+            if self._config.rolling_gen.enabled
+            else None
+        )
+        for lookback in self._config.lookback_candidates:
+            resolve_geometry(
+                scheme,
+                lookback=lookback,
+                retrain_interval=self._config.retrain_interval,
+                context=FeatureContext.for_features(
+                    RiskFeatureEngineer(lookback=lookback)
+                ),
+                history_bars=len(df),
+                label_horizon=self._config.target_holding_bars,
+            )
         val_ratio = self._config.validation_ratio
         split_idx = int(len(df) * (1 - val_ratio))
         train_df = df.iloc[:split_idx]
@@ -167,9 +188,15 @@ class SafetyVolumeStrategy(BaseStrategy):
             msg = "Strategy not fitted. Call fit() first."
             raise RuntimeError(msg)
 
-        risk_scores = self._predict_risk_rolling(df)
-        directions = self._compute_directions(df)
-        signals = self._run_state_machine(risk_scores, directions)
+        self._rolling_trace = None
+        try:
+            risk_scores = self._predict_risk_rolling(df)
+            directions = self._compute_directions(df)
+            signals = self._run_state_machine(risk_scores, directions)
+        except Exception:
+            # A successful risk pass alone is not evidence of a successful run.
+            self._rolling_trace = None
+            raise
 
         result = df.copy()
         result["signal"] = signals
@@ -401,148 +428,25 @@ class SafetyVolumeStrategy(BaseStrategy):
         assert self._risk_model is not None
         assert self._train_data is not None
 
-        if self._config.rolling_gen.enabled:
-            return self._predict_risk_with_scheme(df)
-
-        lookback = self._best_lookback or 720
-        retrain_interval = self._config.retrain_interval
-        model_cfg = self._config.risk_model
-
-        history, scored = align_scoring_history(self._train_data, df)
-        combined = pd.concat(
-            [history, scored],
-            ignore_index=True,
-        )
-        test_offset = len(history)
-        window_size = max(lookback * 10, len(history))
-
-        total_bars = len(scored)
-        p_safe_arr = np.full(total_bars, np.nan)
-        current_model = self._risk_model
-
-        t_start = time.monotonic()
-        total_retrains = (total_bars - 1) // retrain_interval + 1
-        retrain_count = 0
-        log_interval = max(total_bars // 20, 1)
-
-        logger.info(
-            "[risk] Starting: %d bars, retrain every %d "
-            "bars (~%d retrains), threshold=%.2f",
-            total_bars,
-            retrain_interval,
-            total_retrains,
-            self._best_threshold,
-        )
-
-        for i in range(total_bars):
-            combined_idx = test_offset + i
-
-            # --- periodic retrain ---
-            if i % retrain_interval == 0:
-                retrain_count += 1
-                start = max(0, combined_idx - window_size)
-                window = combined.iloc[start:combined_idx].copy()
-                if len(window) > lookback + 10:
-                    feat = self._risk_fe.transform(
-                        window,
-                        include_target=True,
-                    )
-                    if len(feat) >= 10:
-                        new_model = XGBoostDirectionModel(
-                            config=model_cfg,
-                        )
-                        new_model.train(feat)
-                        current_model = new_model
-                        logger.info(
-                            "[risk] Retrain %d/%d at bar %d/%d",
-                            retrain_count,
-                            total_retrains,
-                            i,
-                            total_bars,
-                        )
-
-            # --- predict bar ---
-            ctx_start = max(0, combined_idx - self._risk_fe.context_rows + 1)
-            ctx = combined.iloc[ctx_start : combined_idx + 1].copy()
-            feat_pred = self._risk_fe.transform(
-                ctx,
-                include_target=False,
-            )
-            if combined_idx in feat_pred.index:
-                row = feat_pred.loc[[combined_idx]]
-                proba = validate_probabilities(current_model.predict_proba(row), row)
-                p_safe_arr[i] = class_probability(proba, 1).iloc[0]
-
-            # --- progress ---
-            if i > 0 and i % log_interval == 0:
-                elapsed = time.monotonic() - t_start
-                speed = i / elapsed
-                eta = (total_bars - i) / speed
-                logger.info(
-                    "[risk] Progress: %d/%d (%.1f%%) | %.0f bars/s | ETA %.0fs",
-                    i,
-                    total_bars,
-                    i / total_bars * 100,
-                    speed,
-                    eta,
-                )
-
-        elapsed = time.monotonic() - t_start
-        logger.info(
-            "[risk] Complete: %d bars in %.1fs (%.0f bars/s)",
-            total_bars,
-            elapsed,
-            total_bars / elapsed if elapsed > 0 else 0,
-        )
-        if total_bars and np.isnan(p_safe_arr).all():
-            needed = self._risk_fe.minimum_context_rows
-            reason = (
-                "provide more history before the scored window"
-                if len(combined) < needed
-                else "features are incomplete despite sufficient history; "
-                "check missing or degenerate data"
-            )
-            raise ValueError(
-                f"Risk prediction scored none of {total_bars} bars; "
-                f"features need at least {needed} rows; {reason}"
-            )
-        return p_safe_arr
-
-    def _predict_risk_with_scheme(
-        self,
-        df: pd.DataFrame,
-    ) -> npt.NDArray[np.floating[Any]]:
-        """Predict P(safe) with the declared rolling scheme.
-
-        Reached only when ``rolling_gen`` is enabled.  A bar whose features are
-        missing remains unavailable, so the Risk Gate never borrows a neighbouring
-        bar's score or invents a probability.
-        """
-        assert self._risk_fe is not None
-        assert self._risk_model is not None
-        assert self._train_data is not None
-
-        # Imported here so that a defect in the optional engine cannot stop the
-        # classic loop above from loading and running.
-        from tradingdev.domain.ml.rolling_gen import rolling_outcome, trace_payload
-
-        lookback = self._best_lookback or 720
+        self._rolling_trace = None
         outcome = rolling_outcome(
             self._train_data,
             df,
-            self._config.rolling_gen.resolve(),
+            self._config.rolling_gen.resolve()
+            if self._config.rolling_gen.enabled
+            else None,
             model=self._risk_model,
             model_config=self._config.risk_model,
             fe=self._risk_fe,
-            lookback=lookback,
+            lookback=self._risk_fe.lookback,
             retrain_interval=self._config.retrain_interval,
             label_horizon=self._config.target_holding_bars,
         )
         self._rolling_trace = trace_payload(outcome)
-        return outcome.probabilities["p_long"].to_numpy(dtype=np.float64)
+        return class_probability(outcome.probabilities, 1).to_numpy(dtype=np.float64)
 
     def rolling_trace(self) -> dict[str, Any] | None:
-        """Return the rolls that scored the last run, if the switch was on."""
+        """Return the resolved geometry and provenance of the last successful run."""
         return self._rolling_trace
 
     # ------------------------------------------------------------------
@@ -554,7 +458,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         df: pd.DataFrame,
     ) -> npt.NDArray[np.floating[Any]]:
         """Compute direction signal (1=long, -1=short) per bar."""
-        if self._config.use_ml_direction and self._dir_model:
+        if self._config.use_ml_direction:
             return self._compute_ml_directions(df)
         return self._compute_sma_directions(df)
 
@@ -576,13 +480,30 @@ class SafetyVolumeStrategy(BaseStrategy):
         self,
         df: pd.DataFrame,
     ) -> npt.NDArray[np.floating[Any]]:
-        """ML direction using the model the last fit trained for live signals."""
-        if self._dir_model is None or self._dir_fe is None:
-            return self._compute_sma_directions(df)
-        return self._ml_directions(
-            df,
-            _MLDirection(features=self._dir_fe, model=self._dir_model),
+        """Select the most probable direction from causal rolling predictions."""
+        if self._dir_model is None or self._dir_fe is None or self._train_data is None:
+            raise RuntimeError("ML direction is not fitted. Call fit() first.")
+        outcome = rolling_outcome(
+            _direction_inputs(self._train_data),
+            _direction_inputs(df),
+            self._config.rolling_gen.resolve()
+            if self._config.rolling_gen.enabled
+            else None,
+            model=self._dir_model,
+            model_config=self._config.direction_model,
+            fe=self._dir_fe,
+            lookback=self._dir_fe.lookback,
+            retrain_interval=self._config.retrain_interval,
+            label_horizon=self._dir_fe.target_horizon,
         )
+        if self._rolling_trace is not None:
+            self._rolling_trace["direction"] = trace_payload(outcome)
+        available = ~outcome.probabilities.isna().all(axis=1)
+        directions = np.zeros(len(df), dtype=np.float64)
+        directions[available.to_numpy()] = (
+            outcome.probabilities.loc[available].idxmax(axis=1).to_numpy(dtype=float)
+        )
+        return directions
 
     def _ml_directions(
         self,
