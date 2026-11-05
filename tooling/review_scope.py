@@ -119,6 +119,9 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         **_headings({"ml", "strategy", "interfaces"}, "ML 訊號研究"),
         **_headings(_PRODUCT, "設定與儲存一致性", "MCP 回覆契約"),
         **_headings({"execution", "tooling", "interfaces"}, "程序控制與清理"),
+        **_headings(
+            {"strategy", "execution", "interfaces", "tooling"}, "容器執行 adapter"
+        ),
     },
     "AGENTS.md": {
         **_headings(_ALL, "AGENTS.md", "政策與溝通", "設計原則", "完成回報"),
@@ -138,6 +141,9 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     "CLAUDE.md": _headings(_ALL, "Claude Code"),
     "docs/development.md": {
         **_headings(_ALL, "開發指南", "更新文件"),
+        **_headings(
+            {"strategy", "execution", "interfaces", "tooling"}, "容器建置與驗證"
+        ),
         **_headings(
             {"tooling", "presentation"},
             "環境與常用命令",
@@ -164,6 +170,10 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     },
     "docs/strategy_contract.md": {
         **_headings(_ALL, "Strategy Contract"),
+        **_headings(
+            {"strategy", "execution", "interfaces", "tooling"},
+            "Direct Container Adapter",
+        ),
         **_headings(
             _PRODUCT, "Contract References", "Research Inputs and Simulation Policy"
         ),

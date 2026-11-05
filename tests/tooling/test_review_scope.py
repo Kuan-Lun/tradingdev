@@ -442,6 +442,27 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
     ("path", "owner", "heading", "scopes", "evidence"),
     [
         (
+            "ARCHITECTURE.md",
+            "general",
+            "容器執行 adapter",
+            {"strategy", "execution", "interfaces", "tooling"},
+            "runtime.recover_abandoned()",
+        ),
+        (
+            "docs/development.md",
+            "tooling",
+            "容器建置與驗證",
+            {"strategy", "execution", "interfaces", "tooling"},
+            "TRADINGDEV_RUNTIME_LIMITS",
+        ),
+        (
+            "docs/strategy_contract.md",
+            "strategy",
+            "Direct Container Adapter",
+            {"strategy", "execution", "interfaces", "tooling"},
+            "descendants that created another session or process group",
+        ),
+        (
             "docs/development.md",
             "tooling",
             "測試設計與精簡",
@@ -499,7 +520,7 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
         ),
     ],
 )
-def test_relocated_contracts_retain_complete_evidence_for_responsible_scopes(
+def test_registered_contracts_retain_complete_evidence_for_responsible_scopes(
     path: str, owner: str, heading: str, scopes: set[str], evidence: str
 ) -> None:
     root = Path(__file__).resolve().parents[2]
