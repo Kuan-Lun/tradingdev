@@ -77,6 +77,20 @@ macOS 可使用 Docker Desktop 的 Linux Engine，透過本機 Unix socket 連�
 替代 daemon 的 adapter 測試及
 [真實容器測試](../tests/integration/test_strategy_isolation.py) 驗證。
 
+驗證生成策略 worker 協定時，可直接使用
+[`generated_strategy.inspect_parameters` 與 `open_strategy`](../src/tradingdev/adapters/execution/generated_strategy.py)：
+前者擷取或驗證建構參數，後者在 context 內保留訓練狀態與亂數序列，離開時確認容器清理。
+兩者接收已固定來源雜湊、類別與 runtime 的
+[`GeneratedProgram`](../src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
+資料型別與錯誤邊界由 [codec 測試](../tests/adapters/test_frame_codec.py) 和
+[直接 worker／proxy 測試](../tests/integration/test_generated_protocol.py) 驗證。
+這些 adapter 入口尚未接入產品的 `StrategyLoader`。
+
+變更 worker、資料協定或其依賴後，須從待驗證內容重建策略映像，再執行相關測試。
+請使用本次檢查的專用標籤與 builder；固定 image ID 不會隨標籤重建而改變。
+清理時先確認執行已停止，只移除本次建立且沒有執行引用的映像、快取及容器，
+不要對共享 daemon 執行全域 prune。無法確認清理時保留控制目錄及紀錄。
+
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
 以及錯誤 Host／Origin 的拒絕行為。使用獨立 Compose project、臨時工作區及映像標籤，

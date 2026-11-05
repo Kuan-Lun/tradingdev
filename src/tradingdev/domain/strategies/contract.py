@@ -15,7 +15,11 @@ from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.loader import StrategyLoader
-from tradingdev.domain.strategies.signals import check_signal_frame, copy_signal_frame
+from tradingdev.domain.strategies.signals import (
+    check_signal_frame,
+    copy_signal_frame,
+    signal_analysis,
+)
 from tradingdev.domain.strategies.validator import diagnostic
 
 if TYPE_CHECKING:
@@ -167,7 +171,7 @@ class SignalContractChecker:
                 }
             return {
                 "diagnostics": diagnostics,
-                "signal_analysis": _signal_analysis(result),
+                "signal_analysis": signal_analysis(result),
                 "effective_config": effective_config,
             }
         except Exception as exc:  # noqa: BLE001
@@ -208,30 +212,3 @@ def _fixture_df(rows: int) -> pd.DataFrame:
             "volume": [1000.0 + (i % 24) * 10.0 for i in range(rows)],
         }
     )
-
-
-def _signal_analysis(result: pd.DataFrame) -> dict[str, Any]:
-    signals = result["signal"]
-    distribution = {
-        str(key): int(value)
-        for key, value in signals.value_counts(dropna=False).to_dict().items()
-    }
-    transitions = int(signals.fillna(0).ne(signals.fillna(0).shift()).sum() - 1)
-    active = int(signals.isin([-1, 1]).sum())
-    return {
-        "rows": int(len(result)),
-        "signal_distribution": distribution,
-        "nan_count": int(signals.isna().sum()),
-        "transition_count": max(transitions, 0),
-        "active_signal_ratio": active / max(len(result), 1),
-        "first_timestamp": (
-            str(result["timestamp"].iloc[0])
-            if "timestamp" in result.columns and not result.empty
-            else None
-        ),
-        "last_timestamp": (
-            str(result["timestamp"].iloc[-1])
-            if "timestamp" in result.columns and not result.empty
-            else None
-        ),
-    }
