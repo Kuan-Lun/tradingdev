@@ -140,12 +140,15 @@ class GLFTMLStrategy(BaseStrategy):
         self._grid_search_glft(df)
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate position-state signals via GLFT + ML."""
-        if not self._ml_trained:
+        """Generate GLFT position states, filtering by ML only after training."""
+        ml_directions: npt.NDArray[np.float64] | None
+        if self._ml_trained:
+            ml_directions = self._predict_ml_directions(
+                df, self._best_confidence_threshold
+            )
+        else:
             logger.warning("ML model not trained; falling back to pure GLFT signals")
-            return self._generate_pure_glft(df)
-
-        ml_directions = self._predict_ml_directions(df, self._best_confidence_threshold)
+            ml_directions = None
 
         close = np.asarray(df["close"].astype(float).values)
         high = np.asarray(df["high"].astype(float).values)
@@ -427,7 +430,7 @@ class GLFTMLStrategy(BaseStrategy):
         close: npt.NDArray[np.floating[Any]],
         ema: npt.NDArray[np.floating[Any]],
         sigma: npt.NDArray[np.floating[Any]],
-        ml_dir: npt.NDArray[np.float64],
+        ml_dir: npt.NDArray[np.float64] | None,
         gamma: float,
         kappa: float,
         min_hold: int,
@@ -436,10 +439,10 @@ class GLFTMLStrategy(BaseStrategy):
         profit_target_ratio: float = 1.0,
         strategy_sl: float = 0.005,
     ) -> npt.NDArray[np.floating[Any]]:
-        """GLFT state machine with ML direction filter.
+        """GLFT state machine with an optional ML direction filter.
 
-        Same as the pure GLFT state machine, but entries are only
-        allowed when the ML direction prediction agrees:
+        None disables ML filtering for an untrained strategy. When predictions
+        are provided, entries require agreement with their direction:
         - ML=1 (up): only long entries allowed
         - ML=-1 (down): only short entries allowed
         - ML=0 (uncertain): no entries allowed
@@ -478,15 +481,15 @@ class GLFTMLStrategy(BaseStrategy):
                 want_long = deviation < -half_spread
                 want_short = deviation > half_spread
 
-                # ML direction filter
-                md = ml_dir[i]
-                if md >= 0.5:
-                    want_short = False  # ML says up → only long
-                elif md <= -0.5:
-                    want_long = False  # ML says down → only short
-                else:
-                    want_long = False
-                    want_short = False
+                if ml_dir is not None:
+                    md = ml_dir[i]
+                    if md >= 0.5:
+                        want_short = False  # ML says up → only long
+                    elif md <= -0.5:
+                        want_long = False  # ML says down → only short
+                    else:
+                        want_long = False
+                        want_short = False
 
                 if want_long:
                     state = 1
@@ -527,39 +530,3 @@ class GLFTMLStrategy(BaseStrategy):
             signals[i] = float(state)
 
         return signals
-
-    # ------------------------------------------------------------------
-    # Fallback: pure GLFT (no ML)
-    # ------------------------------------------------------------------
-
-    def _generate_pure_glft(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate signals without ML (fallback)."""
-        close = np.asarray(df["close"].astype(float).values)
-        high = np.asarray(df["high"].astype(float).values)
-        low = np.asarray(df["low"].astype(float).values)
-
-        dvol: npt.NDArray[np.floating[Any]] | None = None
-        if self._config.vol_type == "implied" and "dvol" in df.columns:
-            dvol = np.asarray(df["dvol"].astype(float).values)
-
-        ema = self._compute_ema(close, self._best_ema_window)
-        sigma = self._compute_volatility(close, high, low, dvol=dvol)
-        ml_dir = np.zeros(len(close), dtype=np.float64)
-
-        signals = self._run_ml_glft_state_machine(
-            close=close,
-            ema=ema,
-            sigma=sigma,
-            ml_dir=ml_dir,
-            gamma=self._best_gamma,
-            kappa=self._best_kappa,
-            min_hold=self._config.min_holding_bars,
-            max_hold=self._best_max_holding_bars,
-            min_entry_edge=self._best_min_entry_edge,
-            profit_target_ratio=self._best_profit_target_ratio,
-            strategy_sl=self._config.strategy_sl,
-        )
-
-        result = df.copy()
-        result["signal"] = signals
-        return result
