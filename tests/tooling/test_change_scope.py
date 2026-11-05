@@ -58,6 +58,7 @@ def repository() -> Iterator[tuple[Path, str]]:
         ("tooling/git/claim_issue.py", "tooling"),
         ("tooling/git/change_scope.py", "tooling"),
         ("tooling/review_scope.py", "tooling"),
+        ("tooling/requirements.py", "tooling"),
         ("tests/tooling/test_new_tool.py", "tooling"),
         ("scripts/check-tooling.sh", "tooling"),
         ("tests/conftest.py", "code"),
@@ -147,6 +148,16 @@ def test_invalid_git_identity_fails_instead_of_selecting_docs(
     "paths, commit, delivery, candidate",
     [
         (["README.md"], "docs", "docs", ["docs"]),
+        (["docs/requirements.md"], "docs", "docs", ["docs", "documentation_review"]),
+        (
+            [
+                "docs/requirements/execution.md",
+                "docs/talks/tradingdev-introduction/slides.md",
+            ],
+            "presentations",
+            "presentations",
+            ["presentations", "documentation_review"],
+        ),
         (
             ["docs/talks/tradingdev-introduction/slides.md"],
             "presentations",
@@ -431,3 +442,35 @@ def test_vscode_tasks_only_allow_known_presentation_tasks(
     scope = classify_changes(root, base, _git(root, "write-tree"))
     assert scope.kind == ("presentations" if change == "known" else "code")
     assert scope.presentations_changed
+
+
+@pytest.mark.parametrize("change", ["delete", "rename", "edit", "unsafe_mode", "mixed"])
+def test_srs_review_tracks_both_git_sides_and_keeps_stronger_checks(
+    repository: tuple[Path, str], change: str
+) -> None:
+    root, _ = repository
+    source = root / "docs/requirements.md"
+    source.write_text("# SRS\n")
+    _git(root, "add", ".")
+    base = _git(root, "write-tree")
+    if change == "delete":
+        source.unlink()
+        _git(root, "add", "--update", "docs/requirements.md")
+    elif change == "rename":
+        _git(root, "mv", "docs/requirements.md", "docs/other.md")
+    elif change == "unsafe_mode":
+        _git(root, "update-index", "--chmod=+x", "docs/requirements.md")
+    else:
+        source.write_text("# Revised SRS\n")
+        if change == "mixed":
+            (root / "app.py").write_text("VALUE = 2\n")
+        _git(root, "add", ".")
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.requirements_changed
+    assert "documentation_review" in scope.candidate_checks
+    assert scope.commit_profile == (
+        "fast" if change in {"mixed", "unsafe_mode"} else "docs"
+    )
+    assert scope.delivery_profile == (
+        "full" if change in {"mixed", "unsafe_mode"} else "docs"
+    )

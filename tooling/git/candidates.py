@@ -357,7 +357,12 @@ def verify_candidate(
                 900, documentation_timeout_seconds + _DOCUMENTATION_CLEANUP_SECONDS
             ),
         )
+    completed = (
+        f"{scope.delivery_profile} snapshot checks"
+        if scope.kind in {"docs", "presentations"}
+        else f"{scope.delivery_profile} pytest"
+    )
     print(
-        f"Codex documentation review and {scope.delivery_profile} pytest passed.",
+        f"Codex documentation review and {completed} passed.",
         flush=True,
     )

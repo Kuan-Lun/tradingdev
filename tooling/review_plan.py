@@ -7,12 +7,18 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from tooling.requirements import (
+    RequirementsError,
+    contract_references,
+    is_requirements_path,
+)
 from tooling.review_evidence import ReviewError, automatic_document_paths
 from tooling.review_scope import (
     SCOPES,
     markdown_lines,
     markdown_sections,
     scope_for_path,
+    sections_for_reference,
     sections_for_scope,
     selection_reason,
 )
@@ -43,7 +49,15 @@ REVIEW_INSTRUCTIONS = (
     "Require prose updates when a change makes documented usage, behavior, storage, "
     "compatibility or safety guarantees inaccurate or incomplete; internal edits "
     "alone do not require new prose. Prefer one maintained explanation per contract "
-    "with task-specific references elsewhere. Do not require prose copies of fields, "
+    "with task-specific references elsewhere. "
+    "SRS requirements state product obligations and acceptance criteria, with "
+    "references to detailed contracts and verification targets. Check affected "
+    "requirements against supplied contracts and implementation evidence, including "
+    "entry-point differences, failures, limitations and cross-file interactions. "
+    "A verification link is not a passing test receipt or proof of coverage. "
+    "Do not infer new product promises from current implementation, or require "
+    "SRS edits for internal changes that preserve its obligations. "
+    "Do not require prose copies of fields, "
     "types, defaults, enums or limits available from an authoritative definition. "
     "A sufficient reference names when to read it, its file and symbol or callable "
     "tool, and the information it provides; essential semantics and limitations "
@@ -225,6 +239,33 @@ def build_review_plan(
         "exclusion_reasons": raw.get("exclusion_reasons", {}),
     }
 
+    requirement_context: dict[str, set[tuple[str, str]]] = {}
+    for scope in selected:
+        reference_targets: set[tuple[str, str]] = set()
+        for path in doc_index:
+            if is_requirements_path(path) and sections_for_scope(
+                scope, path, files[path]
+            ):
+                try:
+                    reference_targets.update(contract_references(path, files[path]))
+                except RequirementsError as error:
+                    raise ReviewError(str(error)) from error
+        for path, fragment in reference_targets:
+            if path not in files or raw["candidate_file_modes"].get(path) != "100644":
+                raise ReviewError(f"Missing regular SRS contract evidence: {path}")
+            try:
+                sections_for_reference(path, files[path], fragment)
+            except ValueError as error:
+                raise ReviewError(str(error)) from error
+        requirement_context[scope] = reference_targets
+    # The interaction audit must receive original contracts too; a scope batch's
+    # inventory or verdict cannot stand in for its evidence.
+    requirement_context["cross_scope"] = set().union(*requirement_context.values())
+    common["requirement_context_paths"] = {
+        scope: sorted({path for path, _ in paths})
+        for scope, paths in requirement_context.items()
+    }
+
     context_cache: dict[str, list[dict[str, Any]]] = {}
 
     def document_context(scope: str, assigned: set[str]) -> list[dict[str, Any]]:
@@ -233,14 +274,37 @@ def build_review_plan(
         sections: list[dict[str, Any]] = []
         for path in sorted(doc_index):
             if (
-                path in presentation
+                (path in presentation and scope != "cross_scope")
                 or path in additional
                 or path in scoped.get(scope, set())
             ):
                 continue
             lines = markdown_lines(files[path])
-            reason = selection_reason(scope, path, files[path])
-            for part in sections_for_scope(scope, path, files[path]):
+            reason = (
+                selection_reason(scope, path, files[path])
+                if scope != "cross_scope"
+                else "explicit-SRS-contract"
+            )
+            chosen = {
+                part.start_line: part
+                for part in (
+                    sections_for_scope(scope, path, files[path])
+                    if scope != "cross_scope"
+                    else ()
+                )
+            }
+            for reference, fragment in requirement_context[scope]:
+                if reference == path:
+                    chosen.update(
+                        {
+                            part.start_line: part
+                            for part in sections_for_reference(
+                                path, files[path], fragment
+                            )
+                        }
+                    )
+                    reason = "responsibility-and-explicit-SRS-contract"
+            for _, part in sorted(chosen.items()):
                 if "".join(lines[part.start_line - 1 : part.end_line]) != part.text:
                     raise ReviewError(
                         f"Document slice differs from its Git blob: {path}"
@@ -353,6 +417,7 @@ def build_review_plan(
             "document_inventory": doc_index,
             "candidate_tree_inventory": raw["candidate_tree_inventory"],
             "additional_context_paths": sorted(additional),
+            "document_sections": document_context("cross_scope", audit_context),
         }
         if not fits(audit):
             raise capacity_error("Complete cross-scope diff and inventory")

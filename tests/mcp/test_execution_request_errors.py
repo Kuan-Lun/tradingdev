@@ -102,8 +102,11 @@ def test_real_catalog_load_failures_remain_structured_at_preparation(
         b"\xff" if failure == "invalid_encoding" else b"strategy: ["
     )
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
+    catalog = BundledStrategyCatalog(bundled)
+    monkeypatch.setattr(
+        "tradingdev.app.strategy_service.BundledStrategyCatalog", lambda: catalog
+    )
     gate = StrategyService(store.workspace)
-    gate._catalog = BundledStrategyCatalog(bundled)
     jobs = JobService(job_store=store, strategy_service=gate)
     service = _Preparation(
         jobs, OptimizationService(job_store=store, strategy_service=gate)
@@ -146,8 +149,11 @@ def test_real_catalog_missing_strategy_retains_its_distinct_rejection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
 ) -> None:
     store = JobStore(workspace=WorkspacePaths(tmp_path / "workspace"))
+    catalog = BundledStrategyCatalog(tmp_path / "empty-bundled")
+    monkeypatch.setattr(
+        "tradingdev.app.strategy_service.BundledStrategyCatalog", lambda: catalog
+    )
     gate = StrategyService(store.workspace)
-    gate._catalog = BundledStrategyCatalog(tmp_path / "empty-bundled")
     jobs = JobService(job_store=store, strategy_service=gate)
     service = _Preparation(
         jobs, OptimizationService(job_store=store, strategy_service=gate)
