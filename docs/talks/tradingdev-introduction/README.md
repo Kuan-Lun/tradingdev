@@ -38,7 +38,72 @@
 `TODO-01` 等既有識別碼作為子主題標示；同一目標的補充頁沿用其頁首。
 新增或移動頁面時，同步核對閱讀路線及其他 `index.html#頁碼` 連結。
 
-## 在 GitHub 網頁上播放
+## 透過 Cloudflare 自動發布
+
+Cloudflare Workers Builds 可連接本 repository，在 `main` 更新時發布已提交的
+`index.html`。本機仍須先編譯、檢查並提交 HTML；雲端只複製與部署成品，
+不執行 Marp、Python 檢查或安裝 TradingDev 產品依賴。
+
+在 Cloudflare 的 **Workers & Pages → Create application → GitHub** 選擇本
+repository；GitHub 授權範圍只選需要發布的 repository。設定如下：
+
+| 欄位 | 設定 |
+| --- | --- |
+| Worker name | 與根目錄 [wrangler.jsonc](../../../wrangler.jsonc) 的 `name` 相同。 |
+| Production branch | `main`。 |
+| Root directory | repository 根目錄。 |
+| Build command | 下方的複製指令。 |
+| Deploy command | `npx wrangler deploy`。 |
+
+Build command：
+
+```bash
+mkdir -p site-dist/tradingdev && cp docs/talks/tradingdev-introduction/index.html site-dist/tradingdev/index.html
+```
+
+在 **Settings → Build → Build Variables and Secrets** 加入
+`SKIP_DEPENDENCY_INSTALL=1`，停用自動安裝專案依賴。部署仍會使用 Wrangler；
+Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
+`site-dist/` 是忽略的發布產物，只包含要公開的 HTML；不會將整個 `docs/` 發布。
+
+若建置設定顯示 Git 帳戶中斷連線，按 Git repository 旁的 **Manage**，在 GitHub
+完成必要的重新驗證，確認 Cloudflare 應用程式仍可存取本 repository，再回到
+Cloudflare 重新整理設定頁。確認連線警告消失、Production branch 為 `main`，
+且 **Disable builds** 關閉。下一次主線更新後，核對建置記錄的 commit 與部署結果；
+手動重試建置成功不代表 GitHub 自動觸發已驗證。
+
+### 共用網域與專案路徑
+
+`slides.klwang.tw` 是多個專案共用的簡報網域。Custom Domain 綁定獨立的
+`klwang-slides` 入口 Worker，由管理者在 Cloudflare 維護；本 repository
+只部署 `klwang-slides-tradingdev`，不接管整個網域。
+
+根目錄的 `wrangler.jsonc` 宣告本專案的兩條 Route：
+
+- `slides.klwang.tw/tradingdev`：不帶尾端斜線的入口。
+- `slides.klwang.tw/tradingdev/*`：簡報及其子路徑。
+
+Route 優先於共用入口的 Custom Domain；路由保留原始路徑，因此發布檔案仍放在
+`site-dist/tradingdev/index.html`。不要改成 `slides.klwang.tw/*` 或將整個
+Custom Domain 綁回本專案，也不要使用會涵蓋 `/tradingdev-other` 的
+`/tradingdev*`。不帶尾端斜線且附有 query 的網址由共用入口補上斜線後轉址。
+
+首次設定時，管理者先在 **Workers & Pages → klwang-slides → Domains →
+Add domain** 選擇 `klwang.tw`，在 Subdomain 填入 `slides`，啟用於 Production。
+網域須屬於同一 Cloudflare 帳號的有效 zone，Cloudflare 負責 DNS 與 HTTPS。
+TradingDev 的部署權限須包含該 zone 的
+Workers Routes 編輯權限；部署後在本專案 Worker 的 **Domains** 核對兩條 Route。
+沿用舊設定時，先建立上述 Route，再將 Custom Domain 移到共用入口，以保留簡報入口。
+
+新增其他專案時，使用獨立 Worker 與不同的路徑前綴，各自連接自己的 repository；
+不覆寫本專案 Worker，也不移動共用 Custom Domain。共用入口只將根路徑 `/` 以
+302 轉向[演講與簡報目錄](https://www.klwang.tw/talks/)，由管理者另外維護，
+不隨 TradingDev 發布更新。
+
+簡報位址為 [https://slides.klwang.tw/tradingdev/](https://slides.klwang.tw/tradingdev/)。只有部署成功才會更新網站；
+repository 中的設定檔不代表已連接 Cloudflare 或發布。
+
+## 透過 GitHub Pages 發布
 
 GitHub 的一般檔案頁只會顯示 HTML 原始碼。若要直接播放，可使用同一 repository
 的 GitHub Pages。
