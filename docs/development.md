@@ -61,6 +61,22 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定隨 wheel 收錄。
 映像採多階段建置，執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
 
+獨立策略 worker 使用 `strategy-runtime` target。完整離線測試包含真實 Linux 容器邊界
+檢查，需先準備可連線、支援 cgroup v2 資源限制的 Docker Engine 與此映像：
+
+```bash
+docker build --target strategy-runtime -t tradingdev-strategy-runtime:dev .
+export TRADINGDEV_STRATEGY_IMAGE=tradingdev-strategy-runtime:dev
+```
+
+macOS 可使用 Docker Desktop 的 Linux Engine，透過本機 Unix socket 連線。
+測試本身不下載映像；缺少 daemon、
+必要能力或預建映像會失敗。`TRADINGDEV_STRATEGY_IMAGE` 可指定專用測試標籤，執行前
+會解析為固定 image ID。資源政策的正式定義見
+[`RuntimeLimits`](../src/tradingdev/domain/runtime.py)；傳輸、程序身分與故障清理分別由
+替代 daemon 的 adapter 測試及
+[真實容器測試](../tests/integration/test_strategy_isolation.py) 驗證。
+
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
 以及錯誤 Host／Origin 的拒絕行為。使用獨立 Compose project、臨時工作區及映像標籤，
