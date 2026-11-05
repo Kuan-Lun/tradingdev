@@ -96,10 +96,11 @@ Workers Routes 編輯權限；部署後在本專案 Worker 的 **Domains** 核�
 沿用舊設定時，先建立上述 Route，再將 Custom Domain 移到共用入口，以保留簡報入口。
 
 新增其他專案時，使用獨立 Worker 與不同的路徑前綴，各自連接自己的 repository；
-不覆寫本專案 Worker，也不移動共用 Custom Domain。共用入口的首頁連結由管理者
-另外維護，不隨 TradingDev 發布更新。
+不覆寫本專案 Worker，也不移動共用 Custom Domain。共用入口只將根路徑 `/` 以
+302 轉向[演講與簡報目錄](https://www.klwang.tw/talks/)，由管理者另外維護，
+不隨 TradingDev 發布更新。
 
-簡報位址為 `https://slides.klwang.tw/tradingdev/`。只有部署成功才會更新網站；
+簡報位址為 [https://slides.klwang.tw/tradingdev/](https://slides.klwang.tw/tradingdev/)。只有部署成功才會更新網站；
 repository 中的設定檔不代表已連接 Cloudflare 或發布。
 
 ## 透過 GitHub Pages 發布
