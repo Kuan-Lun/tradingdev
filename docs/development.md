@@ -81,9 +81,6 @@ docker buildx build --builder "$tradingdev_check_builder" --load \
 export TRADINGDEV_STRATEGY_IMAGE="$tradingdev_check_image"
 ```
 
-此映像供 `DockerRuntime` 的直接呼叫與測試使用，尚未接入產品策略流程；既有入口的
-監督範圍與 adapter 的隔離限制見[策略安全模型](strategy_contract.md#security-model)。
-
 macOS 可使用 Docker Desktop 提供的 Linux Engine。
 測試本身不下載映像；缺少 daemon、
 必要能力或預建映像會失敗。`TRADINGDEV_STRATEGY_IMAGE` 可指定專用測試標籤，執行前
@@ -111,6 +108,12 @@ docker image rm "$tradingdev_check_image" &&
 移除專用 builder 時不加 `--keep-state`，會一併移除其建置快取。
 只清理本次資源，不使用 force 或全域 prune。任一步驟失敗或無法確認清理時，
 停止後續清理並保留剩餘資源、控制目錄及紀錄，依上述 adapter 復原契約處理。
+
+MCP runtime target 含 Docker CLI，Compose 只把本機 socket 掛給可信控制端；操作權限與
+安裝設定由 [README 的 Docker 部署](../README.md#使用-docker-部署) 說明。
+
+若開發檢查回報未確認清理，保留所列控制目錄；停止相應 host 工作並恢復原 Docker daemon
+後，依[容器執行 adapter 的復原契約](../ARCHITECTURE.md#容器執行-adapter)選定控制目錄並重試。
 
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
@@ -339,7 +342,7 @@ Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順�
 | --- | --- |
 | 策略生成、修復與既有結果查詢 | [test_llm_workflows.py](../tests/e2e/test_llm_workflows.py) |
 | 自然需求、必要資訊追問與工具探索 | [test_llm_novice_intake.py](../tests/e2e/test_llm_novice_intake.py)、[test_llm_discovery.py](../tests/e2e/test_llm_discovery.py) |
-| 執行計畫、使用者決策與訓練指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
+| 執行計畫、使用者決策、訓練與生成策略隔離／資源限制／清理復原指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
 | 自動 walk-forward 設定、尾端覆蓋與結果交付 | [test_llm_automatic_walk_forward.py](../tests/e2e/test_llm_automatic_walk_forward.py)（`-k automatic_walk_forward`） |
 | 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |

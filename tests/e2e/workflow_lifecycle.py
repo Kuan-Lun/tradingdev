@@ -156,7 +156,9 @@ def assert_repair(trace: WorkflowTrace, save_index: int) -> None:
     calls, scenario, target = trace.calls, trace.scenario, trace.target
     require_index = trace.require_index
     failure_code = (
-        "strategy_check_failed" if scenario.runtime_exit else "invalid_signal_values"
+        "strategy_execution_failed"
+        if scenario.runtime_exit
+        else "invalid_signal_values"
     )
     read_index = require_index(
         f"get_strategy({target}) returning success=True before repairing the draft",

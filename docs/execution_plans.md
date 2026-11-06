@@ -78,7 +78,12 @@ inside that directory without changing the parent's environment. Successful,
 failed and timed-out workers are stopped and verified before files are deleted.
 If process cleanup cannot be verified, the directory is retained and the operation
 reports failure; file cleanup failure is also an error. Preparation publishes no
-regular job or run. These resource controls are not a generated-Python sandbox.
+regular job or run. For generated strategies, imports, constructor inspection and
+synthetic calls additionally use the shared Linux container boundary described in
+the [strategy security model](strategy_contract.md#security-model). Bundled
+comparison candidates run their synthetic checks as trusted host code.
+Host-worker termination alone is insufficient cleanup evidence when it owned
+containers.
 
 The plan schema is version 3; the confirmation-document schema remains version 2.
 Older confirmation

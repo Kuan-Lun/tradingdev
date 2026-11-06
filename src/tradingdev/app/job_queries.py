@@ -34,7 +34,6 @@ class JobQueries:
                 "code": "job_not_found",
             }
         status = str(job["status"])
-        cleanup_error = observation.cleanup_error
         response: dict[str, Any] = {
             "status": status,
             "job_type": job.get("job_type", "backtest"),
@@ -48,6 +47,8 @@ class JobQueries:
             **_elapsed_fields(job, datetime.now(UTC)),
             "ended_at": job.get("ended_at"),
         }
+        if observation.cleanup_error is not None:
+            response["cleanup_error"] = observation.cleanup_error
 
         if job.get("job_type") == "comparison":
             response["data_downloaded"] = job.get("data_downloaded", False)
@@ -63,8 +64,8 @@ class JobQueries:
                     "code": "execution_manifest_invalid",
                     "error": str(exc),
                 }
-            if cleanup_error is not None:
-                response["detail_error"] = cleanup_error
+            if observation.detail_error is not None:
+                response["detail_error"] = observation.detail_error
             return response
 
         if status == "done":

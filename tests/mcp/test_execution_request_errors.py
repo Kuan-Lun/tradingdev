@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
@@ -16,7 +17,6 @@ from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
@@ -503,7 +503,7 @@ def test_strategy_loading_failure_is_structured_before_job_creation(
     def fail_loading(*_args: object) -> None:
         raise failure_type("Strategy module cannot be loaded at submission")
 
-    monkeypatch.setattr(StrategyLoader, loader_method, fail_loading)
+    monkeypatch.setattr(StrategyFactory, loader_method, fail_loading)
 
     def unexpected_spawn(*_args: object) -> None:
         pytest.fail("Rejected strategy loading must not start a worker")

@@ -11,6 +11,7 @@ import yaml
 from tradingdev.adapters.execution.process_runner import (
     ProcessRunner,
 )
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.data_service import DataService
@@ -38,7 +39,6 @@ from tradingdev.domain.strategies.capabilities import (
     StrategyExecutionModeError,
     ensure_execution_mode,
 )
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
@@ -54,7 +54,7 @@ class JobService:
         *,
         strategy_service: StrategyService | None = None,
         data_service: DataService | None = None,
-        strategy_loader: StrategyLoader | None = None,
+        strategy_loader: StrategyFactory | None = None,
         job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
         project_root: Path | None = None,
@@ -66,7 +66,7 @@ class JobService:
             self._job_store.workspace
         )
         self._data_service = data_service or DataService(self._job_store.workspace)
-        self._strategy_loader = strategy_loader or StrategyLoader(
+        self._strategy_loader = strategy_loader or StrategyFactory(
             workspace_root=self._job_store.workspace.root
         )
         self._project_root = (project_root or self._default_project_root()).resolve()

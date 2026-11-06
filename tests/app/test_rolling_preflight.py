@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
@@ -18,7 +19,6 @@ from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
 from tradingdev.domain.strategies.bundled.xgboost_strategy.config import (
     XGBoostStrategyConfig,
 )
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
 
@@ -57,7 +57,7 @@ def test_impossible_feature_context_fails_before_data_loading(
         workspace = WorkspacePaths(Path(temporary))
         service = BacktestService(
             data_service=DataService(workspace),
-            strategy_loader=StrategyLoader(workspace_root=workspace.root),
+            strategy_loader=StrategyFactory(workspace_root=workspace.root),
             strategy_gate=StrategyService(workspace),
         )
         saved = None

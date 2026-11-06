@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.performance import (
@@ -87,7 +88,9 @@ def _pipeline(
     manifest = ExecutionManifest.create(
         kind="walk_forward" if walk_forward else "backtest",
         config=config,
-        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+        strategy_execution=StrategyExecution(
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+        ),
     )
     result = _result(volume=volume)
     if not walk_forward:
@@ -541,6 +544,7 @@ def test_persisted_scopes_keep_fixed_parameters_separate_from_fitted_values(
         config=config,
         strategy_execution=StrategyExecution(
             kind="bundled" if bundled else "generated",
+            program=None if bundled else GENERATED_PROGRAM,
             constructor_kwargs={"config": parameters} if bundled else parameters,
         ),
     )

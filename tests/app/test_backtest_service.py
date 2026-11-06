@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -13,7 +14,9 @@ import pytest
 import yaml
 from pydantic import create_model
 from tests.research_fixtures import research_for_config, with_fixture_market_source
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService, LoadedDataset
@@ -36,11 +39,12 @@ from tradingdev.domain.strategies.bundled.quantile_strategy.strategy import (
     QuantileStrategy,
 )
 from tradingdev.domain.strategies.execution import StrategyExecution
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pytest import MonkeyPatch
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
@@ -111,25 +115,28 @@ class _SignalStrategy(BaseStrategy):
         return {"name": "signal_stub"}
 
 
-class _StrategyLoaderStub:
+class _StrategyFactoryStub:
     def __init__(self, strategy: BaseStrategy) -> None:
         self.strategy = strategy
         self.engine: BaseBacktestEngine | None = None
         self.parallel_config: ParallelConfig | None = None
 
     def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
-        return StrategyExecution(kind="generated", constructor_kwargs={})
+        return StrategyExecution(
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+        )
 
-    def create_from_execution(
+    @contextmanager
+    def open_from_execution(
         self,
         strategy_cfg: dict[str, Any],
         execution: StrategyExecution,
         engine: BaseBacktestEngine,
         parallel_config: ParallelConfig | None = None,
-    ) -> BaseStrategy:
+    ) -> Iterator[BaseStrategy]:
         self.engine = engine
         self.parallel_config = parallel_config
-        return self.strategy
+        yield self.strategy
 
 
 class _GateStub:
@@ -155,7 +162,7 @@ def _service(
     tmp_path: Path,
     *,
     rows: int = 24,
-) -> tuple[BacktestService, _DataServiceStub, _StrategyLoaderStub, _SignalStrategy]:
+) -> tuple[BacktestService, _DataServiceStub, _StrategyFactoryStub, _SignalStrategy]:
     dataset = LoadedDataset(
         frame=_frame(rows),
         processed_path=tmp_path / "processed.parquet",
@@ -163,12 +170,12 @@ def _service(
     )
     data_service = _DataServiceStub(dataset)
     strategy = _SignalStrategy()
-    strategy_loader = _StrategyLoaderStub(strategy)
+    strategy_loader = _StrategyFactoryStub(strategy)
     source_path = tmp_path / "fixture.py"
     source_path.write_text("# fixture strategy\n", encoding="utf-8")
     service = BacktestService(
         data_service=cast("DataService", data_service),
-        strategy_loader=cast("StrategyLoader", strategy_loader),
+        strategy_loader=cast("StrategyFactory", strategy_loader),
         strategy_gate=_GateStub(str(source_path)),
     )
     return service, data_service, strategy_loader, strategy
@@ -285,7 +292,9 @@ def _stub_backtest_service(
     )
     return BacktestService(
         data_service=cast("DataService", _DataServiceStub(dataset)),
-        strategy_loader=cast("StrategyLoader", _StrategyLoaderStub(_SignalStrategy())),
+        strategy_loader=cast(
+            "StrategyFactory", _StrategyFactoryStub(_SignalStrategy())
+        ),
         strategy_gate=gate,
     )
 
@@ -334,7 +343,7 @@ def test_glft_execution_uses_hourly_data_and_rejects_gaps(
     dataset = LoadedDataset(frame, tmp_path / "processed.parquet", "glft-hourly")
     service = BacktestService(
         data_service=_DataServiceStub(dataset),
-        strategy_loader=StrategyLoader(workspace_root=tmp_path / "workspace"),
+        strategy_loader=StrategyFactory(workspace_root=tmp_path / "workspace"),
         strategy_gate=_gate_service(tmp_path),
     )
     cls = GLFTMLStrategy if ml else GLFTStrategy
@@ -375,7 +384,7 @@ def test_run_manifest_uses_captured_defaults_in_real_strategy(
         processed_path=tmp_path / "processed.parquet",
         dataset_id="captured-kd",
     )
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
     service = BacktestService(
         data_service=_DataServiceStub(dataset),
         strategy_loader=loader,
@@ -604,7 +613,7 @@ def test_simple_backtest_refuses_an_untrained_quantile_strategy(
     reaches the caller from ``generate_signals`` itself.
     """
 
-    class _BundledLoader(_StrategyLoaderStub):
+    class _BundledLoader(_StrategyFactoryStub):
         def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
             return StrategyExecution(kind="bundled", constructor_kwargs={})
 
@@ -635,7 +644,7 @@ def test_simple_backtest_refuses_an_untrained_quantile_strategy(
     source_path.write_text("# fixture strategy\n", encoding="utf-8")
     service = BacktestService(
         data_service=cast("DataService", _DataServiceStub(dataset)),
-        strategy_loader=cast("StrategyLoader", _BundledLoader(strategy)),
+        strategy_loader=cast("StrategyFactory", _BundledLoader(strategy)),
         strategy_gate=_GateStub(str(source_path)),
     )
 

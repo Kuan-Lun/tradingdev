@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.execution_requests import (
     BacktestInput,
@@ -37,7 +38,6 @@ from tradingdev.domain.preflight import (
 from tradingdev.domain.strategies.capabilities import (
     StrategyExecutionModeError,
 )
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from tradingdev.app.prepared_execution import PreparedSubmission
@@ -54,7 +54,7 @@ def execute_preflight(
     temporary_workspace = WorkspacePaths(directory / "runtime")
     store = JobStore(workspace=temporary_workspace)
     strategies = StrategyService(source_workspace, store=store.store)
-    loader = StrategyLoader(workspace_root=source_workspace.root)
+    loader = StrategyFactory(workspace_root=source_workspace.root)
     # Preparation resolves data paths and source declarations only. It never loads
     # cached bars, calls a crawler, or checks whether historical prices exist.
     data = DataService(source_workspace)

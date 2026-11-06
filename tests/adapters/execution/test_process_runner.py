@@ -321,26 +321,36 @@ def test_cleanup_acknowledgement_does_not_hide_a_stuck_supervisor(
     (directory / "finished.json").write_text('{"cleaned": true}')
     monkeypatch.setattr(ProcessIdentity, "get_process", lambda _: Mock())
 
-    with pytest.raises(TimeoutError, match="did not exit after cleanup"):
+    with pytest.raises(RuntimeError, match="did not exit after cleanup"):
         request_worker_stop(tmp_path, handle, timeout=0)
     assert directory.exists()
 
 
-@pytest.mark.parametrize("failure", ["missing", "mismatched", "failed", "timeout"])
+@pytest.mark.parametrize(
+    "failure", ["missing", "mismatched", "malformed", "failed", "timeout", "inspect"]
+)
 def test_unverified_cleanup_fails_and_preserves_control_evidence(
-    tmp_path: Path, failure: str
+    tmp_path: Path, failure: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     handle, directory = _control(tmp_path)
     if failure == "missing":
         (directory / "start.json").unlink()
     elif failure == "mismatched":
         (directory / "start.json").write_text('{"pid": 4321}')
+    elif failure == "malformed":
+        (directory / "finished.json").write_text("{")
     elif failure == "failed":
         (directory / "finished.json").write_text(
             '{"cleaned": false, "error": "group inspection denied"}'
         )
-    with pytest.raises((RuntimeError, TimeoutError)):
+    elif failure == "inspect":
+        (directory / "finished.json").write_text('{"cleaned": true}')
+        monkeypatch.setattr(
+            ProcessIdentity, "get_process", Mock(side_effect=psutil.AccessDenied(4321))
+        )
+    with pytest.raises(RuntimeError) as error:
         request_worker_stop(tmp_path, handle, timeout=0)
+    assert str(directory) in str(error.value)
     assert directory.exists()
     if failure in {"missing", "mismatched"}:
         assert not (directory / "stop").exists()

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from html import unescape
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 from pydantic import ValidationError
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_html,
     render_confirmation_summary,
@@ -36,8 +39,10 @@ from tradingdev.domain.presentation.confirmation_contract import (
 )
 from tradingdev.domain.research import InheritResearchSpec, NewResearchSpec
 from tradingdev.domain.strategies.base import BaseStrategy
-from tradingdev.domain.strategies.execution import StrategyExecution
-from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.strategies.execution import (
+    StrategyExecution,
+    merge_strategy_parameters,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -106,6 +111,7 @@ def _manifest(
         config=config,
         strategy_execution=StrategyExecution(
             kind="bundled" if bundled else "generated",
+            program=None if bundled else GENERATED_PROGRAM,
             constructor_kwargs={"period": 20} if parameters is None else parameters,
         ),
         optimization=search,
@@ -471,26 +477,46 @@ def test_partial_and_empty_candidates_show_the_actual_merged_constructor_values(
         for field in section.fields
     }
 
-    # Substitute only strategy discovery/model types; use the real loader's
-    # candidate merge, constructor binding and actual constructor invocation.
-    loader = StrategyLoader()
-    cls = BundledNestedStrategy if bundled else NestedStrategy
-    monkeypatch.setattr(loader, "load_class", lambda _cfg: cls)
+    # Presentation projection is checked against real bundled construction and
+    # a trusted local generated-constructor double using the common overlay.
+    loader = StrategyFactory()
+    monkeypatch.setattr(
+        loader, "_load_bundled_class", lambda _cfg: BundledNestedStrategy
+    )
     monkeypatch.setattr(loader, "_execution_models", lambda _cls, _execution: {})
     cfg = {"id": "kd_crossover" if bundled else "generated_nested"}
     for candidate_index, candidate in enumerate(({"x": 5}, {}), 1):
-        strategy = loader.create_from_execution(
-            cfg,
-            manifest.strategy_execution,
-            None,
-            parameter_overrides={"settings": candidate},
+        merged = (
+            merge_strategy_parameters(
+                manifest.strategy_execution.constructor_kwargs, {"settings": candidate}
+            )
+            if not bundled
+            else {}
         )
-        actual = strategy.get_parameters()["settings"]
-        assert actual == {"x": 5 if candidate_index == 1 else 2, "y": 3}
-        assert rows[f"搜尋組 1／候選 {candidate_index}：短期條件"] == str(actual["x"])
-        assert rows[f"搜尋組 1／候選 {candidate_index}：長期條件"] == str(actual["y"])
-        if bundled:
-            assert vars(strategy)["fit_config"] == {"training": 9}
+        settings = merged.get("settings", {})
+        assert isinstance(settings, dict)
+        assert all(isinstance(value, int) for value in settings.values())
+        context = (
+            loader.open_from_execution(
+                cfg,
+                manifest.strategy_execution,
+                None,
+                parameter_overrides={"settings": candidate},
+            )
+            if bundled
+            else nullcontext(NestedStrategy(cast("dict[str, int]", settings)))
+        )
+        with context as strategy:
+            actual = strategy.get_parameters()["settings"]
+            assert actual == {"x": 5 if candidate_index == 1 else 2, "y": 3}
+            assert rows[f"搜尋組 1／候選 {candidate_index}：短期條件"] == str(
+                actual["x"]
+            )
+            assert rows[f"搜尋組 1／候選 {candidate_index}：長期條件"] == str(
+                actual["y"]
+            )
+            if bundled:
+                assert vars(strategy)["fit_config"] == {"training": 9}
     text = render_confirmation_text(document)
     assert "合併後的完整有效設定" in text
     assert "空的設定集合" not in text

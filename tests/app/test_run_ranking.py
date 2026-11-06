@@ -17,6 +17,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -93,7 +94,9 @@ def _manifest(
             },
         },
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs={"window": window}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"window": window},
         ),
     )
 

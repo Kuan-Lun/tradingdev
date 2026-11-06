@@ -66,7 +66,8 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
         Each response contains one complete content section and lists all available
         sections. research covers required choices/defaults; evidence covers parameter
         proposals, source claims and saved formulas. configuration is the executable
-        YAML schema; example is a complete Python/YAML pair. indicators lists the
+        YAML schema; runtime covers isolation, limits and failure recovery;
+        example is a complete Python/YAML pair. indicators lists the
         installed public API; pass indicator only with that section to retrieve one
         function and its input/parameter checks from source. Missing reference files
         fail; no partial contract is returned.
@@ -224,7 +225,8 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
         """Check a draft or validated strategy; repair diagnostics or dry-run next.
 
         Pass the revision_id returned by save_strategy to bind the evidence.
-        The smoke check executes generated Python without a security sandbox.
+        The smoke check executes generated Python in a bounded Linux container.
+        Read get_strategy_contract(section="runtime") for its limits and recovery.
         """
         response = service.validate(strategy_id, revision_id=revision_id)
         if "error" in response:
@@ -255,8 +257,9 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
         """Check a validated strategy on a longer fixture before backtesting.
 
         Use the revision_id that passed validation.
-        This executes generated Python without a security sandbox. Repair any
-        diagnostics through save_strategy and validation before trying again.
+        This executes generated Python in a bounded Linux container; read
+        get_strategy_contract(section="runtime") for its limits and recovery.
+        Repair diagnostics through save_strategy and validation before trying again.
         """
         response = service.dry_run(strategy_id, revision_id=revision_id)
         if "error" in response:

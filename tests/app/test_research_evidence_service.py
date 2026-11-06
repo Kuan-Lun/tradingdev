@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.research_evidence import ResearchEvidenceSaved
@@ -16,7 +17,6 @@ from tradingdev.app.data_service import DataService
 from tradingdev.app.preflight_service import PreflightService
 from tradingdev.app.research_evidence_service import ResearchEvidenceService
 from tradingdev.domain.research_evidence import ResearchEvidenceDraft
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -114,8 +114,8 @@ def test_source_declarations_are_saved_without_network_data_or_strategy_calls(
         (httpx.Client, "request"),
         (DataService, "load"),
         (DataService, "ensure"),
-        (StrategyLoader, "create_from_config"),
-        (StrategyLoader, "create_from_execution"),
+        (StrategyFactory, "open_from_config"),
+        (StrategyFactory, "open_from_execution"),
         (PreflightService, "prepare"),
         (ProcessRunner, "spawn_module"),
         (ProcessRunner, "run_module"),

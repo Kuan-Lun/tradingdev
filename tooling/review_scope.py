@@ -172,7 +172,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         **_headings(_ALL, "Strategy Contract"),
         **_headings(
             {"strategy", "execution", "interfaces", "tooling"},
-            "Direct Container Adapter",
+            "Security Model",
         ),
         **_headings(
             _PRODUCT, "Contract References", "Research Inputs and Simulation Policy"
@@ -186,7 +186,6 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Revision Identity and Eligibility",
             "Execution and Parameter Experiments",
             "Legacy Recovery",
-            "Security Model",
         ),
         **_headings(
             {"strategy", "execution", "results", "interfaces"},

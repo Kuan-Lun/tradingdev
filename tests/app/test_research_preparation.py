@@ -9,6 +9,7 @@ from tests.integration.execution_fixtures import research_input
 from tests.preflight_fixtures import make_preflight_fixture
 
 from tradingdev.adapters.execution.preflight_worker import execute_preflight
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
@@ -19,7 +20,6 @@ from tradingdev.app.preflight_service import PreflightError
 from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import PreflightReceipt, PreflightRequest
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -142,7 +142,7 @@ def test_old_bundled_validation_requires_an_explicit_research_window_choice(
 
     monkeypatch.setattr(DataService, "load", forbidden)
     monkeypatch.setattr(BacktestService, "create_engine", forbidden)
-    monkeypatch.setattr(StrategyLoader, "create_from_execution", forbidden)
+    monkeypatch.setattr(StrategyFactory, "open_from_execution", forbidden)
     workspace = WorkspacePaths(tmp_path / "source")
     arguments: dict[str, Any] = {
         "strategy_id": strategy_id,

@@ -458,9 +458,9 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
         (
             "docs/strategy_contract.md",
             "strategy",
-            "Direct Container Adapter",
+            "Security Model",
             {"strategy", "execution", "interfaces", "tooling"},
-            "descendants that created another session or process group",
+            "UID/GID",
         ),
         (
             "docs/development.md",
