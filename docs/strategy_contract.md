@@ -21,6 +21,7 @@ restore the reference before authoring rather than guessing a partial contract.
 | Supply research choices and simulation assumptions | [ResearchSpec](../src/tradingdev/domain/research.py) and [research_policy_payload](../src/tradingdev/domain/research_policy.py) | `get_strategy_contract(section="research")` |
 | Start from a Python/YAML pair | [strategy_contract_payload](../src/tradingdev/domain/strategies/templates.py) | `get_strategy_contract(section="example")` |
 | Check permitted imports and calls | [static_policy_payload](../src/tradingdev/domain/strategies/validator.py) | `get_strategy_contract(section="core").content.static_policy` |
+| Understand generated execution limits and recovery | [RuntimeLimits](../src/tradingdev/domain/runtime.py) and [Security Model](#security-model) | `get_strategy_contract(section="runtime")` |
 | Select an installed indicator | [indicator_reference](../src/tradingdev/domain/indicators/reference.py) | `get_strategy_contract(section="indicators")`, then pass `indicator` |
 
 Schemas describe shape and validation, not proof that a strategy fulfills a
@@ -33,8 +34,8 @@ Generated code must:
 
 - inherit `tradingdev.domain.strategies.base.BaseStrategy`;
 - expose a constructor that can be called with YAML `strategy.parameters`;
-- accept optional `backtest_engine` or `parallel_config` when it needs application
-  execution context;
+- keep constructors independent of application services; `backtest_engine` and
+  `parallel_config` arguments are rejected for generated strategies;
 - implement `generate_signals(df)` and return a new pandas DataFrame;
 - preserve the input DataFrame without mutation;
 - preserve every input row in order, the exact index (including its metadata),
@@ -53,10 +54,18 @@ the payload and saved locations.
 The shared frame checker enforces these structural rules on synthetic fixtures
 and the actual frames used by simple backtests, fixed comparisons, optimization
 trials and both sides of walk-forward folds. Invalid frames fail before their
-engine call. Execution supplies a copy so ordinary DataFrame mutation by a failed
-candidate cannot alter the captured market data for later candidates. Indicator
+engine call. Execution supplies detached copies of data, ordinary nested feature
+values and index/column arrays. Mutating these inputs, including before raising
+an exception, cannot alter the captured market data for later candidates. Indicator
 columns may still contain warm-up NaNs. These checks do not prove the absence of
 future-data use, agreement with a prose strategy, or safe Python execution.
+
+When [`generate_checked_signals`](../src/tradingdev/domain/strategies/signals.py)
+rejects output, callers can inspect `SignalContractError.analysis` for observations
+that `signal_analysis` could safely extract. The isolated strategy worker returns
+this analysis alongside its contract diagnostics. Malformed output may yield only
+partial analysis or an empty mapping; other execution failures need not provide
+analysis, and complete statistics are not guaranteed.
 
 ### Signal and Execution Semantics
 
@@ -152,9 +161,10 @@ preflight checks; completed checks are recorded separately.
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
-the constructor cannot accept fail validation. `backtest_engine` and
-`parallel_config` are injected by the application and cannot be overridden in
-YAML. Revised source and base configuration require a new immutable revision;
+the constructor cannot accept fail validation. Generated strategies receive data
+and JSON settings, without engine or parallel-policy object injection. Bundled
+strategies retain their trusted application injections. Revised source and base
+configuration require a new immutable revision;
 see [Lifecycle](#lifecycle).
 
 Execution submission captures every declared constructor default, excluding the
@@ -164,8 +174,10 @@ injected execution context, as an explicit keyword value in
 parameters for an MCP experiment. Defaults must be finite JSON values;
 unsupported defaults require explicit serializable parameters or a revised
 strategy. Generated code must express configurable values as constructor
-parameters rather than derive hidden defaults from environment state. This
-captures declared arguments, not arbitrary Python behavior or dependency versions.
+parameters rather than derive hidden defaults from environment state. Generated
+execution also fixes its source digest, class and runtime image; see
+[execution identity](run_artifacts.md#execution-manifest). Capturing arguments does
+not prove arbitrary Python behavior or agreement with research intent.
 
 ### Indicators and Code Quality
 
@@ -716,32 +728,69 @@ back to legacy files. Historical runs without revisions retain `revision_id: nul
 
 The [static policy reference](#contract-references) supplies the enforced import
 and call restrictions. Static-policy or quality failures stop validation before
-generated code is imported or executed.
+generated code is imported or executed. These checks complement the runtime
+boundary; a workspace path or user approval alone does not establish isolation.
 
-This is not a full process sandbox. `validate_strategy` and `dry_run_strategy`
-import and execute generated Python in a supervised subprocess to check class
-loading, constructor behavior, BaseStrategy inheritance, input immutability,
-signal values, and smoke dataframe output. Each runtime check has a 60-second
-budget, excluding earlier static/quality checks and subsequent process cleanup;
-direct application callers may set `StrategyService(contract_timeout_seconds=...)`.
-An exception, abnormal exit such as `SystemExit`, or timeout produces failure
-diagnostics instead of ending or indefinitely blocking the calling service.
-Successful evidence must match the selected revision and fixture request.
-Temporary files are removed only after the supervisor's owned process group stops;
-unverified cleanup retains the directory and reports its path. Cleanup failure
-never produces passing validation/dry-run evidence. As with MCP preparation, this
-POSIX process-group guarantee excludes descendants that create a separate session
-and external forced termination of the supervisor; it is not an OS isolation boundary.
+All MCP, CLI and high-level Python execution paths use the same isolated strategy
+factory. Generated source is read and hash-checked by the trusted controller,
+then imported only inside a Linux container. Constructor/default inspection,
+parameter-grid validation, construction, `fit`, signals, parameters and rolling
+traces all cross this boundary. There is no native fallback. Bundled strategies,
+data acquisition, backtest engines, result storage and independent ML model
+loading remain trusted host operations.
 
-Preparation is another code-execution boundary: module imports, constructor/default
-capture and synthetic signal checks can have effects even when no formal job is
-created. Module-level code may run more than once. MCP preparation uses the
-supervised budget and cleanup described in [Execution Plans](execution_plans.md).
-Direct Python/CLI preparation executes in the calling process. Workers later
-repeat generated execution-contract checks, including optimization candidates,
-before their actual runs.
+Each generated instance has a private PID namespace and an independent trusted
+PID 1 deadline. The trusted `container_init` runs as root PID 1 with only the
+`SETUID` and `SETGID` capabilities, then launches the generated worker as UID/GID
+65534 with no supplementary groups or effective capabilities. A read-only image,
+bounded temporary storage, no host mounts, no Docker socket, no inherited host
+secrets and no external network restrict access. Memory, CPU quota and process-count
+limits cover descendants.
+Normal completion, failure, timeout and cancellation remove the entire unit,
+including descendants that create another session. A lost host controller cannot
+remove PID 1's deadline; daemon unavailability or uncertain cleanup is reported
+as failure, with ownership records retained rather than silently declared clean.
 
-Supervision does not isolate filesystem or network access, and a workspace is
-only an output location. User approval controls formal submission; it does not
-make earlier code execution safe. Review generated Python as runtime code at
-every boundary until a dedicated isolation layer exists.
+The controller requires a local Unix-socket Linux Docker daemon with the required
+cgroup v2 controls and a prebuilt strategy-runtime image. macOS MCP/CLI processes
+remain native and use Docker Desktop's Linux engine. The selected image and
+resource policy are fixed in the execution identity; future environment changes
+cannot change that run. Reusing a captured run requires its original image.
+Installation and socket permissions are described in [README](../README.md).
+
+`TRADINGDEV_RUNTIME_LIMITS` configures the operator policy, not strategy YAML.
+[`RuntimeLimits` and `RuntimeSpec`](../src/tradingdev/domain/runtime.py) define its
+fields, defaults and bounds. The wall-clock budget covers a complete strategy
+session, including waits between calls; training state and RNG streams stay in
+that session. Input/output messages have a byte cap and fail rather than truncate
+results. Diagnostics retain a bounded tail and explicitly indicate truncation.
+
+The data-only protocol never unpickles worker data on the host or accepts arbitrary
+object deserialization. Frame data limits and rejection rules are described in the
+[container execution adapter](../ARCHITECTURE.md#容器執行-adapter), with formal
+definitions in [`FramePayload`, `encode_frame` and `decode_frame`](../src/tradingdev/adapters/execution/frame_codec.py).
+Timezone input is validated before pandas conversion; path-based dateutil names
+and arbitrary timezone objects are rejected. Input-mutation checks run inside the
+worker as well as structural checks on returned frames, so copying data across the
+boundary cannot conceal an in-place strategy mutation.
+
+Validation/dry-run retain their outer supervised request budget (60 seconds by
+default, excluding earlier quality checks and subsequent cleanup); direct
+application callers may set `StrategyService(contract_timeout_seconds=...)`.
+MCP preparation has the separate budget described in [Execution Plans](execution_plans.md).
+Successful evidence must match the selected revision and fixture request and is
+published only after host-worker and container cleanup are verified. Unverified
+cleanup preserves diagnostics/control files and never grants passing evidence.
+Module code may run more than once during inspection, checks and execution.
+
+For retained runtime ownership records, `get_strategy_contract(section="runtime")`
+provides operator recovery instructions, the `DockerRuntime.recover_abandoned`
+entry point and control-directory selection rules without requiring local source
+access. Recovery requires the original daemon and stopped originating host work;
+it skips active leases and does not rewrite job outcomes or cleanup acknowledgements.
+
+The trusted image, Docker daemon, Linux kernel and controller are part of the
+trust boundary. Container isolation is not a guarantee against kernel/runtime
+vulnerabilities, hostile administrators, side channels or malicious saved ML
+pickles. It does not provide per-user workspace authorization or prove strategy
+correctness, profitability, causality or agreement with research intent.

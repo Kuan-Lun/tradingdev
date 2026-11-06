@@ -14,6 +14,7 @@ schemas through `tools/list` and use the [lookup tools](#mcp-lookup).
 | Information needed | Maintained definition |
 | --- | --- |
 | Execution fields, schema version and digest | [ExecutionManifest and OptimizationSpec](../src/tradingdev/domain/execution.py) |
+| Generated source/runtime binding and resource limits | [StrategyExecution and GeneratedProgram](../src/tradingdev/domain/strategies/execution.py), [RuntimeSpec and RuntimeLimits](../src/tradingdev/domain/runtime.py) |
 | Comparison membership and candidate limits | [ComparisonManifest](../src/tradingdev/domain/comparison.py) |
 | Research explanation fields and bindings | [ResearchEvidenceDraft, BoundResearchEvidence and bind_research_evidence](../src/tradingdev/domain/research_evidence.py); MCP `get_strategy_contract(section="evidence")` supplies authoring guidance |
 | Runtime table columns and record updates | [SQLiteStore](../src/tradingdev/adapters/storage/sqlite.py), [ExecutionPlanStore](../src/tradingdev/adapters/storage/execution_plans.py) and [ResearchNoteStore](../src/tradingdev/adapters/storage/research_notes.py) |
@@ -39,6 +40,7 @@ result exists. Standard roots are resolved by
 | `runs/<run_id>/` | [Completed run files](#completed-run-files); a standalone job's manifest is already published here at submission. |
 | `comparisons/<job_id>/` | Shared manifest/config, ledger and post-approval data snapshot/receipt; see [comparison evidence](#fixed-comparison-evidence). |
 | `.workers/<launch_token>/` | Supervisor startup, readiness, stop request and cleanup acknowledgement; see [worker identity](#job-state-and-worker-identity). |
+| `.workers/<launch_token>/runtime/`, `.strategy-runtime/` | Generated execution ownership records for supervised jobs or direct API sessions; retained only when cleanup is uncertain or a session is active. |
 | `research_evidence/`, `submitted_research/` | Draft explanations and approved job snapshots, described below. |
 | `execution_plans/<plan_id>/` | Saved confirmation text/HTML and approval lock; see [Execution Plans](execution_plans.md). |
 | `ml_datasets/`, `ml_feature_cache/`, `models/`, `ml_leaderboard/` | Independent [ML stores](ml_research.md#ml-research-artifacts). |
@@ -203,6 +205,13 @@ do not trust a potentially reused PID alone. Control records remain in normal
 workspaces for later cleanup verification. Temporary tests remove them only after
 verified shutdown.
 
+Generated units have separate daemon identity, container ID and owner leases.
+The host supervisor recovers its units after stopping the worker group before
+publishing cleanup acknowledgement. Direct API calls use the same container
+ownership protocol. A lost controller leaves recoverable records and an
+independent in-container deadline. Do not delete retained records to suppress a
+cleanup error; restore the owning daemon and resolve the units first.
+
 Persisted legacy jobs with `status: pending_confirmation` are incompatible with
 the current job response contracts and are not migrated. `get_job_status` and
 `cancel_job` reject their responses at the MCP boundary; even one such record
@@ -221,6 +230,13 @@ fail a started job whose supervisor identity is missing/mismatched. Comparisons
 first require verified worker cleanup; failure leaves lifecycle states unchanged.
 Cancellation likewise preserves states on cleanup failure. Both return the saved
 job, so concurrent `done` may coexist with a cleanup diagnostic.
+
+All job types check a stopped supervisor's cleanup acknowledgement, including when
+the execution has already reached a terminal state. `get_job_status.cleanup_error`
+reports unverified host/container cleanup independently of the saved outcome and
+`detail_error` for result or comparison evidence. A null cleanup error alone does
+not establish that a still-active supervisor has finished cleanup. Missing or failed
+acknowledgement retains the control path; a saved `done` result is not overwritten.
 
 Status failure returns its persisted error immediately; launch failure saves the
 error and terminal timestamp before propagating. For response placement and codes,
@@ -338,9 +354,18 @@ file; file publication and the database job write do not form one transaction.
 The [ExecutionManifest definition](#artifact-references) owns the supported schema,
 fields and digest calculation. `config` holds effective execution settings and
 resolved absolute data/feature paths. `strategy_execution` separately captures
-constructor values, including nested bundled config/fit defaults; injected engine
-and parallel objects are supplied from execution configuration, outside this JSON.
+constructor values, including nested bundled config/fit defaults. Generated
+executions also bind source hash, class, immutable runtime image and effective
+resource limits. Bundled engine/parallel objects remain trusted injections outside
+this JSON; generated constructors cannot receive them.
 Research origins and display names are saved metadata, not constructor arguments.
+
+Changing the configured runtime image or resource policy affects newly captured
+executions only. Source drift or an unavailable fixed image rejects reuse; the
+factory does not recapture defaults, switch images or fall back to host execution.
+Generated manifests without this program identity are incompatible and must be
+prepared again. Existing files are not migrated or deleted; preserve the original
+workspace/version when its historical manifest readers are still needed.
 
 Optimization fixes candidate ranges, objective/direction, calendar train/test
 bounds and the first-trial estimation timeout. The timeout limits only that

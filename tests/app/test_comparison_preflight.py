@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,7 @@ from tradingdev.adapters.execution.process_runner import (
     BoundedWorkerError,
     ProcessRunner,
 )
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.execution_requests import ComparisonInput
 from tradingdev.app.preflight_service import PreflightError, PreflightService
@@ -27,9 +29,10 @@ from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import ComparisonPreflightReceipt, PreflightRequest
 from tradingdev.domain.strategies.capabilities import StrategyExecutionModeError
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import pandas as pd
 
     from tradingdev.domain.strategies.base import BaseStrategy
@@ -93,39 +96,42 @@ def test_all_eight_candidates_check_actual_parameters_without_history_or_base_ch
     research_calls: list[dict[str, Any]] = []
     resolutions: list[dict[str, Any]] = []
     observed: list[tuple[int, float]] = []
-    create = StrategyLoader.create_from_execution
-    resolve = StrategyLoader.resolve_execution
+    create = StrategyFactory.open_from_execution
+    resolve = StrategyFactory.resolve_execution
 
     def capture_research(*args: Any, **kwargs: Any) -> dict[str, Any]:
         result = resolve_research_config(*args, **kwargs)
         research_calls.append(deepcopy(result))
         return result
 
-    def capture_defaults(loader: StrategyLoader, config: dict[str, Any]) -> Any:
+    def capture_defaults(loader: StrategyFactory, config: dict[str, Any]) -> Any:
         resolutions.append(deepcopy(config))
         return resolve(loader, config)
 
-    def capture(loader: StrategyLoader, *args: Any, **kwargs: Any) -> BaseStrategy:
+    @contextmanager
+    def capture(
+        loader: StrategyFactory, *args: Any, **kwargs: Any
+    ) -> Iterator[BaseStrategy]:
         assert args[2] is None
-        strategy = create(loader, *args, **kwargs)
-        generate = strategy.generate_signals
+        with create(loader, *args, **kwargs) as strategy:
+            generate = strategy.generate_signals
 
-        def no_training(*_args: Any, **_kwargs: Any) -> None:
-            pytest.fail("Comparison preparation must not fit a strategy")
+            def no_training(*_args: Any, **_kwargs: Any) -> None:
+                pytest.fail("Comparison preparation must not fit a strategy")
 
-        def checked(frame: pd.DataFrame) -> pd.DataFrame:
-            observed.append((len(frame), strategy.get_parameters()["threshold"]))
-            return generate(frame)
+            def checked(frame: pd.DataFrame) -> pd.DataFrame:
+                observed.append((len(frame), strategy.get_parameters()["threshold"]))
+                return generate(frame)
 
-        monkeypatch.setattr(strategy, "fit", no_training)
-        monkeypatch.setattr(strategy, "generate_signals", checked)
-        return strategy
+            monkeypatch.setattr(strategy, "fit", no_training)
+            monkeypatch.setattr(strategy, "generate_signals", checked)
+            yield strategy
 
     monkeypatch.setattr(
         "tradingdev.app.research_preparation.resolve_research_config", capture_research
     )
-    monkeypatch.setattr(StrategyLoader, "resolve_execution", capture_defaults)
-    monkeypatch.setattr(StrategyLoader, "create_from_execution", capture)
+    monkeypatch.setattr(StrategyFactory, "resolve_execution", capture_defaults)
+    monkeypatch.setattr(StrategyFactory, "open_from_execution", capture)
     before = {
         path: path.read_bytes() for path in workspace.root.rglob("*") if path.is_file()
     }

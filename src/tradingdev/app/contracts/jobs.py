@@ -96,6 +96,14 @@ class JobStatus(ContractModel):
     default_scope: str | None = None
     selected_train_scope: str | None = None
     detail_error: ErrorResponse | None = None
+    cleanup_error: ErrorResponse | None = Field(
+        default=None,
+        description=(
+            "Worker/container cleanup could not be confirmed. Independent of job "
+            "outcome and result detail errors; retain the reported control paths. "
+            "Null alone does not prove cleanup of an active supervisor."
+        ),
+    )
     error: str | None = None
     message: str | None = None
     data_downloaded: bool | None = None

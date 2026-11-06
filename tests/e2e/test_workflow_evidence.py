@@ -203,7 +203,7 @@ def test_natural_runtime_repair_accepts_report_without_artifact_listing(
     metrics_before_summary: bool,
 ) -> None:
     calls = [call for call in _repair_evidence() if call.name != "list_artifacts"]
-    calls[2].result["diagnostics"] = [{"code": "strategy_check_failed"}]
+    calls[2].result["diagnostics"] = [{"code": "strategy_execution_failed"}]
     if metrics_before_summary:
         summary = next(call for call in calls if call.name == "get_run")
         calls.remove(summary)
@@ -236,7 +236,7 @@ def test_natural_repair_can_read_definitions_with_saved_metrics(
     missing: str | None,
 ) -> None:
     calls = [call for call in _repair_evidence() if call.name != "get_metric_catalog"]
-    calls[2].result["diagnostics"] = [{"code": "strategy_check_failed"}]
+    calls[2].result["diagnostics"] = [{"code": "strategy_execution_failed"}]
     calls[-1].result["definitions"] = {
         name: {"id": name}
         for name in ("daily_pnl_mean", "total_volume", "n_days")

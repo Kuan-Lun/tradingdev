@@ -8,6 +8,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
@@ -180,7 +181,9 @@ def _publish(
             },
         },
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs={"fast": 12, "slow": 26}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"fast": 12, "slow": 26},
         ),
         optimization=OptimizationSpec(
             param_ranges={"fast": [10, 12]},
@@ -491,7 +494,7 @@ def test_queries_are_read_only_detached_and_never_replay(
 
     monkeypatch.setattr("pickle.load", forbidden)
     for module in (
-        "tradingdev.domain.strategies.loader",
+        "tradingdev.adapters.execution.strategy_factory",
         "tradingdev.domain.backtest.engines",
         "tradingdev.app.backtest_service",
     ):

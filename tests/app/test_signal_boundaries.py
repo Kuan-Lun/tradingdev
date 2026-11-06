@@ -11,6 +11,7 @@ import pytest
 from tests.app.test_backtest_service import _raw_config, _service
 from tests.mcp.test_optimization_manifest import _prepared_strategy
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.domain.backtest.schemas import (
     BacktestConfig,
@@ -18,7 +19,6 @@ from tradingdev.domain.backtest.schemas import (
 )
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.signals import SignalContractError
 from tradingdev.domain.validation.config import (
     AutomaticWalkForwardConfig,
@@ -101,7 +101,7 @@ def test_optimization_checks_bundled_strategy_output_before_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     strategy_config = {"id": "kd_crossover", "parameters": {}}
-    execution = StrategyLoader().resolve_execution(strategy_config)
+    execution = StrategyFactory().resolve_execution(strategy_config)
     engine = Mock()
     monkeypatch.setattr(BacktestService, "prepare_strategy", _prepared_strategy)
     monkeypatch.setattr(BacktestService, "create_engine", lambda *args: engine)

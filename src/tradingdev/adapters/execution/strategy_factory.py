@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib
-import importlib.util
 import inspect
+import os
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from tradingdev.adapters.execution.container_runtime import DockerRuntime
+from tradingdev.adapters.execution.generated_strategy import (
+    inspect_parameters,
+    open_channel,
+    open_strategy,
+)
 from tradingdev.domain.backtest.schemas import ParallelConfig
+from tradingdev.domain.randomness import execution_randomness, get_seed
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.execution import (
+    GeneratedProgram,
     StrategyExecution,
     finite_strategy_value,
     merge_strategy_parameters,
@@ -24,31 +34,33 @@ from tradingdev.shared.paths import resolve_workspace_root
 from tradingdev.shared.utils.json_values import strict_json_value
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-    from types import ModuleType
+    from collections.abc import Iterable, Iterator
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 
 
-class StrategyLoader:
-    """Load bundled or workspace-generated strategies through one contract."""
+class StrategyFactory:
+    """Own strategy lifetimes; generated imports and instances are always isolated."""
 
     def __init__(
         self,
         *,
         workspace_root: Path | None = None,
         catalog: BundledStrategyCatalog | None = None,
+        runtime: DockerRuntime | None = None,
     ) -> None:
         self._workspace_root = resolve_workspace_root(workspace_root)
         self._generated_root = self._workspace_root / "generated_strategies"
         self._catalog = catalog or BundledStrategyCatalog()
+        self._runtime = runtime
 
-    def create_from_config(
+    @contextmanager
+    def open_from_config(
         self,
         raw_config: dict[str, Any],
         engine: BaseBacktestEngine | None,
         parallel_config: ParallelConfig | None = None,
-    ) -> BaseStrategy:
+    ) -> Iterator[BaseStrategy]:
         """Resolve and build using the same constructor contract as execution."""
         strategy_cfg = raw_config["strategy"]
         if not isinstance(strategy_cfg, dict):
@@ -61,34 +73,53 @@ class StrategyLoader:
                 {} if raw_parallel is None else raw_parallel
             )
         execution = self.resolve_execution(strategy_cfg)
-        return self.create_from_execution(
-            strategy_cfg, execution, engine, parallel_config
-        )
+        with (
+            execution_randomness(raw_config.get("random_seed")),
+            self.open_from_execution(
+                strategy_cfg, execution, engine, parallel_config
+            ) as strategy,
+        ):
+            yield strategy
 
     def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
         """Capture effective settings without constructing a strategy instance."""
-        cls = self.load_class(strategy_cfg)
-        bundled = strategy_cfg["id"] in self._bundled_class_by_id()
+        strategy_id = self._required_strategy_string(strategy_cfg, "id")
+        bundled = strategy_id in self._bundled_class_by_id()
         params = strategy_cfg.get("parameters", {})
         if not isinstance(params, dict):
             raise ValueError("strategy.parameters must be a mapping")
+        if not bundled:
+            runtime = self._generated_runtime()
+            spec = runtime.resolve()
+            source, class_name = self._generated_source(
+                strategy_cfg, max_bytes=spec.limits.message_bytes // 2
+            )
+            program = GeneratedProgram(
+                source_hash=hashlib.sha256(source).hexdigest(),
+                class_name=class_name,
+                runtime=spec,
+            )
+            return StrategyExecution(
+                kind="generated",
+                program=program,
+                constructor_kwargs=inspect_parameters(
+                    runtime, program, source, params, capture=True
+                ),
+            )
+        cls = self._load_bundled_class(strategy_cfg)
         signature = inspect.signature(cls)
-        kwargs: dict[str, Any]
-        if bundled:
-            kwargs = {}
-            if "config" in signature.parameters:
-                model = self._bundled_config_model(cls).model_validate(params)
-                kwargs["config"] = model.model_dump(mode="python")
-            if "fit_config" in signature.parameters and "fit" in strategy_cfg:
-                fit = strategy_cfg["fit"]
-                if not isinstance(fit, dict):
-                    raise ValueError("strategy.fit must be a mapping")
-                fit_model = self._bundled_config_model(cls, suffix="FitConfig")
-                kwargs["fit_config"] = fit_model.model_validate(fit).model_dump(
-                    mode="python"
-                )
-        else:
-            kwargs = deepcopy(params)
+        kwargs: dict[str, Any] = {}
+        if "config" in signature.parameters:
+            model = self._bundled_config_model(cls).model_validate(params)
+            kwargs["config"] = model.model_dump(mode="python")
+        if "fit_config" in signature.parameters and "fit" in strategy_cfg:
+            fit = strategy_cfg["fit"]
+            if not isinstance(fit, dict):
+                raise ValueError("strategy.fit must be a mapping")
+            fit_model = self._bundled_config_model(cls, suffix="FitConfig")
+            kwargs["fit_config"] = fit_model.model_validate(fit).model_dump(
+                mode="python"
+            )
         injected = {"backtest_engine", "parallel_config"}
         if injected.intersection(kwargs):
             raise ValueError("Strategy parameters cannot override injected settings")
@@ -107,13 +138,14 @@ class StrategyLoader:
             **{name: None for name in injected if name in signature.parameters},
         )
         execution = StrategyExecution(
-            kind="bundled" if bundled else "generated",
+            kind="bundled",
             constructor_kwargs=kwargs,
         )
         self._execution_kwargs(cls, execution, None, None, None)
         return execution
 
-    def create_from_execution(
+    @contextmanager
+    def open_from_execution(
         self,
         strategy_cfg: dict[str, Any],
         execution: StrategyExecution,
@@ -121,13 +153,29 @@ class StrategyLoader:
         parallel_config: ParallelConfig | None = None,
         *,
         parameter_overrides: dict[str, Any] | None = None,
-    ) -> BaseStrategy:
+    ) -> Iterator[BaseStrategy]:
         """Construct from explicit settings; never fill missing strategy defaults."""
-        cls = self._execution_class(strategy_cfg, execution)
+        self._check_kind(strategy_cfg, execution)
+        if execution.program is not None:
+            program = execution.program
+            source, _ = self._generated_source(strategy_cfg, program=program)
+            values = execution.constructor_kwargs
+            if parameter_overrides is not None:
+                values = merge_strategy_parameters(values, parameter_overrides)
+            try:
+                seed = get_seed()
+            except RuntimeError:
+                seed = None
+            with open_strategy(
+                self._generated_runtime(), program, source, values, seed
+            ) as strategy:
+                yield strategy
+            return
+        cls = self._load_bundled_class(strategy_cfg)
         kwargs = self._execution_kwargs(
             cls, execution, engine, parallel_config, parameter_overrides
         )
-        return cls(**kwargs)
+        yield cls(**kwargs)
 
     def override_execution(
         self,
@@ -144,7 +192,9 @@ class StrategyLoader:
         if not isinstance(target, dict):
             raise ValueError("Strategy does not expose searchable parameters")
         target.update(merge_strategy_parameters(target, overrides))
-        selected = StrategyExecution(kind=execution.kind, constructor_kwargs=kwargs)
+        selected = StrategyExecution(
+            kind=execution.kind, constructor_kwargs=kwargs, program=execution.program
+        )
         self.validate_parameter_overrides(strategy_cfg, selected, {})
         return selected
 
@@ -154,8 +204,7 @@ class StrategyLoader:
         execution: StrategyExecution,
     ) -> None:
         """Revalidate captured settings without construction or new defaults."""
-        cls = self._execution_class(strategy_cfg, execution)
-        self._execution_kwargs(cls, execution, None, None, None)
+        self.validate_parameter_overrides(strategy_cfg, execution, {})
 
     def validate_parameter_overrides(
         self,
@@ -164,7 +213,21 @@ class StrategyLoader:
         parameter_overrides: dict[str, Any],
     ) -> None:
         """Validate one search combination without running its constructor."""
-        cls = self._execution_class(strategy_cfg, execution)
+        self._check_kind(strategy_cfg, execution)
+        if execution.program is not None:
+            program = execution.program
+            source, _ = self._generated_source(strategy_cfg, program=program)
+            inspect_parameters(
+                self._generated_runtime(),
+                program,
+                source,
+                merge_strategy_parameters(
+                    execution.constructor_kwargs, parameter_overrides
+                ),
+                capture=False,
+            )
+            return
+        cls = self._load_bundled_class(strategy_cfg)
         self._execution_kwargs(cls, execution, None, None, parameter_overrides)
 
     def validate_parameter_grid(
@@ -174,7 +237,23 @@ class StrategyLoader:
         combinations: Iterable[dict[str, Any]],
     ) -> None:
         """Check a lazy grid using one resolved class, without instantiation."""
-        cls = self._execution_class(strategy_cfg, execution)
+        self._check_kind(strategy_cfg, execution)
+        if execution.program is not None:
+            program = execution.program
+            source, _ = self._generated_source(strategy_cfg, program=program)
+            encoded: str | None = base64.b64encode(source).decode("ascii")
+            with open_channel(self._generated_runtime(), program) as channel:
+                for parameters in combinations:
+                    channel.request(
+                        "validate",
+                        source=encoded,
+                        kwargs=merge_strategy_parameters(
+                            execution.constructor_kwargs, parameters
+                        ),
+                    )
+                    encoded = None
+            return
+        cls = self._load_bundled_class(strategy_cfg)
         models = self._execution_models(cls, execution)
         signature = inspect.signature(cls)
         for parameters in combinations:
@@ -188,13 +267,12 @@ class StrategyLoader:
                 signature=signature,
             )
 
-    def _execution_class(
+    def _check_kind(
         self, strategy_cfg: dict[str, Any], execution: StrategyExecution
-    ) -> type[BaseStrategy]:
+    ) -> None:
         bundled = strategy_cfg.get("id") in self._bundled_class_by_id()
         if bundled != (execution.kind == "bundled"):
             raise ValueError("Strategy execution kind does not match the strategy")
-        return self.load_class(strategy_cfg)
 
     def _execution_kwargs(
         self,
@@ -259,7 +337,7 @@ class StrategyLoader:
         before = finite_strategy_value(values)
         restored = model.model_validate(deepcopy(before))
         after = finite_strategy_value(restored.model_dump(mode="python"))
-        if not StrategyLoader._unchanged_model_values(before, after):
+        if not StrategyFactory._unchanged_model_values(before, after):
             raise ValueError(
                 f"Recorded {model.__name__} settings no longer match its model; "
                 "submit a new execution"
@@ -271,51 +349,29 @@ class StrategyLoader:
         """Allow only identical JSON values or lossless integer-to-float leaves."""
         if isinstance(before, dict) and isinstance(after, dict):
             return before.keys() == after.keys() and all(
-                StrategyLoader._unchanged_model_values(value, after[key])
+                StrategyFactory._unchanged_model_values(value, after[key])
                 for key, value in before.items()
             )
         if isinstance(before, list) and isinstance(after, list):
             return len(before) == len(after) and all(
-                StrategyLoader._unchanged_model_values(left, right)
+                StrategyFactory._unchanged_model_values(left, right)
                 for left, right in zip(before, after, strict=True)
             )
         if type(before) is int and type(after) is float:
             return before == after
         return type(before) is type(after) and before == after
 
-    def load_class(self, strategy_cfg: dict[str, Any]) -> type[BaseStrategy]:
-        """Resolve a strategy class from bundled metadata or generated source."""
+    def _load_bundled_class(self, strategy_cfg: dict[str, Any]) -> type[BaseStrategy]:
+        """Import only a class selected by the installed bundled catalog."""
         strategy_id = self._required_strategy_string(strategy_cfg, "id")
-        bundled = self._bundled_class_by_id()
-        bundled_class = bundled.get(strategy_id)
-        if bundled_class is not None:
-            module_name, class_name = bundled_class
-            module = importlib.import_module(module_name)
-            cls = getattr(module, class_name)
-            if not issubclass(cls, BaseStrategy):
-                msg = f"{class_name} must inherit from BaseStrategy"
-                raise TypeError(msg)
-            return cast("type[BaseStrategy]", cls)
-
-        class_name = self._required_strategy_string(strategy_cfg, "class_name")
-        source_value = self._required_strategy_string(strategy_cfg, "source_path")
-        source_path = Path(str(source_value))
-        self._reject_unknown_bundled_source(strategy_id, strategy_cfg, bundled)
-        source_hash = strategy_cfg.get("source_hash")
-        if source_hash is not None and not isinstance(source_hash, str):
-            msg = "strategy.source_hash must be a string"
-            raise ValueError(msg)
-        module = self._load_module(
-            self._resolve_generated_source(source_path), source_hash=source_hash
-        )
-        cls = getattr(module, class_name, None)
-        if cls is None:
-            msg = f"Class {class_name!r} not found"
-            raise ValueError(msg)
-        if not issubclass(cls, BaseStrategy):
-            msg = f"{class_name} must inherit from BaseStrategy"
-            raise TypeError(msg)
-        return cast("type[BaseStrategy]", cls)
+        entry = self._bundled_class_by_id().get(strategy_id)
+        if entry is None:
+            raise ValueError("Generated strategy classes cannot be loaded on the host")
+        module_name, class_name = entry
+        cls = getattr(importlib.import_module(module_name), class_name)
+        if not inspect.isclass(cls) or not issubclass(cls, BaseStrategy):
+            raise TypeError(f"{class_name} must inherit from BaseStrategy")
+        return cls
 
     def _bundled_class_by_id(self) -> dict[str, tuple[str, str]]:
         """Discover bundled strategy classes from the bundled catalog."""
@@ -403,29 +459,56 @@ class StrategyLoader:
             raise FileNotFoundError(msg)
         return resolved
 
-    def _load_module(
-        self, source_path: Path, *, source_hash: str | None = None
-    ) -> ModuleType:
-        spec = importlib.util.spec_from_file_location(
-            f"_tradingdev_generated_{source_path.stem}",
-            source_path,
+    def _generated_runtime(self) -> DockerRuntime:
+        if self._runtime is None:
+            configured = os.environ.get("TRADINGDEV_RUNTIME_CONTROL_ROOT")
+            root = (
+                Path(configured)
+                if configured
+                else self._workspace_root / ".strategy-runtime"
+            )
+            self._runtime = DockerRuntime(root)
+        return self._runtime
+
+    def _generated_source(
+        self,
+        strategy_cfg: dict[str, Any],
+        *,
+        program: GeneratedProgram | None = None,
+        max_bytes: int | None = None,
+    ) -> tuple[bytes, str]:
+        strategy_id = self._required_strategy_string(strategy_cfg, "id")
+        class_name = self._required_strategy_string(strategy_cfg, "class_name")
+        source_path = Path(self._required_strategy_string(strategy_cfg, "source_path"))
+        self._reject_unknown_bundled_source(
+            strategy_id, strategy_cfg, self._bundled_class_by_id()
         )
-        if spec is None or spec.loader is None:
-            msg = f"Cannot load module from {source_path}"
-            raise ImportError(msg)
-        module = importlib.util.module_from_spec(spec)
-        # LLM repair loops can rewrite same-size source within one timestamp
-        # unit. Read and compile the current source directly so a stale .pyc
-        # never changes which revision gets validated or executed.
-        source = source_path.read_bytes()
+        declared_hash = strategy_cfg.get("source_hash")
+        if declared_hash is not None and not isinstance(declared_hash, str):
+            raise ValueError("strategy.source_hash must be a string")
+        if program is not None:
+            if class_name != program.class_name or declared_hash not in (
+                None,
+                program.source_hash,
+            ):
+                raise ValueError(
+                    "Strategy source identity differs from its fixed execution"
+                )
+            max_bytes = program.runtime.limits.message_bytes // 2
+            declared_hash = program.source_hash
+        if max_bytes is None:
+            raise ValueError(
+                "A bounded runtime is required before reading generated source"
+            )
+        with self._resolve_generated_source(source_path).open("rb") as stream:
+            source = stream.read(max_bytes + 1)
+        if len(source) > max_bytes:
+            raise ValueError("Generated source exceeds the isolated message capacity")
         if (
-            source_hash is not None
-            and hashlib.sha256(source).hexdigest() != source_hash
+            declared_hash is not None
+            and hashlib.sha256(source).hexdigest() != declared_hash
         ):
-            msg = (
+            raise ValueError(
                 "Strategy revision source has changed; save and validate a new revision"
             )
-            raise ValueError(msg)
-        code = compile(source, str(source_path), "exec")
-        exec(code, module.__dict__)  # noqa: S102
-        return module
+        return source, class_name

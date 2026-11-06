@@ -63,8 +63,9 @@ flowchart LR
 
 這是目前實作的責任分組，尚未形成全面的依賴反轉。
 Application services 直接使用具體的儲存與程序 adapters；`domain/data` 內的
-crawlers 與 loader 仍執行網路及檔案 I/O，StrategyLoader 也會
-讀取、載入策略檔案。`domain/ml/registry` 的模型、特徵快取與排行榜 stores
+crawlers 與 loader 仍執行網路及檔案 I/O。策略檔案讀取與實例生命週期由
+`adapters/execution/strategy_factory.py` 負責，domain 的訊號檢查依賴 factory port。
+`domain/ml/registry` 的模型、特徵快取與排行榜 stores
 也執行檔案 I/O；ML dataset store 位於 `adapters/storage`。
 最佳化的完整流程仍由 worker 協調，尚未全部收斂到 app。
 修改這些模組時，不能假設 domain 全部都是無副作用的純計算。
@@ -166,8 +167,9 @@ stateDiagram-v2
 ```
 
 驗證先做靜態政策與共用 Ruff／Mypy 檢查，再由 StrategyContractService 透過具期限的
-worker 執行 SignalContractChecker，在合成資料上檢查匯入、建構子、設定與訊號；
-dry-run 使用較長 fixture。回覆綁定原請求，確認 supervisor 持有的程序群組清理後才保存證據；
+worker 執行 SignalContractChecker。StrategyFactory 從首次匯入起把生成程式放入獨立
+Linux 執行單元，在合成資料上檢查建構子、設定與訊號；dry-run 使用較長 fixture。
+回覆綁定原請求，確認 host worker 與隔離單元清理後才保存證據；
 異常退出、逾時及清理失敗皆不授予執行資格。實際執行也套用共用訊號框架檢查，
 防止缺列、索引錯位、輸入修改或無效訊號進入引擎。檢查不證明沒有前視或符合自然語言構想。
 
@@ -223,7 +225,8 @@ JobService 與 OptimizationService 共用 ExecutionSubmissionService；提交使
 
 固定比較由 ComparisonService 使用一份不可變行情快照，逐組重新解碼並建立獨立策略、
 引擎、資金與亂數串流。ComparisonStore 保存全部候選帳本，RunPublisher 核對父子身分
-後發布成功結果；失敗與未執行組別不被省略。此流程限普通回測，不提供全域 Python 狀態隔離。
+後發布成功結果；失敗與未執行組別不被省略。此流程限普通回測。生成策略實例各自有獨立
+程序；內建策略與可信主程式的任意 Python 全域狀態不在隔離保證內。
 範圍與恢復規則見[固定比較證據](docs/run_artifacts.md#fixed-comparison-evidence)。
 
 CLI 直接同步呼叫 BacktestService，再透過 ArtifactService 保存；命令本身是明確執行
@@ -422,11 +425,80 @@ JobService 在狀態查詢時先透過 JobLifecycle 恢復失聯 worker 的狀�
 JobQueries 讀取結果明細與組裝回覆；清單查詢只讀取已保存狀態。取消與恢復都保留
 清理後的狀態重讀及 store 的終態保護，避免覆寫並行完成的工作。
 
-監督依賴 POSIX process groups 與 `waitid(WNOWAIT)`，以尚未回收的直屬 child 維持身分。
-策略 validate／dry-run（含直接 StrategyService 呼叫）及 MCP preflight 受此監督；
-直接 Python API／CLI 的執行設定捕捉不因此受到監督。外部強殺 supervisor 或後代
-自行脫離 session 不在清理保證內。
+可信 host worker 的監督依賴 POSIX process groups 與 `waitid(WNOWAIT)`，
+以尚未回收的直屬 child 維持身分。生成 Python 不進入這些 host 程序：所有入口共用
+StrategyFactory 的 context-managed 生命週期，透過有界資料協定呼叫容器中的實例。
+fit 狀態與亂數 context 保留於同一實例；主程式不反序列化 worker 提供的 Python 物件。
+
+Supervisor 停止 host worker 後，依[容器執行 adapter](#容器執行-adapter)的清理契約
+恢復該次工作的容器控制紀錄，不以程序群組已空代替容器清理。
+跨 MCP session 的取消沿用同一 launch 控制身分。
+
+強殺 host supervisor 仍可能使可信 host worker 的清理證據缺失；不得據此宣稱整個工作
+已清理。容器隔離與獨立期限的保證範圍見[策略安全模型](docs/strategy_contract.md#security-model)。
 控制檔案與證據見[Workspace Layout](docs/run_artifacts.md#workspace-layout)。
+
+### 容器執行 adapter
+
+[`DockerRuntime`](src/tradingdev/adapters/execution/container_runtime.py) 是產品
+`StrategyFactory`、直接整合與測試共用的容器執行入口。隔離保證與可信元件的範圍由
+[策略安全模型](docs/strategy_contract.md#security-model)說明；
+建置映像、環境設定與測試操作見[開發指南](docs/development.md#容器建置與驗證)。
+
+產品 `StrategyFactory` 透過
+[`generated_strategy.inspect_parameters` 與 `open_strategy`](src/tradingdev/adapters/execution/generated_strategy.py)
+操作容器中的生成策略；整合者或測試也可直接呼叫這些 helper。前者擷取或驗證建構參數，
+後者在 context 內保留訓練狀態與亂數序列，
+離開時確認容器清理。兩者接收已固定來源雜湊、類別與 runtime 的
+[`GeneratedProgram`](src/tradingdev/domain/strategies/execution.py)，以純資料傳送來源與設定。
+
+跨容器訊息由 [`StrategyRequest`、`StrategyResponse` 與 `Operation`](src/tradingdev/adapters/execution/strategy_protocol.py)
+定義請求／回覆 schema、協定版本及可用操作；整合者應使用這些正式定義編解碼，
+而非自行維護欄位或操作清單。Proxy 逐次核對 request ID、操作、來源雜湊與類別名稱，
+拒絕不屬於該次請求或固定策略身分的回覆。
+
+直接呼叫時，`inspect_parameters(..., capture=True)` 擷取缺少的宣告預設、核對 keyword
+binding 並回傳完整設定 dict；它不呼叫建構子，但仍會載入及執行模組層程式。
+`capture=False` 與 `open_strategy` 要求每個具名參數都有顯式值，包括已有預設的參數。
+呼叫端可先 capture，再把回傳 dict 交給驗證或開啟策略；也可自行提供完整設定。
+
+這些 helper 的設定與 proxy hook 回傳值遵循
+[`finite_strategy_value`](src/tradingdev/domain/strategies/execution.py) 的有限 JSON 邊界。
+`get_parameters()` 須回傳 JSON object；`rolling_trace()` 須回傳 JSON object 或 `None`。
+內含 tuple、NumPy 陣列或其他不受支援物件的 Python dict 也會被拒絕，不自動轉型。
+
+DataFrame 透過 [`FramePayload`、`encode_frame` 與 `decode_frame`](src/tradingdev/adapters/execution/frame_codec.py)
+跨越邊界。欄名必須是唯一字串，index／columns 的名稱只能是字串或 `None`。
+支援 RangeIndex、DatetimeIndex 及一般數值／字串 index；MultiIndex、categorical／自訂
+extension dtype 與任意 Python 物件不受支援。`attrs` 與 object 儲存格須為有限 JSON 值。
+數值、nullable、datetime 與字串的支援型別由該 codec 定義；無法表示的型別或值會失敗，
+不以字串化或截斷替代。時區限已安裝的 IANA 名稱或明示 UTC offset，不接受 dateutil
+路徑或任意 timezone 物件。
+
+[`strategy_worker.serve`](src/tradingdev/adapters/execution/strategy_worker.py) 回報操作錯誤後
+會結束該 session；呼叫端須離開 context 完成清理後重新開啟，不能沿用已失敗實例的
+訓練狀態繼續操作。底層傳輸或程序失敗也不保證可恢復同一實例。
+底層容器呼叫契約如下。
+
+1. 建立 `DockerRuntime(control_root)`，以可保留的獨立目錄保存執行歸屬紀錄。
+   Adapter 固定所選本機 Docker 端點，後續 Docker context 變更不會改變清理目標。
+   `resolve(image=..., limits=...)` 核對 daemon 能力與預建映像，回傳固定 image ID
+   及有效政策的 `RuntimeSpec`，不自動下載映像。政策欄位與限制由
+   [`RuntimeLimits`](src/tradingdev/domain/runtime.py)定義。
+2. 使用 `with runtime.open(spec, command) as session` 啟動映像內的命令及管理生命週期。
+   `command` 是程式與參數序列，所需檔案須已在映像內；此入口不掛載 host 工作區。
+   每個 context 擁有獨立執行單元及歸屬紀錄。
+3. `session.exchange(message)` 依序交換單行 `bytes`：傳入內容不含換行，回傳內容移除
+   結尾換行。命令須每次輸入只產生一行 stdout，診斷使用 stderr；超量與已偵測的
+   額外 stdout 會失敗。診斷保留有上限的尾端，發生截斷時標示。
+4. Context 正常結束或拋出例外時，先停止 attach client，再移除並核對整個執行單元。
+   清理核對 daemon 身分、owner 與不可變 container ID；只有確認清理後才移除歸屬紀錄。
+   發生 `IsolatedRuntimeError` 時檢查 `cleanup_verified` 與 `control_path`；清理未確認
+   就保留控制目錄，不把操作失敗與清理完成視為同一件事。
+5. 原呼叫端停止後，可在原 daemon 上呼叫 `runtime.recover_abandoned()` 重試復原；
+   `control_root` 使用錯誤所列 `control_path` JSON 的所在目錄。
+   它只接手已釋放 lease 的單元，跳過仍持有 lease 的執行；身分不符、紀錄不明或
+   daemon 不可用時回報失敗並保留紀錄，不承諾立即清理。
 
 ### 可重現性與策略執行安全
 
@@ -434,7 +506,8 @@ JobQueries 讀取結果明細與組裝回覆；清單查詢只讀取已保存狀
 按 fold 順序共用該次串流，trial 各自獨立。策略須使用 domain.randomness，第三方種子須
 明確傳入；不控制任意全域 RNG。獨立 ML 訓練另用模型的 `random_state`，不能互相推斷。
 
-Manifest、來源 hash、資料指紋及版本提供追蹤，沒有封存全部依賴與執行環境，不承諾
-跨環境完全重現。舊結果缺少證據時明確回報，不能猜測或自動重算。
-靜態驗證、workspace 路徑與程序監督都不是完整 sandbox；生成 Python 的匯入、建構
-與訊號檢查仍會執行程式。適用路徑及限制見[策略安全模型](docs/strategy_contract.md#security-model)。
+Manifest、來源 hash、資料指紋及版本提供追蹤；生成策略另固定容器 image ID 與資源政策。
+可信 host 依賴、硬體與任意全域 RNG 並未全部封存，不承諾跨環境完全重現。
+舊結果缺少證據時明確回報，不能猜測或自動重算。
+生成程式使用無主機掛載、無外部網路及有資源上限的 Linux 容器；workspace、靜態驗證
+與操作同意本身不是隔離。信任邊界及限制見[策略安全模型](docs/strategy_contract.md#security-model)。

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -217,7 +218,9 @@ backtest:
         kind="backtest",
         config=load_config_payload(config_path) or {},
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs={"random_seed": 11}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"random_seed": 11},
         ),
     )
     pipeline = PipelineResult(
@@ -295,7 +298,9 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
         kind="backtest",
         config=original,
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs={"window": 7}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"window": 7},
         ),
     )
     pipeline = PipelineResult(
@@ -319,7 +324,9 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
         changed_config["backtest"]["end_date"] = "2024-02-29"
     else:
         strategy_execution = StrategyExecution(
-            kind="generated", constructor_kwargs={"window": 14}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"window": 14},
         )
     changed = ExecutionManifest.create(
         kind="backtest",
@@ -356,7 +363,9 @@ def test_cli_cache_rejects_results_without_their_intact_execution_manifest(
     monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
     manifest = ExecutionManifest.create(
         kind="backtest",
-        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+        strategy_execution=StrategyExecution(
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+        ),
         config={
             "strategy": {"id": "fixture"},
             "backtest": {

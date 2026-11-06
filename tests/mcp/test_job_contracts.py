@@ -13,6 +13,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult
 
+from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
@@ -124,6 +125,44 @@ def test_job_lifecycle_payloads_satisfy_advertised_contract(
         assert payload["direction"] == "maximize"
         assert payload["train_metrics"]["sharpe_ratio"] == 0.0
         assert payload["test_metrics"]["sharpe_ratio"] is None
+
+
+@pytest.mark.parametrize("job_type", ["backtest", "optimization", "comparison"])
+@pytest.mark.parametrize("state", ["running_backtest", "done"])
+def test_all_job_types_expose_retained_cleanup_evidence_separately(
+    job_service: JobService,
+    monkeypatch: pytest.MonkeyPatch,
+    job_type: str,
+    state: str,
+) -> None:
+    store = job_service._job_store
+    handle = WorkerHandle(12345, 100.0, "b" * 32)
+    store.create_job(job_id="cleanup", job_type=job_type)
+    store.update_job("cleanup", status=state, **handle.job_fields())
+    control = store.workspace.root / ".workers" / handle.control_id
+    control.mkdir(parents=True)
+    (control / "start.json").write_text(json.dumps(handle.job_fields()))
+    (control / "finished.json").write_text(
+        json.dumps({"cleaned": False, "returncode": 7, "error": "daemon unavailable"})
+    )
+    monkeypatch.setattr(job_service._lifecycle, "_is_process_alive", lambda _: False)
+    server = MCPServer("cleanup-contract")
+    jobs.register(server, job_service)
+
+    for _attempt in range(2):
+        result = asyncio.run(server.call_tool("get_job_status", {"job_id": "cleanup"}))
+        assert isinstance(result, CallToolResult) and result.structured_content
+        payload = result.structured_content["result"]
+        expected = state if state == "done" or job_type == "comparison" else "failed"
+        assert payload["status"] == expected
+        assert payload["cleanup_error"]["code"] == "worker_cleanup_failed"
+        assert "daemon unavailable" in payload["cleanup_error"]["error"]
+        assert str(control) in payload["cleanup_error"]["error"]
+        if state == "done":
+            # Missing result fixtures still report their own independent error.
+            assert payload["detail_error"] is not None
+            assert payload["detail_error"]["code"] != "worker_cleanup_failed"
+        assert (control / "finished.json").exists()
 
 
 def test_cancel_contract_does_not_claim_success_when_identity_missing(

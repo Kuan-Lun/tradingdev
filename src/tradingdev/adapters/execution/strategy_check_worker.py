@@ -9,10 +9,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.strategy_revisions import StrategyRevisionStore
 from tradingdev.domain.strategies.contract import SignalContractChecker
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import StrategyDiagnostic, StrategyMetadata
 
 
@@ -42,7 +42,7 @@ def check_revision(request_path: Path, result_path: Path) -> None:
     workspace = WorkspacePaths(Path(request.source_workspace))
     revisions = StrategyRevisionStore(workspace)
     revisions.verify(request.metadata)
-    checker = SignalContractChecker(StrategyLoader(workspace_root=workspace.root))
+    checker = SignalContractChecker(StrategyFactory(workspace_root=workspace.root))
     checked = checker.check(request.metadata, fixture_rows=request.fixture_rows)
     revisions.verify(request.metadata)
     response = StrategyCheckResponse(

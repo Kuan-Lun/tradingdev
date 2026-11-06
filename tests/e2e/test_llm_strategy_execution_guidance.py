@@ -1,8 +1,8 @@
 """Real model/MCP discovery and rejected preflights; no market fetch or training.
 
-Only the two unsupported preparation modes are exposed. Their production workers
-reject the request before fetching data or fitting QuantileStrategy. No worker or
-service is substituted, and the final callback never grants execution approval.
+Read-only discovery uses actual product contracts. Unsupported preparation modes
+reach production workers, which reject them before fetching data or training.
+No worker or service is substituted, and callbacks never grant execution approval.
 """
 
 from __future__ import annotations
@@ -29,6 +29,65 @@ from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
+
+
+@pytest.mark.live_llm
+def test_natural_generated_runtime_boundary_guidance(
+    pytestconfig: pytest.Config,
+) -> None:
+    """Find the isolation contract from user intent without naming its tool."""
+    with temporary_mcp_workspace() as workspace:
+        turns: list[ModelTurn] = []
+        readonly_tools: set[str] = set()
+        request = (
+            "我想在自己的 Mac 上使用助手寫的新策略。它會直接在 Mac 的 Python 裡跑嗎？"
+            "能讀我的檔案、連網或任意建立子程序嗎？若關掉視窗或取消工作又會怎樣？"
+            "若顯示清理未確認，我應該怎麼處理？"
+            "請查目前產品契約，只說明使用條件、資源上限如何設定與必要限制，"
+            "不要建立策略或執行研究。"
+        )
+
+        async def observe(turn: ModelTurn) -> None:
+            turns.append(turn)
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "user_reply": observe,
+                "max_turns": 1,
+            }
+            async with workspace.connect() as client:
+                tools = (await client.session.list_tools()).tools
+                assert all(tool.name not in request for tool in tools)
+                options["tool_names"] = [tool.name for tool in tools]
+                readonly_tools.update(
+                    tool.name
+                    for tool in tools
+                    if tool.annotations and tool.annotations.read_only_hint is True
+                )
+                if pytestconfig.getoption("llm_provider") == "local":
+                    return await run_local_model(
+                        client,
+                        request,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        **options,
+                    )
+            return codex_calls(await run_codex(workspace.root, request, **options))
+
+        calls = asyncio.run(run())
+        verify_readonly_attempts(calls, readonly_tools)
+        assert any(
+            call.name == "get_strategy_contract"
+            and call.result.get("section") == "runtime"
+            and call.result.get("content", {}).get("limits_schema")
+            for call in calls
+        ), calls
+        assert turns and turns[-1].text.strip()
+        print("[runtime-boundary] Final model reply:\n" + turns[-1].text, flush=True)
+    assert not workspace.root.exists()
 
 
 @pytest.mark.live_llm
