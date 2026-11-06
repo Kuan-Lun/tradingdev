@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import base64
 import builtins
+import os
 from datetime import UTC, timedelta, timezone, tzinfo
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -18,7 +21,6 @@ from tradingdev.adapters.execution.frame_codec import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from typing import Any
 
 
@@ -109,27 +111,42 @@ def test_timezone_roundtrip_uses_safe_names_and_fixed_offsets(
 
 @pytest.mark.parametrize("path_kind", ["dateutil", "absolute", "traversal"])
 def test_worker_timezone_cannot_open_a_host_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path_kind: str
+    monkeypatch: pytest.MonkeyPatch, path_kind: str
 ) -> None:
-    sentinel = tmp_path / "sentinel"
-    sentinel.write_bytes(b"not a timezone")
-    payload = encode_frame(
-        pd.DataFrame({"timestamp": pd.date_range("2024-01-01", periods=1, tz="UTC")})
-    ).model_dump()
-    payload["vectors"][0]["timezone"] = {
-        "dateutil": "dateutil/" + str(sentinel),
-        "absolute": str(sentinel),
-        "traversal": "../" + str(sentinel).lstrip("/"),
-    }[path_kind]
-    opened: list[object] = []
-    original = builtins.open
+    # Keep the absolute attack within the wire schema even under a deep TMPDIR.
+    # Restore cwd before removing this test's independently owned directory.
+    with (
+        TemporaryDirectory(prefix="tradingdev-tz-", dir="/tmp") as directory,
+        monkeypatch.context() as scoped,
+    ):
+        sentinel = Path(directory).resolve() / "sentinel"
+        sentinel.write_bytes(b"not a timezone")
+        working = sentinel.parent / "cwd"
+        working.mkdir()
+        scoped.chdir(working)
+        payload = encode_frame(
+            pd.DataFrame(
+                {"timestamp": pd.date_range("2024-01-01", periods=1, tz="UTC")}
+            )
+        ).model_dump()
+        payload["vectors"][0]["timezone"] = {
+            "dateutil": "dateutil/" + str(sentinel),
+            "absolute": str(sentinel),
+            "traversal": "../sentinel",
+        }[path_kind]
+        validated = FramePayload.model_validate(payload)
+        opened: list[object] = []
+        original = builtins.open
 
-    def observed(file: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(file) == str(sentinel):
-            opened.append(file)
-        return original(file, *args, **kwargs)
+        def observed(file: Any, *args: Any, **kwargs: Any) -> Any:
+            if (
+                isinstance(file, str | bytes | os.PathLike)
+                and Path(os.fsdecode(file)).resolve() == sentinel
+            ):
+                opened.append(file)
+            return original(file, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "open", observed)
-    with pytest.raises(ValueError, match="Unsupported isolated frame timezone"):
-        decode_frame(FramePayload.model_validate(payload))
-    assert opened == []
+        scoped.setattr(builtins, "open", observed)
+        with pytest.raises(ValueError, match="Unsupported isolated frame timezone"):
+            decode_frame(validated)
+        assert opened == []
