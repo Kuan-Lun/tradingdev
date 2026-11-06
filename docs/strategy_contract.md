@@ -58,6 +58,13 @@ candidate cannot alter the captured market data for later candidates. Indicator
 columns may still contain warm-up NaNs. These checks do not prove the absence of
 future-data use, agreement with a prose strategy, or safe Python execution.
 
+When [`generate_checked_signals`](../src/tradingdev/domain/strategies/signals.py)
+rejects output, callers can inspect `SignalContractError.analysis` for observations
+that `signal_analysis` could safely extract. The direct isolated worker returns
+this analysis alongside its contract diagnostics. Malformed output may yield only
+partial analysis or an empty mapping; other execution failures need not provide
+analysis, and complete statistics are not guaranteed.
+
 ### Signal and Execution Semantics
 
 In signal mode, each row specifies a position state: `1` long, `-1` short,
@@ -757,6 +764,13 @@ guarantees of paths that have not been connected to it.
 These guarantees apply only to commands launched through `DockerRuntime.open`.
 The callable API, message protocol, ownership records and cleanup recovery are
 maintained in [Container Execution Adapter](../ARCHITECTURE.md#容器執行-adapter).
+
+The direct generated worker's
+[`_constructor_kwargs`](../src/tradingdev/adapters/execution/strategy_worker.py)
+rejects `backtest_engine` or `parallel_config` in constructor signatures or supplied
+settings. Host application context is not injected on this path; the current
+product host paths retain the optional context behavior described in
+[Python Contract](#python-contract).
 
 Each execution unit has a private Linux PID namespace. Its trusted
 [`container_init`](../src/tradingdev/adapters/execution/container_init.py) runs as

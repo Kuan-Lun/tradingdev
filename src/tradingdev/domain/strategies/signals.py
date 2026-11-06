@@ -20,8 +20,14 @@ _MARKET_COLUMNS = ("timestamp", "open", "high", "low", "close", "volume")
 class SignalContractError(ValueError):
     """Reject invalid strategy output before handing any rows to an engine."""
 
-    def __init__(self, diagnostics: list[StrategyDiagnostic]) -> None:
+    def __init__(
+        self,
+        diagnostics: list[StrategyDiagnostic],
+        *,
+        analysis: dict[str, Any] | None = None,
+    ) -> None:
         self.diagnostics = tuple(diagnostics)
+        self.analysis = analysis or {}
         super().__init__(
             "; ".join(f"{item.code}: {item.message}" for item in diagnostics)
         )
@@ -188,5 +194,42 @@ def generate_checked_signals(
     result = strategy.generate_signals(supplied)
     diagnostics = check_signal_frame(frame, supplied, result)
     if diagnostics:
-        raise SignalContractError(diagnostics)
+        raise SignalContractError(diagnostics, analysis=signal_analysis(result))
     return result
+
+
+def signal_analysis(result: object) -> dict[str, Any]:
+    """Preserve available observations even when signal validation rejects output."""
+    if not isinstance(result, pd.DataFrame):
+        return {}
+    analysis: dict[str, Any] = {"rows": int(len(result))}
+    if not result.columns.is_unique or "signal" not in result.columns:
+        return analysis
+    signals = result["signal"]
+    try:
+        distribution = {
+            str(key): int(value)
+            for key, value in signals.value_counts(dropna=False).to_dict().items()
+        }
+        transitions = int(signals.fillna(0).ne(signals.fillna(0).shift()).sum() - 1)
+        active = int(signals.isin([-1, 1]).sum())
+    except TypeError, ValueError:
+        # Invalid, non-scalar signal values must not erase the original finding.
+        return analysis
+    analysis.update(
+        signal_distribution=distribution,
+        nan_count=int(signals.isna().sum()),
+        transition_count=max(transitions, 0),
+        active_signal_ratio=active / max(len(result), 1),
+        first_timestamp=(
+            str(result["timestamp"].iloc[0])
+            if "timestamp" in result.columns and not result.empty
+            else None
+        ),
+        last_timestamp=(
+            str(result["timestamp"].iloc[-1])
+            if "timestamp" in result.columns and not result.empty
+            else None
+        ),
+    )
+    return analysis

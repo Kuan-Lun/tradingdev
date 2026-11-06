@@ -63,11 +63,22 @@ ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定�
 
 獨立策略 worker 使用 `strategy-runtime` target。完整離線測試包含真實 Linux 容器邊界
 檢查，需先準備可透過本機 Unix socket 連線、支援 cgroup v2 資源限制的 Docker Engine
-與此映像；所有支援平台都不接受 SSH 或 TCP 遠端端點：
+與此映像；所有支援平台都不接受 SSH 或 TCP 遠端端點。建置另需 Docker CLI 的
+Buildx 元件，不能只以 Engine 可用判定工具已齊備。先執行 `docker buildx version`，
+再以 `docker buildx create --help` 確認包含 `docker-container` driver、
+`docker buildx build --help` 確認支援 `--load`；缺少命令或能力時須先安裝或更新
+Docker 安裝來源提供的 Buildx 元件，不能繼續下列建置。
+
+在 repository 根目錄為本次檢查建立專用 builder 與標籤，明確選用 builder 而不切換預設 builder：
 
 ```bash
-docker build --target strategy-runtime -t tradingdev-strategy-runtime:dev .
-export TRADINGDEV_STRATEGY_IMAGE=tradingdev-strategy-runtime:dev
+tradingdev_check_id="$(uv run --no-sync python -c 'import uuid; print(uuid.uuid4().hex)')"
+tradingdev_check_builder="tradingdev-check-${tradingdev_check_id}"
+tradingdev_check_image="tradingdev-strategy-runtime:check-${tradingdev_check_id}"
+docker buildx create --name "$tradingdev_check_builder" --driver docker-container
+docker buildx build --builder "$tradingdev_check_builder" --load \
+  --target strategy-runtime -t "$tradingdev_check_image" .
+export TRADINGDEV_STRATEGY_IMAGE="$tradingdev_check_image"
 ```
 
 此映像供 `DockerRuntime` 的直接呼叫與測試使用，尚未接入產品策略流程；既有入口的
@@ -81,10 +92,25 @@ macOS 可使用 Docker Desktop 提供的 Linux Engine。
 欄位間限制以 [`RuntimeLimits`](../src/tradingdev/domain/runtime.py) 為準。
 
 直接整合或診斷 adapter 時，查閱[容器執行 adapter](../ARCHITECTURE.md#容器執行-adapter)，
-取得 `DockerRuntime.resolve/open`、`ContainerSession.exchange`、清理失敗判定及
-`recover_abandoned` 的呼叫契約。傳輸、程序身分與故障清理的驗證入口為
+取得 `DockerRuntime.resolve/open`、`ContainerSession.exchange`、生成策略呼叫與身分綁定、
+清理失敗判定及 `recover_abandoned` 的契約。傳輸、程序身分與故障清理的驗證入口為
 [替代 daemon 的 adapter 測試](../tests/adapters/test_container_runtime.py)及
 [真實容器測試](../tests/integration/test_strategy_isolation.py)。
+生成策略資料協定另由 [codec 測試](../tests/adapters/test_frame_codec.py)及
+[直接 worker／proxy 測試](../tests/integration/test_generated_protocol.py)驗證。
+
+變更 worker、資料協定或其依賴後，須從待驗證內容重建策略映像，再執行相關測試。
+固定 image ID 不會隨標籤重建而改變。保留上述變數值；確認本次 host 工作已停止、
+所有關聯執行容器均已停止並移除，且映像沒有其他執行引用後，才在同一個 shell 清理：
+
+```bash
+docker image rm "$tradingdev_check_image" &&
+  docker buildx rm "$tradingdev_check_builder"
+```
+
+移除專用 builder 時不加 `--keep-state`，會一併移除其建置快取。
+只清理本次資源，不使用 force 或全域 prune。任一步驟失敗或無法確認清理時，
+停止後續清理並保留剩餘資源、控制目錄及紀錄，依上述 adapter 復原契約處理。
 
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
