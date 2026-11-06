@@ -176,6 +176,65 @@ def _document(manifest: ExecutionManifest) -> ConfirmationDocument:
     )
 
 
+@pytest.mark.parametrize(
+    "source,default_source,market_type,expected",
+    [
+        ("yahoo_finance", "binance_vision", "futures/um", "不適用（Yahoo Finance）"),
+        ("binance_api", "binance_vision", "futures/um", "不適用（Binance 行情介面）"),
+        ("binance_vision", "yahoo_finance", "spot", "現貨"),
+        (
+            "binance_vision",
+            "binance_vision",
+            "futures/um",
+            "以穩定幣保證金計價的合約",
+        ),
+    ],
+)
+def test_market_type_describes_the_effective_source(
+    source: str, default_source: str, market_type: str, expected: str
+) -> None:
+    original = _manifest()
+    config = original.config_copy()
+    config["data"]["source"] = default_source
+    config["data"]["requirements"]["market"]["source"] = source
+    config["data"]["market_type"] = market_type
+    manifest = ExecutionManifest.create(
+        kind=original.kind,
+        config=config,
+        strategy_execution=original.strategy_execution,
+    )
+    document = _document(manifest)
+    market = next(section for section in document.sections if section.id == "market")
+    field = next(field for field in market.fields if field.label == "市場類型")
+    assert field.value_text == expected
+    for rendered in (
+        render_confirmation_text(document),
+        unescape(render_confirmation_html(document)),
+    ):
+        assert expected in rendered
+        if source != "binance_vision":
+            assert "以穩定幣保證金計價的合約" not in rendered
+    if source != "binance_vision":
+        html = unescape(render_confirmation_html(document))
+        assert "未適用的市場類型設定" in html
+        assert market_type in html
+        assert "不參與本次行情選擇" in html
+    assert manifest.config == config
+
+
+def test_confirmation_rejects_an_unknown_market_source() -> None:
+    original = _manifest()
+    config = original.config_copy()
+    config["data"]["requirements"]["market"]["source"] = "not-registered"
+    manifest = ExecutionManifest.create(
+        kind=original.kind,
+        config=config,
+        strategy_execution=original.strategy_execution,
+    )
+    with pytest.raises(ValueError, match="Unknown market data source: not-registered"):
+        _document(manifest)
+
+
 def test_volume_month_baseline_is_visible_in_all_confirmation_formats() -> None:
     document = _document(_manifest(backtest={"mode": "volume", "init_cash": None}))
     for rendered in (
