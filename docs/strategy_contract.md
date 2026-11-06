@@ -54,8 +54,9 @@ the payload and saved locations.
 The shared frame checker enforces these structural rules on synthetic fixtures
 and the actual frames used by simple backtests, fixed comparisons, optimization
 trials and both sides of walk-forward folds. Invalid frames fail before their
-engine call. Execution supplies a copy so ordinary DataFrame mutation by a failed
-candidate cannot alter the captured market data for later candidates. Indicator
+engine call. Execution supplies detached copies of data, ordinary nested feature
+values and index/column arrays. Mutating these inputs, including before raising
+an exception, cannot alter the captured market data for later candidates. Indicator
 columns may still contain warm-up NaNs. These checks do not prove the absence of
 future-data use, agreement with a prose strategy, or safe Python execution.
 
