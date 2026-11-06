@@ -11,8 +11,8 @@
 
 ## FR-RES-002 績效與基準解讀
 
-- **需求**：績效提供保存的定義、單位、適用性及不可用原因；依模式區分報酬、金額損益、交易統計與分折結果。可提供基準的結果依資產類別的正式政策計算及保存基準。
-- **驗收**：缺值不當作零，未平倉不冒充已平倉；粗於日頻資料不假造年化與日／月統計。回測與 walk-forward 的個別執行 scope 可保存基準，`test_summary` 因無單一路徑而沒有基準，最佳化目前不保存基準。不支援或資料覆蓋不足的基準明示原因，不借用其他市場基準；基準取得失敗不使已完成的回測失敗。歷史指標不被目前 catalog 替換。
+- **需求**：回測 run 的績效提供保存的定義、單位、適用性及不可用原因；依模式區分報酬、金額損益、交易統計與分折結果。可提供基準的結果依資產類別的正式政策計算及保存基準。
+- **驗收**：缺值不當作零，未平倉不冒充已平倉；粗於日頻資料不假造年化與日／月統計。回測與 walk-forward 的個別執行 scope 可保存基準，`test_summary` 因無單一路徑而沒有基準，最佳化目前不保存基準。不支援或資料覆蓋不足的基準明示原因，不借用其他市場基準；基準取得失敗不使已完成的回測失敗。回測 run 保存的歷史指標定義不被目前 catalog 替換。
 - **契約**：[績效解讀與基準](../performance_artifacts.md)。
 - **驗證**：[歷史績效查詢](../../tests/app/test_run_metrics.py)、[績效數值](../../tests/domain/backtest/test_performance_metrics.py)、[基準 service](../../tests/app/test_benchmark_service.py) 核對定義、缺值與對齊。
 
@@ -39,10 +39,10 @@
 
 ## NFR-DATA-001 保存完整性與可追溯性
 
-- **需求**：歷史結果固定執行設定、來源身分與當時指標定義；讀取及發佈須核對相關證據，區分完整結果、部分狀態與不可用資料。
-- **驗收**：缺少或變更來源時不靜默取用其他版本；失敗不把缺值當零或補造交易。Hash 只在預期值可信時檢查一致性，不宣稱抵抗同時控制檔案與資料庫的寫入者；檔案與資料庫不宣稱跨資源交易。
-- **契約**：[執行產物](../run_artifacts.md#artifact-references)、[績效保存](../performance_artifacts.md#performance-scopes-and-provenance)。
-- **驗證**：[manifest 儲存](../../tests/app/test_execution_manifest_storage.py)、[績效產物儲存](../../tests/app/test_performance_artifact_storage.py) 核對綁定、損壞及發佈失敗。
+- **需求**：歷史結果固定各自保存的設定與來源身分；回測 run 另保存當時指標定義。讀取及發佈須核對相關證據，區分完整結果、部分狀態與不可用資料，並區分指標定義的取得時點。
+- **驗收**：ML 排行榜紀錄不保存指標定義快照；從相同評估紀錄新產生報告時，採用報告產生時的 signal catalog，不宣稱還原評估當時的定義。既有報告保留其已保存的定義，不隨 catalog 更新改變。缺少或變更來源時不靜默取用其他版本；失敗不把缺值當零或補造交易。Hash 只在預期值可信時檢查一致性，不宣稱抵抗同時控制檔案與資料庫的寫入者；檔案與資料庫不宣稱跨資源交易。
+- **契約**：[執行產物](../run_artifacts.md#artifact-references)、[績效保存](../performance_artifacts.md#performance-scopes-and-provenance)、[ML 評估與定義來源](../ml_research.md#recorded-signal-evaluations)、[報告快照](../reports.md#composable-offline-reports)。
+- **驗證**：[manifest 儲存](../../tests/app/test_execution_manifest_storage.py)、[績效產物儲存](../../tests/app/test_performance_artifact_storage.py) 核對綁定、損壞及發佈失敗；[ML 報告投影](../../tests/domain/ml/test_ml_report.py)、[ML 報告 service](../../tests/app/test_ml_report_service.py) 核對定義投影與已保存報告的獨立性。
 
 ## NFR-UX-001 報告可閱讀與操作
 
