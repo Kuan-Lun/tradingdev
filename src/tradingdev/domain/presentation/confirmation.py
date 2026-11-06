@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from tradingdev.domain.backtest.execution_policy import DEFAULT_VOLUME_POSITION_SIZE
+from tradingdev.domain.data.crawlers.registry import describe_sources
 from tradingdev.domain.execution_assumptions import (
     resolve_execution_assumptions,
     summarize_execution_assumptions,
@@ -182,6 +183,13 @@ def _market_fields(
     _known_fields(requirements, {"market", "features"}, "data requirements")
     market = _object(requirements["market"], "market data")
     _known_fields(market, {"source", "symbol", "timeframe"}, "market data")
+    source = market["source"]
+    source_details = next(
+        (item for item in describe_sources() if item["source"] == source), None
+    )
+    if source_details is None:
+        raise ValueError(f"Unknown market data source: {source}")
+    uses_market_type = bool(source_details["market_types"])
     market_type = {
         "spot": "現貨",
         "futures/um": "以穩定幣保證金計價的合約",
@@ -205,14 +213,24 @@ def _market_fields(
         _field("預設資料來源", _source(data["source"]), detail=True),
         _field(
             "市場類型",
-            market_type,
-            "此選項用於 Binance 歷史資料庫；其他資料來源依其商品定義。",
+            market_type if uses_market_type else f"不適用（{_source(source)}）",
+            "本次行情來源使用此設定選擇市場。"
+            if uses_market_type
+            else "此行情來源不使用市場類型設定；商品種類依來源與商品代碼定義。",
         ),
     ]
     technical = [
         _field("原始行情保存位置", data["raw_dir"]),
         _field("處理後行情保存位置", data["processed_dir"]),
     ]
+    if not uses_market_type:
+        technical.append(
+            _field(
+                "未適用的市場類型設定",
+                data["market_type"],
+                "保留的共用設定值，不參與本次行情選擇。",
+            )
+        )
     feature_values = requirements["features"]
     if not isinstance(feature_values, list):
         raise ValueError("Confirmation feature requirements must be a list")

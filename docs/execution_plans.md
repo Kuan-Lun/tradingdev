@@ -118,6 +118,13 @@ the user interface. Both text and HTML render the same document; technical
 identity and file paths are outside the main explanation, in HTML details and
 machine metadata. The HTML is offline, escapes text and disables scripts.
 
+Market-type applicability follows the registered capabilities of the effective
+`data.requirements.market.source`, rather than the default `data.source`.
+Sources that do not use `data.market_type`, including Yahoo Finance and Binance
+API, show that setting as not applicable. The stored, unused value remains in
+HTML technical details and the captured configuration; it is not presented as
+the instrument's market type. Existing saved confirmations are not rewritten.
+
 When research provenance is present, market, period, capital, costs and annualization
 fields identify their origins. The document separately displays the saved outline,
 the observed-UTC-daily-return basis and unavailable sampling reasons. Technical
