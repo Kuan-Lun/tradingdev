@@ -35,8 +35,8 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 | --- | --- | --- |
 | 01 | [開發動機與專案定位](index.html#3) | 現成工具的範圍、自製理由與使用情境 |
 | 02 | [策略研究](index.html#11) | 角色分工、運算安排與策略實驗 |
-| 03 | [經驗如何回饋專案](index.html#47) | 開發經驗的整合與驗證 |
-| 04 | [後續開發方向](index.html#50) | 可獨立指定的開發目標 |
+| 03 | [經驗如何回饋專案](index.html#48) | 開發經驗的整合與驗證 |
+| 04 | [後續開發方向](index.html#51) | 可獨立指定的開發目標 |
 
 <!-- _footer: "點選章名跳轉。方向鍵換頁，P 開啟講者模式。" -->
 
@@ -745,7 +745,7 @@ gpt-6.1-sol｜該輪最終回覆
 
 [開啟完整確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html) · [完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html)
 
-<!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
+<!-- _footer: "原生 HTML 頁面內容；完整內容由連結續讀。" -->
 
 <!--
 來源：新案例 screenshots/01-confirmation-native.jpg。閱讀文件不啟動回測；不能據此證明真人已閱讀。
@@ -870,6 +870,27 @@ gpt-6.1-sol｜該輪最終回覆
 
 ---
 
+<!-- _class: compact -->
+<!-- _header: "02　策略研究　／　回測結果" -->
+
+## 這次回測的績效指標
+
+| 指標 | 保存數值 | 指標 | 保存數值 |
+| --- | ---: | --- | ---: |
+| 區間報酬 | 24.33% | 最大回撤 | 8.61% |
+| 年化報酬 | 59.21% | 年化波動率 | 16.44% |
+| 夏普比率 | 2.91 | 已平倉勝率 | 40.00% |
+| 已平倉交易 | 5 筆 | 期末未平倉 | 1 筆 |
+
+- **區間報酬包含未平倉損益**；勝率只計已平倉交易。
+- 年化數值依確認單的每年日數換算，**不是未來一年報酬的預測**。
+
+[原生報告：績效分析與保存指標](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · [完整數值與定義](evidence/0050-taiex/cases/01-ma-discussion/metrics.json)
+
+<!-- _footer: "數值取自本次回測保存指標，四捨五入至小數點後兩位；詳見原生報告。" -->
+
+---
+
 <!-- _class: case-shot case-native case-equity -->
 <!-- _header: "02　策略研究　／　新版 0050 案例" -->
 
@@ -879,7 +900,7 @@ gpt-6.1-sol｜該輪最終回覆
 
 [開啟報告並查看結果明細](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0)
 
-<!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
+<!-- _footer: "原生 HTML 頁面內容；完整內容由連結續讀。" -->
 
 <!--
 來源：新案例 screenshots/02-equity-native.jpg。畫面節錄曲線區段，完整序列及互動明細保留在原生報告。
@@ -991,7 +1012,7 @@ gpt-6.1-sol｜該輪最終回覆
 
 [開啟完整基準與資料覆蓋](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · [保存的基準資料](evidence/0050-taiex/cases/01-ma-discussion/benchmark.json)
 
-<!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
+<!-- _footer: "原生 HTML 頁面內容；完整內容由連結續讀。" -->
 
 <!--
 來源：新案例 screenshots/03-benchmark-native.jpg。^TWII 價格指數未含股利；完整對齊118根。同成本假設不等於同標的，差距不能全歸因於擇時。
@@ -1188,7 +1209,7 @@ gpt-6.1-sol｜該輪最終回覆
 
 [開啟研究筆記](evidence/0050-taiex/cases/01-ma-discussion/notebook/index.html) · [閱讀完整對話（HTML）](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html) · [案例總覽](evidence/0050-taiex/index.html)
 
-<!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
+<!-- _footer: "原生 HTML 頁面內容；完整內容由連結續讀。" -->
 
 <!--
 來源：新案例 screenshots/04-notebook-native.jpg。研究筆記依對話要求保存，與自動保存的完整對話紀錄不同。
