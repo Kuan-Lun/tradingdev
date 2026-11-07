@@ -35,8 +35,8 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 | --- | --- | --- |
 | 01 | [開發動機與專案定位](index.html#3) | 現成工具的範圍、自製理由與使用情境 |
 | 02 | [策略研究](index.html#11) | 角色分工、運算安排與策略實驗 |
-| 03 | [經驗如何回饋專案](index.html#34) | 開發經驗的整合與驗證 |
-| 04 | [後續開發方向](index.html#37) | 可獨立指定的開發目標 |
+| 03 | [經驗如何回饋專案](index.html#33) | 開發經驗的整合與驗證 |
+| 04 | [後續開發方向](index.html#36) | 可獨立指定的開發目標 |
 
 <!-- _footer: "點選章名跳轉。方向鍵換頁，P 開啟講者模式。" -->
 
@@ -778,29 +778,14 @@ gpt-6.1-sol｜該輪最終回覆
 - **完整案例證據**：6 輪可見對話與 MCP 原文、各版報告、策略、指標與校驗資料。
 - **比較界線**：三組均線各自執行，大盤是市場基準；改善建議尚未執行。
 
-[閱讀完整對話（HTML）](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html) · [案例總覽](evidence/0050-taiex/index.html) · [下載產品研究包](evidence/0050-taiex/cases/01-ma-discussion/research.zip) · [下載完整案例證據包](evidence/0050-taiex/natural-case-evidence.zip)
+[開啟研究筆記](evidence/0050-taiex/cases/01-ma-discussion/notebook/index.html) · [下載產品研究包](evidence/0050-taiex/cases/01-ma-discussion/research.zip)
+
+[閱讀完整對話（HTML）](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html) · [案例總覽](evidence/0050-taiex/index.html) · [下載完整案例證據包](evidence/0050-taiex/natural-case-evidence.zip)
 
 *完整解壓後可離線閱讀；研究筆記是摘要，逐字內容另由對話紀錄查閱。*
 
 <!--
 完整對話由 TradingDev 的 Codex CLI 接入自動保存並原生匯出 HTML／JSON；研究包保存研究筆記與報告。案例總覽與證據包另行整理，保留兩種成果的來源。舊案例保留在 evidence/0050-ma/，未改寫歷史報告或結果。原始研究工作區另行保留，可持續查詢；離線證據包不是可攜式執行環境。
--->
-
----
-
-<!-- _class: case-shot case-native case-equity -->
-<!-- _header: "02　策略研究　／　新版 0050 案例" -->
-
-## 原生研究筆記：保留結果與未完成事項
-
-![新版原生研究筆記及台股大盤比較](assets/0050-taiex-notebook.jpg)
-
-[開啟研究筆記](evidence/0050-taiex/cases/01-ma-discussion/notebook/index.html) · [閱讀完整對話（HTML）](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html) · [案例總覽](evidence/0050-taiex/index.html)
-
-<!-- _footer: "原生 HTML 頁面內容；完整內容由連結續讀。" -->
-
-<!--
-來源：新案例 screenshots/04-notebook-native.jpg。研究筆記依對話要求保存，與自動保存的完整對話紀錄不同。
 -->
 
 ---
