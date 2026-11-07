@@ -125,7 +125,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 [Execution Manifest](docs/run_artifacts.md#execution-manifest)。
 
 單次背景回測與最佳化以 job ID 作為 run ID；固定比較由父 job 管理各候選 run，
-沒有父工作的合併資金績效。CLI 同步執行保存 run，但不建立背景 job。
+沒有父工作的合併資金績效。直接回測 CLI 同步執行保存 run，但不建立背景 job。
 策略、工作與結果的狀態各自獨立。
 
 ## 從策略建立到結果查詢

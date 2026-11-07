@@ -385,7 +385,7 @@ research provenance, is identical. Strategy identity and non-parameter declarati
 remain bound to the revision. Without an MCP `parameters` override, or with
 `parameters: null`, `config.strategy.parameters` retains the input configuration's
 parameter mapping while constructor defaults are expanded separately into
-`strategy_execution`. CLI execution likewise retains the parameter mapping from
+`strategy_execution`. Direct backtest CLI execution likewise retains the parameter mapping from
 its submitted YAML, which may already contain experiment settings.
 
 An explicit MCP `parameters` mapping, including `{}`, recursively overlays the
@@ -679,7 +679,7 @@ run seed. Run comparison,
 dashboard rendering, and artifact lookup always read through SQLite first, then
 resolve files from the recorded artifact paths.
 
-CLI runs keep dashboard pickles under the processed-data `cache` directory, while
+Direct backtest CLI runs keep dashboard pickles under the processed-data `cache` directory, while
 `runs.artifact_dir` points to `runs/cli_<cache_key>_<execution_id>/` with the
 registered manifest and shared performance/observation JSON. Each save gets a
 fresh execution ID and separate pickle; rerunning the same request can preserve
