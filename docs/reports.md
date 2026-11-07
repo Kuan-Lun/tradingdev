@@ -605,7 +605,10 @@ receive an error and stop the turn.
 The transport bounds individual JSON frames and uses nonblocking writes. Its direct
 child remains unreaped until process-group teardown has been checked on success,
 exception and timeout. TradingDev's independently managed research workers are not
-cancelled merely because the client closes. Capture failures retain the previous
-saved evidence and attempt an incomplete reading export; export failure returns
-the conversation identity and reason for later inspection. Normal closure never
+cancelled merely because the client closes. Capture failures attempt to export the
+last durably saved version. An already-persisted running turn is sealed as
+interrupted/incomplete when that save succeeds. If a new input could not be saved,
+for example because of capacity, it is absent from the export and earlier complete
+turns remain labelled complete. Export failure returns the conversation identity
+and reason for later inspection. Normal closure never
 deletes a research workspace, conversation or export.
