@@ -88,9 +88,9 @@ bash scripts/stage-presentations.sh
 Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
 `site-dist/tradingdev/` 是忽略的發布產物，每次重新建立，只包含簡報 HTML、圖片與明列的
 案例證據；不會將整個 `docs/` 或一般使用者 workspace 發布。
-`wrangler.jsonc` 的 `build.command` 供本機 Wrangler 部署使用，同樣執行這份複製腳本。
-Workers Builds 不採用這項 Custom Builds 設定；既有 Cloudflare 專案必須分別更新
-**Production** 與 **Preview base** 的 Build command，才能在雲端準備完整資源。
+`wrangler.jsonc` 的 `build.command` 同樣指向這份複製腳本。
+Workers Builds 的 Build command 由 Cloudflare 獨立保存；請將 **Production** 與
+**Preview base** 同步設定為上述腳本，使雲端與本機的成品準備步驟一致。
 
 分支預覽使用 `wrangler.jsonc` 的 `previews` 區塊；即使沒有獨立設定，也須保留空物件。
 Cloudflare 的 Wrangler 預覽設定契約明定此要求，原文節錄：
