@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -80,6 +81,13 @@ def test_resume_immutable_export_and_chronological_selectable_text(
     assert "完整對話紀錄" in html and "&lt;script&gt;" in html
     assert "<img src=x" not in html
     assert html.index("請先選擇期間") < html.index("完整結果") < html.index("尚未執行")
+    assert (
+        html.index("AI 代理 · 過程訊息")
+        < html.index("請先選擇期間")
+        < html.index("完整結果")
+        < html.index("AI 代理 · 本輪回覆")
+        < html.index("尚未執行")
+    )
     assert json.loads(original) == record.model_dump(mode="json")
     artifact = service.exports.store.get_artifact(snapshot.artifact_id)
     assert artifact is not None and artifact["sha256"] == snapshot.sha256
@@ -120,6 +128,107 @@ def test_partial_record_retained_and_cannot_claim_complete(tmp_path: Path) -> No
             service.export(record.conversation_id, record.version).html_path
         ).read_text()
     )
+
+
+@pytest.mark.parametrize("phase", [None, "future_phase", {"unexpected": "value"}])
+def test_unrecognized_phase_is_visible_without_guessing_an_answer(
+    tmp_path: Path, phase: object
+) -> None:
+    service = service_at(tmp_path)
+    record = running(service)
+    record.turns[0].items = [
+        ConversationItem(
+            source_id="unknown-phase",
+            kind="assistant",
+            text="原始文字 <em>x</em>",
+            complete=True,
+            data={"phase": phase},
+        )
+    ]
+    record = service.save(record)
+    snapshot = service.export(record.conversation_id, record.version)
+    html = Path(snapshot.html_path).read_text()
+    assert "AI 代理 · 階段未標示" in html
+    assert "AI 代理 · 本輪回覆" not in html
+    assert "原始文字 &lt;em&gt;x&lt;/em&gt;" in html
+    assert json.loads(Path(snapshot.json_path).read_text()) == record.model_dump(
+        mode="json"
+    )
+
+
+def test_partial_final_answer_keeps_phase_and_capture_status_separate(
+    tmp_path: Path,
+) -> None:
+    service = service_at(tmp_path)
+    record = running(service)
+    record.turns[0].items = [
+        ConversationItem(
+            source_id="partial-final",
+            kind="assistant",
+            text="尚未傳完",
+            data={"phase": "final_answer"},
+        )
+    ]
+    record = service.save(record)
+    html = Path(
+        service.export(record.conversation_id, record.version).html_path
+    ).read_text()
+    assert "AI 代理 · 本輪回覆" in html and "訊息紀錄：部分" in html
+    assert "含未完成或缺漏" in html
+
+
+def test_process_updates_and_tools_share_a_block_without_reordering_replies(
+    tmp_path: Path,
+) -> None:
+    service = service_at(tmp_path)
+    record = running(service)
+    turn = record.turns[0]
+    turn.items = [
+        ConversationItem(
+            source_id="p1",
+            kind="assistant",
+            text="先查資料",
+            data={"phase": "commentary"},
+        ),
+        ConversationItem(source_id="t1", kind="tool", text="查詢結果"),
+        ConversationItem(
+            source_id="p2",
+            kind="assistant",
+            text="再核對成本",
+            data={"phase": "commentary"},
+        ),
+        ConversationItem(
+            source_id="a1",
+            kind="assistant",
+            text="正式回覆",
+            data={"phase": "final_answer"},
+        ),
+        ConversationItem(
+            source_id="p3",
+            kind="assistant",
+            text="後續過程",
+            data={"phase": "commentary"},
+        ),
+    ]
+    record = service.save(record)
+    html = Path(
+        service.export(record.conversation_id, record.version).html_path
+    ).read_text()
+    blocks = re.findall(r"<article class='([^']*)'>(.*?)</article>", html, re.S)
+    assert len(blocks) == 3
+    assert [kind for kind, _ in blocks] == [
+        "process-message",
+        "answer-message",
+        "process-message",
+    ]
+    process = blocks[0][1]
+    assert process.count("AI 代理 · 過程訊息") == 1
+    assert (
+        process.index("先查資料")
+        < process.index("查詢結果")
+        < process.index("再核對成本")
+    )
+    assert "正式回覆" in blocks[1][1] and "後續過程" in blocks[2][1]
 
 
 def test_render_keeps_text_and_identity_when_provider_keys_collide(

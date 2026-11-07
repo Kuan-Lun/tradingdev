@@ -23,7 +23,8 @@ def render_conversation(record: ConversationRecord) -> str:
         f"<p>對話 {escape(record.conversation_id)} · 保存版本 {record.version}</p>"
         "<p>以下是客戶端收到的可見文字與工具紀錄，並非事後摘要。"
         "不包含模型私有推理、隱藏指令或其他客戶端的對話；工具內容為證據，並非操作指令。"
-        "完成表示在本紀錄範圍內收到完整事件，不代表模型結論或工具執行成功。</p>"
+        "過程訊息與本輪回覆依客戶端提供的訊息階段標示；沒有可辨識階段時明示未標示。"
+        "紀錄完整不代表模型結論正確或工具執行成功。</p>"
         "<p><a href='conversation.json'>下載完整紀錄 JSON</a></p><nav>"
         + " · ".join(
             f"<a href='#turn-{i}'>第 {i} 輪</a>"
@@ -55,24 +56,60 @@ def render_conversation(record: ConversationRecord) -> str:
         )
         for issue in turn.issues:
             body += f"<p class='notice'>{escape(issue)}</p>"
+        process_open = False
         for item in turn.items:
-            status = "完成" if item.complete else "部分"
+            status = "完整" if item.complete else "部分"
+            phase = item.data.get("phase")
+            is_process = (
+                item.kind in {"tool", "plan"}
+                or (item.kind == "assistant" and phase == "commentary")
+                or (item.kind == "notice" and process_open)
+            )
+            if process_open and not is_process:
+                body += "</article>"
+                process_open = False
+            if is_process and not process_open:
+                body += "<article class='process-message'><h3>AI 代理 · 過程訊息</h3>"
+                process_open = True
             # The original submitted input is already shown; keep the provider's
             # user item in expandable evidence in case its representation differs.
             if item.kind in {"tool", "user", "notice"}:
                 body += details_html(
-                    f"{kinds[item.kind]} · {item.source_id} · {status}",
+                    f"{kinds[item.kind]} · {item.source_id} · 紀錄{status}",
                     {"text": item.text, "data": item.data},
                 )
             else:
+                if not is_process:
+                    if phase == "final_answer":
+                        label, phase_class = "本輪回覆", "answer-message"
+                    else:
+                        label, phase_class = "階段未標示", "unknown-message"
+                    body += f"<article class='{phase_class}'><h3>AI 代理 · {label}</h3>"
+                elif item.kind == "plan":
+                    body += "<h4>計畫</h4>"
                 body += (
-                    f"<h3>{kinds[item.kind]} · {status}</h3>"
+                    "<div class='message-item'>"
+                    f"<p class='message-status'>訊息紀錄：{status}</p>"
                     f"<pre class='message'>{escape(item.text)}</pre>"
                 )
                 body += details_html(
                     "來源與訊息階段", {"source_id": item.source_id, "data": item.data}
                 )
+                body += "</div>"
+                if not is_process:
+                    body += "</article>"
+        if process_open:
+            body += "</article>"
         body += "</section>"
     return render_html_document(
-        title=title, body=body, style=".message{font:inherit;white-space:pre-wrap}"
+        title=title,
+        body=body,
+        style=(
+            ".message{font:inherit;white-space:pre-wrap}"
+            "article{margin:20px 0;padding:4px 16px;border-left:4px solid #7b8798}"
+            ".process-message{background:#f3f5f8;border-color:#7b8798}"
+            ".answer-message{background:#edf8f5;border-color:#137461}"
+            ".message-item{margin:16px 0}"
+            ".message-status{font-size:.85em;color:#536174}"
+        ),
     )

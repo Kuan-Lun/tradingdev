@@ -532,15 +532,21 @@ paged metadata. `export(conversation_id, expected_version)` produces an immutabl
 snapshot under `conversations/<export_id>/` with `index.html`, `conversation.json`
 and a file-hash `manifest.json`. Its identity is the manifest SHA-256. HTML contains
 selectable, escaped original text in turn/item order, expandable full tool records,
-and clear partial/interrupted status. It needs no network or scripts; the JSON link
+and clear partial/interrupted status. Assistant messages visibly distinguish
+process updates from final replies using the recorded provider phase; missing or
+unrecognized phases are labelled as unspecified, never inferred from message order.
+Consecutive process updates and intervening tool records share one process block;
+replies and unspecified assistant messages remain separate, preserving item order.
+Message capture status is separate from that phase. It needs no network or scripts; the JSON link
 needs its adjacent file. Exports contain no copied reports or full workspace data.
 Sharing exposes all recorded messages and tool contents, including any sensitive
 information submitted in those messages.
 
 Publication checks existing snapshot bytes and artifact identity, rejects symlinks
 and differing files, and removes only newly created files on failure. Repeated
-exports of an unchanged record reuse verified bytes; later turns produce a new
-snapshot. The HTML is registered as `conversation_html`, discoverable through the
+exports reuse verified bytes when the record and rendered output are unchanged;
+later turns or renderer changes produce a new snapshot without replacing earlier
+exports. The HTML is registered as `conversation_html`, discoverable through the
 existing artifact tools. Paths are local files, not public download URLs. No saved
 conversation or export expires automatically; retain the workspace to resume.
 
