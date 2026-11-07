@@ -504,8 +504,9 @@ and optimistic versions cannot prove that a user said or approved a statement.
 `app.conversation_service.ConversationService` records provider-neutral visible
 conversation items supplied by client adapters. It is separate from editable
 research summaries and does not observe arbitrary MCP clients. Canonical models
-and byte limits live in `domain/conversations.py`; export limits live in
-`adapters/storage/conversation_exports.py`.
+`ConversationRecord`, `ConversationTurn` and `ConversationItem`, with the record
+limit `MAX_CONVERSATION_BYTES`, live in `domain/conversations.py`. The export limit
+`MAX_EXPORT_BYTES` lives in `adapters/storage/conversation_exports.py`.
 
 `create(provider, model)` creates an empty record. The adapter binds its source
 thread before `start_turn(record, prompt)` persists the exact submitted input.
