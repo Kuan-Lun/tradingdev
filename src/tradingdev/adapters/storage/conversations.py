@@ -108,7 +108,7 @@ class ConversationStore:
     def _check_history(
         previous: ConversationRecord, record: ConversationRecord
     ) -> None:
-        for field in ("provider", "model", "created_at"):
+        for field in ("provider", "model", "settings", "created_at"):
             if getattr(record, field) != getattr(previous, field):
                 raise ConversationConflictError("Conversation identity cannot change")
         if (

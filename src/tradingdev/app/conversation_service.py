@@ -13,6 +13,8 @@ from tradingdev.app.contracts.conversations import ConversationSummary
 from tradingdev.domain.conversations import ConversationRecord, ConversationTurn
 
 if TYPE_CHECKING:
+    from pydantic import JsonValue
+
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
     from tradingdev.adapters.storage.sqlite import SQLiteStore
     from tradingdev.app.contracts.conversations import ConversationExport
@@ -23,12 +25,15 @@ class ConversationService:
         self.records = ConversationStore(store)
         self.exports = ConversationExports(workspace, store)
 
-    def create(self, provider: str, model: str) -> ConversationRecord:
+    def create(
+        self, provider: str, model: str, *, settings: dict[str, JsonValue] | None = None
+    ) -> ConversationRecord:
         now = now_iso()
         record = ConversationRecord(
             conversation_id=uuid4().hex,
             provider=provider,
             model=model,
+            settings=settings or {},
             created_at=now,
             updated_at=now,
         )

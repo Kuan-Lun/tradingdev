@@ -558,6 +558,37 @@ HTTP 連線會提供 15 分鐘有效的 ZIP 下載網址；持有網址者可下
 若希望把研究中可重用的邏輯整合回專案，另見開發指南的
 [研究成果工程回饋](docs/development.md#研究成果工程回饋)；這需要能存取專案的開發助手與明確授權。
 
+### 自動保存 Codex CLI 對話
+
+第一版提供 TradingDev 專用的 Codex CLI 入口。先安裝並登入 Codex CLI，確認
+`codex login status` 可用；若執行檔不在 PATH，將 `TRADINGDEV_CODEX_BIN` 設為其
+絕對路徑。研究仍須具備前述 TradingDev 執行環境，模型使用既有 Codex 登入。
+
+```bash
+tradingdev-codex --workspace ./research --model gpt-6.1-sol \
+  --reasoning-effort medium --message '我想用均線買賣0050，可以幫我看看嗎？'
+```
+
+每次命令送出一輪文字，自動保存使用者輸入、AI 代理的可見回覆與 TradingDev 工具
+參數／結果，並回傳 `conversation_id`、回覆文字與 `export.html_path`。較長的輸入
+可用 `--prompt-file FILE` 取代 `--message`。收到追問後，用同一個工作區與代號續接：
+
+```bash
+tradingdev-codex --workspace ./research --conversation-id CONVERSATION_ID \
+  --message '先看2024年1月1日到7月1日，用日線。'
+```
+
+續接沿用原模型與推理設定，並核對 Codex 歷史。請保留原工作區與 Codex 的原生
+工作階段資料，不要從其他入口修改同一個來源對話。中斷時已保存文字仍可匯出；
+若未取得來源回合身分或歷史不一致，會拒絕續接，請保留舊紀錄並另開新對話。
+關閉對話命令不會自動取消已交給 TradingDev 的背景研究工作，可從同一工作區查詢。
+
+這個入口僅啟用 TradingDev MCP，不是一般程式開發的 Codex 終端介面；不會擷取
+其他 `codex`、VS Code、桌面版或 Claude 的聊天。第一版只接受文字，私有推理不保存。
+它不提供互動式 MCP 表單，遇到表單會明示由客戶端取消，不會代替使用者同意；
+一般文字追問仍由下一輪命令回答。需要 app-server 的啟動、續接及分頁歷史介面，
+不支援的 CLI 版本或事件會明確失敗。預設單輪期限為 1200 秒，可用 `--timeout` 指定。
+
 ### 閱讀保存的對話
 
 客戶端整合已保存的對話可用 `tradingdev-conversation --workspace PATH list` 找到，

@@ -379,6 +379,11 @@ stdio 回傳本機路徑，不假設客戶端能下載。
 筆記與對話匯出共用 `WorkspaceFiles` 的受限讀取，個別封存格式及身分保持獨立。
 精確生命週期與限制見[對話紀錄契約](docs/reports.md#recorded-conversations)。
 
+Codex CLI 專用入口由 `adapters/clients/` 驅動 app-server，轉譯可見事件並呼叫
+共用保存服務；與模型私有推理分離，不要求 MCP server 觀察客戶端訊息。
+續接核對原生歷史、固定設定與生命週期鎖；串流中斷保留部分內容，來源不一致時拒絕追加。
+此入口只啟用 TradingDev MCP，通用 MCP 客戶端仍沿用既有連接方式。
+
 ## 一致性、程序管理與保證範圍
 
 ### 歷史查詢與報告組裝

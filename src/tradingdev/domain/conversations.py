@@ -69,6 +69,7 @@ class ConversationRecord(ConversationModel):
     version: Annotated[int, Field(strict=True, ge=1)] = 1
     provider: SourceId
     model: SourceId
+    settings: dict[str, JsonValue] = {}
     source_thread_id: SourceId | None = None
     created_at: str
     updated_at: str

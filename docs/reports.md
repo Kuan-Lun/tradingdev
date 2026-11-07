@@ -547,3 +547,57 @@ The `tradingdev-conversation --workspace PATH` CLI provides `list --offset N
 --limit N`, `read CONVERSATION_ID` and `export CONVERSATION_ID --expected-version N`.
 It returns JSON and exits nonzero on invalid IDs, stale versions or storage errors.
 This storage/reading interface does not itself start a model or import old chats.
+
+### Codex CLI recording adapter
+
+`adapters/clients/codex_session.py:record_turn` drives one text turn through the
+installed Codex CLI's stdio app-server. `adapters/cli/codex.py` exposes
+`tradingdev-codex`. A new managed conversation fixes the model, reasoning effort
+and adapter protocol version in its immutable settings. Subsequent commands select
+its ID explicitly; they cannot change those settings or import an arbitrary thread.
+The adapter requires the initialize, thread/start, thread/resume, thread/turns/list
+and turn/start methods, plus public item lifecycle events. It opts into the
+experimental API; unsupported protocol versions fail rather than fall back to
+scraping a UI or reading unrelated session files.
+
+The adapter sets a dedicated working directory and per-conversation Codex SQLite
+and log directories under `.conversation-clients/<conversation_id>/`. It uses the
+existing Codex profile for authentication and native session persistence, without
+copying credentials into exports. Native Codex session data may also reside in that
+profile and is required for resume; the reading export alone cannot restore a live
+model conversation. Codex's own internal state/logs are not the filtered reading
+artifact and must not be included when sharing conversation exports.
+
+A lifetime file lock prevents simultaneous recorder commands for the same ID.
+Before resuming, the adapter pages source history, verifies turn identities and
+compares complete saved items' text, phases, call arguments and results. Changed,
+missing or still-running source history fails before a new input is sent. A stale
+running local turn is sealed as interrupted with explicit missing-content status;
+if its source ID is known and the source is terminal it can be followed by a new
+turn, without rewriting or claiming to recover the partial turn. Unknown source
+IDs require a new managed conversation.
+
+Input is saved before turn/start; events arriving before its acknowledgement are
+bound and persisted immediately, then checked against the acknowledged ID. Text
+deltas save partial output; completed items supply authoritative final text. MCP
+arguments, results, errors and progress remain in item order. Reasoning items and
+private reasoning deltas are discarded. The adapter checks thread/turn identity,
+visible item type and configured MCP server; unexpected events stop the capture
+with an explicit issue. Retry errors can be recorded without treating them as
+missing data. A terminal event alone does not make unfinished items complete.
+
+Only the configured TradingDev MCP server is enabled for this client; other global
+MCP servers, shell tools, plugins, web search, hooks, memories and extra agents are
+disabled through per-process/thread overrides. Existing user configuration is not
+rewritten. This integration does not add a sandbox guarantee to generated strategy
+execution. Noninteractive MCP elicitations receive `cancel`, with both request and
+client response saved; no user consent is inferred. Unsupported permission requests
+receive an error and stop the turn.
+
+The transport bounds individual JSON frames and uses nonblocking writes. Its direct
+child remains unreaped until process-group teardown has been checked on success,
+exception and timeout. TradingDev's independently managed research workers are not
+cancelled merely because the client closes. Capture failures retain the previous
+saved evidence and attempt an incomplete reading export; export failure returns
+the conversation identity and reason for later inspection. Normal closure never
+deletes a research workspace, conversation or export.
