@@ -414,7 +414,8 @@ experiments remain distinct from observations and do not approve execution.
 A notebook is a client-authored research summary, not an audit transcript or
 execution authorization. The server does not observe messages outside MCP calls.
 It keeps one editable current record; exported snapshots preserve chosen versions.
-No per-stage export APIs or automatic chat hooks are required.
+Notebook summaries do not capture client messages. Recorded conversations use the
+separate [conversation recording service](#recorded-conversations).
 
 `save_research_note(draft, note_id?, expected_version?)` creates with both optional
 fields absent. An update requires both and replaces the complete draft, with an
@@ -497,3 +498,117 @@ This archive is a reading package, not a restorable research workspace. Preserve
 the original database/files for subsequent result queries. Client summary quality,
 correct pending/completed distinctions and relevance need semantic review; hashes
 and optimistic versions cannot prove that a user said or approved a statement.
+
+## Recorded conversations
+
+`app.conversation_service.ConversationService` records provider-neutral visible
+conversation items supplied by client adapters. It is separate from editable
+research summaries and does not observe arbitrary MCP clients. Canonical models
+`ConversationRecord`, `ConversationTurn` and `ConversationItem`, with the record
+limit `MAX_CONVERSATION_BYTES`, live in `domain/conversations.py`. The export limit
+`MAX_EXPORT_BYTES` lives in `adapters/storage/conversation_exports.py`.
+
+`create(provider, model)` creates an empty record. The adapter binds its source
+thread before `start_turn(record, prompt)` persists the exact submitted input.
+`save(record)` checks the selected version atomically and advances it; an adapter
+must use the returned version. Source thread/turn identities, original inputs,
+completed items, item order and finished turns cannot be rewritten. A reconnect
+loads the existing record rather than creating a summary of earlier messages.
+The SQLite `conversations` table is additive and does not change existing notes,
+execution records or reports.
+
+Items preserve visible text and selected public provider data, including tool
+arguments, results, failures and message phases. Private reasoning, hidden
+instructions and authentication material are outside the recording contract.
+Adapters must persist partial output during a turn and mark missing or unsupported
+evidence explicitly. `outcome` describes execution; `capture_complete` describes
+record coverage. A failed model turn can have complete evidence, while an apparently
+successful answer can have incomplete evidence. Neither field proves semantic
+correctness or human authorization. Capacity errors retain the previous saved
+version and must stop further recording rather than silently truncate.
+
+`read(conversation_id)` returns the bounded record; `list(offset, limit)` returns
+paged metadata. `export(conversation_id, expected_version)` produces an immutable
+snapshot under `conversations/<export_id>/` with `index.html`, `conversation.json`
+and a file-hash `manifest.json`. Its identity is the manifest SHA-256. HTML contains
+selectable, escaped original text in turn/item order, expandable full tool records,
+and clear partial/interrupted status. It needs no network or scripts; the JSON link
+needs its adjacent file. Exports contain no copied reports or full workspace data.
+Sharing exposes all recorded messages and tool contents, including any sensitive
+information submitted in those messages.
+
+Publication checks existing snapshot bytes and artifact identity, rejects symlinks
+and differing files, and removes only newly created files on failure. Repeated
+exports of an unchanged record reuse verified bytes; later turns produce a new
+snapshot. The HTML is registered as `conversation_html`, discoverable through the
+existing artifact tools. Paths are local files, not public download URLs. No saved
+conversation or export expires automatically; retain the workspace to resume.
+
+The `tradingdev-conversation --workspace PATH` CLI provides `list --offset N
+--limit N`, `read CONVERSATION_ID` and `export CONVERSATION_ID --expected-version N`.
+It returns JSON and exits nonzero on invalid IDs, stale versions or storage errors.
+This storage/reading interface does not itself start a model or import old chats.
+
+### Codex CLI recording adapter
+
+`adapters/clients/codex_session.py:record_turn` drives one text turn through the
+installed Codex CLI's stdio app-server. `adapters/cli/codex.py` exposes
+`tradingdev-codex`. A new managed conversation fixes the model, reasoning effort
+and adapter protocol version in its immutable settings. Subsequent commands select
+its ID explicitly; they cannot change those settings or import an arbitrary thread.
+The adapter requires the initialize, config/read, thread/start, thread/resume,
+thread/turns/list and turn/start methods, plus public item lifecycle events. It opts into the
+experimental API; unsupported protocol versions fail rather than fall back to
+scraping a UI or reading unrelated session files.
+
+The adapter sets a dedicated working directory and per-conversation Codex SQLite
+and log directories under `.conversation-clients/<conversation_id>/`. It uses the
+existing Codex profile for authentication and native session persistence, without
+copying credentials into exports. Native Codex session data may also reside in that
+profile and is required for resume; the reading export alone cannot restore a live
+model conversation. Codex's own internal state/logs are not the filtered reading
+artifact and must not be included when sharing conversation exports.
+
+A lifetime file lock prevents simultaneous recorder commands for the same ID.
+Before resuming, the adapter pages source history, verifies turn identities and
+compares complete saved items' text, phases, call arguments and results. Adjacent
+tool-call groups are matched by item identity because native history can reorder
+parallel calls; calls cannot move across visible message boundaries. Known native
+text projections of successful tool results are checked against the full saved
+wire result, including the retained prefix, suffix and exact omitted character
+count. Omitted source content cannot be independently verified from that projection;
+the original captured result remains complete and unchanged in the reading export.
+Unknown projections or inconsistent retained evidence fail. Changed,
+missing or still-running source history fails before a new input is sent. A stale
+running local turn is sealed as interrupted with explicit missing-content status;
+if its source ID is known and the source is terminal it can be followed by a new
+turn, without rewriting or claiming to recover the partial turn. Unknown source
+IDs require a new managed conversation.
+
+Input is saved before turn/start; events arriving before its acknowledgement are
+bound and persisted immediately, then checked against the acknowledged ID. Text
+deltas save partial output; completed items supply authoritative final text. MCP
+arguments, results, errors and progress remain in item order. Reasoning items and
+private reasoning deltas are discarded. The adapter checks thread/turn identity,
+visible item type and configured MCP server; unexpected events stop the capture
+with an explicit issue. Retry errors can be recorded without treating them as
+missing data. A terminal event alone does not make unfinished items complete.
+
+Only the configured TradingDev MCP server is enabled for this client; other global
+MCP servers, shell tools, plugins, web search, hooks, memories and extra agents are
+disabled through per-process/thread overrides. Existing user configuration is not
+rewritten. This integration does not add a sandbox guarantee to generated strategy
+execution. Noninteractive MCP elicitations receive `cancel`, with both request and
+client response saved; no user consent is inferred. Unsupported permission requests
+receive an error and stop the turn.
+
+The transport bounds individual JSON frames and uses nonblocking writes. Its direct
+child remains unreaped until process-group teardown has been checked on success,
+exception and timeout. TradingDev's independently managed research workers are not
+cancelled merely because the client closes. Capture failures attempt to export the
+last durably saved version. An already-persisted running turn is sealed as
+interrupted/incomplete when that save succeeds. If a new input could not be saved,
+for example because of capacity, it is absent from the export and earlier complete
+turns remain labelled complete. Export failure returns the conversation identity
+and reason for later inspection. Normal closure never
+deletes a research workspace, conversation or export.

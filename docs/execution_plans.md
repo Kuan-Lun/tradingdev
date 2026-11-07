@@ -188,5 +188,7 @@ still applies. A new plan must be prepared after expiry.
 The server trusts the assistant to convey the user's decision; it cannot prove
 human consent from a tool argument. Source and effective-setting checks, internal
 submission reservations and duplicate-job prevention remain enforced. The former
-native MCP form tool is removed. CLI commands remain explicit execution requests
-and do not use this conversation workflow.
+native MCP form tool is removed. Direct backtest CLI commands remain explicit
+execution requests and do not use this conversation workflow. The
+`tradingdev-codex` conversation client uses TradingDev MCP and follows the same
+preparation, review and conversational confirmation workflow as other MCP clients.
