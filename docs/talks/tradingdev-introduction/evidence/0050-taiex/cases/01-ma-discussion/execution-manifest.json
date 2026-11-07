@@ -3,12 +3,12 @@
   "kind": "backtest",
   "config": {
     "strategy": {
-      "id": "strategy_1bfbc2a9ec5d446e87d222a959c57ff9",
-      "revision_id": "9e8399dff16c49919faa822dcd04c02a",
-      "class_name": "SingleSmaHoldStrategy",
-      "display_name": "0050－20日均線持有策略",
-      "source_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/cases/01-ma-discussion/research/generated_strategies/strategy_1bfbc2a9ec5d446e87d222a959c57ff9/revisions/9e8399dff16c49919faa822dcd04c02a/strategy.py",
-      "source_hash": "d3ee79804073d031af9b0dc36f4e8e7f25af884858cc721b04b7e1cf813c7fbe",
+      "id": "strategy_a6404e88c1f240ebbf6cdfb79b594703",
+      "revision_id": "3c756be494994a56a53218ee96badda6",
+      "class_name": "SmaHoldStrategy",
+      "display_name": "0050：20日均線，相等維持部位",
+      "source_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107/research/generated_strategies/strategy_a6404e88c1f240ebbf6cdfb79b594703/revisions/3c756be494994a56a53218ee96badda6/strategy.py",
+      "source_hash": "02f3947bcf2ae8b9a689eed2de2f84b6420da58c5338bd7a5255c8b1ec50ca6d",
       "parameters": {
         "period": 20
       }
@@ -35,8 +35,8 @@
     "data": {
       "source": "yahoo_finance",
       "market_type": "futures/um",
-      "raw_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/market-data/raw",
-      "processed_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/market-data/processed",
+      "raw_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107/market-data/raw",
+      "processed_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107/market-data/processed",
       "requirements": {
         "market": {
           "source": "yahoo_finance",
@@ -49,7 +49,7 @@
     "research": {
       "schema_version": 1,
       "policy_version": "research-v1",
-      "strategy_outline": "0050 日線20日SMA，初始空手；收盤價高於均線轉為持多，低於轉為空手，等於延續原部位，不加碼、不放空。隔根開盤成交；以區間報酬、回撤與交易次數為主，年化不是未來預測。",
+      "strategy_outline": "0050 日K單一20日簡單均線；收盤價高於均線持有多單，低於清倉，相等維持前一部位；初始空手，暖機不足或缺值輸出0；下一根開盤執行，不放空。年化採助理提議252交易日換算假設，供計畫確認。",
       "field_sources": {
         "/research/strategy_outline": "request",
         "/backtest/symbol": "request",
@@ -78,8 +78,8 @@
       "period": 20
     },
     "program": {
-      "source_hash": "d3ee79804073d031af9b0dc36f4e8e7f25af884858cc721b04b7e1cf813c7fbe",
-      "class_name": "SingleSmaHoldStrategy",
+      "source_hash": "02f3947bcf2ae8b9a689eed2de2f84b6420da58c5338bd7a5255c8b1ec50ca6d",
+      "class_name": "SmaHoldStrategy",
       "runtime": {
         "image_id": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
         "limits": {
@@ -95,5 +95,5 @@
     }
   },
   "optimization": null,
-  "manifest_hash": "0c2f4614d4b2d4fb9e248cda94e9331c33938cb9709fe4405bcb008989d392e0"
+  "manifest_hash": "2c92fa56a62a9735419a3396eb2ad427656b9e50a292b04eff12d25c6c5f6246"
 }

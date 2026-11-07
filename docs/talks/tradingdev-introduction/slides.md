@@ -35,8 +35,8 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 | --- | --- | --- |
 | 01 | [開發動機與專案定位](index.html#3) | 現成工具的範圍、自製理由與使用情境 |
 | 02 | [策略研究](index.html#11) | 角色分工、運算安排與策略實驗 |
-| 03 | [經驗如何回饋專案](index.html#50) | 開發經驗的整合與驗證 |
-| 04 | [後續開發方向](index.html#53) | 可獨立指定的開發目標 |
+| 03 | [經驗如何回饋專案](index.html#49) | 開發經驗的整合與驗證 |
+| 04 | [後續開發方向](index.html#52) | 可獨立指定的開發目標 |
 
 <!-- _footer: "點選章名跳轉。方向鍵換頁，P 開啟講者模式。" -->
 
@@ -363,21 +363,22 @@ signal 使用 VectorBT，包含初始資金。volume 從零累計 P&L，沒有�
 > 「我想用均線來買賣 0050，可以幫我看看嗎？」
 
 - **沿用案例條件**：0050 日 K、2024/1/1 至 7/1、20 日 SMA 與相同模擬成本。
-- **重新互動與執行**：八輪實際對話、一次回測，取得可比較的台股大盤數值。
+- **重新互動與執行**：每輪一個提問重點；252 年化假設由模型先提案，確認後才回測。
+- **查證後解讀**：大盤比較與策略改善各自獨立提問，依保存數據回答。
 - **保留來源**：Sol 的回覆與 MCP 紀錄來自真實執行；示範操作者由助理依委託擔任。
 
 *下頁依序保留操作者輸入與各輪最終回覆全文，長回覆分頁呈現。*
 
-<!-- _footer: "Codex CLI app-server · gpt-6.1-sol / medium；產品版本 fccde5b（PR #182 合併後）。" -->
+<!-- _footer: "Codex CLI app-server · gpt-6.1-sol / medium；產品版本 741fd84（原生對話保存與階段呈現修正後）。" -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options case-with-input -->
-<!-- _header: "02　策略研究　／　實際對話　第 1／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 1／9 輪" -->
 
-## 實際對話：提出選項與追問（1/2）
+## 實際對話：從模糊構想開始追問（1/2）
 
-<!-- dialogue-message: 01-intake/0 -->
+<!-- dialogue-message: turn-1/0 -->
 
 操作者輸入
 
@@ -387,215 +388,288 @@ signal 使用 VectorBT，包含初始資金。volume 從零累計 P&L，沒有�
 
 <!-- dialogue-text-end -->
 
-<!-- dialogue-message: 01-intake/4 -->
+<!-- dialogue-message: turn-1/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 可以。我們可以先把均線想法變成明確規則，再回測看是否適合 0050。
+> 可以。均線策略可以先看兩種規則：
 >
-> 兩種可討論的做法：
->
-> - **單條均線**：價格站上均線買進，跌破時賣出。
-> - **雙均線**：短均線高於長均線時持有，低於時賣出、空手等待。
+> - **股價與單條均線**：收盤價高於均線時持有，低於時賣出、持有現金。
+> - **雙均線**：短期均線高於長期均線時持有，低於時賣出、持有現金。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#01-intake)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-1)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 1／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 1／9 輪" -->
 
-## 實際對話：提出選項與追問（2/2）
+## 實際對話：從模糊構想開始追問（2/2）
 
-<!-- dialogue-message: 01-intake/4 -->
+<!-- dialogue-message: turn-1/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 均線的取捨是訊號較慢；盤整時也可能反覆買賣，增加成本。因此除了報酬，還要看最大跌幅、交易次數，並與買進持有比較。目前尚未回測，不能判斷哪種較好。
+> 這類策略的主要取捨是：可能避開部分下跌，也可能在盤整時反覆買賣，或在上漲後較晚進場。需要把交易成本算進去，並和「0050 買進持有」比較報酬、最大回撤與交易次數，才能判斷是否適合你。
 >
-> 先請你補充：
+> 先請你告訴我兩件事：
 >
-> 1. **想看哪段期間？** 請提供起訖日期。
-> 2. **想用日線、週線，還是盤中 K 線？**
-> 3. **偏好哪種規則？** 單均線、雙均線，或還沒決定？若已有均線天數，也一起告訴我。
+> 1\. **想看哪段期間？** 例如 2020 年至 2025 年完整年度。
+> 2\. **想用日線還是週線？** 日線觀察每天的變化；週線適合較低頻率的操作。
+>
+> 若已有想用的均線天數或買賣規則，也可以一起告訴我。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#01-intake)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-1)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options case-with-input -->
-<!-- _header: "02　策略研究　／　實際對話　第 2／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 2／9 輪" -->
 
-## 實際對話：選定期間與均線天數（1/3）
+## 實際對話：補充研究期間與頻率（1/2）
 
-<!-- dialogue-message: 02-discuss/0 -->
+<!-- dialogue-message: turn-2/0 -->
 
 操作者輸入
 
 <!-- dialogue-text-start -->
 
-> 先看 2024 年 1 月 1 日到 7 月 1 日，用日線。我想先從單均線開始，天數你建議怎麼選？
+> 先看 2024 年 1 月 1 日到 7 月 1 日，用日 K。
 
 <!-- dialogue-text-end -->
 
-<!-- dialogue-message: 02-discuss/5 -->
+<!-- dialogue-message: turn-2/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 我建議先比較 **10、20、60 日簡單移動平均線（SMA）**，若只選一條，就從 **20 日**開始。這是依反應速度提出的研究設定，尚未經回測或外部資料驗證，不能視為最佳天數。
+> 收到：**0050，2024/1/1 至 2024/7/1，日 K，包含 7/1。**
+>
+> 我建議先用一個容易理解的規則：
+>
+> - 收盤價高於 **20 日簡單均線** 時持有。
+> - 收盤價低於或等於均線時清倉，不放空。
+> - 收盤確認訊號，下一個交易日開盤執行。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#02-discuss)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-2)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 2／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 2／9 輪" -->
 
-## 實際對話：選定期間與均線天數（2/3）
+## 實際對話：補充研究期間與頻率（2/2）
 
-<!-- dialogue-message: 02-discuss/5 -->
-
-gpt-6.1-sol｜該輪最終回覆
-
-<!-- dialogue-text-start -->
-
-> | 均線 | 選擇理由 | 取捨 |
-> |---|---|---|
-> | 10 日 | 觀察較快的進出反應 | 容易反覆買賣，成本可能較高 |
-> | 20 日 | 作為快慢之間的起點 | 仍可能在盤整時頻繁進出 |
-> | 60 日 | 觀察較慢的趨勢判斷 | 買進與退出都可能較晚 |
->
-> 為了公平比較，三組都使用同一套規則：**收盤價高於均線時持有 0050；低於或等於均線時賣出並空手，不放空**。訊號需等收盤確認，成交時點會在回測計畫中列清楚。
->
-> 你指定的 **2024/1/1～2024/7/1、日線**只有半年，結果對這段行情可能很敏感；60 日均線也需要足夠資料暖機，解讀時要一併考慮。
-
-<!-- dialogue-text-end -->
-
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#02-discuss)" -->
-
-<!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
--->
-
----
-
-<!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 2／8 輪" -->
-
-## 實際對話：選定期間與均線天數（3/3）
-
-<!-- dialogue-message: 02-discuss/5 -->
+<!-- dialogue-message: turn-2/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 你想先比較這三組，還是只測 20 日？另外，這次是否先不計算年化指標，著重看區間報酬、最大回撤與交易次數？
+> 20 日是我提出的測試起點，尚未驗證效果；這段期間只有半年，結果也不足以代表長期表現。
+>
+> **你想先用這個規則，還是雙均線？** 另外，年化計算需要另訂交易日假設，這次是否先不計算年化指標，只看期間報酬、最大回撤與交易次數？
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#02-discuss)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-2)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options case-with-input -->
-<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 3／9 輪" -->
 
-## 實際對話：釐清持有並準備確認單（1/6）
+## 實際對話：選定均線買賣規則
 
-<!-- dialogue-message: 03-holding-question/0 -->
+<!-- dialogue-message: turn-3/0 -->
 
 操作者輸入
 
 <!-- dialogue-text-start -->
 
-> 先測 20 日一組。你說高於均線就持有，是每天都會再買嗎？我希望買了就持有，低於均線再賣掉；剛好等於均線時維持原部位，不另外交易。
->
-> 年化設定沿用每年 252 根，但這只是半年案例，解讀仍以區間報酬、回撤與交易次數為主，不把年化數字當成未來預測。
+> 先用一條 20 日均線；高於就買、低於就賣，相等就維持原本的部位。
 
 <!-- dialogue-text-end -->
 
-<!-- dialogue-message: 03-holding-question/11 -->
+<!-- dialogue-message: turn-3/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> **不會每天再買。** 已設定為持倉期間不加碼，等於均線時維持原部位。程式與合成資料檢查已通過，尚未執行歷史回測。前 19 根日線會因均線暖機保持空手；成本使用專案模擬預設，並非已核實的台股實際費稅。
+> 已記下：**20 日簡單均線，高於買進、低於清倉、相等維持原部位，不放空**。訊號於收盤確認，下一交易日開盤執行；均線尚未滿 20 筆有效收盤價前先空手。
+>
+> 還差年化設定：這次是否先**不計算年化指標**，只看這半年的報酬、最大回撤與交易次數？系統對台股沒有可直接套用的年化交易日設定，需要你明確選擇。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-3)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 4／9 輪" -->
+
+## 實際對話：釐清年化指標的意思（1/2）
+
+<!-- dialogue-message: turn-4/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 年化指標是什麼？
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: turn-4/1 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 年化指標是把不同長度的投資表現，換成「一年」的尺度，方便比較。
+>
+> 例如，半年賺 10%，若假設接下來半年也有相同表現，複利換算的年化報酬約為 **21%**。這只是數學換算，** 不是預測一年會賺 21%**。
+>
+> 我們這次先看的指標，都不需要年化：
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-4)" -->
+
+<!--
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 4／9 輪" -->
 
-## 實際對話：釐清持有並準備確認單（2/6）
+## 實際對話：釐清年化指標的意思（2/2）
 
-<!-- dialogue-message: 03-holding-question/11 -->
+<!-- dialogue-message: turn-4/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
+> - **期間報酬**：這半年總共賺或賠多少。
+> - **最大回撤**：資產從高點往下，最多跌了多少百分比。
+> - **交易次數**：買進、賣出的頻率。
+>
+> 這次只有半年，我建議先不計算年化指標，直接看上述結果。你要先照這樣設定嗎？
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-4)" -->
+
+<!--
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 5／9 輪" -->
+
+## 實際對話：選擇年化並取得確認單（1/6）
+
+<!-- dialogue-message: turn-5/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 年化指標我也想看，可以一起算嗎？
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: turn-5/1 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 可以，已將年化指標納入計畫。**252 日是我提出的換算假設**；本金、手續費與滑價採系統模擬預設，尚未另計台股 ETF 賣出交易稅。
+>
 > > 回測前確認
 >
-> > 策略說明：2024/1/1至7/1台北日期（含7/1），初始空手，高於20日SMA持多、低於空手、等於延續，不加碼、不放空。收盤訊號於下一根開盤交易。以區間報酬、回撤與交易次數為主；252年化因子僅作描述，非未來預測。
->
+> > 策略說明：2024/1/1至7/1日K：高於20日均線持有，低於空手，相等維持原部位；下一根開盤執行。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-5)" -->
+
+<!--
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 5／9 輪" -->
+
+## 實際對話：選擇年化並取得確認單（2/6）
+
+<!-- dialogue-message: turn-5/1 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
 > > 執行方式：單次歷史回測；參數依據：使用者提供
 >
 > > 回測商品：0050.TW；回測 K 線週期：每根 K 線 1 天；回測開始：2023-12-31T16:00:00+00:00；回測結束：2024-07-01T15:59:59+00:00；時間邊界：依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-5)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 5／9 輪" -->
 
-## 實際對話：釐清持有並準備確認單（3/6）
+## 實際對話：選擇年化並取得確認單（3/6）
 
-<!-- dialogue-message: 03-holding-question/11 -->
+<!-- dialogue-message: turn-5/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
@@ -609,20 +683,20 @@ gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-5)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 5／9 輪" -->
 
-## 實際對話：釐清持有並準備確認單（4/6）
+## 實際對話：選擇年化並取得確認單（4/6）
 
-<!-- dialogue-message: 03-holding-question/11 -->
+<!-- dialogue-message: turn-5/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
@@ -640,20 +714,20 @@ gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-5)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 5／9 輪" -->
 
-## 實際對話：釐清持有並準備確認單（5/6）
+## 實際對話：選擇年化並取得確認單（5/6）
 
-<!-- dialogue-message: 03-holding-question/11 -->
+<!-- dialogue-message: turn-5/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
@@ -671,33 +745,35 @@ gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-5)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 5／9 輪" -->
 
-## 實際對話：釐清持有並準備確認單（6/6）
+## 實際對話：選擇年化並取得確認單（6/6）
 
-<!-- dialogue-message: 03-holding-question/11 -->
+<!-- dialogue-message: turn-5/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
 > [閱讀確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html)
+>
+> 請閱讀後回覆「同意」或提出修改。TradingDev 的執行流程要求先確認這份具體計畫，才能開始取得行情並回測。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-5)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
@@ -707,181 +783,57 @@ gpt-6.1-sol｜該輪最終回覆
 
 ## 原生確認單：閱讀後回到對話決定
 
-![TradingDev 新版案例的原生確認單](assets/0050-taiex-confirmation.png)
+![TradingDev 新版案例的原生確認單](assets/0050-taiex-confirmation.jpg)
 
-[開啟完整確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html) · [日期與年化問答](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#04-plan-questions)
+[開啟完整確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html) · [完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html)
 
 <!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
 
 <!--
-來源：新案例 screenshots/01-confirmation-native.png。閱讀文件不啟動回測；不能據此證明真人已閱讀。
+來源：新案例 screenshots/01-confirmation-native.jpg。閱讀文件不啟動回測；不能據此證明真人已閱讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options case-with-input -->
-<!-- _header: "02　策略研究　／　實際對話　第 4／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 6／9 輪" -->
 
-## 實際對話：確認日期與年化設定（1/2）
+## 實際對話：閱讀確認單後同意執行（1/4）
 
-<!-- dialogue-message: 04-plan-questions/0 -->
-
-操作者輸入
-
-<!-- dialogue-text-start -->
-
-> 我看過確認單了。開始日期顯示 2023-12-31 16:00 UTC、結束顯示 2024-07-01 15:59:59 UTC，這就是台灣日期 2024 年 1 月 1 日到 7 月 1 日、包含 7 月 1 日全天嗎？另外，每年 252 根只是年化設定，不代表這次會取得 252 根資料，對嗎？先幫我說明，這一輪先不要執行。
-
-<!-- dialogue-text-end -->
-
-<!-- dialogue-message: 04-plan-questions/1 -->
-
-gpt-6.1-sol｜該輪最終回覆
-
-<!-- dialogue-text-start -->
-
-> 對，兩項理解都正確。
-
-<!-- dialogue-text-end -->
-
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#04-plan-questions)" -->
-
-<!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
--->
-
----
-
-<!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 4／8 輪" -->
-
-## 實際對話：確認日期與年化設定（2/2）
-
-<!-- dialogue-message: 04-plan-questions/1 -->
-
-gpt-6.1-sol｜該輪最終回覆
-
-<!-- dialogue-text-start -->
-
-> - **日期範圍**：台灣時間是 UTC+8，因此開始時間換算為 **2024/1/1 00:00:00**，結束為 **2024/7/1 23:59:59**，包含 7 月 1 日全天。系統依 K 棒時間戳記篩選，實際涵蓋哪些日線仍取決於資料來源。
-> - **252 年化設定**：它是計算年化指標時使用的每年日數因子，**不是本次要取得的資料根數**。實際根數由指定期間內可取得的日線決定，休市日通常沒有 K 棒。
->
-> 這一輪不會執行回測。
-
-<!-- dialogue-text-end -->
-
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#04-plan-questions)" -->
-
-<!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
--->
-
----
-
-<!-- _class: case-dialogue case-transcript case-options case-with-input -->
-<!-- _header: "02　策略研究　／　實際對話　第 5／8 輪" -->
-
-## 實際對話：暫停後核對確認單（1/2）
-
-<!-- dialogue-message: 05-refresh-plan/0 -->
+<!-- dialogue-message: turn-6/0 -->
 
 操作者輸入
 
 <!-- dialogue-text-start -->
 
-> 剛才暫停並重啟電腦，隔了一段時間才回來。日期和 252 的說明我理解了。請先確認原本那份確認單是否仍有效；若已過期，沿用同一個策略版本和全部設定，重新產生確認單給我看。這輪先不要執行回測，也不要新增其他策略或參數組合。
+> 我同意
 
 <!-- dialogue-text-end -->
 
-<!-- dialogue-message: 05-refresh-plan/3 -->
+<!-- dialogue-message: turn-6/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 已查詢原確認單，**目前仍有效，無須重新產生**。
+> 回測完成。0050 的 **20 日均線策略**，在 2024/1/1～7/1 的結果如下（實際資料自 1/2 開始，共 118 根日 K）：
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#05-refresh-plan)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-6)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 5／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 6／9 輪" -->
 
-## 實際對話：暫停後核對確認單（2/2）
+## 實際對話：閱讀確認單後同意執行（2/4）
 
-<!-- dialogue-message: 05-refresh-plan/3 -->
-
-gpt-6.1-sol｜該輪最終回覆
-
-<!-- dialogue-text-start -->
-
-> - 狀態：`ready`，尚未提交執行，沒有回測工作。
-> - 有效期限：**2026/11/7 19:50:18（台灣時間）**。
-> - 查詢時間：約 **2026/11/7 19:10（台灣時間）**。
-> - 原策略版本與全部設定維持不變。
->
-> [閱讀原確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html)
->
-> 本輪未執行回測，也未新增策略或參數組合。
-
-<!-- dialogue-text-end -->
-
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#05-refresh-plan)" -->
-
-<!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
--->
-
----
-
-<!-- _class: case-dialogue case-transcript case-options case-with-input -->
-<!-- _header: "02　策略研究　／　實際對話　第 6／8 輪" -->
-
-## 實際對話：同意執行並取得結果（1/4）
-
-<!-- dialogue-message: 06-execute/0 -->
-
-操作者輸入
-
-<!-- dialogue-text-start -->
-
-> 我已閱讀原確認單和限制，確認以這份有效確認單執行：0050.TW 日 K、台灣時間 2024/1/1 到 7/1（含全天）、20 日 SMA，高於均線持多、低於空手、相等維持原部位，不重複加碼，下一根開盤成交。接受模擬本金 10000、手續費率 0.0006、滑價率 0.0005、年化因子 252；這不是台股實際費稅模型。同意開始這一次回測，完成後給我原生報告並說明結果；不要另外跑參數或其他策略。
-
-<!-- dialogue-text-end -->
-
-<!-- dialogue-message: 06-execute/15 -->
-
-gpt-6.1-sol｜該輪最終回覆
-
-<!-- dialogue-text-start -->
-
-> 已完成這一次 **0050／20 日 SMA** 回測，沒有另跑其他參數或策略。
->
-> [開啟 TradingDev 原生完整報告](evidence/0050-taiex/cases/01-ma-discussion/earlier-reports/d41835e9438f31c69328ef37bbcf86609f42d315be54b409680418f8de90f2e8.html)
-
-<!-- dialogue-text-end -->
-
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#06-execute)" -->
-
-<!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
--->
-
----
-
-<!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 6／8 輪" -->
-
-## 實際對話：同意執行並取得結果（2/4）
-
-<!-- dialogue-message: 06-execute/15 -->
+<!-- dialogue-message: turn-6/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
@@ -889,71 +841,73 @@ gpt-6.1-sol｜該輪最終回覆
 
 > | 指標 | 結果 |
 > |---|---:|
-> | 區間報酬 | **24.33%** |
-> | 期末權益（初始 10,000） | **12,433.03** |
+> | 期間報酬 | **24.33%** |
 > | 最大回撤 | **8.61%** |
-> | 已平倉交易 | **5 筆，2 勝 3 負** |
-> | 期末未平倉 | **1 筆** |
-> | 實際日線資料 | **118 根** |
+> | 年化報酬 | 59.21% |
+> | 年化波動率 | 16.44% |
+> | 夏普比率 | 2.91 |
+> | 已平倉交易／勝率 | 5 筆／40% |
+>
+> 模擬本金 10,000 元，期末約 **12,433 元**，包含最後一筆尚未賣出的持倉損益。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#06-execute)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-6)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 6／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 6／9 輪" -->
 
-## 實際對話：同意執行並取得結果（3/4）
+## 實際對話：閱讀確認單後同意執行（3/4）
 
-<!-- dialogue-message: 06-execute/15 -->
+<!-- dialogue-message: turn-6/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 成交紀錄共 **6 次買進、5 次賣出，持倉期間沒有加碼**。期末仍持有的部位包含約 **910.15** 未實現淨損益，已計入上述區間報酬，沒有假設期末賣出。
+> 這段期間有獲利，但只有 5 筆已平倉交易，還不足以判斷長期效果。年化採 252 日換算，**59.21% 不是未來一年報酬預測**。成本已含模擬手續費與滑價，尚未另計 ETF 賣出交易稅。
 >
-> 這段期間有獲利，但已平倉交易只有 5 筆，尚不足以判斷長期可靠性。年化報酬換算為 59.21%，僅是使用 252 因子的樣本統計；成本仍是你核准的模擬模型。
+> [開啟完整回測報告](evidence/0050-taiex/cases/01-ma-discussion/earlier-reports/55b826f61440ea8b9e996d9044412dd489a9cdeb858600f1afd5b358677c117e.html)
 >
-> 報告操作指引：
+> 報告基準是**加權指數買進持有**；目前還不能據此判定均線是否勝過直接持有 0050。
+>
+> 點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#06-execute)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-6)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 6／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 6／9 輪" -->
 
-## 實際對話：同意執行並取得結果（4/4）
+## 實際對話：閱讀確認單後同意執行（4/4）
 
-<!-- dialogue-message: 06-execute/15 -->
+<!-- dialogue-message: turn-6/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> > 點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。
->
-> 結果編號：`af6a758f1ded43eea193638330be7aaf`；分析範圍：`full`（完整區間）。
+> 結果識別碼：`416f3613665f49798357736085303952`；分析範圍：全期間（full）。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#06-execute)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-6)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
@@ -963,136 +917,109 @@ gpt-6.1-sol｜該輪最終回覆
 
 ## 原生報告：權益曲線與回撤明細
 
-![新版回測的權益與回撤曲線](assets/0050-taiex-equity.png)
+![新版回測的權益與回撤曲線](assets/0050-taiex-equity.jpg)
 
 [開啟報告並查看結果明細](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0)
 
 <!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
 
 <!--
-來源：新案例 screenshots/02-equity-native.png。畫面節錄曲線區段，完整序列及互動明細保留在原生報告。
+來源：新案例 screenshots/02-equity-native.jpg。畫面節錄曲線區段，完整序列及互動明細保留在原生報告。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options case-with-input -->
-<!-- _header: "02　策略研究　／　實際對話　第 7／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 7／9 輪" -->
 
-## 實際對話：對照大盤並討論改進（1/4）
+## 實際對話：獨立比較台股大盤（1/3）
 
-<!-- dialogue-message: 07-critique/0 -->
+<!-- dialogue-message: turn-7/0 -->
 
 操作者輸入
 
 <!-- dialogue-text-start -->
 
-> 你覺得這個策略最大的問題是什麼？如果要改，會先改哪裡，為什麼？也請根據這次已保存的基準數值，說明跟台股大盤相比如何。先討論，不用再跑。
+> 這個策略跟台股大盤相比，表現如何？
 
 <!-- dialogue-text-end -->
 
-<!-- dialogue-message: 07-critique/10 -->
+<!-- dialogue-message: turn-7/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 我最在意的是：**這次擇時沒有展現降低風險的價值，報酬也落後大盤。** 至於原因，半年、5 筆已平倉交易還不足以定論。
+> **這段期間，20 日均線策略落後大盤，最大回撤也較大。**
 >
-> 依這次已保存、完整對齊 118 根日線的數值：
+> 比較實際涵蓋 2024/1/2～7/1，共 118 根日 K；大盤採加權指數（^TWII）買進持有基準。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#07-critique)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-7)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 7／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 7／9 輪" -->
 
-## 實際對話：對照大盤並討論改進（2/4）
+## 實際對話：獨立比較台股大盤（2/3）
 
-<!-- dialogue-message: 07-critique/10 -->
+<!-- dialogue-message: turn-7/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> | 指標 | 20 日 SMA 策略 | 台股加權指數基準 |
+> | 指標 | 0050 均線策略 | 大盤基準 |
 > |---|---:|---:|
-> | 區間報酬 | 24.33% | 29.01% |
-> | 最大回撤 | 8.61% | 6.66% |
-> | 夏普比率 | 2.91 | 3.48 |
+> | 期間報酬 | 24.33% | **29.01%** |
+> | 最大回撤 | 8.61% | **6.66%** |
+> | 年化報酬 | 59.21% | 72.29% |
+> | 年化波動率 | 16.44% | 16.00% |
+> | 夏普比率 | 2.91 | **3.48** |
 >
-> 策略**少賺 4.68 個百分點，最大回撤多 1.95 個百分點**。因此這個案例沒有呈現「犧牲一些報酬、換取較小回撤」的效果。
->
-> 基準是 **^TWII 加權指數價格報酬**，不含股利；套用同樣模擬成本，首根收盤買進、期末估值。它不是 0050 買進持有，因此落後幅度包含標的成分與權重差異，不能全部歸因於均線進出場。
+> 策略少賺 **4.68 個百分點**，且沒有換來較小的最大回撤，因此這次樣本沒有顯示相對大盤的優勢。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#07-critique)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-7)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 7／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 7／9 輪" -->
 
-## 實際對話：對照大盤並討論改進（3/4）
+## 實際對話：獨立比較台股大盤（3/3）
 
-<!-- dialogue-message: 07-critique/10 -->
-
-gpt-6.1-sol｜該輪最終回覆
-
-<!-- dialogue-text-start -->
-
-> 若要改交易規則，我會先研究**均線周圍加緩衝區**：
->
-> - 空手時，超過均線上方門檻才買進。
-> - 持倉時，跌破均線下方門檻才賣出。
-> - 中間維持原部位，仍不加碼、下一根開盤成交。
->
-> 理由是這次有幾筆短期進出虧損，例如 4/19～4/22 虧損 298.49、6/4～6/5 虧損 118.51，值得檢查均線附近的反覆切換。但緩衝區可能讓退出更慢、回撤更大，**目前只是待驗證的改法，沒有證據保證改善**。40% 勝率本身反而不是首要問題，因為獲利交易的幅度仍能抵銷虧損。
-
-<!-- dialogue-text-end -->
-
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#07-critique)" -->
-
-<!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
--->
-
----
-
-<!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 7／8 輪" -->
-
-## 實際對話：對照大盤並討論改進（4/4）
-
-<!-- dialogue-message: 07-critique/10 -->
+<!-- dialogue-message: turn-7/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 研究順序上，我會先補清楚區間前暖機及 0050 自身買進持有的對照，再評估規則修改，才能分辨差距來自哪裡。本輪沒有新增回測。
+> 不過，0050 與大盤的成分權重不同，策略前 19 根也在空手暖機，不能把差距全部歸因於均線。要判斷「均線買賣是否值得」，下一個最直接的對照是 **0050 本身買進持有**。另外，大盤基準不含現金股利，年化數字採 252 日換算。
 >
-> 已將這些解讀補入[原生完整報告](evidence/0050-taiex/cases/01-ma-discussion/earlier-reports/4098c0384cfdeed43d4bd6cf136c2822444decf1b1feb3e3e122231c6e5cba4a.html)。結果編號：`af6a758f1ded43eea193638330be7aaf`，範圍：`full`。
+> [查看已補入大盤比較的完整報告](evidence/0050-taiex/cases/01-ma-discussion/report.html)
 >
-> > 點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。
+> 點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。
+>
+> 結果：`416f3613665f49798357736085303952`，全期間（full）。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#07-critique)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-7)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
@@ -1102,105 +1029,175 @@ gpt-6.1-sol｜該輪最終回覆
 
 ## 原生報告：台股大盤已有可比較數值
 
-![策略與台股加權指數的基準比較表](assets/0050-taiex-benchmark.png)
+![策略與台股加權指數的基準比較表](assets/0050-taiex-benchmark.jpg)
 
 [開啟完整基準與資料覆蓋](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · [保存的基準資料](evidence/0050-taiex/cases/01-ma-discussion/benchmark.json)
 
 <!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
 
 <!--
-來源：新案例 screenshots/03-benchmark-native.png。^TWII 價格指數未含股利；完整對齊118根。同成本假設不等於同標的，差距不能全歸因於擇時。
+來源：新案例 screenshots/03-benchmark-native.jpg。^TWII 價格指數未含股利；完整對齊118根。同成本假設不等於同標的，差距不能全歸因於擇時。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options case-with-input -->
-<!-- _header: "02　策略研究　／　實際對話　第 8／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 8／9 輪" -->
 
-## 實際對話：保存研究筆記與分享包（1/3）
+## 實際對話：提出待驗證的改善建議（1/3）
 
-<!-- dialogue-message: 08-package/0 -->
+<!-- dialogue-message: turn-8/0 -->
 
 操作者輸入
 
 <!-- dialogue-text-start -->
 
-> 這次先保留台股大盤作為唯一基準，不增加 0050 買進持有或其他回測。請把這次討論、已執行的設定、結果、大盤比較和仍待驗證的建議整理成研究筆記並打包，讓我可以分享給別人。報告與筆記請清楚說明基準是另行取得的 ^TWII 價格指數、不是同一份 0050 行情，也不是含息總報酬；先前報告若有讓人誤解成同標的的說法，請更正。保留原生報告、交易明細與實際資料覆蓋，提供可開啟的報告與研究包。
+> 如果要改善這個策略，你會怎麼建議？
 
 <!-- dialogue-text-end -->
 
-<!-- dialogue-message: 08-package/10 -->
+<!-- dialogue-message: turn-8/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 已完成更正與打包，**未新增任何回測**。
+> 我會先釐清你想改善的是「報酬」還是「下跌時少賠」。這次策略報酬落後大盤、最大回撤也較大，但只有半年、5 筆已平倉交易，還不適合直接挑一組賺最多的均線天數。
+>
+> 我建議依這個順序研究：
+>
+> 1\. **先和直接持有 0050 比較。**
+> 用相同期間、成本與價格資料，確認均線買賣到底增加了什麼價值。這比先改參數更重要。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#08-package)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-8)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 8／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 8／9 輪" -->
 
-## 實際對話：保存研究筆記與分享包（2/3）
+## 實際對話：提出待驗證的改善建議（2/3）
 
-<!-- dialogue-message: 08-package/10 -->
+<!-- dialogue-message: turn-8/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> - [開啟更正版原生報告](evidence/0050-taiex/cases/01-ma-discussion/report.html)
-> - [開啟研究筆記（第 2 版）](evidence/0050-taiex/cases/01-ma-discussion/notebook/index.html)
-> - [取得完整研究包 ZIP](evidence/0050-taiex/cases/01-ma-discussion/research.zip)
+> 2\. **把驗證期間拉長。**
+> 納入上漲、下跌與盤整階段，保留一段資料作為樣本外測試。並用區間前資料建立均線，讓評估開始時已有完整 20 日均線。
 >
-> 報告與筆記均明確說明：**唯一基準是另行取得的 ^TWII 加權價格指數，不是同一份 0050 行情，也不是含息總報酬**。分享時請使用此更正版。
+> 3\. **優先測試減少短期反覆進出的規則。**
+> 這次有幾筆持有很短的虧損交易，可以提出兩種替代方案：
 >
-> 研究包包含設定、結果、大盤比較、討論與未驗證建議，以及完整原生報告；保留 **118 根日線的實際覆蓋、11 筆成交、5 筆已平倉及 1 筆未平倉交易**。
+> - **連續確認**：連續兩天高於均線才買、連續兩天低於才賣。
+> - **緩衝區**：例如高於均線 1% 才買、低於均線 1% 才賣，中間維持部位。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#08-package)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-8)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
 
 <!-- _class: case-dialogue case-transcript case-options -->
-<!-- _header: "02　策略研究　／　實際對話　第 8／8 輪" -->
+<!-- _header: "02　策略研究　／　實際對話　第 8／9 輪" -->
 
-## 實際對話：保存研究筆記與分享包（3/3）
+## 實際對話：提出待驗證的改善建議（3/3）
 
-<!-- dialogue-message: 08-package/10 -->
+<!-- dialogue-message: turn-8/1 -->
 
 gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-start -->
 
-> 下載 ZIP 後請**完整解壓，開啟 `index.html`**；`reports/` 保留連結報告。上述連結為本機檔案路徑，分享給別人時請傳送 ZIP。
+> 這些是尚未驗證的測試提案。可能減少交易，也可能讓進場、出場更慢；應先分別測試，才能知道各自影響。
 >
-> 報告操作指引：
+> 4\. **補齊實際成本。**
+> 加入 ETF 賣出交易稅、最低手續費與實際可買數量，避免改善只存在於模擬中。
 >
-> > 點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。
->
-> 保存結果：`af6a758f1ded43eea193638330be7aaf`，範圍：`full`。
+> **我的優先選擇是：先完成長期間的「原始 20 日均線 vs. 0050 買進持有」，再單獨測試連續兩天確認。** 先確認問題，再增加規則，會比較容易判斷改善是否可信。
 
 <!-- dialogue-text-end -->
 
-<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#08-package)" -->
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-8)" -->
 
 <!--
-來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 9／9 輪" -->
+
+## 實際對話：保存研究並準備分享（1/2）
+
+<!-- dialogue-message: turn-9/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 幫我把這次的研究整理好，讓我能分享給別人。
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: turn-9/1 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 已整理成**研究摘要第 1 版**，並將完整回測報告一起打包。
+>
+> [下載研究分享包 ZIP](evidence/0050-taiex/cases/01-ma-discussion/research.zip)
+>
+> 內容包含：
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-9)" -->
+
+<!--
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 9／9 輪" -->
+
+## 實際對話：保存研究並準備分享（2/2）
+
+<!-- dialogue-message: turn-9/1 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> - 20 日均線買賣規則與模擬設定。
+> - 報酬、回撤、年化指標與交易紀錄。
+> - 大盤比較：策略報酬 24.33%，大盤基準 29.01%，落後 4.68 個百分點。
+> - 研究限制及尚未執行的改善建議。
+>
+> **分享整個 ZIP 即可。收到後請完整解壓，再開啟 `index.html`**；保留 `reports/` 資料夾，才能從摘要連到完整報告。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-9)" -->
+
+<!--
+來源：TradingDev 原生匯出的 evidence/0050-taiex/cases/01-ma-discussion/conversation/conversation.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
 -->
 
 ---
@@ -1211,15 +1208,15 @@ gpt-6.1-sol｜該輪最終回覆
 ## 討論完成，再把研究整理分享
 
 - **產品研究包**：研究筆記、固定設定、原生報告與尚未驗證的建議。
-- **完整案例證據**：八輪可見對話與 MCP 原文、各版報告、策略、指標與校驗資料。
-- **比較界線**：台股大盤是唯一基準；緩衝區只是建議，沒有新增回測。
+- **完整案例證據**：9 輪可見對話與 MCP 原文、各版報告、策略、指標與校驗資料。
+- **比較界線**：台股大盤是唯一基準；改善方向仍待驗證，沒有新增回測。
 
-[開啟完整案例](evidence/0050-taiex/index.html) · [下載產品研究包](evidence/0050-taiex/cases/01-ma-discussion/research.zip) · [下載完整案例證據包](evidence/0050-taiex/natural-case-evidence.zip)
+[閱讀完整對話（HTML）](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html) · [案例總覽](evidence/0050-taiex/index.html) · [下載產品研究包](evidence/0050-taiex/cases/01-ma-discussion/research.zip) · [下載完整案例證據包](evidence/0050-taiex/natural-case-evidence.zip)
 
 *完整解壓後可離線閱讀；研究筆記是摘要，逐字內容另由對話紀錄查閱。*
 
 <!--
-原生研究包不含全部逐字對話，完整案例證據包另行整理，不冒稱產品原生功能。舊案例保留在 evidence/0050-ma/，未改寫歷史報告或結果。原始研究工作區另行保留，可持續查詢；離線證據包不是可攜式執行環境。
+完整對話由 TradingDev 的 Codex CLI 接入自動保存並原生匯出 HTML／JSON；研究包保存研究筆記與報告。案例總覽與證據包另行整理，保留兩種成果的來源。舊案例保留在 evidence/0050-ma/，未改寫歷史報告或結果。原始研究工作區另行保留，可持續查詢；離線證據包不是可攜式執行環境。
 -->
 
 ---
@@ -1229,14 +1226,14 @@ gpt-6.1-sol｜該輪最終回覆
 
 ## 原生研究筆記：保留結果與未完成事項
 
-![新版原生研究筆記及台股大盤比較](assets/0050-taiex-notebook.png)
+![新版原生研究筆記及台股大盤比較](assets/0050-taiex-notebook.jpg)
 
-[開啟研究筆記](evidence/0050-taiex/cases/01-ma-discussion/notebook/index.html) · [完整對話與檔案校驗](evidence/0050-taiex/index.html)
+[開啟研究筆記](evidence/0050-taiex/cases/01-ma-discussion/notebook/index.html) · [閱讀完整對話（HTML）](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html) · [案例總覽](evidence/0050-taiex/index.html)
 
 <!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
 
 <!--
-來源：新案例 screenshots/04-notebook-native.png。筆記第2版於最後一輪要求後保存；未宣稱每輪自動保存。
+來源：新案例 screenshots/04-notebook-native.jpg。研究筆記依對話要求保存，與自動保存的完整對話紀錄不同。
 -->
 
 ---
