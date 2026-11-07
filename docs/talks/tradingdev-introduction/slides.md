@@ -494,7 +494,7 @@ gpt-6.1-sol｜該輪最終回覆
 > 回測完成。0050 在 **2024/1/1～7/1、日 K** 的結果如下，已含方案中的模擬手續費與滑價：
 >
 > | 均線組合 | 區間報酬 | 最大回撤 | 已平倉筆數 |
-> |---|---:|---:|---:|
+> | --- | ---: | ---: | ---: |
 > | 5／20 日 | 28.02% | 8.16% | 1 |
 > | 10／40 日 | 16.96% | 7.84% | 1 |
 > | 20／60 日 | 16.50% | 7.84% | 0 |
@@ -596,7 +596,7 @@ gpt-6.1-sol｜該輪最終回覆
 > **這段期間三組都落後台股大盤，最大回撤也較大。** 以台股加權指數（`^TWII`）為基準，實際比較期間為 2024/1/2～7/1，共 118 根日 K。
 >
 > | 策略／基準 | 區間報酬 | 與大盤差距 | 最大回撤 |
-> |---|---:|---:|---:|
+> | --- | ---: | ---: | ---: |
 > | 台股大盤基準 | 29.01% | — | 6.66% |
 > | 5／20 日均線 | 28.02% | −0.99 個百分點 | 8.16% |
 > | 10／40 日均線 | 16.96% | −12.05 個百分點 | 7.84% |
@@ -890,58 +890,4 @@ gpt-6.1-sol｜該輪最終回覆
 
 <!--
 不承諾所有 TODO 都一定做。把對話模型與產品計費留在外部，是責任分工；多人服務必需的隔離則不能用自由度為理由省略。
--->
-
----
-
-<!-- _class: closing -->
-
-## TradingDev 的方向
-
-今天，讓自己的 AI 助手完成**可追問的策略實驗**，
-並透過提示詞，讓開發助手將研究經驗整合回 TradingDev。
-
-以 **research-feedback Skill** 引導工程回饋，
-持續驗證可重用的研究能力。
-
-*後續附有參考來源。演講後可繼續在線上閱讀。*
-
-<!--
-結尾區分現有策略研究、research-feedback Skill 引導的 TradingDev 改進流程，以及後續真實研究採用與成效驗證。TradingDev 的修改仍須經過測試與審查，沒有在此宣稱已完成服務內建的自主改進或測得績效優勢。
--->
-
----
-
-<!-- header: "附錄　參考資料" -->
-<!-- _class: references -->
-
-## 參考資料：本專案與基礎工具
-
-- [TradingDev 使用說明](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/README.md)與[架構](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/ARCHITECTURE.md)
-- [策略契約](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/docs/strategy_contract.md)與[執行產物](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/docs/run_artifacts.md)
-- [VectorBT](https://vectorbt.dev/)與[VectorBT PRO MCP](https://vectorbt.pro/features/ai/mcp-server/)
-- [Backtrader](https://www.backtrader.com/docu/)
-
-*本專案初稿基準 d57da5c，個別更新依頁面標示。開場能力摘要查核於 2026-10-31。*
-
-<!--
-原始碼來源固定版本，外部官方文件可能持續變動。簡報更新時應重新核對涉及的主張。
--->
-
----
-
-<!-- _class: references -->
-
-## 參考資料：研究指引與擴充
-
-- [MaverickMCP](https://github.com/wshobson/maverick-mcp/tree/da70d074dcdac5fb21e3b2e6383cfebf391f28b5)
-- [cloudQuant/backtrader-mcp](https://github.com/cloudQuant/backtrader-mcp/tree/ad6312a11c2fe7ff9a4c3fcfcfab5037a951b58c)
-- [QuantConnect Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents)與[Shared Libraries](https://www.quantconnect.com/docs/v2/local-platform/projects/shared-libraries)
-- [QuantConnect Private Cloud](https://www.quantconnect.com/docs/v2/local-platform/private-cloud)
-- [LEAN 引擎](https://github.com/QuantConnect/Lean)與[Algorithm Framework](https://www.quantconnect.com/docs/v2/writing-algorithms/algorithm-framework/overview)
-
-*來源依公開文件與所列版本。尚未實測自製機制相對既有工具的效益。*
-
-<!--
-開場的現成能力摘要以該頁官方文件為依據，其餘保留作研究引導、診斷與擴充的參考。Maverick 為初期診斷 adapter 的參考來源。候選配置套件與引擎的來源已附於 TODO 頁，後續開發時仍需重新確認現況。
 -->
