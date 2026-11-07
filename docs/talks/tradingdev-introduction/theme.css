@@ -136,3 +136,15 @@ section.case-dialogue blockquote {
 section.case-dialogue blockquote:nth-of-type(2) { border-left-color: #087f79; }
 section.case-dialogue blockquote p, section.case-dialogue blockquote ul { margin: 6px 0; }
 section.case-dialogue blockquote li { margin: 3px 0; }
+section.case-options blockquote { font-size: 22px; }
+section.case-options table { font-size: 20px; line-height: 1.3; margin: 8px 0; }
+section.case-options th, section.case-options td { padding: 6px 12px; }
+section.case-transcript > blockquote { border-left-color: #087f79; }
+section.case-transcript.case-with-input > blockquote:first-of-type { border-left-color: #d2714a; }
+section.case-transcript blockquote blockquote {
+  border-left: 2px solid #c9d4d2;
+  font-size: 22px;
+  line-height: 1.5;
+  padding-left: 16px;
+  margin: 8px 0;
+}
