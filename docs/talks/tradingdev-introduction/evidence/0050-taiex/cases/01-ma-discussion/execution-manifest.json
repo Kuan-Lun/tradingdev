@@ -1,0 +1,99 @@
+{
+  "schema_version": 5,
+  "kind": "backtest",
+  "config": {
+    "strategy": {
+      "id": "strategy_1bfbc2a9ec5d446e87d222a959c57ff9",
+      "revision_id": "9e8399dff16c49919faa822dcd04c02a",
+      "class_name": "SingleSmaHoldStrategy",
+      "display_name": "0050－20日均線持有策略",
+      "source_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/cases/01-ma-discussion/research/generated_strategies/strategy_1bfbc2a9ec5d446e87d222a959c57ff9/revisions/9e8399dff16c49919faa822dcd04c02a/strategy.py",
+      "source_hash": "d3ee79804073d031af9b0dc36f4e8e7f25af884858cc721b04b7e1cf813c7fbe",
+      "parameters": {
+        "period": 20
+      }
+    },
+    "backtest": {
+      "symbol": "0050.TW",
+      "timeframe": "1d",
+      "start_date": "2023-12-31T16:00:00+00:00",
+      "end_date": "2024-07-01T15:59:59+00:00",
+      "init_cash": 10000.0,
+      "fees": 0.0006,
+      "slippage": 0.0005,
+      "position_size": null,
+      "stop_loss": null,
+      "take_profit": null,
+      "signal_as_position": false,
+      "re_entry_after_sl": true,
+      "mode": "signal",
+      "monthly_max_loss": 1500.0,
+      "periods_per_year": 252.0,
+      "risk_free_rate": 0.0,
+      "required_return": 0.0
+    },
+    "data": {
+      "source": "yahoo_finance",
+      "market_type": "futures/um",
+      "raw_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/market-data/raw",
+      "processed_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/market-data/processed",
+      "requirements": {
+        "market": {
+          "source": "yahoo_finance",
+          "symbol": "0050.TW",
+          "timeframe": "1d"
+        },
+        "features": []
+      }
+    },
+    "research": {
+      "schema_version": 1,
+      "policy_version": "research-v1",
+      "strategy_outline": "0050 日線20日SMA，初始空手；收盤價高於均線轉為持多，低於轉為空手，等於延續原部位，不加碼、不放空。隔根開盤成交；以區間報酬、回撤與交易次數為主，年化不是未來預測。",
+      "field_sources": {
+        "/research/strategy_outline": "request",
+        "/backtest/symbol": "request",
+        "/backtest/timeframe": "request",
+        "/backtest/start_date": "request",
+        "/backtest/end_date": "request",
+        "/backtest/init_cash": "project_default",
+        "/backtest/fees": "project_default",
+        "/backtest/slippage": "project_default",
+        "/backtest/periods_per_year": "request"
+      },
+      "selected_revision": null,
+      "annualization_reason": "explicit_daily_factor"
+    },
+    "validation": null,
+    "parallel": {
+      "reserve_cores": 2,
+      "safety_factor": 0.6,
+      "overhead_multiplier": 3.0
+    },
+    "random_seed": null
+  },
+  "strategy_execution": {
+    "kind": "generated",
+    "constructor_kwargs": {
+      "period": 20
+    },
+    "program": {
+      "source_hash": "d3ee79804073d031af9b0dc36f4e8e7f25af884858cc721b04b7e1cf813c7fbe",
+      "class_name": "SingleSmaHoldStrategy",
+      "runtime": {
+        "image_id": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
+        "limits": {
+          "max_seconds": 300.0,
+          "memory_bytes": 2147483648,
+          "cpus": 2.0,
+          "processes": 128,
+          "temporary_bytes": 268435456,
+          "message_bytes": 67108864,
+          "diagnostic_bytes": 65536
+        }
+      }
+    }
+  },
+  "optimization": null,
+  "manifest_hash": "0c2f4614d4b2d4fb9e248cda94e9331c33938cb9709fe4405bcb008989d392e0"
+}

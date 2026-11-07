@@ -1,0 +1,651 @@
+{
+  "kind": "backtest",
+  "mode": "signal",
+  "metadata": {
+    "calculation_fallbacks": {},
+    "execution_context": {
+      "end_date": "2024-07-01T15:59:59+00:00",
+      "fees": 0.0006,
+      "init_cash": 10000.0,
+      "mode": "signal",
+      "monthly_max_loss": 1500.0,
+      "periods_per_year": 252.0,
+      "position_size": null,
+      "random_seed": null,
+      "re_entry_after_sl": true,
+      "required_return": 0.0,
+      "risk_free_rate": 0.0,
+      "signal_as_position": false,
+      "slippage": 0.0005,
+      "start_date": "2023-12-31T16:00:00+00:00",
+      "stop_loss": null,
+      "symbol": "0050.TW",
+      "take_profit": null,
+      "timeframe": "1d"
+    },
+    "mode": "signal",
+    "observations": {
+      "account_history_availability": "available",
+      "account_history_mark": "bar_close",
+      "accounting": "vectorbt_generic",
+      "bar_count": 118,
+      "end_date": "2024-07-01T01:00:00+00:00",
+      "execution_equity_mark": "requested_price_before_slippage",
+      "execution_records_availability": "available",
+      "execution_timestamp_semantics": "bar_timestamp_not_exact_intrabar_fill",
+      "start_date": "2024-01-02T01:00:00+00:00",
+      "trade_count": 6
+    },
+    "providers": {
+      "quantstats": "0.0.86",
+      "vectorbt": "1.2.0"
+    },
+    "schema_version": 1,
+    "settings": {
+      "calendar_timezone": "UTC",
+      "calmar_drawdown_sampling": "observed_daily",
+      "cost_model": "commission_and_slippage_adjusted_fill_prices",
+      "drawdown_sampling": "bar",
+      "excess_return_adjustment": "configured_rate_before_quantstats",
+      "frequency": "1d",
+      "initial_cash": 10000.0,
+      "missing_dates": "not_filled",
+      "period_pnl_std_ddof": 0,
+      "periods_per_year": 252.0,
+      "required_return": 0.0,
+      "required_return_per_period": 0.0,
+      "return_sampling": "observed_daily",
+      "return_std_ddof": 1,
+      "returns_basis": "simple",
+      "risk_free_rate": 0.0,
+      "risk_free_rate_per_period": 0.0,
+      "stored_returns_sampling": "bar",
+      "trade_scope": "closed"
+    },
+    "strategy_parameters": {
+      "period": 20
+    },
+    "unavailable": {
+      "total_slippage": "embedded_in_fill_prices"
+    }
+  },
+  "split": "full",
+  "fold_index": null,
+  "trial_index": null,
+  "parameters": {
+    "period": 20
+  },
+  "success": true,
+  "run_id": "af6a758f1ded43eea193638330be7aaf",
+  "manifest_hash": "0c2f4614d4b2d4fb9e248cda94e9331c33938cb9709fe4405bcb008989d392e0",
+  "scope": "full",
+  "metrics": {
+    "annual_return": 0.5921291751754136,
+    "annual_volatility": 0.16440060688346278,
+    "avg_holding_bars": 13.8,
+    "calmar_ratio": 6.878325979196783,
+    "daily_max_drawdown": 0.08608623333152343,
+    "daily_pnl_max": 468.86502961107726,
+    "daily_pnl_mean": 20.61893693741684,
+    "daily_pnl_median": 0.0,
+    "daily_pnl_min": -318.68169108050097,
+    "daily_pnl_std": 115.92427916247057,
+    "max_drawdown": 0.08608623333152343,
+    "max_drawdown_amount": 1029.5658824316633,
+    "monthly_pnl_max": 1062.270813122008,
+    "monthly_pnl_mean": 347.57636551645527,
+    "monthly_pnl_median": 393.95230058586276,
+    "monthly_pnl_min": -483.30323213930023,
+    "monthly_pnl_std": 538.8575222023463,
+    "monthly_trades_mean": 0.7142857142857143,
+    "monthly_volume_mean": 17649.54742948653,
+    "n_days": 118,
+    "n_months": 7,
+    "open_trades": 1,
+    "profit_factor": 4.422803129122141,
+    "sharpe_ratio": 2.912447800628984,
+    "sortino_ratio": 5.339980830959924,
+    "total_fees": 74.12809920384026,
+    "total_pnl": 2433.034558615187,
+    "total_return": 0.2433034558615188,
+    "total_slippage": null,
+    "total_trades": 5,
+    "total_volume": 123546.83200640572,
+    "trade_expectancy": 304.5765074005327,
+    "win_rate": 0.4
+  },
+  "display_metrics": {
+    "annual_return": "59.21%",
+    "annual_volatility": "16.44%",
+    "avg_holding_bars": "13.80",
+    "calmar_ratio": "6.88",
+    "daily_max_drawdown": "8.61%",
+    "daily_pnl_max": "468.87",
+    "daily_pnl_mean": "20.62",
+    "daily_pnl_median": "0.00",
+    "daily_pnl_min": "-318.68",
+    "daily_pnl_std": "115.92",
+    "max_drawdown": "8.61%",
+    "max_drawdown_amount": "1029.57",
+    "monthly_pnl_max": "1062.27",
+    "monthly_pnl_mean": "347.58",
+    "monthly_pnl_median": "393.95",
+    "monthly_pnl_min": "-483.30",
+    "monthly_pnl_std": "538.86",
+    "monthly_trades_mean": "0.71",
+    "monthly_volume_mean": "17649.55",
+    "n_days": "118",
+    "n_months": "7",
+    "open_trades": "1",
+    "profit_factor": "4.42",
+    "sharpe_ratio": "2.91",
+    "sortino_ratio": "5.34",
+    "total_fees": "74.13",
+    "total_pnl": "2433.03",
+    "total_return": "24.33%",
+    "total_slippage": null,
+    "total_trades": "5",
+    "total_volume": "123546.83",
+    "trade_expectancy": "304.58",
+    "win_rate": "40.00%"
+  },
+  "definitions": {
+    "annual_return": {
+      "id": "annual_return",
+      "unit": "fraction",
+      "category": "return",
+      "provider": "quantstats",
+      "description": "Compounded annual growth rate of observed UTC daily returns using configured days per year. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": true,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal"
+      ],
+      "requires_annualization": true
+    },
+    "annual_volatility": {
+      "id": "annual_volatility",
+      "unit": "fraction",
+      "category": "risk",
+      "provider": "quantstats",
+      "description": "Annualized sample standard deviation of observed daily returns. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "minimize",
+      "modes": [
+        "signal"
+      ],
+      "requires_annualization": true
+    },
+    "avg_holding_bars": {
+      "id": "avg_holding_bars",
+      "unit": "bars",
+      "category": "trade",
+      "provider": "vectorbt",
+      "description": "Mean exit index minus entry index for closed trades.",
+      "summary": false,
+      "optimization_direction": null,
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "calmar_ratio": {
+      "id": "calmar_ratio",
+      "unit": "ratio",
+      "category": "risk",
+      "provider": "quantstats",
+      "description": "Compounded annual return divided by maximum observed-day closing drawdown (daily_max_drawdown). Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal"
+      ],
+      "requires_annualization": true
+    },
+    "daily_max_drawdown": {
+      "id": "daily_max_drawdown",
+      "unit": "fraction",
+      "category": "risk",
+      "provider": "quantstats",
+      "description": "Maximum observed-day closing percentage drawdown; denominator of Calmar ratio. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "minimize",
+      "modes": [
+        "signal"
+      ],
+      "requires_annualization": false
+    },
+    "daily_pnl_max": {
+      "id": "daily_pnl_max",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "max of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "daily_pnl_mean": {
+      "id": "daily_pnl_mean",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "mean of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "daily_pnl_median": {
+      "id": "daily_pnl_median",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "median of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "daily_pnl_min": {
+      "id": "daily_pnl_min",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "min of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "daily_pnl_std": {
+      "id": "daily_pnl_std",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "std of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "minimize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "max_drawdown": {
+      "id": "max_drawdown",
+      "unit": "fraction",
+      "category": "risk",
+      "provider": "quantstats",
+      "description": "Largest peak-to-trough loss fraction, reported as nonnegative magnitude.",
+      "summary": true,
+      "optimization_direction": "minimize",
+      "modes": [
+        "signal"
+      ],
+      "requires_annualization": false
+    },
+    "max_drawdown_amount": {
+      "id": "max_drawdown_amount",
+      "unit": "amount",
+      "category": "risk",
+      "provider": "ledger",
+      "description": "Largest peak-to-trough loss amount, including the initial capital/PnL baseline.",
+      "summary": true,
+      "optimization_direction": "minimize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "monthly_pnl_max": {
+      "id": "monthly_pnl_max",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "max of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "monthly_pnl_mean": {
+      "id": "monthly_pnl_mean",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "mean of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "monthly_pnl_median": {
+      "id": "monthly_pnl_median",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "median of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "monthly_pnl_min": {
+      "id": "monthly_pnl_min",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "min of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "monthly_pnl_std": {
+      "id": "monthly_pnl_std",
+      "unit": "amount",
+      "category": "period",
+      "provider": "numpy/pandas",
+      "description": "std of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": false,
+      "optimization_direction": "minimize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "monthly_trades_mean": {
+      "id": "monthly_trades_mean",
+      "unit": "count",
+      "category": "period",
+      "provider": "pandas",
+      "description": "Closed trades divided by observed calendar months.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "monthly_volume_mean": {
+      "id": "monthly_volume_mean",
+      "unit": "amount",
+      "category": "period",
+      "provider": "pandas",
+      "description": "Executed notional divided by observed calendar months.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "n_days": {
+      "id": "n_days",
+      "unit": "count",
+      "category": "period",
+      "provider": "pandas",
+      "description": "Number of observed UTC calendar dates.",
+      "summary": false,
+      "optimization_direction": null,
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "n_months": {
+      "id": "n_months",
+      "unit": "count",
+      "category": "period",
+      "provider": "pandas",
+      "description": "Number of observed UTC calendar months.",
+      "summary": false,
+      "optimization_direction": null,
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "open_trades": {
+      "id": "open_trades",
+      "unit": "count",
+      "category": "trade",
+      "provider": "vectorbt",
+      "description": "Number of trades still open at the final mark.",
+      "summary": false,
+      "optimization_direction": null,
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "profit_factor": {
+      "id": "profit_factor",
+      "unit": "ratio",
+      "category": "trade",
+      "provider": "vectorbt",
+      "description": "Closed-trade gross gains divided by absolute gross losses; all-winning is unbounded.",
+      "summary": true,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "sharpe_ratio": {
+      "id": "sharpe_ratio",
+      "unit": "ratio",
+      "category": "risk",
+      "provider": "quantstats",
+      "description": "Annualized excess daily return divided by sample standard deviation. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": true,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal"
+      ],
+      "requires_annualization": true
+    },
+    "sortino_ratio": {
+      "id": "sortino_ratio",
+      "unit": "ratio",
+      "category": "risk",
+      "provider": "quantstats",
+      "description": "Annualized return above target divided by downside deviation. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+      "summary": true,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal"
+      ],
+      "requires_annualization": true
+    },
+    "total_fees": {
+      "id": "total_fees",
+      "unit": "amount",
+      "category": "trade",
+      "provider": "ledger",
+      "description": "Total charged entry and exit commissions (see cost model metadata).",
+      "summary": false,
+      "optimization_direction": "minimize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "total_pnl": {
+      "id": "total_pnl",
+      "unit": "amount",
+      "category": "return",
+      "provider": "ledger",
+      "description": "Net marked-to-market profit, including execution costs.",
+      "summary": true,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "total_return": {
+      "id": "total_return",
+      "unit": "fraction",
+      "category": "return",
+      "provider": "quantstats",
+      "description": "Cumulative return on initial capital.",
+      "summary": true,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal"
+      ],
+      "requires_annualization": false
+    },
+    "total_slippage": {
+      "id": "total_slippage",
+      "unit": "amount",
+      "category": "trade",
+      "provider": "ledger",
+      "description": "Explicit slippage charges in the volume model; signal slippage is embedded in fill prices.",
+      "summary": false,
+      "optimization_direction": null,
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "total_trades": {
+      "id": "total_trades",
+      "unit": "count",
+      "category": "trade",
+      "provider": "vectorbt",
+      "description": "Number of closed trades; open trades excluded.",
+      "summary": true,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "total_volume": {
+      "id": "total_volume",
+      "unit": "amount",
+      "category": "trade",
+      "provider": "ledger",
+      "description": "Sum of actual entry and exit notional; open marks are not executions.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "trade_expectancy": {
+      "id": "trade_expectancy",
+      "unit": "amount",
+      "category": "trade",
+      "provider": "vectorbt",
+      "description": "Expected net profit per closed trade.",
+      "summary": false,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    },
+    "win_rate": {
+      "id": "win_rate",
+      "unit": "fraction",
+      "category": "trade",
+      "provider": "vectorbt",
+      "description": "Fraction of closed trades with positive net PnL, after entry and exit costs.",
+      "summary": true,
+      "optimization_direction": "maximize",
+      "modes": [
+        "signal",
+        "volume"
+      ],
+      "requires_annualization": false
+    }
+  },
+  "details_available": true,
+  "provenance": "performance_artifact",
+  "available_metric_ids": [
+    "annual_return",
+    "annual_volatility",
+    "avg_holding_bars",
+    "calmar_ratio",
+    "daily_max_drawdown",
+    "daily_pnl_max",
+    "daily_pnl_mean",
+    "daily_pnl_median",
+    "daily_pnl_min",
+    "daily_pnl_std",
+    "max_drawdown",
+    "max_drawdown_amount",
+    "monthly_pnl_max",
+    "monthly_pnl_mean",
+    "monthly_pnl_median",
+    "monthly_pnl_min",
+    "monthly_pnl_std",
+    "monthly_trades_mean",
+    "monthly_volume_mean",
+    "n_days",
+    "n_months",
+    "open_trades",
+    "profit_factor",
+    "sharpe_ratio",
+    "sortino_ratio",
+    "total_fees",
+    "total_pnl",
+    "total_return",
+    "total_slippage",
+    "total_trades",
+    "total_volume",
+    "trade_expectancy",
+    "win_rate"
+  ],
+  "available_scopes": [
+    "full"
+  ],
+  "default_scope": "full",
+  "selected_train_scope": null,
+  "detail_error": null
+}
