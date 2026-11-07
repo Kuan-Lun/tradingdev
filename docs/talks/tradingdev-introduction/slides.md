@@ -196,12 +196,15 @@ research-feedback Skill 引導外部助手固定來源、判斷共用價值、�
 - **證據保存**：連結策略版本、有效設定與實驗結果。
 - **研究回饋**：診斷提示、報告解讀與可續讀的研究筆記。
 
+已建立 [軟體需求規格（SRS）](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md)，整理產品需求與驗收條件。
+
 <!-- _footer: "現況依據：[TradingDev 使用說明](https://github.com/Kuan-Lun/tradingdev/blob/cd95d6091bbc2a46c6a58cdb326aa5df730519c4/README.md)與[架構](https://github.com/Kuan-Lun/tradingdev/blob/cd95d6091bbc2a46c6a58cdb326aa5df730519c4/ARCHITECTURE.md)" -->
 
 <!--
 TradingDev 除了接收工具請求、執行計算和保存資料，也提供模型可讀取的研究流程指引、策略契約與診斷。使用者不必自己把一次次實驗的程式、設定和結果拼回來。
 診斷先提供規則式提示，外部 LLM 的報告解讀須保留觀察依據與限制，研究建議不會自動啟動新實驗。研究筆記可保存階段摘要及引用報告，供外部開發助手透過 research-feedback Skill 讀取選定案例及改進 TradingDev；跨研究自動檢索仍待開發。
 TradingDev 不內建對話模型。這些能力是 TradingDev 的現有基礎，不代表已提供多人權限或完整執行隔離。
+SRS 定義產品需求基線與驗收入口，不是測試通過證明。本頁提供主線版本的入口，需求細節與驗收條件由該文件及其分冊維護。
 基礎計算包含行情、技術指標、回測與參數研究，採用 VectorBT、TA-Lib、QuantStats 等套件，沒有把 Freqtrade 整合為依賴。ML 訊號研究是現有能力，並非本專案獨有，也不代表已有任意模型支援或真實下單。
 ML 模型包含 XGBoost、LightGBM、CatBoost 方向模型；QuantConnect 也提供機器學習研究，支援更多常見框架。模型種類不代表較泛用。
 基礎計算與 ML 來源：pyproject.toml、src/tradingdev/domain/ml/models/registry.py；https://www.quantconnect.com/docs/v2/writing-algorithms/machine-learning/popular-libraries/pytorch
