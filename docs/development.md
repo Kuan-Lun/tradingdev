@@ -250,6 +250,15 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 
 瀏覽 `http://127.0.0.1:8765/` 確認版面、頁碼、導覽與講者模式；結束伺服器按
 `Ctrl+C`。修改來源或樣式後同步提交重建的 HTML。
+
+簡報採整包離線交付，`assets/` 圖片及 `evidence/` 報告沿用相對路徑。
+`scripts/check-presentations.sh` 另核對交付 HTML 的 `href`、`src`、`poster`、`xlink:href`
+靜態引用與 HTML 片段；這些本機引用須指向交付範圍內的檔案，整包不接受符號連結。
+報告內的 CSS、`srcset` 與 JavaScript 動態資源不在此連結檢查範圍，須另用瀏覽器驗證。
+`scripts/presentations.sh package --output <新資料夾>` 檢查後建立資料夾及同名 ZIP，
+不覆寫既存輸出。`scripts/stage-presentations.sh` 只複製既有成品至固定的
+`site-dist/tradingdev/` 並替換舊發布內容，不編譯或安裝工具；供 Wrangler 部署時呼叫。
+打包、解壓與發布的使用方式見[簡報編輯指南](talks/tradingdev-introduction/README.md)。
 專項檢查以臨時目錄重建並比對，不覆寫工作樹；缺少工具鏈或輸出不同步會失敗。
 可用 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定另一套已初始化且 lock 相符的工具鏈。
 

@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
+from typing import TYPE_CHECKING
 
+from tooling.presentation_bundle import check_image
 from tooling.presentation_errors import PresentationError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _css_unescape(value: str) -> str:
@@ -19,7 +24,7 @@ def _css_unescape(value: str) -> str:
     return re.sub(r"\\([0-9a-fA-F]{1,6}\s?|[^\n\r\f])", replace, value)
 
 
-def _check_css(value: str) -> None:
+def _check_css(value: str, root: Path | None = None) -> None:
     css = _css_unescape(re.sub(r"/\*.*?\*/", "", value, flags=re.DOTALL))
     if re.search(r"@import\b", css, flags=re.IGNORECASE):
         raise PresentationError("External CSS imports are not allowed.")
@@ -30,12 +35,17 @@ def _check_css(value: str) -> None:
     for match in re.finditer(r"\burl\s*\(\s*([^)]*)\)", css, flags=re.IGNORECASE):
         target = match[1].strip().strip("\"'").strip()
         if target and not target.casefold().startswith(("data:", "#")):
-            raise PresentationError(f"External CSS resource is not allowed: {target}")
+            if root is None:
+                raise PresentationError(
+                    f"External CSS resource is not allowed: {target}"
+                )
+            check_image(root, target)
 
 
 class _PresentationHTML(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, root: Path | None = None) -> None:
         super().__init__(convert_charrefs=True)
+        self.root = root
         self.sections: list[dict[str, str | None]] = []
         self.active: str | None = None
         self.content: list[str] = []
@@ -54,7 +64,7 @@ class _PresentationHTML(HTMLParser):
             raise PresentationError(f"Unexpected navigation element: {tag}")
         for name, value in attrs:
             if name == "style" and value:
-                _check_css(value)
+                _check_css(value, self.root)
             if name in {"srcdoc", "srcset", "ping"} or name.startswith("on"):
                 raise PresentationError(f"Inline executable HTML attribute: {name}")
             resource = name in {"src", "srcset", "poster", "data", "background"} or (
@@ -65,9 +75,14 @@ class _PresentationHTML(HTMLParser):
                 and value
                 and not value.strip().lower().startswith(("data:", "#"))
             ):
-                raise PresentationError(
-                    f"External HTML resource is not allowed: {value}"
-                )
+                if self.root is None or not (
+                    (tag == "img" and name == "src")
+                    or (tag == "image" and name in {"href", "xlink:href"})
+                ):
+                    raise PresentationError(
+                        f"External HTML resource is not allowed: {value}"
+                    )
+                check_image(self.root, value)
             if (
                 tag == "a"
                 and name == "href"
@@ -85,7 +100,7 @@ class _PresentationHTML(HTMLParser):
             return
         content = "".join(self.content)
         if tag == "style":
-            _check_css(content)
+            _check_css(content, self.root)
         elif re.search(
             r"WebSocket|EventSource|location\s*\.\s*reload|marp-cli-reload|wss?://",
             content,
@@ -97,9 +112,9 @@ class _PresentationHTML(HTMLParser):
         self.active, self.content = None, []
 
 
-def check_html(content: str) -> int:
+def check_html(content: str, *, root: Path | None = None) -> int:
     """Inspect generated output as data; never open it in a browser."""
-    parser = _PresentationHTML()
+    parser = _PresentationHTML(root)
     parser.feed(content)
     parser.close()
     count = len(parser.sections)
