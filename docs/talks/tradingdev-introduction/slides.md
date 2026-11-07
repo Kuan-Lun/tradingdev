@@ -35,8 +35,8 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 | --- | --- | --- |
 | 01 | [開發動機與專案定位](index.html#3) | 現成工具的範圍、自製理由與使用情境 |
 | 02 | [策略研究](index.html#11) | 角色分工、運算安排與策略實驗 |
-| 03 | [經驗如何回饋專案](index.html#32) | 開發經驗的整合與驗證 |
-| 04 | [後續開發方向](index.html#35) | 可獨立指定的開發目標 |
+| 03 | [經驗如何回饋專案](index.html#31) | 開發經驗的整合與驗證 |
+| 04 | [後續開發方向](index.html#34) | 可獨立指定的開發目標 |
 
 <!-- _footer: "點選章名跳轉。方向鍵換頁，P 開啟講者模式。" -->
 
@@ -325,32 +325,6 @@ TradingDev 以 server instructions、工具描述與按需契約提供研究指�
 signal 使用 VectorBT，包含初始資金。volume 從零累計 P&L，沒有初始資金，不能當作本金報酬率；名目規模可由 size_weight 調整。volume 也不是市場深度或成交量限制撮合模型。
 來源：https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/src/tradingdev/domain/backtest/result.py
 其他引擎：https://vectorbt.dev/api/portfolio/base/#simulation-modes 、 https://www.quantconnect.com/docs/v2/writing-algorithms/trading-and-orders/position-sizing
--->
-
----
-
-<!-- _class: compact -->
-
-## TradingDev 的研究指引：均線策略案例
-
-> **使用者**：「我想測試短均線高於長均線時買進。」
-
-| TradingDev 的指引 | 前端 AI 可能接著問 |
-| --- | --- |
-| **缺項時追問** | 「想測哪個標的、哪段期間？每根 K 棒代表多久？」 |
-| **將策略具體化** | 「均線各用幾根？短均線跌破時，是平倉還是做空？」 |
-| **執行前確認** | 「本金、手續費與滑價有指定嗎？若沒有，我先列出模擬預設供你確認。」 |
-
-*示意對話，問法依情境調整；整理成確認單後，使用者同意才回測。*
-
-<!--
-本頁保留使用者只有均線交易構想的情境，以具體問句展示 TradingDev 的指引如何影響前端互動。表中的問題可分散於多輪對話，不是要求一次問完；補齊必要研究選擇後，再釐清策略細節與提出方案。這是依現有指引編寫的示意，不是真實模型逐字紀錄或已執行的回測。
-提示詞引導由 TradingDev 的 server instructions、工具說明與按需策略契約提供；此處不是指另行註冊的 MCP prompts，也不是固定問卷。實際問句與互動由 Codex 等客戶端的 LLM 組織。
-建立新研究前，構想、標的、回測期間與 K 棒頻率缺項時須追問，不能從範例猜出選擇。只有明確要求沿用已選定研究時，才可繼承其設定。
-策略具體化包含整理進場、持有、出場與交易方向，確認參數並形成可驗證的程式。模型可提出有說明依據的方案，不能把自己的假設冒充使用者要求。
-本金與成本未指定時可依共用模擬政策解析，明示有效值優先。前端須呈現 TradingDev 產生的確認摘要與 HTML，待使用者明確同意該方案才提交執行。這些是歷史回測假設，不是即時費率或真實下單設定；本金與交易規模依執行模式適用。
-提示詞要求不保證所有客戶端一定遵循；TradingDev 另檢查必要欄位、設定與執行狀態，但不能證明輸入或同意真的來自使用者。
-來源：src/tradingdev/mcp/prompts.py 的 SERVER_INSTRUCTIONS、server.py 的 instructions 註冊，以及 src/tradingdev/domain/strategies/templates.py 的 research 契約與 src/tradingdev/domain/research_policy.py。
 -->
 
 ---
