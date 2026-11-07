@@ -255,6 +255,12 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 `scripts/check-presentations.sh` 另核對交付 HTML 的 `href`、`src`、`poster`、`xlink:href`
 靜態引用與 HTML 片段；這些本機引用須指向交付範圍內的檔案，整包不接受符號連結。
 報告內的 CSS、`srcset` 與 JavaScript 動態資源不在此連結檢查範圍，須另用瀏覽器驗證。
+案例證據依 [presentation_bundle.py](../tooling/presentation_bundle.py) 的
+`evidence_content_allowed` 登錄相對路徑角色與格式，新增、更新或刪除已登錄的報告、
+資料、截圖、下載包及保存的 `strategy.py` 走簡報專項；保存的策略只供閱讀／下載，
+檢查不匯入或執行它。分類同時檢查變更前後的 Git 內容與檔案模式，未知角色、
+不符格式、可執行檔、符號連結或混合產品修改仍走原有保守分流。
+格式辨識不證明報告數值、ZIP 內容或策略正確，案例語意、來源與完整性仍須另行審閱。
 `scripts/presentations.sh package --output <新資料夾>` 檢查後建立資料夾及同名 ZIP，
 不覆寫既存輸出。`scripts/stage-presentations.sh` 只複製既有成品至固定的
 `site-dist/tradingdev/` 並替換舊發布內容，不編譯或安裝工具；供 Wrangler 部署時呼叫。
@@ -498,6 +504,8 @@ TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 
 文件審查會帶入完整的變更檔案及按責任選取的既有文件原文，輸入量不只取決於
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
+每批證據區分實際 Git 變更與必須附上的未修改簡報參照；參照仍保留完整原文，
+供檢查本次變更造成的不一致，不將列入審查等同於本次新增或修改。
 上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
 設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
 舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。

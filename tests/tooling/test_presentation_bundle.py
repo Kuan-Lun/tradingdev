@@ -5,11 +5,16 @@ from __future__ import annotations
 import shutil
 import subprocess
 import zipfile
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from tests.tooling.test_presentations import _html
-from tooling.presentation_bundle import check_bundle, write_bundle
+from tooling.presentation_bundle import (
+    check_bundle,
+    evidence_content_allowed,
+    write_bundle,
+)
 from tooling.presentation_errors import PresentationError
 from tooling.presentation_html import check_html
 from tooling.presentations import DECK, presentation_change_allowed
@@ -126,6 +131,66 @@ def test_asset_classification_rejects_code_disguised_as_an_image() -> None:
     assert presentation_change_allowed(f"{DECK}/assets/chart.png", None, PNG)
     assert not presentation_change_allowed(f"{DECK}/assets/chart.png", None, b"code")
     assert not presentation_change_allowed(f"{DECK}/assets/run.py", None, PNG)
+
+
+@pytest.mark.parametrize(
+    "name, content",
+    [
+        ("demo/index.html", b"<h1>Case</h1>"),
+        ("demo/case.json", b'{"case": {}}'),
+        ("demo/checksums.json", b"{}"),
+        ("demo/cases/example/benchmark.json", b'{"status": "unavailable"}'),
+        ("demo/cases/example/confirmation.txt", "確認單".encode()),
+        ("demo/cases/example/report.html", b"<script>/* native report */</script>"),
+        ("demo/cases/example/strategy.py", b"raise RuntimeError('never execute')"),
+        ("demo/cases/example/notebook/research.json", b"{}"),
+        ("demo/cases/example/notebook/reports/12.html", b"<h1>Report</h1>"),
+        (f"demo/cases/example/earlier-reports/{'a' * 64}.html", b"<h1>Report</h1>"),
+        ("demo/screenshots/01-native.png", PNG),
+        (
+            "demo/.gitattributes",
+            b"# Preserve native bytes\n"
+            b"cases/example/report.html whitespace=-blank-at-eol\n",
+        ),
+    ],
+)
+def test_saved_document_roles_are_read_only(name: str, content: bytes) -> None:
+    assert evidence_content_allowed(name, content)
+
+
+def test_archive_role_checks_format_without_extracting_or_executing() -> None:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("strategy.py", "raise RuntimeError('never execute')")
+    for name in ("demo/natural-case-evidence.zip", "demo/cases/example/research.zip"):
+        assert evidence_content_allowed(name, buffer.getvalue())
+        assert not evidence_content_allowed(name, b"not a ZIP")
+
+
+@pytest.mark.parametrize(
+    "name, content",
+    [
+        ("demo/cases/example/run.py", b"print('unknown program')"),
+        ("demo/cases/example/plugin.js", b"alert('unknown program')"),
+        ("demo/cases/example/unknown.json", b"{}"),
+        ("demo/cases/example/benchmark.json", b"{invalid"),
+        ("demo/cases/example/report.html", b"\xff"),
+        ("demo/cases/example/strategy.py", b"binary\0payload"),
+        ("demo/cases/example/notebook/reports/latest.html", b"<h1>Unknown role</h1>"),
+        ("demo/cases/example/earlier-reports/latest.html", b"<h1>Unknown role</h1>"),
+        ("demo/screenshots/01-native.png", b"disguised program"),
+        ("demo/screenshots/nested/01-native.png", PNG),
+        ("../demo/index.html", b"<h1>Outside</h1>"),
+        ("demo/cases/example/../report.html", b"<h1>Outside</h1>"),
+        ("demo/.gitattributes", b"*.html whitespace=-blank-at-eol"),
+        ("demo/.gitattributes", b"cases/example/report.html filter=custom"),
+        ("demo/.gitattributes", b"cases/example/strategy.py whitespace=-blank-at-eol"),
+    ],
+)
+def test_unknown_or_malformed_evidence_retains_code_checks(
+    name: str, content: bytes
+) -> None:
+    assert not evidence_content_allowed(name, content)
 
 
 def test_cloudflare_stages_all_entries_and_removes_only_stale_output(
