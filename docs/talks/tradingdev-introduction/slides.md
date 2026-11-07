@@ -4,7 +4,7 @@ theme: tradingdev
 size: 16:9
 paginate: true
 lang: zh-Hant
-title: TradingDev｜讓 AI 代理協助研究交易策略
+title: TradingDev｜能學習策略開發經驗、自我演進的研究後端
 description: 產品介紹、使用場景、分類比較與後續開發方向
 -->
 
@@ -12,9 +12,12 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 
 # TradingDev
 
-讓 AI 代理協助研究交易策略
+能學習策略開發經驗、自我演進的研究後端
 
-自己的想法，可檢查的實驗，可繼續追問的結果
+AI 代理從既有策略的開發與修正過程歸納經驗，
+自動整合並驗證後續策略可重用的能力。
+
+*經驗整合由人員選定案例，啟動能存取原始碼的開發 AI 代理執行，審查後更新後端。*
 
 *完整閱讀版 · 2026 年 11 月。歷史回測與策略研究。*
 
@@ -27,8 +30,8 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 | 章節 | 主題 | 內容 |
 | --- | --- | --- |
 | 01 | [開發動機與專案定位](index.html#3) | 工具比較、工程回饋與使用情境 |
-| 02 | [策略研究](index.html#12) | 角色分工、運算安排與策略實驗 |
-| 03 | [後續開發方向](index.html#31) | 可獨立指定的開發目標 |
+| 02 | [策略研究](index.html#10) | 角色分工、運算安排與策略實驗 |
+| 03 | [後續開發方向](index.html#26) | 可獨立指定的開發目標 |
 
 <!-- _footer: "點選章名跳轉。方向鍵換頁，P 開啟講者模式。" -->
 
@@ -44,20 +47,13 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 
 ---
 
-## 開發動機
-
-我是臺大資工計算理論暨金融計算實驗室的一員，
-
-許多實驗室成員的研究與金融交易相關。
-
-> **我希望建立共用的研究後端，**
-> **支援成員開發各自的交易策略。**
-
----
-
 <!-- _class: compact -->
 
-## 共用研究後端的必要能力
+## 開發動機與必要能力
+
+我是臺大資工計算理論暨金融計算實驗室的一員，許多成員的研究與金融交易相關。
+
+> **建立共用研究後端，支援成員開發各自的交易策略。**
 
 - **實驗基礎**：在同一後端執行回測，保存可重現的設定與結果。
 - **策略與模型**：支援成員建構、修改與驗證不同的量化方法。
@@ -107,21 +103,6 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 4. 成員 B 開發不同策略時，提早攔下同類錯誤。
 
 *情境示意；減少重複錯誤的效果尚待實測。*
-
----
-
-<!-- _class: compact -->
-
-## 開發經驗的整合與驗證
-
-由人員啟動 research-feedback Skill，讓 AI 代理整合與驗證 TradingDev 的後端改進。
-
-1. **挑選共通問題**：比較案例與既有元件，確認可共用範圍、保留策略假設。
-2. **定義契約並整合**：明確輸入、輸出與適用條件，提供共用檢查或元件的使用入口。
-3. **驗證使用端**：固定資料與設定，檢查其他策略、正常情境及既有行為。
-4. **審查與版本更新**：完成獨立審查，記錄行為變更與版本，再依流程更新服務。
-
-*跨研究採用，以及減少重複錯誤與人工工時的成效，仍待驗證。*
 
 ---
 
@@ -282,7 +263,7 @@ gpt-6.1-sol｜該輪最終回覆
 
 ---
 
-<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _class: case-dialogue case-transcript case-options case-with-input case-preview -->
 <!-- _header: "02　策略研究　／　0050 均線策略案例" -->
 
 ## 實際對話：選定期間與日 K
@@ -309,20 +290,11 @@ gpt-6.1-sol｜該輪最終回覆（節錄；確認單由連結續讀）
 
 <!-- dialogue-text-end -->
 
+[![0050 均線策略的回測確認單](assets/0050-taiex-confirmation.jpg)](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html)
+
+[回測確認單｜開啟完整內容](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html)
+
 <!-- _footer: "CLI 實際對話原文；操作者由 AI 代理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-2)" -->
-
----
-
-<!-- _class: case-shot case-native case-equity -->
-<!-- _header: "02　策略研究　／　0050 均線策略案例" -->
-
-## 回測確認單：閱讀後回到對話決定
-
-![0050 均線策略的回測確認單](assets/0050-taiex-confirmation.jpg)
-
-[開啟完整確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html) · [完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html)
-
-<!-- _footer: "回測頁面截圖；完整內容由連結續讀。" -->
 
 ---
 
@@ -365,7 +337,7 @@ gpt-6.1-sol｜該輪最終回覆
 
 ---
 
-<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _class: case-dialogue case-transcript case-options case-preview case-preview-pair -->
 <!-- _header: "02　策略研究　／　0050 均線策略案例" -->
 
 ## 實際對話：閱讀後同意執行（2/2）
@@ -382,33 +354,11 @@ gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-end -->
 
+[![5／20 日均線的權益與回撤曲線](assets/0050-taiex-equity.jpg)](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) [![5／20 日均線的 QuantStats 績效分析](assets/0050-taiex-quantstats.jpg)](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0)
+
+[權益與回撤｜5／20 日均線](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) [QuantStats 績效分析｜5／20 日均線](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0)
+
 <!-- _footer: "CLI 實際對話原文；操作者由 AI 代理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-3)" -->
-
----
-
-<!-- _class: case-shot case-native case-equity -->
-<!-- _header: "02　策略研究　／　0050 均線策略案例" -->
-
-## 回測報告：權益曲線與回撤明細
-
-![5／20 日均線的權益與回撤曲線](assets/0050-taiex-equity.jpg)
-
-[開啟報告並查看結果明細](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · 畫面為 5／20 日均線
-
-<!-- _footer: "回測頁面截圖；完整內容由連結續讀。" -->
-
----
-
-<!-- _class: case-shot case-native case-equity -->
-<!-- _header: "02　策略研究　／　0050 均線策略案例" -->
-
-## 回測報告：QuantStats 績效詳表
-
-![5／20 日均線的 QuantStats 原生績效詳表節錄](assets/0050-taiex-quantstats.jpg)
-
-[開啟完整 QuantStats 績效分析](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · 5／20 日均線，詳表節錄
-
-<!-- _footer: "回測頁面截圖；完整內容由連結續讀。" -->
 
 ---
 
@@ -450,7 +400,7 @@ gpt-6.1-sol｜該輪最終回覆
 
 ---
 
-<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _class: case-dialogue case-transcript case-options case-preview case-preview-compact -->
 <!-- _header: "02　策略研究　／　0050 均線策略案例" -->
 
 ## 實際對話：詢問台股大盤比較（2/2）
@@ -471,20 +421,11 @@ gpt-6.1-sol｜該輪最終回覆
 
 <!-- dialogue-text-end -->
 
+[![5／20 日均線與台股加權指數的基準比較表](assets/0050-taiex-benchmark.jpg)](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0)
+
+[台股大盤比較｜5／20 日均線](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · [基準資料](evidence/0050-taiex/cases/01-ma-discussion/benchmark.json)
+
 <!-- _footer: "CLI 實際對話原文；操作者由 AI 代理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-4)" -->
-
----
-
-<!-- _class: case-shot case-native case-equity -->
-<!-- _header: "02　策略研究　／　0050 均線策略案例" -->
-
-## 回測報告：台股大盤比較
-
-![5／20 日均線與台股加權指數的基準比較表](assets/0050-taiex-benchmark.jpg)
-
-[開啟完整基準與資料覆蓋](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · 畫面為 5／20 日均線 · [保存的基準資料](evidence/0050-taiex/cases/01-ma-discussion/benchmark.json)
-
-<!-- _footer: "回測頁面截圖；完整內容由連結續讀。" -->
 
 ---
 
@@ -582,6 +523,21 @@ gpt-6.1-sol｜該輪最終回覆
 <!-- dialogue-text-end -->
 
 <!-- _footer: "CLI 實際對話原文；操作者由 AI 代理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-6)" -->
+
+---
+
+<!-- _class: compact -->
+
+## 開發經驗的整合與驗證
+
+由人員選定研究案例，啟動 research-feedback Skill，讓能存取 TradingDev 原始碼的開發 AI 代理整合與驗證後端改進。
+
+1. **挑選共通問題**：比較案例與既有元件，確認可共用範圍、保留策略假設。
+2. **定義契約並整合**：明確輸入、輸出與適用條件，提供共用檢查或元件的使用入口。
+3. **驗證使用端**：固定資料與設定，檢查其他策略、正常情境及既有行為。
+4. **審查與版本更新**：完成獨立審查，記錄行為變更與版本，再依流程更新服務。
+
+*跨研究採用，以及減少重複錯誤與人工工時的成效，仍待驗證。*
 
 ---
 
