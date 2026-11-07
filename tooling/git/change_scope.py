@@ -28,6 +28,7 @@ _TOOLING_FILES = frozenset(
         "tooling/quality.py",
         "tooling/presentations.py",
         "tooling/presentation_html.py",
+        "tooling/presentation_bundle.py",
         "tooling/presentation_errors.py",
         "tooling/review_docs.py",
         "tooling/review_evidence.py",
@@ -61,6 +62,7 @@ _TOOLING_SCRIPTS = frozenset(
         "scripts/git-flow-commit.sh",
         "scripts/install-git-hooks.sh",
         "scripts/presentations.sh",
+        "scripts/stage-presentations.sh",
     }
 )
 

@@ -1,4 +1,4 @@
-"""Build and verify registered, self-contained Marp presentations."""
+"""Build and verify registered Marp presentations and their offline bundles."""
 
 from __future__ import annotations
 
@@ -14,6 +14,12 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING
 
+from tooling.presentation_bundle import (
+    IMAGE_SUFFIXES,
+    check_bundle,
+    is_image,
+    write_bundle,
+)
 from tooling.presentation_errors import PresentationError
 from tooling.presentation_html import check_html
 from tooling.process_guard import (
@@ -34,9 +40,12 @@ _TOOL_PATHS = frozenset(
     {
         "tooling/presentations.py",
         "tooling/presentation_html.py",
+        "tooling/presentation_bundle.py",
         "tooling/presentation_errors.py",
         "scripts/check-presentations.sh",
         "scripts/presentations.sh",
+        "scripts/stage-presentations.sh",
+        "wrangler.jsonc",
     }
 )
 _TITLE = "TradingDev｜讓 AI 助手協助研究交易策略"
@@ -147,8 +156,10 @@ def _presentation_tasks_change_allowed(
 
 def is_presentation_path(path: str) -> bool:
     """Identify deck or compiler changes requiring the presentation checks."""
-    return path in PRESENTATION_PATHS | _SPECIAL_PATHS | _TOOL_PATHS or path.startswith(
-        "tooling/marp/"
+    return (
+        path.startswith((f"{DECK}/assets/", f"{DECK}/evidence/"))
+        or path in PRESENTATION_PATHS | _SPECIAL_PATHS | _TOOL_PATHS
+        or path.startswith("tooling/marp/")
     )
 
 
@@ -162,6 +173,11 @@ def presentation_change_allowed(
     """
     if path in PRESENTATION_PATHS:
         return True
+    if path.startswith(f"{DECK}/assets/"):
+        suffix = Path(path).suffix.lower()
+        return suffix in IMAGE_SUFFIXES and all(
+            value is None or is_image(value, suffix) for value in (before, after)
+        )
     if path == "docs/.nojekyll":
         return before in {None, b""} and after in {None, b""}
     if path != ".vscode/tasks.json":
@@ -405,7 +421,8 @@ def check_presentations(root: Path, *, timeout: float = 120) -> None:
                 "Committed index.html is out of date; "
                 "run scripts/presentations.sh build."
             )
-        count = check_html(output.read_text(encoding="utf-8"))
+        count = check_html(output.read_text(encoding="utf-8"), root=root / DECK)
+        check_bundle(root / DECK)
     print(
         f"Presentation checks passed ({count} slides; "
         "locked build, links, pages and resources)."
@@ -459,10 +476,24 @@ def watch(root: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("setup", "build", "watch", "check"))
+    parser.add_argument(
+        "action", choices=("setup", "build", "watch", "check", "package")
+    )
+    parser.add_argument(
+        "--output", type=Path, help="New folder for the offline package"
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     try:
+        if args.action == "package":
+            if args.output is None:
+                parser.error("package requires --output <new-folder>")
+            check_presentations(root)
+            archive = write_bundle(root / DECK, args.output.resolve())
+            print(f"Offline presentation: {archive}")
+            return 0
+        if args.output is not None:
+            parser.error("--output is only available for package")
         {"setup": setup, "build": build, "watch": watch, "check": check_presentations}[
             args.action
         ](root)

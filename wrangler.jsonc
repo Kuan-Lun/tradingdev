@@ -3,6 +3,9 @@
   "compatibility_date": "2026-11-05",
   "workers_dev": true,
   "previews": {},
+  "build": {
+    "command": "bash scripts/stage-presentations.sh"
+  },
   "routes": [
     {
       "pattern": "slides.klwang.tw/tradingdev",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import Mock
 
@@ -125,8 +126,30 @@ def test_us_listing_loads_the_sp500_index() -> None:
     assert stub.loaded[0][:2] == ("^GSPC", "yahoo_finance")
 
 
+def test_taiwan_listing_loads_taiex_with_the_runs_period_and_frequency() -> None:
+    config = _config("0050.TW", "yahoo_finance", market_type=None)
+    evidence, stub = _evidence(
+        {"^TWII": _frame([17000.0, 17100.0])}, config, _frame([100.0, 101.0])
+    )
+    assert evidence.status == "available"
+    assert evidence.asset_class == "tw_equity"
+    assert evidence.definition is not None and evidence.definition.symbol == "^TWII"
+    assert evidence.closes.tolist() == [17000.0, 17100.0]
+    assert evidence.reused_run_frame is False
+    assert evidence.market_type is None
+    symbol, source, loaded = stub.loaded[0]
+    assert (symbol, source) == ("^TWII", "yahoo_finance")
+    assert loaded["data"]["requirements"]["features"] == []
+    assert loaded["backtest"]["timeframe"] == "1h"
+    assert loaded["backtest"]["start_date"] == datetime(2024, 1, 1)
+    assert loaded["backtest"]["end_date"] == datetime(2024, 1, 2)
+    assert evidence.dataset_id == (
+        "yahoo_finance:-:^TWII:1h:2024-01-01T00:00:00+00:00:2024-01-02T00:00:00+00:00"
+    )
+
+
 def test_undefined_asset_class_never_loads_another_market() -> None:
-    config = _config("2330.TW", "yahoo_finance", market_type=None)
+    config = _config("0700.HK", "yahoo_finance", market_type=None)
     evidence, stub = _evidence({}, config, _frame([1.0, 1.0]))
     assert evidence.status == "undefined"
     assert evidence.reason == "undefined_asset_class"
@@ -134,10 +157,16 @@ def test_undefined_asset_class_never_loads_another_market() -> None:
     assert stub.loaded == []
 
 
-def test_provider_failure_is_recorded_instead_of_failing_the_run() -> None:
-    config = _config("ETH/USDT", "binance_vision")
+@pytest.mark.parametrize(
+    ("symbol", "source", "baseline"),
+    [("ETH/USDT", "binance_vision", "BTC/USDT"), ("0050.TW", "yahoo_finance", "^TWII")],
+)
+def test_provider_failure_is_recorded_instead_of_failing_the_run(
+    symbol: str, source: str, baseline: str
+) -> None:
+    config = _config(symbol, source)
     evidence, _ = _evidence(
-        {"BTC/USDT": RuntimeError("network down")}, config, _frame([1.0, 1.0])
+        {baseline: RuntimeError("network down")}, config, _frame([1.0, 1.0])
     )
     assert evidence.status == "unavailable"
     assert evidence.reason == "benchmark_data_unavailable"

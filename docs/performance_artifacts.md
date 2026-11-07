@@ -253,8 +253,13 @@ those results. Historical values are not asserted to follow the new definitions.
 New backtest and walk-forward artifacts add a `benchmarks` mapping keyed by the
 same scalar scope IDs. The baseline is chosen from the saved market requirement,
 never from a request parameter: `binance_vision` and `binance_api` USDT-quoted markets use
-`BTC/USDT`, and `yahoo_finance` US listings use `^GSPC`. A market with no
-defined asset class, another venue suffix, a Yahoo future or an FX pair is recorded as
+`BTC/USDT`, and `yahoo_finance` US listings use `^GSPC`. Yahoo Taiwan listings
+(`.TW` and `.TWO`, including ETFs) and `^TWII` use the Taiwan market baseline
+`^TWII` under `tw_equity`. This is a listing-market policy, not an inference
+about an ETF's underlying assets: overseas and bond ETFs listed in Taiwan also
+use this same baseline. Both `^GSPC` and `^TWII` are price indices excluding
+cash dividends, not total-return indices or directly tradable instruments.
+A market with no defined asset class, an unsupported venue suffix, a Yahoo future or an FX pair is recorded as
 `undefined` instead of borrowing a foreign index. Yahoo crypto pairs are not US
 equities; Binance pairs quoted in another currency have no baseline until a
 same-currency comparison is defined.

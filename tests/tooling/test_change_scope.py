@@ -311,6 +311,28 @@ def test_mixed_changes_retain_presentation_validation(
     assert scope.presentations_changed
 
 
+@pytest.mark.parametrize("change", ["add", "modify", "delete"])
+def test_evidence_changes_keep_full_checks_and_bundle_validation(
+    repository: tuple[Path, str], change: str
+) -> None:
+    root, base = repository
+    name = "docs/talks/tradingdev-introduction/evidence/report.html"
+    target = root / name
+    target.parent.mkdir(parents=True)
+    if change != "add":
+        target.write_text('<a href="index.html">Report</a>\n')
+        _git(root, "add", name)
+        base = _git(root, "write-tree")
+    if change == "delete":
+        target.unlink()
+    else:
+        target.write_text('<a href="missing.html">Broken report</a>\n')
+    _git(root, "add", name)
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.kind == "code"
+    assert scope.candidate_checks == ("presentations", "documentation_review", "full")
+
+
 @pytest.mark.parametrize(
     "change", ["executable", "symlink", "delete", "product_rename"]
 )

@@ -241,6 +241,7 @@ def test_snapshot_retains_workspace_when_real_presentation_cli_reports_cleanup_e
         "presentations.py",
         "presentation_errors.py",
         "presentation_html.py",
+        "presentation_bundle.py",
         "process_guard.py",
     ):
         _commit(source, f"tooling/{name}", (project / name).read_text())

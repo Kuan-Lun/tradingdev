@@ -107,6 +107,7 @@ def test_registered_paths_do_not_allow_arbitrary_decks_or_compiler_changes() -> 
         "tooling/marp/package-lock.json",
         "tooling/presentations.py",
         "tooling/presentation_html.py",
+        "tooling/presentation_bundle.py",
         "tooling/presentation_errors.py",
         "scripts/check-presentations.sh",
         "scripts/presentations.sh",
