@@ -558,6 +558,21 @@ HTTP 連線會提供 15 分鐘有效的 ZIP 下載網址；持有網址者可下
 若希望把研究中可重用的邏輯整合回專案，另見開發指南的
 [研究成果工程回饋](docs/development.md#研究成果工程回饋)；這需要能存取專案的開發助手與明確授權。
 
+### 閱讀保存的對話
+
+客戶端整合已保存的對話可用 `tradingdev-conversation --workspace PATH list` 找到，
+再以 `read CONVERSATION_ID` 讀取原文與版本。匯出指定版本：
+
+```bash
+tradingdev-conversation --workspace PATH export CONVERSATION_ID --expected-version VERSION
+```
+
+命令回傳可開啟的 `html_path`；頁面提供可選取文字、逐輪導航及可展開的完整工具紀錄。
+模型回合狀態與紀錄完整性分開標示，中斷不冒充完整。HTML 可離線閱讀，若也要下載
+JSON，請一併保留同目錄的檔案。分享會包含所有已記錄的訊息與工具內容；後續回合
+不會改寫先前匯出的版本。這個查詢入口不會自動擷取其他聊天程式或匯入歷史對話。
+保存範圍與限制見[對話紀錄契約](docs/reports.md#recorded-conversations)。
+
 ### 開啟 Dashboard
 
 Dashboard 可顯示具有可載入圖表產物的一般回測與 walk-forward 結果。先安裝圖表依賴，

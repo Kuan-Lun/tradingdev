@@ -364,8 +364,20 @@ HTTP 的自訂下載 route 使用每個 server instance 的短期簽章能力網
 驗證後才交付同一份 ZIP bytes；重新取得舊封存的網址只讀保存 ZIP，不依賴目前筆記或來源報告。
 stdio 回傳本機路徑，不假設客戶端能下載。
 未來可替換 storage／delivery adapter，但應保留版本衝突、來源完整性、容量限制及
-獨立閱讀的契約；不需把聊天供應商或逐字紀錄依賴加進 domain。
+獨立閱讀的契約；聊天供應商的傳輸協定留在客戶端整合層。
 欄位與限制見[報告與筆記契約](docs/reports.md#research-notebooks-and-archives)。
+
+### 可見對話紀錄
+
+`ConversationService` 與 `domain/conversations.py` 提供不綁定供應商的對話、回合與
+可見項目模型；客戶端 adapter 負責將實際事件轉換並持續保存，MCP server 不推測
+客戶端外的訊息。SQLite 以版本核對避免並行覆寫，已完成回合與項目不可改寫。
+執行結果與紀錄完整性分開保存，中斷或缺漏不冒充完整紀錄。私有推理不屬於保存內容。
+
+`adapters/reporting/conversation.py` 產生可選取文字及展開工具內容的離線 HTML；
+`ConversationExports` 發佈固定 HTML／JSON，登錄到共用 artifact 查詢入口。
+筆記與對話匯出共用 `WorkspaceFiles` 的受限讀取，個別封存格式及身分保持獨立。
+精確生命週期與限制見[對話紀錄契約](docs/reports.md#recorded-conversations)。
 
 ## 一致性、程序管理與保證範圍
 

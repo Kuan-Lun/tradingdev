@@ -414,7 +414,8 @@ experiments remain distinct from observations and do not approve execution.
 A notebook is a client-authored research summary, not an audit transcript or
 execution authorization. The server does not observe messages outside MCP calls.
 It keeps one editable current record; exported snapshots preserve chosen versions.
-No per-stage export APIs or automatic chat hooks are required.
+Notebook summaries do not capture client messages. Recorded conversations use the
+separate [conversation recording service](#recorded-conversations).
 
 `save_research_note(draft, note_id?, expected_version?)` creates with both optional
 fields absent. An update requires both and replaces the complete draft, with an
@@ -497,3 +498,52 @@ This archive is a reading package, not a restorable research workspace. Preserve
 the original database/files for subsequent result queries. Client summary quality,
 correct pending/completed distinctions and relevance need semantic review; hashes
 and optimistic versions cannot prove that a user said or approved a statement.
+
+## Recorded conversations
+
+`app.conversation_service.ConversationService` records provider-neutral visible
+conversation items supplied by client adapters. It is separate from editable
+research summaries and does not observe arbitrary MCP clients. Canonical models
+and byte limits live in `domain/conversations.py`; export limits live in
+`adapters/storage/conversation_exports.py`.
+
+`create(provider, model)` creates an empty record. The adapter binds its source
+thread before `start_turn(record, prompt)` persists the exact submitted input.
+`save(record)` checks the selected version atomically and advances it; an adapter
+must use the returned version. Source thread/turn identities, original inputs,
+completed items, item order and finished turns cannot be rewritten. A reconnect
+loads the existing record rather than creating a summary of earlier messages.
+The SQLite `conversations` table is additive and does not change existing notes,
+execution records or reports.
+
+Items preserve visible text and selected public provider data, including tool
+arguments, results, failures and message phases. Private reasoning, hidden
+instructions and authentication material are outside the recording contract.
+Adapters must persist partial output during a turn and mark missing or unsupported
+evidence explicitly. `outcome` describes execution; `capture_complete` describes
+record coverage. A failed model turn can have complete evidence, while an apparently
+successful answer can have incomplete evidence. Neither field proves semantic
+correctness or human authorization. Capacity errors retain the previous saved
+version and must stop further recording rather than silently truncate.
+
+`read(conversation_id)` returns the bounded record; `list(offset, limit)` returns
+paged metadata. `export(conversation_id, expected_version)` produces an immutable
+snapshot under `conversations/<export_id>/` with `index.html`, `conversation.json`
+and a file-hash `manifest.json`. Its identity is the manifest SHA-256. HTML contains
+selectable, escaped original text in turn/item order, expandable full tool records,
+and clear partial/interrupted status. It needs no network or scripts; the JSON link
+needs its adjacent file. Exports contain no copied reports or full workspace data.
+Sharing exposes all recorded messages and tool contents, including any sensitive
+information submitted in those messages.
+
+Publication checks existing snapshot bytes and artifact identity, rejects symlinks
+and differing files, and removes only newly created files on failure. Repeated
+exports of an unchanged record reuse verified bytes; later turns produce a new
+snapshot. The HTML is registered as `conversation_html`, discoverable through the
+existing artifact tools. Paths are local files, not public download URLs. No saved
+conversation or export expires automatically; retain the workspace to resume.
+
+The `tradingdev-conversation --workspace PATH` CLI provides `list --offset N
+--limit N`, `read CONVERSATION_ID` and `export CONVERSATION_ID --expected-version N`.
+It returns JSON and exits nonzero on invalid IDs, stale versions or storage errors.
+This storage/reading interface does not itself start a model or import old chats.
