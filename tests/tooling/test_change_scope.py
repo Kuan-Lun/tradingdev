@@ -392,6 +392,34 @@ def test_evidence_formats_use_both_git_blobs_not_unstaged_repairs(
     assert classify_changes(root, invalid, valid).kind == "code"
 
 
+def test_native_conversation_export_uses_presentation_checks(
+    repository: tuple[Path, str],
+) -> None:
+    root, base = repository
+    directory = (
+        root
+        / "docs/talks/tradingdev-introduction/evidence/demo/cases/example"
+        / "conversation"
+    )
+    directory.mkdir(parents=True)
+    files = {
+        "index.html": '<a href="conversation.json">Original conversation</a>',
+        "conversation.json": '{"turns": []}',
+        "manifest.json": '{"files": {"index.html": "saved digest"}}',
+    }
+    for name, content in files.items():
+        (directory / name).write_text(content)
+    _git(root, "add", ".")
+    saved = _git(root, "write-tree")
+    assert classify_changes(root, base, saved).candidate_checks == ("presentations",)
+    for name in files:
+        (directory / name).unlink()
+    _git(root, "add", ".")
+    assert (
+        classify_changes(root, saved, _git(root, "write-tree")).kind == "presentations"
+    )
+
+
 @pytest.mark.parametrize(
     "change", ["executable", "symlink", "delete", "product_rename"]
 )
