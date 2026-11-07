@@ -2,16 +2,110 @@
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import zipfile
 from html.parser import HTMLParser
-from pathlib import Path
+from io import BytesIO
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 from tooling.presentation_errors import PresentationError
 
 BUNDLE_ENTRIES = ("index.html", "assets", "evidence")
 IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
+
+# Saved demonstration documents, never imported by the product or executed by
+# presentation checks. New artifact roles require registration here.
+_CASE_DOCUMENTS = frozenset(
+    {
+        "analysis.json",
+        "benchmark.json",
+        "commentary.json",
+        "confirmation.html",
+        "confirmation.txt",
+        "critique.html",
+        "dialogue.html",
+        "execution-manifest.json",
+        "metrics.json",
+        "provenance.json",
+        "report.html",
+        "research.zip",
+        "strategy.py",
+        "trades.json",
+        "transcript.json",
+        "notebook/index.html",
+        "notebook/manifest.json",
+        "notebook/research.json",
+    }
+)
+_IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9_-]*"
+
+
+def _case_document(path: str) -> bool:
+    parts = path.split("/", 2)
+    return (
+        len(parts) == 3
+        and parts[0] == "cases"
+        and re.fullmatch(_IDENTIFIER, parts[1]) is not None
+        and (
+            parts[2] in _CASE_DOCUMENTS
+            or re.fullmatch(r"earlier-reports/[0-9a-f]{64}\.html", parts[2]) is not None
+            or re.fullmatch(r"notebook/reports/[1-9][0-9]*\.html", parts[2]) is not None
+        )
+    )
+
+
+def evidence_content_allowed(path: str, content: bytes) -> bool:
+    """Recognize registered saved-document roles, not arbitrary evidence files.
+
+    The caller checks both Git versions and ordinary file modes. Format checks
+    establish the role only; links, semantic accuracy and browser behavior still
+    need their respective presentation checks and review.
+    """
+    parts = path.split("/", 1)
+    if len(parts) != 2 or re.fullmatch(_IDENTIFIER, parts[0]) is None:
+        return False
+    name = parts[1]
+    if name.startswith("screenshots/"):
+        filename = name.removeprefix("screenshots/")
+        suffix = PurePosixPath(filename).suffix
+        return re.fullmatch(
+            _IDENTIFIER, filename.removesuffix(suffix)
+        ) is not None and is_image(content, suffix)
+    if name not in {
+        ".gitattributes",
+        "case.json",
+        "checksums.json",
+        "index.html",
+        "natural-case-evidence.zip",
+    } and not _case_document(name):
+        return False
+    if name.endswith(".zip"):
+        return zipfile.is_zipfile(BytesIO(content))
+    try:
+        text = content.decode("utf-8")
+        if "\0" in text:
+            return False
+        if name.endswith(".json"):
+            json.loads(text)
+        if name == ".gitattributes":
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                fields = line.split()
+                if (
+                    len(fields) != 2
+                    or fields[1] != "whitespace=-blank-at-eol"
+                    or not _case_document(fields[0])
+                    or not fields[0].endswith(".html")
+                ):
+                    return False
+    except ValueError, UnicodeError:
+        return False
+    return True
 
 
 def is_image(content: bytes, suffix: str) -> bool:
