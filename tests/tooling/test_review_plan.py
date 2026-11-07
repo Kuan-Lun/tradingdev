@@ -114,6 +114,44 @@ def test_each_changed_file_has_one_complete_owner_and_one_cross_scope_audit(
     assert plan.manifest["status"] == "planned_not_reviewed"
 
 
+@pytest.mark.parametrize("change_deck", [False, True])
+def test_required_deck_context_is_distinguished_from_actual_changes(
+    tmp_path: Path, change_deck: bool
+) -> None:
+    _git(tmp_path, "init", "-q")
+    for path in PRESENTATION_PATHS:
+        _write(tmp_path, path, "Existing presentation content.\n")
+    compiler = "tooling/presentations.py"
+    bundle = "tooling/presentation_bundle.py"
+    _write(tmp_path, compiler, "VALUE = 'old'\n")
+    _write(tmp_path, bundle, "VALUE = 'old'\n")
+    base = _tree(tmp_path)
+    _write(tmp_path, compiler, "VALUE = 'new'\n")
+    _write(tmp_path, bundle, "VALUE = 'new'\n")
+    changed = {compiler, bundle}
+    if change_deck:
+        _write(tmp_path, f"{DECK}/slides.md", "Changed slide.\n")
+        changed.add(f"{DECK}/slides.md")
+    tree = _tree(tmp_path)
+    _write(tmp_path, f"{DECK}/theme.css", "UNSTAGED_STYLE\n")
+    plan = review_docs.prepare_review(base, tree, repo=tmp_path)
+    for prompt in plan.prompts:
+        payload = _payload(prompt)
+        assert set(payload["changed_paths"]) == changed
+        assert set(payload["unchanged_presentation_context_paths"]) == (
+            PRESENTATION_PATHS - changed
+        )
+        assert "UNSTAGED_STYLE" not in prompt
+        if payload["scope"] == "presentation":
+            assert set(payload["assigned_paths"]) == PRESENTATION_PATHS | {compiler}
+            assert set(payload["path_diffs"]) == changed - {bundle}
+            for path in PRESENTATION_PATHS:
+                assert (
+                    payload["candidate_files"][path]
+                    == _git(tmp_path, "show", f"{tree}:{path}") + "\n"
+                )
+
+
 def test_explicit_scope_cannot_hide_a_changed_responsibility(
     change: tuple[Path, str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

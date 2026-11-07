@@ -25,7 +25,7 @@ from tooling.review_scope import (
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 3
+SCOPE_POLICY_VERSION = 4
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -80,7 +80,13 @@ SCOPE_INSTRUCTIONS = (
     "This scope batch contains complete assigned candidate files and their exact "
     "per-path diffs, plus selected original document sections. Its inventory "
     "identifies other scopes, not evidence silently truncated from this batch. "
-    "Review all assigned paths and their documented effects. Missing context "
+    "Review all assigned paths and their documented effects. changed_paths is "
+    "the complete actual Git change inventory; unchanged_presentation_context_paths "
+    "identifies required deck references that remain assigned with their full "
+    "original content. Assignment alone does not mean a file changed. Use the "
+    "actual diffs to identify newly introduced behavior; report an inconsistency "
+    "in unchanged material only when this change causes it, not unrelated cleanup. "
+    "Missing context "
     "needed for a concrete cross-file question is a finding, not permission to "
     "assume another reviewer checked it. Every batch must pass independently.\n\n"
 )
@@ -231,6 +237,8 @@ def build_review_plan(
         "candidate_tree": raw["candidate_tree"],
         "evidence_hash": hashlib.sha256(evidence.encode()).hexdigest(),
         "scope_policy_version": SCOPE_POLICY_VERSION,
+        "changed_paths": sorted(changed),
+        "unchanged_presentation_context_paths": sorted(presentation - changed),
         "path_owners": owners,
         "scoped_context_paths": context_mapping,
         "automatic_document_paths": sorted(automatic_docs),
