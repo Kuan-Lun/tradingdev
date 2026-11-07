@@ -122,6 +122,14 @@ section.case-shot p > img {
   transform: translateY(-51px);
 }
 section.case-shot p:not(:has(> img)) { font-size: 20px; margin: 14px 0 0; }
+section.case-native p > img { transform: none; }
+section.case-equity p > img {
+  width: auto;
+  max-width: 100%;
+  height: 470px;
+  object-fit: contain;
+  margin: 0 auto;
+}
 
 /* Visible conversation text remains selectable and readable at presentation scale. */
 section.case-dialogue { font-size: 24px; justify-content: center; }
