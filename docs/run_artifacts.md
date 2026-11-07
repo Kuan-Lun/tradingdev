@@ -45,6 +45,8 @@ result exists. Standard roots are resolved by
 | `execution_plans/<plan_id>/` | Saved confirmation text/HTML and approval lock; see [Execution Plans](execution_plans.md). |
 | `ml_datasets/`, `ml_feature_cache/`, `models/`, `ml_leaderboard/` | Independent [ML stores](ml_research.md#ml-research-artifacts). |
 | `reports/`, `research_archives/`, `feature_requests/` | Derived reports, notebook exports and recorded unsupported requests; see [Reports](reports.md). |
+| `conversations/<export_id>/` | Fixed-version conversation HTML, JSON and manifest; see [recorded conversations](reports.md#recorded-conversations). |
+| `.conversation-clients/<conversation_id>/` | Native client state and logs used for live conversation resume, not sharing artifacts; see [Codex recording](reports.md#codex-cli-recording-adapter). The original Codex profile is also required for resume. |
 
 Strategy validation/dry-run use separate `tradingdev-strategy-check-*` system
 temporary directories, not research runs. Request/response evidence binds the
@@ -620,8 +622,10 @@ contain identities, not metrics or growing scope catalogs; use `get_run` and
 scoped metric/history tools for details. Artifact pages omit producer metadata;
 `get_artifact` retrieves it. These are record-count bounds and deliberately
 small projections, not a universal byte or token budget for arbitrary fields.
-The internal Python service list APIs remain complete lists for their existing
-application callers; only the MCP discovery contract uses these pages.
+The existing strategy, run and artifact service list APIs retain complete lists
+for their application callers; their MCP discovery methods return these pages.
+The separate conversation service and reading CLI also provide paged discovery;
+see the [conversation contract](reports.md#recorded-conversations).
 
 ### Reading Artifact Text
 

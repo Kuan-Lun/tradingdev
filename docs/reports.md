@@ -555,8 +555,8 @@ installed Codex CLI's stdio app-server. `adapters/cli/codex.py` exposes
 `tradingdev-codex`. A new managed conversation fixes the model, reasoning effort
 and adapter protocol version in its immutable settings. Subsequent commands select
 its ID explicitly; they cannot change those settings or import an arbitrary thread.
-The adapter requires the initialize, thread/start, thread/resume, thread/turns/list
-and turn/start methods, plus public item lifecycle events. It opts into the
+The adapter requires the initialize, config/read, thread/start, thread/resume,
+thread/turns/list and turn/start methods, plus public item lifecycle events. It opts into the
 experimental API; unsupported protocol versions fail rather than fall back to
 scraping a UI or reading unrelated session files.
 

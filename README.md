@@ -563,9 +563,11 @@ HTTP 連線會提供 15 分鐘有效的 ZIP 下載網址；持有網址者可下
 第一版提供 TradingDev 專用的 Codex CLI 入口。先安裝並登入 Codex CLI，確認
 `codex login status` 可用；若執行檔不在 PATH，將 `TRADINGDEV_CODEX_BIN` 設為其
 絕對路徑。研究仍須具備前述 TradingDev 執行環境，模型使用既有 Codex 登入。
+`tradingdev_recorder` 是此入口保留的 MCP 名稱；若 Codex 設定已有同名項目，
+即使已停用也會拒絕啟動。請先將既有項目重新命名，再重試。
 
 ```bash
-tradingdev-codex --workspace ./research --model gpt-6.1-sol \
+uv run --locked tradingdev-codex --workspace ./research --model gpt-6.1-sol \
   --reasoning-effort medium --message '我想用均線買賣0050，可以幫我看看嗎？'
 ```
 
@@ -574,7 +576,7 @@ tradingdev-codex --workspace ./research --model gpt-6.1-sol \
 可用 `--prompt-file FILE` 取代 `--message`。收到追問後，用同一個工作區與代號續接：
 
 ```bash
-tradingdev-codex --workspace ./research --conversation-id CONVERSATION_ID \
+uv run --locked tradingdev-codex --workspace ./research --conversation-id CONVERSATION_ID \
   --message '先看2024年1月1日到7月1日，用日線。'
 ```
 
@@ -591,11 +593,12 @@ tradingdev-codex --workspace ./research --conversation-id CONVERSATION_ID \
 
 ### 閱讀保存的對話
 
-客戶端整合已保存的對話可用 `tradingdev-conversation --workspace PATH list` 找到，
+客戶端整合已保存的對話可用 `uv run --locked tradingdev-conversation --workspace PATH list` 找到，
 再以 `read CONVERSATION_ID` 讀取原文與版本。匯出指定版本：
 
 ```bash
-tradingdev-conversation --workspace PATH export CONVERSATION_ID --expected-version VERSION
+uv run --locked tradingdev-conversation --workspace PATH export CONVERSATION_ID \
+  --expected-version VERSION
 ```
 
 命令回傳可開啟的 `html_path`；頁面提供可選取文字、逐輪導航及可展開的完整工具紀錄。
