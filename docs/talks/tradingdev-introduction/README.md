@@ -22,6 +22,12 @@
 瀏覽器版內含樣式與播放程式，可離線開啟。使用左右方向鍵換頁，`F` 切換全螢幕，
 `P` 開啟講者模式；講者模式須允許新視窗，本機檔案模式有通訊限制時改用 HTTP 預覽。
 
+案例截圖以 data URL 內嵌於簡報來源與 HTML，原始 JPEG 與可查閱的研究成果保存在
+`evidence/0050-ma/`。分享完整簡報時，請將 `index.html` 與 `evidence/` 一起複製，
+保留相對位置；只有 `index.html` 仍能播放截圖，但無法開啟對話、報告與研究包連結。
+案例入口為 [完整證據](evidence/0050-ma/index.html)，內含原始及更正報告、可見對話、
+原生研究包與檔案校驗。對話頁明示為 CLI 紀錄重新排版，原生產物保留原文。
+
 ## 章節與子主題版型
 
 - **章首頁**使用 `chapter`：深色底、章節編號與主題說明。
@@ -41,7 +47,7 @@
 ## 透過 Cloudflare 自動發布
 
 Cloudflare Workers Builds 可連接本 repository，在 `main` 更新時發布已提交的
-`index.html`。本機仍須先編譯、檢查並提交 HTML；雲端只複製與部署成品，
+`index.html` 與 `evidence/`。本機仍須先編譯、檢查並提交 HTML；雲端只複製與部署成品，
 不執行 Marp、Python 檢查或安裝 TradingDev 產品依賴。
 
 在 Cloudflare 的 **Workers & Pages → Create application → GitHub** 選擇本
@@ -64,13 +70,15 @@ Cloudflare Workers Builds 的 `Preview command` 契約說明此命令建立或�
 Build command：
 
 ```bash
-mkdir -p site-dist/tradingdev && cp docs/talks/tradingdev-introduction/index.html site-dist/tradingdev/index.html
+mkdir -p site-dist/tradingdev && cp docs/talks/tradingdev-introduction/index.html site-dist/tradingdev/index.html && cp -R docs/talks/tradingdev-introduction/evidence site-dist/tradingdev/
 ```
 
 在 **Settings → Build → Build Variables and Secrets** 加入
 `SKIP_DEPENDENCY_INSTALL=1`，停用自動安裝專案依賴。部署仍會使用 Wrangler；
 Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
-`site-dist/` 是忽略的發布產物，只包含要公開的 HTML；不會將整個 `docs/` 發布。
+`site-dist/` 是忽略的發布產物，只包含簡報 HTML 與明列的案例證據；不會將整個 `docs/`
+或一般使用者 workspace 發布。既有 Cloudflare 專案須同步更新 Build command，
+否則只複製 HTML 的舊命令會漏掉案例連結所需檔案。
 
 分支預覽使用 `wrangler.jsonc` 的 `previews` 區塊；即使沒有獨立設定，也須保留空物件。
 Cloudflare 的 Wrangler 預覽設定契約明定此要求，原文節錄：
@@ -82,10 +90,11 @@ Cloudflare 的 Wrangler 預覽設定契約明定此要求，原文節錄：
 分支預覽與 `main` 正式部署是兩次獨立建置，須分別核對結果；本機簡報檢查不代表雲端部署成功。
 
 在 **Settings → Builds** 的 **Production** 與 **Preview base** 分頁，分別設定
-**Build watch paths**：從 **Include paths** 移除預設的 `*`，加入以下兩個精確路徑，
+**Build watch paths**：從 **Include paths** 移除預設的 `*`，加入以下路徑，
 並讓 **Exclude paths** 保持空白。
 
 - `docs/talks/tradingdev-introduction/index.html`
+- `docs/talks/tradingdev-introduction/evidence/**`
 - `wrangler.jsonc`
 
 這項設定由 Cloudflare 保存，用來略過一般程式、測試與文件更新，不寫在 `wrangler.jsonc`。
