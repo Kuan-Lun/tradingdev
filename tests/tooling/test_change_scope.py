@@ -312,11 +312,11 @@ def test_mixed_changes_retain_presentation_validation(
 
 
 @pytest.mark.parametrize("change", ["add", "modify", "delete"])
-def test_evidence_changes_keep_full_checks_and_bundle_validation(
+def test_saved_report_changes_use_presentation_checks(
     repository: tuple[Path, str], change: str
 ) -> None:
     root, base = repository
-    name = "docs/talks/tradingdev-introduction/evidence/report.html"
+    name = "docs/talks/tradingdev-introduction/evidence/demo/cases/example/report.html"
     target = root / name
     target.parent.mkdir(parents=True)
     if change != "add":
@@ -329,8 +329,67 @@ def test_evidence_changes_keep_full_checks_and_bundle_validation(
         target.write_text('<a href="missing.html">Broken report</a>\n')
     _git(root, "add", name)
     scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.kind == "presentations"
+    assert scope.candidate_checks == ("presentations",)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "executable",
+        "symlink",
+        "remove_executable",
+        "product_rename",
+        "mixed",
+        "unknown",
+    ],
+)
+def test_evidence_registration_does_not_bypass_code_checks(
+    repository: tuple[Path, str], change: str
+) -> None:
+    root, base = repository
+    name = "docs/talks/tradingdev-introduction/evidence/demo/cases/example/strategy.py"
+    target = root / name
+    target.parent.mkdir(parents=True)
+    if change == "product_rename":
+        _git(root, "mv", "app.py", name)
+    elif change == "symlink":
+        target.symlink_to(root / "app.py")
+        _git(root, "add", name)
+    else:
+        target.write_text("# Saved source, never imported by the product\n")
+        _git(root, "add", name)
+        if change in {"executable", "remove_executable"}:
+            _git(root, "update-index", "--chmod=+x", name)
+            if change == "remove_executable":
+                base = _git(root, "write-tree")
+                _git(root, "update-index", "--chmod=-x", name)
+        elif change == "mixed":
+            (root / "app.py").write_text("VALUE = 2\n")
+            _git(root, "add", "app.py")
+        else:
+            _git(root, "mv", name, str(target.with_name("run.py")))
+    scope = classify_changes(root, base, _git(root, "write-tree"))
     assert scope.kind == "code"
     assert scope.candidate_checks == ("presentations", "documentation_review", "full")
+
+
+def test_evidence_formats_use_both_git_blobs_not_unstaged_repairs(
+    repository: tuple[Path, str],
+) -> None:
+    root, base = repository
+    name = "docs/talks/tradingdev-introduction/evidence/demo/case.json"
+    target = root / name
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"\xff")
+    _git(root, "add", name)
+    invalid = _git(root, "write-tree")
+    target.write_text("{}")
+    assert classify_changes(root, base, invalid).kind == "code"
+    _git(root, "add", name)
+    valid = _git(root, "write-tree")
+    assert classify_changes(root, base, valid).kind == "presentations"
+    assert classify_changes(root, invalid, valid).kind == "code"
 
 
 @pytest.mark.parametrize(

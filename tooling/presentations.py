@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from tooling.presentation_bundle import (
     IMAGE_SUFFIXES,
     check_bundle,
+    evidence_content_allowed,
     is_image,
     write_bundle,
 )
@@ -177,6 +178,12 @@ def presentation_change_allowed(
         suffix = Path(path).suffix.lower()
         return suffix in IMAGE_SUFFIXES and all(
             value is None or is_image(value, suffix) for value in (before, after)
+        )
+    if path.startswith(f"{DECK}/evidence/"):
+        relative = path.removeprefix(f"{DECK}/evidence/")
+        return all(
+            value is None or evidence_content_allowed(relative, value)
+            for value in (before, after)
         )
     if path == "docs/.nojekyll":
         return before in {None, b""} and after in {None, b""}
