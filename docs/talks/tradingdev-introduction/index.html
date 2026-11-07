@@ -103,9 +103,8 @@
 </tr>
 </tbody>
 </table>
-<p><strong>本專案聚焦：把跨研究案例轉成 TradingDev 的改進，<br />
-並驗證改進能否供其他策略重用。</strong></p>
-<p><em>下列公開文件未描述完整提供這項流程；不代表無法擴充。</em></p>
+<p><strong>本專案提供 AI 輔助策略開發與研究的共用後端，<br />
+並支援將研究中的共通檢查與元件整合回後端，供後續策略使用。</strong></p>
 <footer>來源：<a href="https://vectorbt.dev/">VectorBT</a>、<a href="https://www.backtrader.com/docu/">Backtrader</a>、<a href="https://vectorbt.pro/features/ai/mcp-server/">VBT PRO MCP</a>、<a href="https://www.quantconnect.com/docs/v2/ai-assistance/agents">QC Agents</a>、<a href="https://www.quantconnect.com/docs/v2/local-platform/projects/shared-libraries">程式庫</a> · 查核 2026-10-31</footer>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="7" data-paginate="true" data-header="01　開發動機與專案定位" data-class="compact" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" class="compact" data-marpit-pagination="7" style="--paginate:true;--header:01　開發動機與專案定位;--class:compact;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="36" data-size="16:9">
@@ -687,7 +686,7 @@
 共用的對象是研究所需的基礎能力，各位成員仍能研究自己的策略構想。接下來先說明這個目標需要哪些能力，再看現有工具能提供什麼。</p></div><div class="bespoke-marp-note" data-index="4" tabindex="0"><p>共用實驗基礎需要清楚區分各自的策略、版本及結果，並保存重現實驗所需的設定與依據。多樣的策略與模型包含交易規則、統計方法及機器學習模型的建構，以及適用的訓練與驗證。
 策略回饋應引用檢查與實驗證據，協助提出修改，再驗證修改是否有效。
 人員可選擇策略開發案例，以提示詞啟動 AI 代理，讀取證據並提出後端改進方案及程式修改，執行測試並依結果繼續修正。通過審查後，將適合共用的檢查、元件或流程改善整合回後端，支援下一輪研究。
-目前已有回測、研究紀錄與可擴充的共用元件，支援上述維護方式。工程回饋由 research-feedback Skill 引導外部開發助手執行，多人的服務身分與權限仍待開發；此流程不代表服務會自行觸發改進或不中斷更新。以下以這些需求檢視現有工具與整合責任。</p></div><div class="bespoke-marp-note" data-index="5" tabindex="0"><p>比較對準前頁要求的跨研究工程回饋。回測、策略生成、診斷、研究指引與記憶已能由第三方工具提供，單獨列出這些功能不能證明本專案的必要性。
+目前已有回測、研究紀錄與可擴充的共用元件，支援上述維護方式。工程回饋由 research-feedback Skill 引導外部開發助手執行，多人的服務身分與權限仍待開發；此流程不代表服務會自行觸發改進或不中斷更新。以下以這些需求檢視現有工具與整合責任。</p></div><div class="bespoke-marp-note" data-index="5" tabindex="0"><p>本頁先說明現成工具提供的研究基礎，再交代 TradingDev 同時支援策略開發與研究經驗回饋。回測、策略生成、診斷、研究指引與記憶已能由第三方工具提供，單獨列出這些功能不能證明本專案的必要性。
 VectorBT 與 Backtrader 的官方文件提供回測、參數研究與擴充能力。VBT PRO MCP 提供程式執行、持續 kernel 及回測、最佳化、交叉驗證等按需 skills。QuantConnect Agents 已提供研究流程、結構化診斷、組織共用 skills 與能由代理更新的專案記憶，Shared Libraries 提供跨專案程式重用。
 這些頁面沒有描述完整的「彙集跨研究問題與修正證據、產生共用後端修改、跨策略回歸驗證、審查整合並評估後續效益」流程。這是依明列文件範圍作出的開發判斷，不是已證明所有產品都缺少此功能，也不能由未列出推論其無法擴充。
 研究案例可能含私人內容，共用時須區分可分享證據與私人策略。實際採用仍應比較擴充現有生態與自維護服務的成本，不能僅憑這張摘要宣稱自製必然更便宜、更快或更準確。
