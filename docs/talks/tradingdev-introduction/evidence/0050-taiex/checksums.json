@@ -1,5 +1,5 @@
 {
-  "case.json": "60571180b2bf3f36bab70806b323d4b160d3ae49f89534aeaa49ddcb95aeb1dc",
+  "case.json": "ae6da11c89d3e8b5b78b2e56bf6e007126ec5a927896d6a9de48a6c9a9db3918",
   "cases/01-ma-discussion/analysis.json": "55b0fe5f5b949f028c25ea7e63ad6328f25e1a0213452999664ac56d029e9b23",
   "cases/01-ma-discussion/benchmark.json": "aea799d1f0c89312d41e271483a7643ff089388df8f7467eaace1f3b9ca0a617",
   "cases/01-ma-discussion/commentary.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
@@ -19,7 +19,7 @@
   "cases/01-ma-discussion/notebook/manifest.json": "8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663",
   "cases/01-ma-discussion/notebook/reports/1.html": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064",
   "cases/01-ma-discussion/notebook/research.json": "ec68e35532c1f6cb769148368f626b707187d9cb648097b45bfe27ae1686cffa",
-  "cases/01-ma-discussion/provenance.json": "89b67a18055b9160d3e34c8081178acaa76a78083cb95dd9b571bfffce6e3e88",
+  "cases/01-ma-discussion/provenance.json": "ce46f45507eccb94b0eb377eba74e886f4fa2b0dbe019361f8ac8a17d29f5f33",
   "cases/01-ma-discussion/report.html": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064",
   "cases/01-ma-discussion/research.zip": "de49891ad36fd521576d41ca936a79fe33dd12b1dade07042cf7548e07331f2a",
   "cases/01-ma-discussion/strategy.py": "5feadac4f45e4d7200901fcf9758882de0768b6f6a7f4cf1bb0a4d19420f6126",

@@ -14,7 +14,7 @@
       }
     ],
     "runtime_image": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
-    "shared_market_data": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-settings-20261108/market-data",
+    "shared_market_data": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/market-data",
     "preselected_operator_answers": {
       "instrument": "0050",
       "timeframe_if_asked": "日 K",
