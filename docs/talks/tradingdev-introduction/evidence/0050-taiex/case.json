@@ -1,22 +1,10 @@
 {
   "catalog": {
-    "purpose": "以修正台股大盤基準後的版本，重新生成相同條件的單一 0050 均線研究案例。",
+    "purpose": "簡報示範，每輪一個主要需求。不另安排年化教學；模型提出設定後，由操作者縮減範圍並以「我同意」執行。大盤比較、既有結果查證與改善建議各自獨立。",
     "prompt_origin": "主代理依使用者委託擔任示範操作者，逐輪回應 Sol 實際提出的問題；並非真人逐字對話。只有可見操作訊息與 MCP 結果交付，不包含私有推理。",
     "model": "gpt-6.1-sol",
     "reasoning_effort": "medium",
-    "repository_commit": "fccde5b069f5aceed53546a3d3a5583150481ccd",
-    "settings": {
-      "source": "yahoo_finance",
-      "symbol": "0050.TW",
-      "timeframe": "1d",
-      "start_date": "2023-12-31T16:00:00+00:00",
-      "end_date": "2024-07-01T15:59:59+00:00",
-      "init_cash": 10000,
-      "fees": 0.0006,
-      "slippage": 0.0005,
-      "periods_per_year": 252,
-      "cost_label": "專案模擬預設，非台灣券商實際費率，未另建台股稅費模型"
-    },
+    "repository_commit": "4f4d78a3a8049b1fff8b9a471df320aa497a5a9f",
     "cases": [
       {
         "id": "01-ma-discussion",
@@ -26,22 +14,19 @@
       }
     ],
     "runtime_image": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
-    "shared_market_data": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/market-data",
+    "shared_market_data": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/market-data",
     "preselected_operator_answers": {
       "instrument": "0050",
-      "timeframe": "日 K",
-      "period": "2024-01-01 至 2024-07-01",
-      "annualization_if_asked": 252,
-      "direction_if_asked": "買進／空手，不做空或槓桿",
-      "strategy_parameters": "依使用者明示沿用原案例：20 日 SMA；高於均線且空手買入一次，低於且持有全數賣出，相等維持；下一根開盤成交，不做空或槓桿。",
-      "capital_and_costs": "沿用原案例：本金10000、fees0.0006、slippage0.0005、每年252根；模擬設定，非實際台股稅費模型。"
+      "timeframe_if_asked": "日 K",
+      "period_if_asked": "2024-01-01 至 2024-07-01（台灣日期，含末日）",
+      "strategy_choice_when_proposed": "單一 20 日 SMA，買進後持有，不重複加碼，不放空",
+      "annualization": "若追問年化，回覆「你幫我決定一個值就好。」不預先提供252；依模型實際回覆繼續。"
     },
-    "reuse_of_market_cache": "Copied the existing 0050 cache into this isolated retained case; new benchmark acquisition will not write to the original research cache. No previous conversation, strategies, plans, results or notes are loaded.",
+    "reuse_of_market_cache": "Copy only market cache into a new retained workspace; no prior conversation, strategies, plans, results or research notes loaded into this model thread.",
     "case_expansion_requires_user_acceptance": true,
-    "date_interpretation": "沿用原自然案例臺灣日期 2024-01-01 至 2024-07-01（含最後一天），共118根已觀測日K；完成後逐項核對設定與資料覆蓋。",
+    "date_interpretation": "以自然語言選定台灣日曆日期；依模型實際提出的確認單釐清並核對，不能預先把答案寫入問題。",
     "benchmark_fix_pr": "https://github.com/Kuan-Lun/tradingdev/pull/182",
-    "reference_case": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-sol-natural-20261107",
-    "reference_run_id": "89fb1284cf7b4773b555360a77acdfa1",
+    "reference_case": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107",
     "market_cache_origin": {
       "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-sol-20261106/market-data",
       "sha256": {
@@ -54,50 +39,731 @@
         "processed/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/2023.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "processed/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/ba1de59fe83742749ac80a87e8439918.parquet": "bd074c9519bccd884f88768ce469bf55efe98d4ecef7f023ea56665c5d7c152c"
       }
-    }
+    },
+    "recording_feature_pr": "https://github.com/Kuan-Lun/tradingdev/pull/185",
+    "conversation_recording": "Native tradingdev-codex / ConversationService HTML and JSON; exact copies are delivered.",
+    "operator_metadata_is_not_model_input": true,
+    "reference_settings": {
+      "source": "yahoo_finance",
+      "symbol": "0050.TW",
+      "timeframe": "1d",
+      "start_date": "2023-12-31T16:00:00+00:00",
+      "end_date": "2024-07-01T15:59:59+00:00",
+      "init_cash": 10000,
+      "fees": 0.0006,
+      "slippage": 0.0005,
+      "periods_per_year": 252,
+      "cost_label": "專案模擬預設，非台灣券商實際費率，未另建台股稅費模型"
+    },
+    "code_provenance": "產品程式沿用主線 741fd848；checkout 4f4d78a 另含未合併簡報修改。",
+    "phase_rendering_pr": "https://github.com/Kuan-Lun/tradingdev/pull/187",
+    "previous_drafts_retained": [
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-recorded-20261107",
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-natural-dialogue-20261107",
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107",
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-settings-20261108"
+    ],
+    "turn_titles": [
+      "從模糊構想開始",
+      "選定期間與日 K",
+      "改成單一 20 日均線",
+      "先只回測均線策略",
+      "閱讀後同意執行",
+      "詢問台股大盤比較",
+      "核對既有基準結果",
+      "討論改善方向",
+      "整理研究與分享"
+    ],
+    "shot_after_turns": {
+      "confirmation": 4,
+      "equity": 5,
+      "benchmark": 7
+    },
+    "actual_annualization": "本次模型在第2輪自行提出每年252日；沒有加入年化教學或操作者重述數值。"
   },
   "case": {
-    "id": "01-ma-discussion",
-    "title": "從均線構想開始的 0050 研究",
-    "idea": "我想用均線來買賣 0050，可以幫我看看嗎？",
-    "story": "先討論買賣規則與必要選擇，再確認、執行、解讀及保存。",
-    "status": "完成",
-    "run_id": "af6a758f1ded43eea193638330be7aaf",
-    "plan_id": "af6a758f1ded43eea193638330be7aaf",
+    "run_id": "a68104ccd4234e4193454de4d09cbfb5",
+    "report_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/reports/e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7/report.html",
+    "report": {
+      "success": true,
+      "report_id": "e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7",
+      "artifact_id": "report:e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7:html",
+      "manifest_artifact_id": "report:e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7:manifest",
+      "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/reports/e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7/report.html",
+      "sha256": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064",
+      "run_ids": [
+        "a68104ccd4234e4193454de4d09cbfb5"
+      ],
+      "navigation_instructions": "點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。",
+      "scope_count": 1,
+      "comparison_job_id": null,
+      "ml_entry_ids": []
+    },
+    "archive": {
+      "success": true,
+      "archive_id": "8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663",
+      "note_id": "bc8498a34bf647d99ce55c9aed407317",
+      "version": 2,
+      "artifact_id": "research:8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663:zip",
+      "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/research.zip",
+      "html_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/index.html",
+      "sha256": "de49891ad36fd521576d41ca936a79fe33dd12b1dade07042cf7548e07331f2a",
+      "download_url": null,
+      "download_expires_at": null,
+      "instructions": "下載 ZIP 後完整解壓，開啟 index.html；reports/ 保留連結報告。無下載網址時，path 是 server 本機路徑，需客戶端檔案傳輸能力。"
+    },
     "metrics": {
-      "annual_return": 0.5921291751754136,
-      "annual_volatility": 0.16440060688346278,
-      "avg_holding_bars": 13.8,
-      "calmar_ratio": 6.878325979196783,
-      "daily_max_drawdown": 0.08608623333152343,
-      "daily_pnl_max": 468.86502961107726,
-      "daily_pnl_mean": 20.61893693741684,
-      "daily_pnl_median": 0.0,
-      "daily_pnl_min": -318.68169108050097,
-      "daily_pnl_std": 115.92427916247057,
-      "max_drawdown": 0.08608623333152343,
-      "max_drawdown_amount": 1029.5658824316633,
-      "monthly_pnl_max": 1062.270813122008,
-      "monthly_pnl_mean": 347.57636551645527,
-      "monthly_pnl_median": 393.95230058586276,
-      "monthly_pnl_min": -483.30323213930023,
-      "monthly_pnl_std": 538.8575222023463,
-      "monthly_trades_mean": 0.7142857142857143,
-      "monthly_volume_mean": 17649.54742948653,
-      "n_days": 118,
-      "n_months": 7,
-      "open_trades": 1,
-      "profit_factor": 4.422803129122141,
-      "sharpe_ratio": 2.912447800628984,
-      "sortino_ratio": 5.339980830959924,
-      "total_fees": 74.12809920384026,
-      "total_pnl": 2433.034558615187,
-      "total_return": 0.2433034558615188,
-      "total_slippage": null,
-      "total_trades": 5,
-      "total_volume": 123546.83200640572,
-      "trade_expectancy": 304.5765074005327,
-      "win_rate": 0.4
+      "kind": "backtest",
+      "mode": "signal",
+      "metadata": {
+        "calculation_fallbacks": {},
+        "execution_context": {
+          "end_date": "2024-07-01T15:59:59+00:00",
+          "fees": 0.0006,
+          "init_cash": 10000.0,
+          "mode": "signal",
+          "monthly_max_loss": 1500.0,
+          "periods_per_year": 252.0,
+          "position_size": null,
+          "random_seed": null,
+          "re_entry_after_sl": true,
+          "required_return": 0.0,
+          "risk_free_rate": 0.0,
+          "signal_as_position": false,
+          "slippage": 0.0005,
+          "start_date": "2023-12-31T16:00:00+00:00",
+          "stop_loss": null,
+          "symbol": "0050.TW",
+          "take_profit": null,
+          "timeframe": "1d"
+        },
+        "mode": "signal",
+        "observations": {
+          "account_history_availability": "available",
+          "account_history_mark": "bar_close",
+          "accounting": "vectorbt_generic",
+          "bar_count": 118,
+          "end_date": "2024-07-01T01:00:00+00:00",
+          "execution_equity_mark": "requested_price_before_slippage",
+          "execution_records_availability": "available",
+          "execution_timestamp_semantics": "bar_timestamp_not_exact_intrabar_fill",
+          "start_date": "2024-01-02T01:00:00+00:00",
+          "trade_count": 6
+        },
+        "providers": {
+          "quantstats": "0.0.86",
+          "vectorbt": "1.2.0"
+        },
+        "schema_version": 1,
+        "settings": {
+          "calendar_timezone": "UTC",
+          "calmar_drawdown_sampling": "observed_daily",
+          "cost_model": "commission_and_slippage_adjusted_fill_prices",
+          "drawdown_sampling": "bar",
+          "excess_return_adjustment": "configured_rate_before_quantstats",
+          "frequency": "1d",
+          "initial_cash": 10000.0,
+          "missing_dates": "not_filled",
+          "period_pnl_std_ddof": 0,
+          "periods_per_year": 252.0,
+          "required_return": 0.0,
+          "required_return_per_period": 0.0,
+          "return_sampling": "observed_daily",
+          "return_std_ddof": 1,
+          "returns_basis": "simple",
+          "risk_free_rate": 0.0,
+          "risk_free_rate_per_period": 0.0,
+          "stored_returns_sampling": "bar",
+          "trade_scope": "closed"
+        },
+        "strategy_parameters": {
+          "buy_and_hold": false,
+          "period": 20
+        },
+        "unavailable": {
+          "total_slippage": "embedded_in_fill_prices"
+        }
+      },
+      "split": "full",
+      "fold_index": null,
+      "trial_index": null,
+      "parameters": {
+        "buy_and_hold": false,
+        "period": 20
+      },
+      "success": true,
+      "run_id": "a68104ccd4234e4193454de4d09cbfb5",
+      "manifest_hash": "16f3b3778d7fe0e151aba7ebb2343ca697226d1fd6fe554936cc9b97eb15b026",
+      "scope": "full",
+      "metrics": {
+        "annual_return": 0.5921291751754136,
+        "annual_volatility": 0.16440060688346278,
+        "avg_holding_bars": 13.8,
+        "calmar_ratio": 6.878325979196783,
+        "daily_max_drawdown": 0.08608623333152343,
+        "daily_pnl_max": 468.86502961107726,
+        "daily_pnl_mean": 20.61893693741684,
+        "daily_pnl_median": 0.0,
+        "daily_pnl_min": -318.68169108050097,
+        "daily_pnl_std": 115.92427916247057,
+        "max_drawdown": 0.08608623333152343,
+        "max_drawdown_amount": 1029.5658824316633,
+        "monthly_pnl_max": 1062.270813122008,
+        "monthly_pnl_mean": 347.57636551645527,
+        "monthly_pnl_median": 393.95230058586276,
+        "monthly_pnl_min": -483.30323213930023,
+        "monthly_pnl_std": 538.8575222023463,
+        "monthly_trades_mean": 0.7142857142857143,
+        "monthly_volume_mean": 17649.54742948653,
+        "n_days": 118,
+        "n_months": 7,
+        "open_trades": 1,
+        "profit_factor": 4.422803129122141,
+        "sharpe_ratio": 2.912447800628984,
+        "sortino_ratio": 5.339980830959924,
+        "total_fees": 74.12809920384026,
+        "total_pnl": 2433.034558615187,
+        "total_return": 0.2433034558615188,
+        "total_slippage": null,
+        "total_trades": 5,
+        "total_volume": 123546.83200640572,
+        "trade_expectancy": 304.5765074005327,
+        "win_rate": 0.4
+      },
+      "display_metrics": {
+        "annual_return": "59.21%",
+        "annual_volatility": "16.44%",
+        "avg_holding_bars": "13.80",
+        "calmar_ratio": "6.88",
+        "daily_max_drawdown": "8.61%",
+        "daily_pnl_max": "468.87",
+        "daily_pnl_mean": "20.62",
+        "daily_pnl_median": "0.00",
+        "daily_pnl_min": "-318.68",
+        "daily_pnl_std": "115.92",
+        "max_drawdown": "8.61%",
+        "max_drawdown_amount": "1029.57",
+        "monthly_pnl_max": "1062.27",
+        "monthly_pnl_mean": "347.58",
+        "monthly_pnl_median": "393.95",
+        "monthly_pnl_min": "-483.30",
+        "monthly_pnl_std": "538.86",
+        "monthly_trades_mean": "0.71",
+        "monthly_volume_mean": "17649.55",
+        "n_days": "118",
+        "n_months": "7",
+        "open_trades": "1",
+        "profit_factor": "4.42",
+        "sharpe_ratio": "2.91",
+        "sortino_ratio": "5.34",
+        "total_fees": "74.13",
+        "total_pnl": "2433.03",
+        "total_return": "24.33%",
+        "total_slippage": null,
+        "total_trades": "5",
+        "total_volume": "123546.83",
+        "trade_expectancy": "304.58",
+        "win_rate": "40.00%"
+      },
+      "definitions": {
+        "annual_return": {
+          "id": "annual_return",
+          "unit": "fraction",
+          "category": "return",
+          "provider": "quantstats",
+          "description": "Compounded annual growth rate of observed UTC daily returns using configured days per year. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": true,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal"
+          ],
+          "requires_annualization": true
+        },
+        "annual_volatility": {
+          "id": "annual_volatility",
+          "unit": "fraction",
+          "category": "risk",
+          "provider": "quantstats",
+          "description": "Annualized sample standard deviation of observed daily returns. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "minimize",
+          "modes": [
+            "signal"
+          ],
+          "requires_annualization": true
+        },
+        "avg_holding_bars": {
+          "id": "avg_holding_bars",
+          "unit": "bars",
+          "category": "trade",
+          "provider": "vectorbt",
+          "description": "Mean exit index minus entry index for closed trades.",
+          "summary": false,
+          "optimization_direction": null,
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "calmar_ratio": {
+          "id": "calmar_ratio",
+          "unit": "ratio",
+          "category": "risk",
+          "provider": "quantstats",
+          "description": "Compounded annual return divided by maximum observed-day closing drawdown (daily_max_drawdown). Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal"
+          ],
+          "requires_annualization": true
+        },
+        "daily_max_drawdown": {
+          "id": "daily_max_drawdown",
+          "unit": "fraction",
+          "category": "risk",
+          "provider": "quantstats",
+          "description": "Maximum observed-day closing percentage drawdown; denominator of Calmar ratio. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "minimize",
+          "modes": [
+            "signal"
+          ],
+          "requires_annualization": false
+        },
+        "daily_pnl_max": {
+          "id": "daily_pnl_max",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "max of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "daily_pnl_mean": {
+          "id": "daily_pnl_mean",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "mean of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "daily_pnl_median": {
+          "id": "daily_pnl_median",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "median of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "daily_pnl_min": {
+          "id": "daily_pnl_min",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "min of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "daily_pnl_std": {
+          "id": "daily_pnl_std",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "std of net PnL aggregated by observed UTC calendar daily periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "minimize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "max_drawdown": {
+          "id": "max_drawdown",
+          "unit": "fraction",
+          "category": "risk",
+          "provider": "quantstats",
+          "description": "Largest peak-to-trough loss fraction, reported as nonnegative magnitude.",
+          "summary": true,
+          "optimization_direction": "minimize",
+          "modes": [
+            "signal"
+          ],
+          "requires_annualization": false
+        },
+        "max_drawdown_amount": {
+          "id": "max_drawdown_amount",
+          "unit": "amount",
+          "category": "risk",
+          "provider": "ledger",
+          "description": "Largest peak-to-trough loss amount, including the initial capital/PnL baseline.",
+          "summary": true,
+          "optimization_direction": "minimize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "monthly_pnl_max": {
+          "id": "monthly_pnl_max",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "max of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "monthly_pnl_mean": {
+          "id": "monthly_pnl_mean",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "mean of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "monthly_pnl_median": {
+          "id": "monthly_pnl_median",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "median of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "monthly_pnl_min": {
+          "id": "monthly_pnl_min",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "min of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "monthly_pnl_std": {
+          "id": "monthly_pnl_std",
+          "unit": "amount",
+          "category": "period",
+          "provider": "numpy/pandas",
+          "description": "std of net PnL aggregated by observed UTC calendar monthly periods; std uses ddof=0. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": false,
+          "optimization_direction": "minimize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "monthly_trades_mean": {
+          "id": "monthly_trades_mean",
+          "unit": "count",
+          "category": "period",
+          "provider": "pandas",
+          "description": "Closed trades divided by observed calendar months.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "monthly_volume_mean": {
+          "id": "monthly_volume_mean",
+          "unit": "amount",
+          "category": "period",
+          "provider": "pandas",
+          "description": "Executed notional divided by observed calendar months.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "n_days": {
+          "id": "n_days",
+          "unit": "count",
+          "category": "period",
+          "provider": "pandas",
+          "description": "Number of observed UTC calendar dates.",
+          "summary": false,
+          "optimization_direction": null,
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "n_months": {
+          "id": "n_months",
+          "unit": "count",
+          "category": "period",
+          "provider": "pandas",
+          "description": "Number of observed UTC calendar months.",
+          "summary": false,
+          "optimization_direction": null,
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "open_trades": {
+          "id": "open_trades",
+          "unit": "count",
+          "category": "trade",
+          "provider": "vectorbt",
+          "description": "Number of trades still open at the final mark.",
+          "summary": false,
+          "optimization_direction": null,
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "profit_factor": {
+          "id": "profit_factor",
+          "unit": "ratio",
+          "category": "trade",
+          "provider": "vectorbt",
+          "description": "Closed-trade gross gains divided by absolute gross losses; all-winning is unbounded.",
+          "summary": true,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "sharpe_ratio": {
+          "id": "sharpe_ratio",
+          "unit": "ratio",
+          "category": "risk",
+          "provider": "quantstats",
+          "description": "Annualized excess daily return divided by sample standard deviation. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": true,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal"
+          ],
+          "requires_annualization": true
+        },
+        "sortino_ratio": {
+          "id": "sortino_ratio",
+          "unit": "ratio",
+          "category": "risk",
+          "provider": "quantstats",
+          "description": "Annualized return above target divided by downside deviation. Requires a recognized bar frequency of one day or finer; coarser or unknown bars cannot establish daily equity observations or allocate PnL across calendar boundaries.",
+          "summary": true,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal"
+          ],
+          "requires_annualization": true
+        },
+        "total_fees": {
+          "id": "total_fees",
+          "unit": "amount",
+          "category": "trade",
+          "provider": "ledger",
+          "description": "Total charged entry and exit commissions (see cost model metadata).",
+          "summary": false,
+          "optimization_direction": "minimize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "total_pnl": {
+          "id": "total_pnl",
+          "unit": "amount",
+          "category": "return",
+          "provider": "ledger",
+          "description": "Net marked-to-market profit, including execution costs.",
+          "summary": true,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "total_return": {
+          "id": "total_return",
+          "unit": "fraction",
+          "category": "return",
+          "provider": "quantstats",
+          "description": "Cumulative return on initial capital.",
+          "summary": true,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal"
+          ],
+          "requires_annualization": false
+        },
+        "total_slippage": {
+          "id": "total_slippage",
+          "unit": "amount",
+          "category": "trade",
+          "provider": "ledger",
+          "description": "Explicit slippage charges in the volume model; signal slippage is embedded in fill prices.",
+          "summary": false,
+          "optimization_direction": null,
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "total_trades": {
+          "id": "total_trades",
+          "unit": "count",
+          "category": "trade",
+          "provider": "vectorbt",
+          "description": "Number of closed trades; open trades excluded.",
+          "summary": true,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "total_volume": {
+          "id": "total_volume",
+          "unit": "amount",
+          "category": "trade",
+          "provider": "ledger",
+          "description": "Sum of actual entry and exit notional; open marks are not executions.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "trade_expectancy": {
+          "id": "trade_expectancy",
+          "unit": "amount",
+          "category": "trade",
+          "provider": "vectorbt",
+          "description": "Expected net profit per closed trade.",
+          "summary": false,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        },
+        "win_rate": {
+          "id": "win_rate",
+          "unit": "fraction",
+          "category": "trade",
+          "provider": "vectorbt",
+          "description": "Fraction of closed trades with positive net PnL, after entry and exit costs.",
+          "summary": true,
+          "optimization_direction": "maximize",
+          "modes": [
+            "signal",
+            "volume"
+          ],
+          "requires_annualization": false
+        }
+      },
+      "details_available": true,
+      "provenance": "performance_artifact",
+      "available_metric_ids": [
+        "annual_return",
+        "annual_volatility",
+        "avg_holding_bars",
+        "calmar_ratio",
+        "daily_max_drawdown",
+        "daily_pnl_max",
+        "daily_pnl_mean",
+        "daily_pnl_median",
+        "daily_pnl_min",
+        "daily_pnl_std",
+        "max_drawdown",
+        "max_drawdown_amount",
+        "monthly_pnl_max",
+        "monthly_pnl_mean",
+        "monthly_pnl_median",
+        "monthly_pnl_min",
+        "monthly_pnl_std",
+        "monthly_trades_mean",
+        "monthly_volume_mean",
+        "n_days",
+        "n_months",
+        "open_trades",
+        "profit_factor",
+        "sharpe_ratio",
+        "sortino_ratio",
+        "total_fees",
+        "total_pnl",
+        "total_return",
+        "total_slippage",
+        "total_trades",
+        "total_volume",
+        "trade_expectancy",
+        "win_rate"
+      ],
+      "available_scopes": [
+        "full"
+      ],
+      "default_scope": "full",
+      "selected_train_scope": null,
+      "detail_error": null
     },
     "benchmark": {
       "status": "available",
@@ -571,279 +1237,7 @@
         }
       }
     },
-    "display_metrics": {
-      "annual_return": "59.21%",
-      "annual_volatility": "16.44%",
-      "avg_holding_bars": "13.80",
-      "calmar_ratio": "6.88",
-      "daily_max_drawdown": "8.61%",
-      "daily_pnl_max": "468.87",
-      "daily_pnl_mean": "20.62",
-      "daily_pnl_median": "0.00",
-      "daily_pnl_min": "-318.68",
-      "daily_pnl_std": "115.92",
-      "max_drawdown": "8.61%",
-      "max_drawdown_amount": "1029.57",
-      "monthly_pnl_max": "1062.27",
-      "monthly_pnl_mean": "347.58",
-      "monthly_pnl_median": "393.95",
-      "monthly_pnl_min": "-483.30",
-      "monthly_pnl_std": "538.86",
-      "monthly_trades_mean": "0.71",
-      "monthly_volume_mean": "17649.55",
-      "n_days": "118",
-      "n_months": "7",
-      "open_trades": "1",
-      "profit_factor": "4.42",
-      "sharpe_ratio": "2.91",
-      "sortino_ratio": "5.34",
-      "total_fees": "74.13",
-      "total_pnl": "2433.03",
-      "total_return": "24.33%",
-      "total_slippage": null,
-      "total_trades": "5",
-      "total_volume": "123546.83",
-      "trade_expectancy": "304.58",
-      "win_rate": "40.00%"
-    },
-    "observations": {
-      "account_history_availability": "available",
-      "account_history_mark": "bar_close",
-      "accounting": "vectorbt_generic",
-      "bar_count": 118,
-      "end_date": "2024-07-01T01:00:00+00:00",
-      "execution_equity_mark": "requested_price_before_slippage",
-      "execution_records_availability": "available",
-      "execution_timestamp_semantics": "bar_timestamp_not_exact_intrabar_fill",
-      "start_date": "2024-01-02T01:00:00+00:00",
-      "trade_count": 6
-    },
-    "dataset_id": "query-sha256:8db33c7ad270b0e16167aa4555b1de823bf089337051109520f77374ff8bb0cd",
-    "parameters": {
-      "period": 20
-    },
-    "trades": [
-      {
-        "trade_id": 0,
-        "direction": "long",
-        "status": "closed",
-        "entry_timestamp": "2024-01-30T01:00:00+00:00",
-        "exit_timestamp": "2024-04-17T01:00:00+00:00",
-        "mark_timestamp": null,
-        "entry_price": 34.10454527664184,
-        "exit_price": 38.96800548744202,
-        "mark_price": null,
-        "size": 293.0402243095197,
-        "size_quote": 9994.003597841296,
-        "entry_fees": 5.996402158703859,
-        "exit_fees": 6.851515841360762,
-        "fee": 12.84791800006462,
-        "gross_pnl": 1425.1894710933084,
-        "net_pnl": 1412.3415530932439,
-        "record": {
-          "direction": 1,
-          "entry_fees": 5.996402158703859,
-          "entry_idx": 20,
-          "entry_price": 34.10454527664184,
-          "exit_fees": 6.851515841360762,
-          "exit_idx": 66,
-          "exit_notional": 11419.193068934605,
-          "exit_price": 38.96800548744202,
-          "fee": 12.84791800006462,
-          "gross_pnl": 1425.1894710933084,
-          "net_pnl": 1412.3415530932439,
-          "size": 293.0402243095197,
-          "size_quote": 9994.003597841296,
-          "status": "closed"
-        }
-      },
-      {
-        "trade_id": 1,
-        "direction": "long",
-        "status": "closed",
-        "entry_timestamp": "2024-04-19T01:00:00+00:00",
-        "exit_timestamp": "2024-04-22T01:00:00+00:00",
-        "mark_timestamp": null,
-        "entry_price": 38.54426402664184,
-        "exit_price": 37.58119847488403,
-        "mark_price": null,
-        "size": 295.9064997649784,
-        "size_quote": 11405.498254140759,
-        "entry_fees": 6.843298952484474,
-        "exit_fees": 6.672312538605526,
-        "fee": 13.51561149109,
-        "gross_pnl": -284.97735646488036,
-        "net_pnl": -298.49296795597036,
-        "record": {
-          "direction": 1,
-          "entry_fees": 6.843298952484474,
-          "entry_idx": 68,
-          "entry_price": 38.54426402664184,
-          "exit_fees": 6.672312538605526,
-          "exit_idx": 69,
-          "exit_notional": 11120.520897675879,
-          "exit_price": 37.58119847488403,
-          "fee": 13.51561149109,
-          "gross_pnl": -284.97735646488036,
-          "net_pnl": -298.49296795597036,
-          "size": 295.9064997649784,
-          "size_quote": 11405.498254140759,
-          "status": "closed"
-        }
-      },
-      {
-        "trade_id": 2,
-        "direction": "long",
-        "status": "closed",
-        "entry_timestamp": "2024-04-30T01:00:00+00:00",
-        "exit_timestamp": "2024-05-03T01:00:00+00:00",
-        "mark_timestamp": null,
-        "entry_price": 39.66982652664184,
-        "exit_price": 39.617682012557985,
-        "mark_price": null,
-        "size": 279.99074478213464,
-        "size_quote": 11107.18427457253,
-        "entry_fees": 6.664310564743573,
-        "exit_fees": 6.6555505759427325,
-        "fee": 13.319861140686307,
-        "gross_pnl": -14.599981334640688,
-        "net_pnl": -27.919842475326995,
-        "record": {
-          "direction": 1,
-          "entry_fees": 6.664310564743573,
-          "entry_idx": 75,
-          "entry_price": 39.66982652664184,
-          "exit_fees": 6.6555505759427325,
-          "exit_idx": 77,
-          "exit_notional": 11092.58429323789,
-          "exit_price": 39.617682012557985,
-          "fee": 13.319861140686307,
-          "gross_pnl": -14.599981334640688,
-          "net_pnl": -27.919842475326995,
-          "size": 279.99074478213464,
-          "size_quote": 11107.18427457253,
-          "status": "closed"
-        }
-      },
-      {
-        "trade_id": 3,
-        "direction": "long",
-        "status": "closed",
-        "entry_timestamp": "2024-05-07T01:00:00+00:00",
-        "exit_timestamp": "2024-06-03T01:00:00+00:00",
-        "mark_timestamp": null,
-        "entry_price": 40.082531249999995,
-        "exit_price": 42.14141722488404,
-        "mark_price": null,
-        "size": 276.4117142416642,
-        "size_quote": 11079.281173957574,
-        "entry_fees": 6.647568704373043,
-        "exit_fees": 6.989028825422034,
-        "fee": 13.636597529795077,
-        "gross_pnl": 569.1002017458177,
-        "net_pnl": 555.4636042160226,
-        "record": {
-          "direction": 1,
-          "entry_fees": 6.647568704373043,
-          "entry_idx": 79,
-          "entry_price": 40.082531249999995,
-          "exit_fees": 6.989028825422034,
-          "exit_idx": 98,
-          "exit_notional": 11648.381375703391,
-          "exit_price": 42.14141722488404,
-          "fee": 13.636597529795077,
-          "gross_pnl": 569.1002017458177,
-          "net_pnl": 555.4636042160226,
-          "size": 276.4117142416642,
-          "size_quote": 11079.281173957574,
-          "status": "closed"
-        }
-      },
-      {
-        "trade_id": 4,
-        "direction": "long",
-        "status": "closed",
-        "entry_timestamp": "2024-06-04T01:00:00+00:00",
-        "exit_timestamp": "2024-06-05T01:00:00+00:00",
-        "mark_timestamp": null,
-        "entry_price": 42.20859375,
-        "exit_price": 41.829073474884034,
-        "mark_price": null,
-        "size": 275.6408272866957,
-        "size_quote": 11634.411699858054,
-        "entry_fees": 6.980647019914613,
-        "exit_fees": 6.917880250351808,
-        "fee": 13.89852727026642,
-        "gross_pnl": -104.61128260503938,
-        "net_pnl": -118.5098098753058,
-        "record": {
-          "direction": 1,
-          "entry_fees": 6.980647019914613,
-          "entry_idx": 99,
-          "entry_price": 42.20859375,
-          "exit_fees": 6.917880250351808,
-          "exit_idx": 100,
-          "exit_notional": 11529.800417253015,
-          "exit_price": 41.829073474884034,
-          "fee": 13.89852727026642,
-          "gross_pnl": -104.61128260503938,
-          "net_pnl": -118.5098098753058,
-          "size": 275.6408272866957,
-          "size_quote": 11634.411699858054,
-          "status": "closed"
-        }
-      },
-      {
-        "trade_id": 5,
-        "direction": "long",
-        "status": "open",
-        "entry_timestamp": "2024-06-06T01:00:00+00:00",
-        "exit_timestamp": null,
-        "mark_timestamp": "2024-07-01T01:00:00+00:00",
-        "entry_price": 43.20909375,
-        "exit_price": null,
-        "mark_price": 46.650001525878906,
-        "size": 266.5173451648873,
-        "size_quote": 11515.972953230723,
-        "entry_fees": 6.909583771937832,
-        "exit_fees": 0.0,
-        "fee": 6.909583771937832,
-        "gross_pnl": 917.0616053844642,
-        "net_pnl": 910.1520216125264,
-        "record": {
-          "direction": 1,
-          "entry_fees": 6.909583771937832,
-          "entry_idx": 101,
-          "entry_price": 43.20909375,
-          "exit_fees": 0.0,
-          "exit_idx": 117,
-          "exit_notional": 0.0,
-          "exit_price": 46.650001525878906,
-          "fee": 6.909583771937832,
-          "gross_pnl": 917.0616053844642,
-          "net_pnl": 910.1520216125264,
-          "size": 266.5173451648873,
-          "size_quote": 11515.972953230723,
-          "status": "open"
-        }
-      }
-    ],
-    "report_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/cases/01-ma-discussion/research/reports/48b0664f3369463fe0dcbe5bbafdc62a152ee7d76dea249c76694d534b573607/report.html",
-    "archive_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/cases/01-ma-discussion/research/research_archives/4b7a43246c621ab0982aa0f355a6c81a0f7d068d5fca7a6bf6f94dbd0d49616b/research.zip",
-    "directory": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/deliverables/cases/01-ma-discussion",
-    "source_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/cases/01-ma-discussion/research/generated_strategies/strategy_1bfbc2a9ec5d446e87d222a959c57ff9/revisions/9e8399dff16c49919faa822dcd04c02a/strategy.py",
-    "analysis": {
-      "hypotheses_and_limits": "半年且僅5筆已平倉交易，證據有限；診斷工具提示交易樣本少與勝率低，屬固定門檻檢查，不能證明策略不佳或找到虧損原因。獲利主要來自少數較長持倉及期末未實現損益，是否能重現仍未驗證。年化報酬59.21%是按252因子換算的樣本統計，不是未來預測，本次解讀以區間報酬、回撤及交易次數為主。成本為核准的模擬費率與滑價，並非台股實際費稅模型；成交數量含小數股，未模擬真實整股/零股限制。資料使用Yahoo日線，不能把資料商價格直接當作當年的未調整券商成交報價；配息、分割及調整口徑對真實總報酬的影響尚未另行核實。未做樣本外或多行情狀態檢驗，無法推論穩健性或長期避險能力。報告中的原生基準是另載入台股加權指數行情、與策略日期完整對齊及套用相同成本的固定參照，不是新增策略參數實驗。本報告分析的保存scope只有full，沒有其他未分析scope。\n目前我最在意的是『擇時尚未展現降低風險的價值』；單一均線兩側立即切換可能造成來回交易，但只有5筆平倉，不能認定已證實原因。40%勝率本身不是首要問題，因為盈利幅度大於虧損仍可獲利。0050與加權指數成分權重不同，落後大盤不能全歸因於進出場規則；本次只保留台股大盤作為唯一基準，因此標的差異與擇時效果未被隔離，不將差距全部歸因於均線。基準不含現金股利，非含息總報酬指數。期初暖機也影響比較，未來應區分指標暖機與可交易區間。",
-      "next_steps": "使用者最新決定：台股大盤^TWII是本研究唯一基準；不增加0050買進持有、不新增參數組合、不執行其他回測。先前曾提出增加同標的對照的建議，現不納入本次研究範圍。分享版只重整既有結果與解讀，原回測、策略版本與設定未變。\n仍待驗證的想法：優先討論在20日均線周圍加入緩衝區，空手超過上界才買進、持倉跌破下界才賣出，中間維持原部位；目的是降低小幅穿越造成的反覆進出，代價是更慢反應、可能擴大回撤或錯過行情。門檻未選定、未查證、未實作、未回測，不宣稱改善。更長區間及獨立樣本驗證、區間前暖機與可交易範圍分離、價格調整/配息/實際費稅與股數限制核實也都只是待研究事項，需要未來另行授權。本輪僅整理、更正報告、保存研究筆記與匯出分享包。",
-      "observations": "實際資料118根日線，2024/1/2至2024/7/1，對應核准的台北日期2024/1/1至7/1全天；252為年化因子而非資料根數。暖機前19根空手，首筆於1/30買入。保存的total_trades=5代表已平倉交易，另有open_trades=1；完整成交紀錄11筆，為6次買進、5次賣出，每次買入前部位為0，每次賣出後部位為0，沒有持倉中加碼。成交原始價格為對應日線open，再套用0.0005滑價及0.0006費率。5筆已平倉為2勝3負，勝率40.00%，獲利因子4.42；已平倉淨損益合計1522.88，6/6買進的最後一筆截至7/1仍持有，含入場費用後評價損益910.15，沒有虛構出場。1/30至4/17的首筆淨利1412.34，5/7至6/3淨利555.46；4/19至4/22、4/30至5/3、6/4至6/5分別損失298.49、27.92、118.51，顯示本樣本部分短期進出虧損，但不能僅據此確認市場狀態或原因。權益資料顯示4/9高點11959.70至5/2低點10930.14，回撤1029.57、8.61%。總手續費74.13；滑價已反映成交價格，獨立滑價金額不可得，並非0。\n基準來源為Yahoo的^TWII價格指數，另載入市場行情，不是0050本身買進持有。基準首根日線收盤全額買進、套用相同0.06%手續費與0.05%滑價、期末保留估值不扣出場費；不是可直接買入的實體指數商品。保存基準報酬29.01%、最大回撤6.66%、Sharpe 3.48、淨損益2901.05；策略分別為24.33%、8.61%、2.91、2433.03。超額報酬-4.68個百分點是區間報酬差，不是風險調整alpha。\n已執行設定：策略SingleSmaHoldStrategy，20根日線簡單均線（含當根收盤）；初始空手，收盤價高於均線持多、低於空手、相等維持原狀態，持多期間不加碼、不放空。訊號延後一根，以次根open及成本成交。前19根暖機空手，價格/均線缺值時狀態重設空手。核准的台北時間2024/1/1 00:00:00至2024/7/1 23:59:59（UTC 2023/12/31 16:00:00至2024/7/1 15:59:59）；初始本金10000、費率0.0006、滑價0.0005、年化因子252，未設停損停利。實際策略及基準覆蓋2024/1/2至7/1、118根完整對齊，基準缺棒0；252不是資料根數。",
-      "references": [
-        {
-          "run_id": "af6a758f1ded43eea193638330be7aaf",
-          "scope": "full"
-        }
-      ],
-      "summary": "分享版與基準更正：本研究唯一基準為另行取得的Yahoo Finance台股加權指數^TWII價格指數，並非同一份0050行情、並非0050買進持有、也不是含息總報酬指數。先前「同資料買進持有」等可能誤導為同標的的說法，以此說明更正；本報告取代先前版本供分享。\n本報告只分析0050.TW日線20日SMA單次回測的full完整區間，策略版本9e8399dff16c49919faa822dcd04c02a；未執行其他參數或策略，也沒有訓練/測試分割。區間報酬24.33%、淨損益2433.03、期末權益12433.03（初始10000），最大回撤8.61%。結果含期末未平倉評價，不能視為全部已實現獲利。\n補充市場基準比較：已保存台股加權指數^TWII買進持有基準，118/118根完整對齊。策略報酬24.33%低於基準29.01%，差4.68個百分點；最大回撤8.61%高於基準6.66%，差1.95個百分點。本案例未呈現用較低報酬換取較小回撤的結果。"
-    },
-    "critique_stage": false
+    "turn_count": 9,
+    "conversation_id": "03140aeb840e400ebdac4dfa48e967e0"
   }
 }

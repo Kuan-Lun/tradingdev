@@ -1,23 +1,129 @@
 {
-  "case": {
-    "id": "01-ma-discussion",
-    "title": "從均線構想開始的 0050 研究",
-    "idea": "我想用均線來買賣 0050，可以幫我看看嗎？",
-    "story": "先討論買賣規則與必要選擇，再確認、執行、解讀及保存。"
+  "catalog": {
+    "purpose": "簡報示範，每輪一個主要需求。不另安排年化教學；模型提出設定後，由操作者縮減範圍並以「我同意」執行。大盤比較、既有結果查證與改善建議各自獨立。",
+    "prompt_origin": "主代理依使用者委託擔任示範操作者，逐輪回應 Sol 實際提出的問題；並非真人逐字對話。只有可見操作訊息與 MCP 結果交付，不包含私有推理。",
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "medium",
+    "repository_commit": "4f4d78a3a8049b1fff8b9a471df320aa497a5a9f",
+    "cases": [
+      {
+        "id": "01-ma-discussion",
+        "title": "從均線構想開始的 0050 研究",
+        "idea": "我想用均線來買賣 0050，可以幫我看看嗎？",
+        "story": "先討論買賣規則與必要選擇，再確認、執行、解讀及保存。"
+      }
+    ],
+    "runtime_image": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
+    "shared_market_data": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/market-data",
+    "preselected_operator_answers": {
+      "instrument": "0050",
+      "timeframe_if_asked": "日 K",
+      "period_if_asked": "2024-01-01 至 2024-07-01（台灣日期，含末日）",
+      "strategy_choice_when_proposed": "單一 20 日 SMA，買進後持有，不重複加碼，不放空",
+      "annualization": "若追問年化，回覆「你幫我決定一個值就好。」不預先提供252；依模型實際回覆繼續。"
+    },
+    "reuse_of_market_cache": "Copy only market cache into a new retained workspace; no prior conversation, strategies, plans, results or research notes loaded into this model thread.",
+    "case_expansion_requires_user_acceptance": true,
+    "date_interpretation": "以自然語言選定台灣日曆日期；依模型實際提出的確認單釐清並核對，不能預先把答案寫入問題。",
+    "benchmark_fix_pr": "https://github.com/Kuan-Lun/tradingdev/pull/182",
+    "reference_case": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107",
+    "market_cache_origin": {
+      "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-sol-20261106/market-data",
+      "sha256": {
+        "raw/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/ba1de59fe83742749ac80a87e8439918.csv": "9870df100f97176187d41858bc7d8cd1bf049129c669ad5dc43bdaaf08aa7c12",
+        "raw/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/60753ffc60c44a40a90e11e26c897d2c.csv": "22c3180f053e4a963a2755e7e6a19f6c8cc2fdf4583f69887ecbaf29574c2530",
+        "processed/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/2023.json": "7d738ef6ccd102ebf3053120f199c1eb700df6ab353f9eae8533aefcd02c3995",
+        "processed/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/2024.json": "e1cfeecdea6f80f781749b0a4ff4309bc5ab21c8e6abde87715e0c188bffa7f1",
+        "processed/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/60753ffc60c44a40a90e11e26c897d2c.parquet": "60c311a15898b5938d39f903dc109823227974b75a40a3c5b4992766b1da8634",
+        "processed/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/2024.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "processed/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/2023.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "processed/cache-v2/88dbfe5e41b06189de3d9016ea66b7d3fe206a10b7b8e68fb0a64b8fe360a6c6/ba1de59fe83742749ac80a87e8439918.parquet": "bd074c9519bccd884f88768ce469bf55efe98d4ecef7f023ea56665c5d7c152c"
+      }
+    },
+    "recording_feature_pr": "https://github.com/Kuan-Lun/tradingdev/pull/185",
+    "conversation_recording": "Native tradingdev-codex / ConversationService HTML and JSON; exact copies are delivered.",
+    "operator_metadata_is_not_model_input": true,
+    "reference_settings": {
+      "source": "yahoo_finance",
+      "symbol": "0050.TW",
+      "timeframe": "1d",
+      "start_date": "2023-12-31T16:00:00+00:00",
+      "end_date": "2024-07-01T15:59:59+00:00",
+      "init_cash": 10000,
+      "fees": 0.0006,
+      "slippage": 0.0005,
+      "periods_per_year": 252,
+      "cost_label": "專案模擬預設，非台灣券商實際費率，未另建台股稅費模型"
+    },
+    "code_provenance": "產品程式沿用主線 741fd848；checkout 4f4d78a 另含未合併簡報修改。",
+    "phase_rendering_pr": "https://github.com/Kuan-Lun/tradingdev/pull/187",
+    "previous_drafts_retained": [
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-recorded-20261107",
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-natural-dialogue-20261107",
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107",
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-settings-20261108"
+    ],
+    "turn_titles": [
+      "從模糊構想開始",
+      "選定期間與日 K",
+      "改成單一 20 日均線",
+      "先只回測均線策略",
+      "閱讀後同意執行",
+      "詢問台股大盤比較",
+      "核對既有基準結果",
+      "討論改善方向",
+      "整理研究與分享"
+    ],
+    "shot_after_turns": {
+      "confirmation": 4,
+      "equity": 5,
+      "benchmark": 7
+    },
+    "actual_annualization": "本次模型在第2輪自行提出每年252日；沒有加入年化教學或操作者重述數值。"
   },
-  "repository_commit": "fccde5b069f5aceed53546a3d3a5583150481ccd",
-  "runtime_image": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
-  "plan_id": "af6a758f1ded43eea193638330be7aaf",
-  "plan_hash": "93fd3d31e542b81153ff1cfc51ec322502a5b5cb4188308a22584f429d09bd02",
-  "manifest_hash": "0c2f4614d4b2d4fb9e248cda94e9331c33938cb9709fe4405bcb008989d392e0",
+  "conversation_id": "03140aeb840e400ebdac4dfa48e967e0",
+  "conversation_version": 6431,
+  "source_thread_id": "01a1b6c9-1458-7040-af17-56bb0190de83",
+  "turn_count": 9,
+  "run_id": "a68104ccd4234e4193454de4d09cbfb5",
+  "report": {
+    "success": true,
+    "report_id": "e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7",
+    "artifact_id": "report:e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7:html",
+    "manifest_artifact_id": "report:e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7:manifest",
+    "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/reports/e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7/report.html",
+    "sha256": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064",
+    "run_ids": [
+      "a68104ccd4234e4193454de4d09cbfb5"
+    ],
+    "navigation_instructions": "點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。",
+    "scope_count": 1,
+    "comparison_job_id": null,
+    "ml_entry_ids": []
+  },
+  "archive": {
+    "success": true,
+    "archive_id": "8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663",
+    "note_id": "bc8498a34bf647d99ce55c9aed407317",
+    "version": 2,
+    "artifact_id": "research:8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663:zip",
+    "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/research.zip",
+    "html_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/index.html",
+    "sha256": "de49891ad36fd521576d41ca936a79fe33dd12b1dade07042cf7548e07331f2a",
+    "download_url": null,
+    "download_expires_at": null,
+    "instructions": "下載 ZIP 後完整解壓，開啟 index.html；reports/ 保留連結報告。無下載網址時，path 是 server 本機路徑，需客戶端檔案傳輸能力。"
+  },
+  "plan_hash": "9d1450d8e626da64c182beb5a01995aad459a2cdfb46551f060469c9716e4a15",
+  "manifest_hash": "16f3b3778d7fe0e151aba7ebb2343ca697226d1fd6fe554936cc9b97eb15b026",
   "run": {
-    "run_id": "af6a758f1ded43eea193638330be7aaf",
-    "job_id": "af6a758f1ded43eea193638330be7aaf",
-    "strategy_id": "strategy_1bfbc2a9ec5d446e87d222a959c57ff9",
-    "revision_id": "9e8399dff16c49919faa822dcd04c02a",
-    "manifest_hash": "0c2f4614d4b2d4fb9e248cda94e9331c33938cb9709fe4405bcb008989d392e0",
-    "config_hash": "348729a2bffcb7295e3b63e29426f176f4f6a9793cefbf480699a1d80601a5dc",
-    "source_hash": "d3ee79804073d031af9b0dc36f4e8e7f25af884858cc721b04b7e1cf813c7fbe",
+    "run_id": "a68104ccd4234e4193454de4d09cbfb5",
+    "job_id": "a68104ccd4234e4193454de4d09cbfb5",
+    "strategy_id": "strategy_bff529495c394498a4120f40ab9305ea",
+    "revision_id": "3997676618ac4fde9ec61b55889e201e",
+    "manifest_hash": "16f3b3778d7fe0e151aba7ebb2343ca697226d1fd6fe554936cc9b97eb15b026",
+    "config_hash": "dd4d3e382ecbd33c4d7c119c7d605551f5c8c39ab190f5baf5d3f8320ec6254e",
+    "source_hash": "5feadac4f45e4d7200901fcf9758882de0768b6f6a7f4cf1bb0a4d19420f6126",
     "random_seed": null,
     "dataset_id": "query-sha256:8db33c7ad270b0e16167aa4555b1de823bf089337051109520f77374ff8bb0cd",
     "metrics": {
@@ -32,8 +138,8 @@
       "total_trades": 5,
       "win_rate": 0.4
     },
-    "artifact_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-20261107/cases/01-ma-discussion/research/runs/af6a758f1ded43eea193638330be7aaf",
-    "created_at": "2026-11-07T11:11:52.840319+00:00",
+    "artifact_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/runs/a68104ccd4234e4193454de4d09cbfb5",
+    "created_at": "2026-11-07T16:20:31.142167+00:00",
     "display_metrics": {
       "annual_return": "59.21%",
       "max_drawdown": "8.61%",
@@ -91,10 +197,84 @@
     "detail_error": null
   },
   "files": {
-    "report.html": "2dc752bda082887225754021ae1d9edd2f10a5ef5dbbca925807464f39a6dd27",
-    "confirmation.html": "5a9a308c6cf511773ba8d90dc530b2f2f9041ae272bcd57845a3d1502810f175",
-    "research.zip": "2471f89936b063477aeeab8322551d4635632d03c67d8d70a1353a040cd32e37",
-    "strategy.py": "d3ee79804073d031af9b0dc36f4e8e7f25af884858cc721b04b7e1cf813c7fbe"
+    "conversation/index.html": "4336cae3306a237327372f93ecc4f435b81a41d265b3392553391e1bca5bc921",
+    "conversation/conversation.json": "c422ce8938f6ede16c9003b7dff1feefbcfc1dc8a2ebe3facaed06706cbb127b",
+    "report.html": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064",
+    "confirmation.html": "5eab7612fe3186f45cd27bd66bb47d77961301e0c494588174313ff79a0ea784",
+    "research.zip": "de49891ad36fd521576d41ca936a79fe33dd12b1dade07042cf7548e07331f2a",
+    "strategy.py": "5feadac4f45e4d7200901fcf9758882de0768b6f6a7f4cf1bb0a4d19420f6126"
   },
-  "metrics_readback": "Parent read saved results with product RunService; this readback is separate from the recorded Sol conversation."
+  "copy_policy": "Native conversation HTML/JSON, report, confirmation and ZIP are byte-identical copies. The overview and critique are presentation packaging, not the conversation record.",
+  "offline_links": {
+    "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/reports/e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7/report.html": "report.html",
+    "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/execution_plans/a68104ccd4234e4193454de4d09cbfb5/confirmation.html": "confirmation.html",
+    "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/research.zip": "research.zip",
+    "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/index.html": "notebook/index.html",
+    "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/reports/0b42cd2422046d1eca1e8700510e2bac9963214845f67d2900a4bb1606360c7e/report.html": "earlier-reports/0b42cd2422046d1eca1e8700510e2bac9963214845f67d2900a4bb1606360c7e.html",
+    "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/execution_plans/3585a2e7eacb42b3b76bbffa23cfc9cc/confirmation.html": "earlier-reports/cde9e4584efe5f924591715e36354831ab0d9e925a11acc15b03fa590bfb6d39.html",
+    "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/execution_plans/790e467c172445eba90339c3527240e5/confirmation.html": "earlier-reports/ac0bd544ef958bf919f2010db5ce1dd3d2573c50485ce1064efeee42215eaf5e.html",
+    "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/execution_plans/9cb6bc06d93b40329e38b932ca1d0460/confirmation.html": "earlier-reports/0a3b33a01663bd93470302a6b4da0deaa9baa6de5968dcc56ce947351f1c137a.html"
+  },
+  "screenshots": [
+    {
+      "file": "screenshots/01-confirmation-native.jpg",
+      "operation": "rectangular crop only; no generative edits",
+      "crop_xywh": [
+        342,
+        120,
+        1220,
+        680
+      ],
+      "source_artifact": "research/execution_plans/a68104ccd4234e4193454de4d09cbfb5/confirmation.html",
+      "source_artifact_sha256": "5eab7612fe3186f45cd27bd66bb47d77961301e0c494588174313ff79a0ea784",
+      "raw_capture_retained_at": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/screenshots-raw/01-confirmation-native.jpg",
+      "raw_capture_sha256": "3e201b0d69e24a6ddd6e9d9b46b49f3d6da40f8ff598b419d3156ef1e9acafb0",
+      "cropped_sha256": "0ce821f6bf6d6382e993086e5db23066c67fba3f622d9f69c555dd8cbfbc6d55"
+    },
+    {
+      "file": "screenshots/02-equity-native.jpg",
+      "operation": "rectangular crop only; no generative edits",
+      "crop_xywh": [
+        342,
+        90,
+        1220,
+        822
+      ],
+      "source_artifact": "research/reports/0b42cd2422046d1eca1e8700510e2bac9963214845f67d2900a4bb1606360c7e/report.html",
+      "source_artifact_sha256": "71056df59051240f6e10d7dd662dba8199dbc0bb38c20b333f39cc77038d3962",
+      "raw_capture_retained_at": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/screenshots-raw/02-equity-native.jpg",
+      "raw_capture_sha256": "7aaaf3a41a8474787beab4636298e630d40175ec0dc6b8d5dec9f013871a08c3",
+      "cropped_sha256": "793689f5c21da5a8206a928c3f6310171f088e65356b31633970a74f64071773"
+    },
+    {
+      "file": "screenshots/03-benchmark-native.jpg",
+      "operation": "rectangular crop only; no generative edits",
+      "crop_xywh": [
+        192,
+        435,
+        1520,
+        520
+      ],
+      "source_artifact": "research/reports/e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7/report.html",
+      "source_artifact_sha256": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064",
+      "raw_capture_retained_at": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/screenshots-raw/03-benchmark-native.jpg",
+      "raw_capture_sha256": "06503019f872cb111c11283a84673a30aa108f5051e280a6fd2e5c6f5bc7d5d1",
+      "cropped_sha256": "6632e052e10a086219d80407e255bc2b310bbc8bf0a0408d859ec1a329c8eeb0"
+    },
+    {
+      "file": "screenshots/04-notebook-native.jpg",
+      "operation": "rectangular crop only; no generative edits",
+      "crop_xywh": [
+        342,
+        120,
+        1220,
+        680
+      ],
+      "source_artifact": "research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/index.html",
+      "source_artifact_sha256": "13ff42fb600fb27100e9f1e030e8881b6ae7276125dbc2d5534caae365b5c0b3",
+      "raw_capture_retained_at": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/screenshots-raw/04-notebook-native.jpg",
+      "raw_capture_sha256": "39cae2f807bbd5e30798b3f879b6c7e8c7938141f4f80767c1b4a4cd31a9896f",
+      "cropped_sha256": "aedf5bd3f56d0db044110c9f9a264a3b9023813b239fec6804baf68a50f28a06"
+    }
+  ]
 }

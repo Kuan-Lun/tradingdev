@@ -1,18 +1,18 @@
 {
   "attachments": [
     {
-      "artifact_id": "report:48b0664f3369463fe0dcbe5bbafdc62a152ee7d76dea249c76694d534b573607:html",
+      "artifact_id": "report:e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7:html",
       "artifact_type": "research_report_html",
       "path": "reports/1.html",
-      "sha256": "2dc752bda082887225754021ae1d9edd2f10a5ef5dbbca925807464f39a6dd27"
+      "sha256": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064"
     }
   ],
   "files": {
-    "index.html": "2b533fedf5ed88325160b996b90f251c8c32677f0995acef7b80171a354b1def",
-    "reports/1.html": "2dc752bda082887225754021ae1d9edd2f10a5ef5dbbca925807464f39a6dd27",
-    "research.json": "ccaff66cf3c45e5da4533665fef6187709007e81a02165d9687c00697db30a96"
+    "index.html": "13ff42fb600fb27100e9f1e030e8881b6ae7276125dbc2d5534caae365b5c0b3",
+    "reports/1.html": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064",
+    "research.json": "ec68e35532c1f6cb769148368f626b707187d9cb648097b45bfe27ae1686cffa"
   },
-  "note_id": "a0b51dc9732b4ea283c4dfc97d1d42d2",
+  "note_id": "bc8498a34bf647d99ce55c9aed407317",
   "schema_version": 1,
   "version": 2
 }
