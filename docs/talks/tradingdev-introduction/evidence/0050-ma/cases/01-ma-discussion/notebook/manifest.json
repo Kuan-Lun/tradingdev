@@ -1,0 +1,18 @@
+{
+  "attachments": [
+    {
+      "artifact_id": "report:1431ae92c359bdd581111fa81217fbaf2abcb473118ea6cf23b97a79a2eeb2e8:html",
+      "artifact_type": "research_report_html",
+      "path": "reports/1.html",
+      "sha256": "159917e2f2a49b82c438b55557b29f6d668805a23945ebc58e88dd4f5db6dd13"
+    }
+  ],
+  "files": {
+    "index.html": "c7b78e6d712052c3acdc08c319c2bf909d72f342ebcdbfe8abb71d9ea742f14c",
+    "reports/1.html": "159917e2f2a49b82c438b55557b29f6d668805a23945ebc58e88dd4f5db6dd13",
+    "research.json": "bcdf2a77df5169fe82ee7cb1def6e833936984bf920d34a12dd28bfa65a80c4c"
+  },
+  "note_id": "6be814606413494a9584d0e8d7424c64",
+  "schema_version": 1,
+  "version": 1
+}
