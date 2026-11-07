@@ -28,9 +28,17 @@ from tradingdev.domain.benchmark import (
         ("yahoo_finance", "SPY", "us_equity"),
         ("yahoo_finance", "brk.us", "us_equity"),
         ("yahoo_finance", "^GSPC", "us_equity"),
-        ("yahoo_finance", "2330.TW", None),
+        ("yahoo_finance", "2330.TW", "tw_equity"),
+        ("yahoo_finance", "0050.TW", "tw_equity"),
+        ("yahoo_finance", "00679B.TW", "tw_equity"),
+        ("yahoo_finance", "6488.TWO", "tw_equity"),
+        ("yahoo_finance", " 0050.tw ", "tw_equity"),
         ("yahoo_finance", "0700.HK", None),
-        ("yahoo_finance", "^TWII", None),
+        ("yahoo_finance", "^TWII", "tw_equity"),
+        ("yahoo_finance", "^UNKNOWN.TW", None),
+        ("yahoo_finance", ".TW", None),
+        ("yahoo_finance", "0050.TW=F", None),
+        ("csv", "0050.TW", None),
         ("yahoo_finance", "ES=F", None),
         ("yahoo_finance", "EURUSD=X", None),
         ("yahoo_finance", "BTC-USD", None),
@@ -48,7 +56,7 @@ def test_asset_class_is_derived_only_from_the_saved_market_requirement(
 
 
 def test_unknown_markets_are_undefined_rather_than_borrowing_a_baseline() -> None:
-    assert resolve_benchmark("yahoo_finance", "2330.TW") is None
+    assert resolve_benchmark("yahoo_finance", "0700.HK") is None
     assert resolve_benchmark("csv", "ANY") is None
 
 
@@ -62,6 +70,16 @@ def test_each_asset_class_has_exactly_one_fixed_baseline() -> None:
     # Repeated resolution never depends on the caller, the run or the clock.
     assert resolve_benchmark("binance_vision", "ETH/USDT") is crypto
     assert resolve_benchmark("binance_api", "XRP/USDT") is crypto
+
+
+@pytest.mark.parametrize("symbol", ["0050.TW", "00679B.TW", "6488.TWO", "^TWII"])
+def test_taiwan_listings_share_one_market_baseline(symbol: str) -> None:
+    benchmark = resolve_benchmark("yahoo_finance", symbol)
+    assert benchmark is not None
+    assert benchmark is BENCHMARKS["tw_equity"]
+    assert benchmark.symbol == "^TWII"
+    assert benchmark.id == "tw_equity_taiex_buy_and_hold"
+    assert benchmark.sources == ("yahoo_finance",)
 
 
 def test_baseline_prefers_the_runs_own_provider_for_the_same_bar_calendar() -> None:

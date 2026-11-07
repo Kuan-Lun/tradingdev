@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -96,15 +97,28 @@ def _available(
     )
 
 
-def test_scope_records_the_baseline_priced_with_the_runs_own_costs() -> None:
-    pipeline, projection = _pipeline(_available([100.0, 110.0, 121.0]))
+@pytest.mark.parametrize("asset_class", ["crypto", "tw_equity"])
+def test_scope_records_the_baseline_priced_with_the_runs_own_costs(
+    asset_class: str,
+) -> None:
+    definition = BENCHMARKS[asset_class]
+    evidence = replace(
+        _available([100.0, 110.0, 121.0]),
+        asset_class=asset_class,
+        definition=definition,
+        source=definition.sources[0],
+        market_type="futures/um" if asset_class == "crypto" else None,
+        dataset_id=f"{definition.symbol}:1h:2024-01-01:2024-01-03",
+    )
+    pipeline, projection = _pipeline(evidence)
     artifacts = bundles_from_pipeline("run-a", pipeline, projection)
     benchmark = artifacts.performance.benchmarks["full"]
 
     assert benchmark.status == "available"
     assert benchmark.definition is not None
-    assert benchmark.definition.id == "crypto_btc_buy_and_hold"
-    assert benchmark.definition.symbol == "BTC/USDT"
+    assert benchmark.definition.id == definition.id
+    assert benchmark.definition.symbol == definition.symbol
+    assert benchmark.asset_class == asset_class
     assert benchmark.capital_basis == "run_init_cash"
     assert benchmark.fees == pytest.approx(0.001)
     assert benchmark.slippage == pytest.approx(0.0)
