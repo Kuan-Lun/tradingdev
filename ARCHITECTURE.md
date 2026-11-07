@@ -139,7 +139,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 
 明示的有效值優先，零成本保留；僅可繼承明確選定的 generated revision，不能從
 內建範例補日期。政策不適用時須釐清。解析結果隨有效設定保存，worker 不重新套用
-更新後的政策。CLI 使用完整 YAML；直接 Python override helpers 移除失效來源標籤。
+更新後的政策。直接回測 CLI 使用完整 YAML；直接 Python override helpers 移除失效來源標籤。
 
 Walk-forward 設定的替換、模式與 UTC 日期包含關係由 schema／準備服務檢查；
 正式資料能否形成有效分折，留待授權後執行。輸入與保存契約分別見
@@ -229,8 +229,9 @@ JobService 與 OptimizationService 共用 ExecutionSubmissionService；提交使
 程序；內建策略與可信主程式的任意 Python 全域狀態不在隔離保證內。
 範圍與恢復規則見[固定比較證據](docs/run_artifacts.md#fixed-comparison-evidence)。
 
-CLI 直接同步呼叫 BacktestService，再透過 ArtifactService 保存；命令本身是明確執行
+直接回測 CLI 同步呼叫 BacktestService，再透過 ArtifactService 保存；命令本身是明確執行
 請求，不使用 MCP 對話確認或背景 supervisor，但共用策略資格、manifest 與績效模型。
+`tradingdev-codex` 對話入口透過 MCP 操作，仍使用上述執行計畫、確認與背景工作流程。
 
 ### 最佳化執行
 
