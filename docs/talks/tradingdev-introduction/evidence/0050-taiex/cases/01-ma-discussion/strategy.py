@@ -1,5 +1,4 @@
-"""Long-only SMA strategy retaining position on equality."""
-
+"""Single-SMA long-only strategy, retaining position on equality."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -13,30 +12,39 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
-class SmaHoldStrategy(BaseStrategy):
-    """Hold above SMA, exit below, and retain state on equality."""
+class SmaComparisonStrategy(BaseStrategy):
+    """Compare the completed close with its SMA, then trade next open."""
 
-    def __init__(self, period: int = 20) -> None:
+    def __init__(self, period: int = 20, buy_and_hold: bool = False) -> None:
+        if (
+            isinstance(period, bool)
+            or not isinstance(period, int)
+            or not 2 <= period <= 100000
+        ):
+            raise ValueError("period must be an integer between 2 and 100000")
         self._period = period
+        self._buy_and_hold = buy_and_hold
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
-        close = result["close"].to_numpy(dtype=np.float64)
-        average = indicators.sma(result["close"], self._period).to_numpy(
-            dtype=np.float64
-        )
-        signals = np.zeros(len(result), dtype=np.int64)
+        if self._buy_and_hold:
+            result["signal"] = 1
+            return result
+        average = indicators.sma(result["close"], self._period)
+        closes = result["close"].to_numpy(dtype=float)
+        averages = average.to_numpy(dtype=float)
         state = 0
-        for i in range(len(result)):
-            if not (np.isfinite(close[i]) and np.isfinite(average[i])):
-                continue
-            if close[i] > average[i]:
-                state = 1
-            elif close[i] < average[i]:
+        signals: list[int] = []
+        for close, mean in zip(closes, averages, strict=True):
+            if not (np.isfinite(close) and np.isfinite(mean)):
                 state = 0
-            signals[i] = state
+            elif close > mean:
+                state = 1
+            elif close < mean:
+                state = 0
+            signals.append(state)
         result["signal"] = signals
         return result
 
     def get_parameters(self) -> dict[str, Any]:
-        return {"period": self._period}
+        return {"period": self._period, "buy_and_hold": self._buy_and_hold}

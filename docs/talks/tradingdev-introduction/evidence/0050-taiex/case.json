@@ -1,10 +1,10 @@
 {
   "catalog": {
-    "purpose": "簡報用真實示範：每輪操作者只有一個提問或決策重點；從模糊構想追問、選規則、釐清年化、確認執行、獨立大盤比較、改善建議，到保存分享。",
+    "purpose": "簡報示範，每輪一個主要需求。不另安排年化教學；模型提出設定後，由操作者縮減範圍並以「我同意」執行。大盤比較、既有結果查證與改善建議各自獨立。",
     "prompt_origin": "主代理依使用者委託擔任示範操作者，逐輪回應 Sol 實際提出的問題；並非真人逐字對話。只有可見操作訊息與 MCP 結果交付，不包含私有推理。",
     "model": "gpt-6.1-sol",
     "reasoning_effort": "medium",
-    "repository_commit": "741fd848039aeaa3c2cb6f2c1663359964876d1c",
+    "repository_commit": "4f4d78a3a8049b1fff8b9a471df320aa497a5a9f",
     "cases": [
       {
         "id": "01-ma-discussion",
@@ -14,13 +14,13 @@
       }
     ],
     "runtime_image": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
-    "shared_market_data": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107/market-data",
+    "shared_market_data": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-settings-20261108/market-data",
     "preselected_operator_answers": {
       "instrument": "0050",
       "timeframe_if_asked": "日 K",
       "period_if_asked": "2024-01-01 至 2024-07-01（台灣日期，含末日）",
       "strategy_choice_when_proposed": "單一 20 日 SMA，買進後持有，不重複加碼，不放空",
-      "annualization": "不主動提供因子；待模型提案或追問，先釐清含義再決定。原案例252僅供最終核對，非模型輸入。"
+      "annualization": "若追問年化，回覆「你幫我決定一個值就好。」不預先提供252；依模型實際回覆繼續。"
     },
     "reuse_of_market_cache": "Copy only market cache into a new retained workspace; no prior conversation, strategies, plans, results or research notes loaded into this model thread.",
     "case_expansion_requires_user_acceptance": true,
@@ -55,42 +55,44 @@
       "periods_per_year": 252,
       "cost_label": "專案模擬預設，非台灣券商實際費率，未另建台股稅費模型"
     },
-    "initial_turns_commit": "75b75ac22184cf779a3b9470d1f0ffb4f255ee7d",
-    "code_provenance": "前四輪在對話呈現修正 commit 75b75ac 執行；第五輪起使用其合併版本 741fd84。兩者產品程式相同，主線差異為 PR #186 簡報產物分流。",
+    "code_provenance": "產品程式沿用主線 741fd848；checkout 4f4d78a 另含未合併簡報修改。",
     "phase_rendering_pr": "https://github.com/Kuan-Lun/tradingdev/pull/187",
     "previous_drafts_retained": [
       "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-taiex-recorded-20261107",
-      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-natural-dialogue-20261107"
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-natural-dialogue-20261107",
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107",
+      "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-settings-20261108"
     ],
     "turn_titles": [
-      "從模糊構想開始追問",
-      "補充研究期間與頻率",
-      "選定均線買賣規則",
-      "釐清年化指標的意思",
-      "選擇年化並取得確認單",
-      "閱讀確認單後同意執行",
-      "獨立比較台股大盤",
-      "提出待驗證的改善建議",
-      "保存研究並準備分享"
+      "從模糊構想開始",
+      "選定期間與日 K",
+      "改成單一 20 日均線",
+      "先只回測均線策略",
+      "閱讀後同意執行",
+      "詢問台股大盤比較",
+      "核對既有基準結果",
+      "討論改善方向",
+      "整理研究與分享"
     ],
     "shot_after_turns": {
-      "confirmation": 5,
-      "equity": 6,
+      "confirmation": 4,
+      "equity": 5,
       "benchmark": 7
-    }
+    },
+    "actual_annualization": "本次模型在第2輪自行提出每年252日；沒有加入年化教學或操作者重述數值。"
   },
   "case": {
-    "run_id": "416f3613665f49798357736085303952",
-    "report_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107/research/reports/efdb19a9f913581e81137ade33ba029abe414b024cd384051daec14a44e9c2c1/report.html",
+    "run_id": "a68104ccd4234e4193454de4d09cbfb5",
+    "report_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/reports/e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7/report.html",
     "report": {
       "success": true,
-      "report_id": "efdb19a9f913581e81137ade33ba029abe414b024cd384051daec14a44e9c2c1",
-      "artifact_id": "report:efdb19a9f913581e81137ade33ba029abe414b024cd384051daec14a44e9c2c1:html",
-      "manifest_artifact_id": "report:efdb19a9f913581e81137ade33ba029abe414b024cd384051daec14a44e9c2c1:manifest",
-      "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107/research/reports/efdb19a9f913581e81137ade33ba029abe414b024cd384051daec14a44e9c2c1/report.html",
-      "sha256": "934244c296ee349842259f2eeafb4ccf4d94f5d971208731cb23bb4e93cd3547",
+      "report_id": "e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7",
+      "artifact_id": "report:e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7:html",
+      "manifest_artifact_id": "report:e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7:manifest",
+      "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/reports/e977fb62e3b5e372f7342f776636da0482eb7ee6229ceaa6132bbba8528e4db7/report.html",
+      "sha256": "a8c05c08f96d7ccbd9827b5bf998c728f622419e815da0b901dca90c16db1064",
       "run_ids": [
-        "416f3613665f49798357736085303952"
+        "a68104ccd4234e4193454de4d09cbfb5"
       ],
       "navigation_instructions": "點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。",
       "scope_count": 1,
@@ -99,13 +101,13 @@
     },
     "archive": {
       "success": true,
-      "archive_id": "bd69bd31ed79663e097d6c2069a552daf44315512cfde0ab546d6cb4c13b6aef",
-      "note_id": "e2ffb9df198e4c1eba9c733fb2635a68",
-      "version": 1,
-      "artifact_id": "research:bd69bd31ed79663e097d6c2069a552daf44315512cfde0ab546d6cb4c13b6aef:zip",
-      "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107/research/research_archives/bd69bd31ed79663e097d6c2069a552daf44315512cfde0ab546d6cb4c13b6aef/research.zip",
-      "html_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-focused-dialogue-20261107/research/research_archives/bd69bd31ed79663e097d6c2069a552daf44315512cfde0ab546d6cb4c13b6aef/index.html",
-      "sha256": "fa5074efe24b5548ae3c6880beed762545272b1c7a5504c24135d5fa3d15c083",
+      "archive_id": "8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663",
+      "note_id": "bc8498a34bf647d99ce55c9aed407317",
+      "version": 2,
+      "artifact_id": "research:8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663:zip",
+      "path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/research.zip",
+      "html_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-delegated-value-20261108/research/research_archives/8401bcfd32691984885971e8b0415c8900f660f9eaff93894ec1ab27ea203663/index.html",
+      "sha256": "de49891ad36fd521576d41ca936a79fe33dd12b1dade07042cf7548e07331f2a",
       "download_url": null,
       "download_expires_at": null,
       "instructions": "下載 ZIP 後完整解壓，開啟 index.html；reports/ 保留連結報告。無下載網址時，path 是 server 本機路徑，需客戶端檔案傳輸能力。"
@@ -175,6 +177,7 @@
           "trade_scope": "closed"
         },
         "strategy_parameters": {
+          "buy_and_hold": false,
           "period": 20
         },
         "unavailable": {
@@ -185,11 +188,12 @@
       "fold_index": null,
       "trial_index": null,
       "parameters": {
+        "buy_and_hold": false,
         "period": 20
       },
       "success": true,
-      "run_id": "416f3613665f49798357736085303952",
-      "manifest_hash": "2c92fa56a62a9735419a3396eb2ad427656b9e50a292b04eff12d25c6c5f6246",
+      "run_id": "a68104ccd4234e4193454de4d09cbfb5",
+      "manifest_hash": "16f3b3778d7fe0e151aba7ebb2343ca697226d1fd6fe554936cc9b97eb15b026",
       "scope": "full",
       "metrics": {
         "annual_return": 0.5921291751754136,
@@ -1234,6 +1238,6 @@
       }
     },
     "turn_count": 9,
-    "conversation_id": "f96fd607472a4670b5952fcf897d2a74"
+    "conversation_id": "03140aeb840e400ebdac4dfa48e967e0"
   }
 }

@@ -63,6 +63,7 @@
       "trade_scope": "closed"
     },
     "strategy_parameters": {
+      "buy_and_hold": false,
       "period": 20
     },
     "unavailable": {
@@ -73,11 +74,12 @@
   "fold_index": null,
   "trial_index": null,
   "parameters": {
+    "buy_and_hold": false,
     "period": 20
   },
   "success": true,
-  "run_id": "416f3613665f49798357736085303952",
-  "manifest_hash": "2c92fa56a62a9735419a3396eb2ad427656b9e50a292b04eff12d25c6c5f6246",
+  "run_id": "a68104ccd4234e4193454de4d09cbfb5",
+  "manifest_hash": "16f3b3778d7fe0e151aba7ebb2343ca697226d1fd6fe554936cc9b97eb15b026",
   "scope": "full",
   "metrics": {
     "annual_return": 0.5921291751754136,

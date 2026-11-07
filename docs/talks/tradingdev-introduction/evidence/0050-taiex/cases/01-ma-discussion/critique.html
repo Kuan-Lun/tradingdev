@@ -1,21 +1,13 @@
-<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>原始模型評析</title><style>*{box-sizing:border-box}body{margin:0;background:#f3f6fb;color:#1c2940;font:17px/1.7 -apple-system,BlinkMacSystemFont,"PingFang TC",sans-serif}main{max-width:1120px;margin:auto;padding:40px 26px}h1{font-size:32px;line-height:1.35}h2{margin-top:32px}a{color:#245b97;text-underline-offset:3px}.links{display:flex;flex-wrap:wrap;gap:12px}.links a,.card{background:white;border:1px solid #cad7e5;border-radius:8px;padding:12px 18px}.notice{border-left:4px solid #47719e;background:#e6eef8;padding:16px 20px}.muted{color:#53657c;font-size:14px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}img{max-width:100%;border:1px solid #cad7e5;border-radius:8px}table{border-collapse:collapse;background:#fff}td,th{padding:12px;border:1px solid #d8e0eb}</style></head><body><main><a href="../../index.html">← 案例總覽</a><h1>模型對策略的改善建議</h1><p class="notice">以下直接取自第 8 輪正式回覆，未改寫原文。建議尚未執行。</p><p><a href="conversation/index.html#turn-8">閱讀本輪完整對話</a></p><section class="card"><pre>我會先釐清你想改善的是「報酬」還是「下跌時少賠」。這次策略報酬落後大盤、最大回撤也較大，但只有半年、5 筆已平倉交易，還不適合直接挑一組賺最多的均線天數。
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>原始模型評析</title><style>*{box-sizing:border-box}body{margin:0;background:#f3f6fb;color:#1c2940;font:17px/1.7 -apple-system,BlinkMacSystemFont,"PingFang TC",sans-serif}main{max-width:1120px;margin:auto;padding:40px 26px}h1{font-size:32px;line-height:1.35}h2{margin-top:32px}a{color:#245b97;text-underline-offset:3px}.links{display:flex;flex-wrap:wrap;gap:12px}.links a,.card{background:white;border:1px solid #cad7e5;border-radius:8px;padding:12px 18px}.notice{border-left:4px solid #47719e;background:#e6eef8;padding:16px 20px}.muted{color:#53657c;font-size:14px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}img{max-width:100%;border:1px solid #cad7e5;border-radius:8px}table{border-collapse:collapse;background:#fff}td,th{padding:12px;border:1px solid #d8e0eb}</style></head><body><main><a href="../../index.html">← 案例總覽</a><h1>模型對策略的改善建議</h1><p class="notice">以下直接取自改善建議該輪的正式回覆，未改寫原文。建議尚未執行。</p><p><a href="conversation/index.html#turn-8">閱讀本輪完整對話</a></p><section class="card"><pre>我會先弄清楚**策略為什麼落後，再考慮改規則**。目前只看半年、5 筆已平倉交易，不適合直接挑報酬最高的參數。
 
-我建議依這個順序研究：
+我建議依這個順序：
 
-1. **先和直接持有 0050 比較。**&#32;&#32;
-   用相同期間、成本與價格資料，確認均線買賣到底增加了什麼價值。這比先改參數更重要。
+1. **先和 0050 自身買進持有比較。** 加權指數能回答是否勝過大盤；0050 持有基準則更能分辨落後來自標的差異，還是均線進出場。
 
-2. **把驗證期間拉長。**&#32;&#32;
-   納入上漲、下跌與盤整階段，保留一段資料作為樣本外測試。並用區間前資料建立均線，讓評估開始時已有完整 20 日均線。
+2. **檢查短時間內反覆買賣的損失。** 已保存紀錄中，4/19–4/22、6/4–6/5 都是進場後很快退出並虧損。可以檢查是否在均線附近來回觸發，但目前尚不能確定原因。
 
-3. **優先測試減少短期反覆進出的規則。**&#32;&#32;
-   這次有幾筆持有很短的虧損交易，可以提出兩種替代方案：
-   - **連續確認**：連續兩天高於均線才買、連續兩天低於才賣。
-   - **緩衝區**：例如高於均線 1% 才買、低於均線 1% 才賣，中間維持部位。
+3. **優先測試一種減少反覆交易的規則。** 例如連續兩天收盤高於均線才買、連續兩天低於才賣。這是尚未驗證的提案，可能減少交易，也可能延後進出場、增加損失。
 
-   這些是尚未驗證的測試提案。可能減少交易，也可能讓進場、出場更慢；應先分別測試，才能知道各自影響。
+4. **用更長期間與未參與調整的資料驗證。** 保留原本 20 日規則作對照，同時補齊實際交易成本，檢查改善是否跨期間成立。
 
-4. **補齊實際成本。**&#32;&#32;
-   加入 ETF 賣出交易稅、最低手續費與實際可買數量，避免改善只存在於模擬中。
-
-**我的優先選擇是：先完成長期間的「原始 20 日均線 vs. 0050 買進持有」，再單獨測試連續兩天確認。**先確認問題，再增加規則，會比較容易判斷改善是否可信。</pre></section></main></body></html>
+如果由我選第一個改法，我會先研究**連續兩天確認**，而不是立刻大量搜尋均線天數。判斷標準也不只看報酬：要同時看最大回撤、交易成本，以及不同期間是否穩定。以上都只是研究建議，尚未新增回測。</pre></section></main></body></html>
