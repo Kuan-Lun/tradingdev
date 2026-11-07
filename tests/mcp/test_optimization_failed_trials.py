@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.optimization.grid_search import parameter_grid
 from tradingdev.domain.performance.artifacts import scope_from_backtest
@@ -25,7 +26,6 @@ from tradingdev.domain.statistics.plateau import (
     plateau_summary,
     trials_from_metrics,
 )
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.mcp.workers import optimization
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ def _config() -> BacktestConfig:
 def _run(params: dict[str, int], frame: pd.DataFrame) -> ComboEvaluation:
     return optimization._run_single_combo(
         _STRATEGY,
-        StrategyLoader().resolve_execution(_STRATEGY),
+        StrategyFactory().resolve_execution(_STRATEGY),
         _config(),
         frame,
         params,
@@ -97,7 +97,7 @@ def test_parallel_transport_also_returns_the_zero_trade_combo() -> None:
 
     evaluation = optimization._evaluate_combo(
         _STRATEGY,
-        StrategyLoader().resolve_execution(_STRATEGY),
+        StrategyFactory().resolve_execution(_STRATEGY),
         _config().model_dump(),
         # Since upstream 21c124c the worker hands joblib the frame itself,
         # which pickles it to each worker process; round-trip it the same way.
