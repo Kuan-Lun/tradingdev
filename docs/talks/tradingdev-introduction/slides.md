@@ -4,7 +4,7 @@ theme: tradingdev
 size: 16:9
 paginate: true
 lang: zh-Hant
-title: TradingDev｜讓 AI 代理協助研究交易策略
+title: TradingDev｜能學習策略開發經驗、自我演進的研究後端
 description: 產品介紹、使用場景、分類比較與後續開發方向
 -->
 
@@ -12,9 +12,10 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 
 # TradingDev
 
-讓 AI 代理協助研究交易策略
+能學習策略開發經驗、自我演進的研究後端
 
-自己的想法，可檢查的實驗，可繼續追問的結果
+AI 代理從既有策略的開發與修正過程歸納經驗，
+自動整合並驗證後續策略可重用的能力。
 
 *完整閱讀版 · 2026 年 11 月。歷史回測與策略研究。*
 
