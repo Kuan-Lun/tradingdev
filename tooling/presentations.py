@@ -49,7 +49,7 @@ _TOOL_PATHS = frozenset(
         "wrangler.jsonc",
     }
 )
-_TITLE = "TradingDev｜讓 AI 助手協助研究交易策略"
+_TITLE = "TradingDev｜讓 AI 代理協助研究交易策略"
 _DESCRIPTION = "產品介紹、使用場景、分類比較與後續開發方向"
 _SETUP_HELP = "Run scripts/presentations.sh setup to install the locked toolchain."
 _NODE_HELP = (

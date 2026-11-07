@@ -440,7 +440,10 @@ def test_audience_review_keeps_original_policy_context_separate_from_instruction
     (repo / "docs/contracts.md").write_text(contract, encoding="utf-8")
     for index in range(3):
         (repo / f"src/context_{index}.py").write_text(
-            "VALUE = 'old'\n" + "# source context\n" * 300, encoding="utf-8"
+            # One file plus the review instructions fits the small test budget;
+            # all three still require batching without dropping source evidence.
+            "VALUE = 'old'\n" + "# source context\n" * 200,
+            encoding="utf-8",
         )
     _git(repo, "add", ".")
     base = _git(repo, "write-tree")

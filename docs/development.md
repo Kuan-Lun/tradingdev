@@ -169,6 +169,7 @@ MCP runtime target 含 Docker CLI，Compose 只把本機 socket 掛給可信控�
 | [執行產物](run_artifacts.md) | Workspace、身分、保存格式及歷史查詢入口。 |
 | [ML 研究](ml_research.md)、[執行計畫](execution_plans.md) | 各自的輸入、驗證、保存及執行邊界。 |
 | [績效產物](performance_artifacts.md)、[報告](reports.md) | 保存數值及觀察值的語意、報告呈現與交付。 |
+| [簡報編輯指南](talks/tradingdev-introduction/README.md) | 編輯者的內容與版型維護、預覽、打包及日常發布。 |
 | 本指南 | 工具入口、負責範圍、操作方式與測試維護位置。 |
 | [AGENTS.md](../AGENTS.md) | 唯一代理開發政策來源。 |
 
@@ -267,6 +268,121 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 打包、解壓與發布的使用方式見[簡報編輯指南](talks/tradingdev-introduction/README.md)。
 專項檢查以臨時目錄重建並比對，不覆寫工作樹；缺少工具鏈或輸出不同步會失敗。
 可用 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定另一套已初始化且 lock 相符的工具鏈。
+
+### 簡報網站發布設定
+
+本節供維護簡報發布環境的管理者使用。日常編輯、檢查與發布確認見
+[簡報編輯指南](talks/tradingdev-introduction/README.md#檢查與發布)。
+變更網站設定前先確認使用的發布服務與網域責任；一般內容修改不需要重新設定網站。
+
+#### Cloudflare 自動發布
+
+Cloudflare Workers Builds 可連接本 repository，在 `main` 更新時發布已提交的
+`index.html`、`assets/` 與 `evidence/`。本機仍須先編譯、檢查並提交 HTML；雲端只複製與部署成品，
+不執行 Marp、Python 檢查或安裝 TradingDev 產品依賴。
+
+在 Cloudflare 的 **Workers & Pages → Create application → GitHub** 選擇本
+repository；GitHub 授權範圍只選需要發布的 repository。設定如下：
+
+| 欄位 | 設定 |
+| --- | --- |
+| Worker name | 與根目錄 [wrangler.jsonc](../wrangler.jsonc) 的 `name` 相同。 |
+| Production branch | `main`。 |
+| Root directory | repository 根目錄。 |
+| Build command | 下方的複製指令。 |
+| Deploy command | `npx wrangler deploy`。 |
+| Preview command（非正式分支） | 啟用分支預覽時使用 `npx wrangler preview`。 |
+
+Build command：
+
+```bash
+bash scripts/stage-presentations.sh
+```
+
+在 **Settings → Build → Build Variables and Secrets** 加入
+`SKIP_DEPENDENCY_INSTALL=1`，停用自動安裝專案依賴。部署仍會使用 Wrangler；
+Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
+`site-dist/tradingdev/` 是忽略的發布產物，每次重新建立，只包含簡報 HTML、圖片與明列的
+案例證據；不會將整個 `docs/` 或一般使用者 workspace 發布。
+`wrangler.jsonc` 的 `build.command` 同樣指向這份複製腳本。
+Workers Builds 的 Build command 由 Cloudflare 獨立保存；請將 **Production** 與
+**Preview base** 同步設定為上述腳本，使雲端與本機的成品準備步驟一致。
+
+分支預覽使用 `wrangler.jsonc` 的 `previews` 區塊；即使沒有獨立設定，也須保留空物件。
+靜態資源仍使用頂層 `assets`，正式網域的 `routes` 不放入 `previews`。
+在建置記錄確認分支與 commit，成功後開啟產生的預覽網址並加上 `/tradingdev/` 查看簡報。
+分支預覽與 `main` 正式部署是兩次獨立建置，須分別核對結果；本機簡報檢查不代表雲端部署成功。
+
+在 **Settings → Builds** 的 **Production** 與 **Preview base** 分頁，分別設定
+**Build watch paths**：從 **Include paths** 移除預設的 `*`，加入以下路徑，
+並讓 **Exclude paths** 保持空白。
+
+- `docs/talks/tradingdev-introduction/index.html`
+- `docs/talks/tradingdev-introduction/assets/**`
+- `docs/talks/tradingdev-introduction/evidence/**`
+- `scripts/stage-presentations.sh`
+- `wrangler.jsonc`
+
+這項設定由 Cloudflare 保存，用來略過一般程式、測試與文件更新，不寫在 `wrangler.jsonc`。
+`slides.md` 或 `theme.css` 修改後，須重建並提交 HTML，由 HTML 變更觸發發布。
+Cloudflare 對零檔案變更、至少 3,000 個檔案變更或至少 20 個 commits 的推送會略過
+路徑篩選，因此這些事件仍可能觸發建置。核對略過行為時，使用一般的小型文件提交，
+不要用空提交作為不應建置的測試。
+
+若建置設定顯示 Git 帳戶中斷連線，按 Git repository 旁的 **Manage**，在 GitHub
+完成必要的重新驗證，確認 Cloudflare 應用程式仍可存取本 repository，再回到
+Cloudflare 重新整理設定頁。確認連線警告消失、Production branch 為 `main`，
+且 **Disable builds** 關閉。下一次主線更新後，核對建置記錄的 commit 與部署結果；
+手動重試建置成功不代表 GitHub 自動觸發已驗證。
+
+##### 共用網域與專案路徑
+
+`slides.klwang.tw` 是多個專案共用的簡報網域。Custom Domain 綁定獨立的
+`klwang-slides` 入口 Worker，由管理者在 Cloudflare 維護；本 repository
+只部署 `klwang-slides-tradingdev`，不接管整個網域。
+
+根目錄的 `wrangler.jsonc` 宣告本專案的兩條 Route：
+
+- `slides.klwang.tw/tradingdev`：不帶尾端斜線的入口。
+- `slides.klwang.tw/tradingdev/*`：簡報及其子路徑。
+
+Route 優先於共用入口的 Custom Domain；路由保留原始路徑，因此發布檔案仍放在
+`site-dist/tradingdev/index.html`。不要改成 `slides.klwang.tw/*` 或將整個
+Custom Domain 綁回本專案，也不要使用會涵蓋 `/tradingdev-other` 的
+`/tradingdev*`。不帶尾端斜線且附有 query 的網址由共用入口補上斜線後轉址。
+
+首次設定時，管理者先在 **Workers & Pages → klwang-slides → Domains →
+Add domain** 選擇 `klwang.tw`，在 Subdomain 填入 `slides`，啟用於 Production。
+網域須屬於同一 Cloudflare 帳號的有效 zone，Cloudflare 負責 DNS 與 HTTPS。
+TradingDev 的部署權限須包含該 zone 的
+Workers Routes 編輯權限；部署後在本專案 Worker 的 **Domains** 核對兩條 Route。
+沿用舊設定時，先建立上述 Route，再將 Custom Domain 移到共用入口，以保留簡報入口。
+
+新增其他專案時，使用獨立 Worker 與不同的路徑前綴，各自連接自己的 repository；
+不覆寫本專案 Worker，也不移動共用 Custom Domain。共用入口的根路徑 `/` 回應
+HTTP 302，轉址目標（`Location`）為 `https://www.klwang.tw/talks/`；該入口由管理者
+另外維護，不隨 TradingDev 發布更新。
+
+簡報位址為 [https://slides.klwang.tw/tradingdev/](https://slides.klwang.tw/tradingdev/)。只有部署成功才會更新網站；
+repository 中的設定檔不代表已連接 Cloudflare 或發布。
+
+#### GitHub Pages 發布
+
+GitHub 的一般檔案頁只會顯示 HTML 原始碼。若要直接播放，可使用同一 repository
+的 GitHub Pages。
+
+取得發布授權並透過 PR 合併至主線後，由管理者在
+**Settings → Pages → Deploy from a branch** 選擇主線與 `/docs`。
+這會發布 `/docs` 下的內容，`.nojekyll` 讓 GitHub 直接提供靜態檔案；
+已有 Pages 網站時，先確認原有發布設定。
+
+沒有自訂網域且使用目前 repository 名稱時，預期位址為：
+
+```text
+https://kuan-lun.github.io/tradingdev/talks/tradingdev-introduction/
+```
+
+此位址不代表已發布；設定後須確認部署狀態並實際開啟簡報。
 
 ## MAE 研究原型
 
