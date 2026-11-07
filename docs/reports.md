@@ -570,7 +570,14 @@ artifact and must not be included when sharing conversation exports.
 
 A lifetime file lock prevents simultaneous recorder commands for the same ID.
 Before resuming, the adapter pages source history, verifies turn identities and
-compares complete saved items' text, phases, call arguments and results. Changed,
+compares complete saved items' text, phases, call arguments and results. Adjacent
+tool-call groups are matched by item identity because native history can reorder
+parallel calls; calls cannot move across visible message boundaries. Known native
+text projections of successful tool results are checked against the full saved
+wire result, including the retained prefix, suffix and exact omitted character
+count. Omitted source content cannot be independently verified from that projection;
+the original captured result remains complete and unchanged in the reading export.
+Unknown projections or inconsistent retained evidence fail. Changed,
 missing or still-running source history fails before a new input is sent. A stale
 running local turn is sealed as interrupted with explicit missing-content status;
 if its source ID is known and the source is terminal it can be followed by a new

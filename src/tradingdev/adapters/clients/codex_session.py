@@ -13,12 +13,12 @@ from typing import TYPE_CHECKING, Any
 
 from filelock import FileLock
 
+from tradingdev.adapters.clients.codex_history import verify_items
 from tradingdev.adapters.clients.codex_protocol import (
     CodexProtocolError,
     CodexRecorder,
     object_value,
     text_value,
-    visible_item,
 )
 from tradingdev.adapters.clients.codex_transport import CodexTransport, codex_transport
 from tradingdev.adapters.storage.sqlite import get_sqlite_store
@@ -27,59 +27,9 @@ from tradingdev.app.conversation_service import ConversationService
 
 if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
-    from tradingdev.domain.conversations import ConversationItem, ConversationTurn
 
 PROVIDER = "codex-cli"
 CLIENT_PROTOCOL = 1
-
-
-def _item_evidence(item: ConversationItem) -> tuple[Any, ...]:
-    # Timing/UI metadata may differ when Codex rehydrates history; these fields
-    # identify the visible message or tool execution actually observed.
-    return (
-        item.source_id,
-        item.kind,
-        item.text,
-        *(
-            item.data.get(key)
-            for key in (
-                "server",
-                "tool",
-                "arguments",
-                "result",
-                "error",
-                "status",
-                "phase",
-                "questions",
-            )
-        ),
-    )
-
-
-def _verify_items(previous: ConversationTurn, items: list[Any], server: str) -> None:
-    local = [item for item in previous.items if "source_type" in item.data]
-    completed = {item.source_id for item in local if item.complete}
-    observed = []
-    for value in items:
-        source = object_value(value, "historical item")
-        # An interrupted source may finish more work after capture stops. Keep
-        # that gap explicit, but still verify every completed item we did see.
-        if not previous.capture_complete and source.get("id") not in completed:
-            continue
-        item = visible_item(source, complete=True, server=server)
-        if item is not None:
-            observed.append(item)
-    expected = (
-        local
-        if previous.capture_complete
-        else [item for item in local if item.complete]
-    )
-    if [_item_evidence(item) for item in observed] != [
-        _item_evidence(item) for item in expected
-    ]:
-        raise CodexProtocolError(
-            "Codex historical content differs from the saved conversation"
-        )
 
 
 def resolve_binary() -> str:
@@ -265,7 +215,7 @@ class CodexSession:
                 items = source.get("items")
                 if not isinstance(items, list):
                     raise CodexProtocolError("Missing historical items")
-                _verify_items(previous, items, self.recorder.server)
+                verify_items(previous, items, self.recorder.server)
                 index += 1
             next_cursor = page.get("nextCursor")
             if next_cursor is None:

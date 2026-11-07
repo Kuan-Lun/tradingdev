@@ -15,6 +15,7 @@ import pytest
 from filelock import FileLock, Timeout
 
 from tradingdev.adapters.clients import codex_session
+from tradingdev.adapters.clients.codex_history import verify_items
 from tradingdev.adapters.clients.codex_protocol import CodexProtocolError, CodexRecorder
 from tradingdev.adapters.clients.codex_session import record_turn
 from tradingdev.adapters.clients.codex_transport import CodexTransport, codex_transport
@@ -622,3 +623,230 @@ def test_warning_scope_and_standalone_elicitation_are_explicit(tmp_path: Path) -
         == "standalone"
     )
     assert fake.sent[-1]["result"]["action"] == "cancel"
+
+
+def projected_history(recorder: CodexRecorder) -> list[dict[str, Any]]:
+    """A public stream and independently specified Codex history projection."""
+    acknowledge(recorder)
+    first: dict[str, Any] = {
+        "id": "a",
+        "type": "mcpToolCall",
+        "server": "tradingdev_recorder",
+        "tool": "get_artifact",
+        "arguments": {"artifact_id": "report"},
+        "status": "completed",
+        "error": None,
+        "result": {
+            "content": [{"type": "text", "text": "甲乙丙丁戊己庚辛"}],
+            "structuredContent": {"value": "原始內容"},
+            "_meta": None,
+        },
+    }
+    second = {
+        **deepcopy(first),
+        "id": "b",
+        "tool": "get_run",
+        "arguments": {"run_id": "run"},
+    }
+    answer = {"id": "answer", "type": "agentMessage", "text": "結論"}
+    for item in [first, second, answer]:
+        event(recorder, "item/started", item=item)
+        event(recorder, "item/completed", item=item)
+    recorder.end("completed")
+    # Native readback may reorder adjacent calls and serialize/count-truncate
+    # a wire result instead of returning its original structured fields.
+    projected = deepcopy(first)
+    projected["result"] = {
+        "content": [
+            {
+                "type": "text",
+                "text": '{"content":[{"type":"text",'
+                '"text":"甲乙…4 chars truncated…庚辛"}],'
+                '"structuredContent":{"value":"原始內容"},"isError":false}',
+            }
+        ],
+        "structuredContent": None,
+        "_meta": None,
+    }
+    return [source_user(), second, projected, answer]
+
+
+def test_native_history_projection_keeps_original_order_and_full_result(
+    tmp_path: Path,
+) -> None:
+    recorder = recorder_at(tmp_path)
+    history = projected_history(recorder)
+    before = recorder.record.model_dump_json()
+    verify_items(recorder.record.turns[-1], history, recorder.server)
+    assert recorder.record.model_dump_json() == before
+    assert [item.source_id for item in recorder.record.turns[-1].items] == [
+        "user",
+        "a",
+        "b",
+        "answer",
+    ]
+    assert "甲乙丙丁戊己庚辛" in before
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing",
+        "duplicate",
+        "arguments",
+        "ordinary_result",
+        "prefix",
+        "suffix",
+        "count",
+        "unknown_projection",
+        "message_boundary",
+        "failed_tool",
+    ],
+)
+def test_projected_history_still_rejects_changed_evidence(
+    tmp_path: Path, damage: str
+) -> None:
+    recorder = recorder_at(tmp_path)
+    history = projected_history(recorder)
+    tool = history[2]
+    text = tool["result"]["content"][0]
+    if damage == "missing":
+        history.pop(1)
+    elif damage == "duplicate":
+        history[1] = deepcopy(tool)
+    elif damage == "arguments":
+        tool["arguments"] = {"artifact_id": "different"}
+    elif damage == "ordinary_result":
+        history[1]["result"]["structuredContent"]["value"] = "changed"
+    elif damage == "prefix":
+        text["text"] = text["text"].replace("甲乙", "另一")
+    elif damage == "suffix":
+        text["text"] = text["text"].replace("庚辛", "不同")
+    elif damage == "count":
+        text["text"] = text["text"].replace("…4 chars", "…5 chars")
+    elif damage == "unknown_projection":
+        text["text"] = "[truncated]"
+    elif damage == "message_boundary":
+        history[2], history[3] = history[3], history[2]
+    else:
+        tool["status"] = "failed"
+    with pytest.raises(CodexProtocolError, match="differs"):
+        verify_items(recorder.record.turns[-1], history, recorder.server)
+
+
+@pytest.mark.parametrize("boundary_change", ["move", "remove"])
+def test_partial_message_still_separates_completed_tool_groups(
+    tmp_path: Path, boundary_change: str
+) -> None:
+    recorder = recorder_at(tmp_path)
+    acknowledge(recorder)
+    tool = {
+        "id": "a",
+        "type": "mcpToolCall",
+        "server": "tradingdev_recorder",
+        "tool": "get_run",
+        "arguments": {},
+        "status": "completed",
+        "result": {"content": [{"type": "text", "text": "evidence"}]},
+    }
+    for method in ("item/started", "item/completed"):
+        event(recorder, method, item=tool)
+    boundary = {"id": "boundary", "type": "agentMessage", "text": "partial"}
+    event(recorder, "item/started", item=boundary)
+    for method in ("item/started", "item/completed"):
+        event(recorder, method, item={**tool, "id": "b"})
+    recorder.end("interrupted", "connection lost")
+    final_boundary = {**boundary, "text": "final authoritative text"}
+    valid = [source_user(), tool, final_boundary, {**tool, "id": "b"}]
+    verify_items(recorder.record.turns[-1], valid, recorder.server)
+    changed = [source_user(), {**tool, "id": "b"}, final_boundary, tool]
+    if boundary_change == "remove":
+        changed.pop(2)
+    with pytest.raises(CodexProtocolError, match="differs"):
+        verify_items(recorder.record.turns[-1], changed, recorder.server)
+
+
+def test_native_result_projection_accepts_rust_float_notation(tmp_path: Path) -> None:
+    recorder = recorder_at(tmp_path)
+    acknowledge(recorder)
+    tool = {
+        "id": "tool",
+        "type": "mcpToolCall",
+        "server": "tradingdev_recorder",
+        "tool": "get_run_metrics",
+        "arguments": {},
+        "status": "completed",
+        "result": {"content": [], "structuredContent": {"small": 0.000001}},
+    }
+    for method in ("item/started", "item/completed"):
+        event(recorder, method, item=tool)
+    recorder.end("completed")
+    projected = {
+        **tool,
+        "result": {
+            "content": [
+                {
+                    "type": "text",
+                    "text": '{"content":[],"structuredContent":{"small":1e-6},'
+                    '"isError":false}',
+                }
+            ],
+            "structuredContent": None,
+        },
+    }
+    verify_items(recorder.record.turns[-1], [source_user(), projected], recorder.server)
+
+
+def test_partial_tail_can_be_absent_but_cannot_move_when_present(
+    tmp_path: Path,
+) -> None:
+    recorder = recorder_at(tmp_path)
+    acknowledge(recorder)
+    tool = {
+        "id": "tool",
+        "type": "mcpToolCall",
+        "server": "tradingdev_recorder",
+        "tool": "get_run",
+        "arguments": {},
+        "status": "completed",
+        "result": {"content": [{"type": "text", "text": "evidence"}]},
+    }
+    for method in ("item/started", "item/completed"):
+        event(recorder, method, item=tool)
+    tail = {"id": "tail", "type": "agentMessage", "text": "partial"}
+    event(recorder, "item/started", item=tail)
+    recorder.end("interrupted", "connection lost")
+    turn = recorder.record.turns[-1]
+    verify_items(turn, [source_user(), tool], recorder.server)
+    verify_items(turn, [source_user(), tool, tail], recorder.server)
+    with pytest.raises(CodexProtocolError, match="differs"):
+        verify_items(turn, [source_user(), tail, tool], recorder.server)
+
+
+def test_observed_partial_tool_resumes_with_bound_call_identity(tmp_path: Path) -> None:
+    recorder = recorder_at(tmp_path)
+    acknowledge(recorder)
+    tool = {
+        "id": "tool",
+        "type": "mcpToolCall",
+        "server": "tradingdev_recorder",
+        "tool": "get_run",
+        "arguments": {"run_id": "run"},
+        "status": "inProgress",
+        "result": None,
+        "error": None,
+    }
+    event(recorder, "item/started", item=tool)
+    recorder.end("interrupted", "connection lost")
+    turn = recorder.record.turns[-1]
+    verify_items(turn, [source_user(), tool], recorder.server)
+    with pytest.raises(CodexProtocolError, match="differs"):
+        verify_items(
+            turn,
+            [source_user(), {**tool, "arguments": {"run_id": "other"}}],
+            recorder.server,
+        )
+    with pytest.raises(CodexProtocolError, match="Unknown historical tool status"):
+        verify_items(
+            turn, [source_user(), {**tool, "status": "unknown"}], recorder.server
+        )
