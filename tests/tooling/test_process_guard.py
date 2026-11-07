@@ -6,9 +6,11 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import psutil
@@ -37,6 +39,55 @@ child = subprocess.Popen([sys.executable, '-c', sys.argv[1]], start_new_session=
 Path('child.pid').write_text(str(child.pid))
 Path('leader.pid').write_text(str(os.getpid()))
 """
+
+
+@pytest.mark.parametrize("captured", [False, True])
+def test_observation_delay_does_not_replace_a_completed_process_result(
+    monkeypatch: MonkeyPatch, tmp_path: Path, captured: bool
+) -> None:
+    observed_exit = False
+    elapsed = 0.0
+    real_observe = process_guard._observe
+    release = tmp_path / "release"
+
+    def observe(known: set[psutil.Process]) -> bool:
+        nonlocal observed_exit, elapsed
+        complete = real_observe(known)
+        if any(process.pid == os.getpid() for process in known):
+            return complete
+        if not observed_exit:
+            children = [process for process in known if process.pid != os.getpid()]
+            if children:
+                assert len(children) == 1
+                release.touch()
+                # Observe completion without reaping: Popen must retain the real
+                # exit status. Only the observer's delay crosses the fake deadline.
+                os.waitid(os.P_PID, children[0].pid, os.WEXITED | os.WNOWAIT)
+                observed_exit = True
+                elapsed = 2.0
+        return complete
+
+    monkeypatch.setattr(process_guard, "_observe", observe)
+    monkeypatch.setattr(
+        process_guard,
+        "time",
+        SimpleNamespace(monotonic=lambda: elapsed, sleep=time.sleep),
+    )
+    exit_code = 7 if captured else 0
+    command = [
+        sys.executable,
+        "-c",
+        "import time\nfrom pathlib import Path\n"
+        "while not Path('release').exists(): time.sleep(0.01)\n"
+        f"raise SystemExit({exit_code})",
+    ]
+    if captured:
+        result = run_captured(command, cwd=tmp_path, env=dict(os.environ), timeout=1)
+        assert result.returncode == exit_code
+    else:
+        run_checked(command, cwd=tmp_path, env=dict(os.environ), timeout=1)
+    assert observed_exit
+    assert list(tmp_path.iterdir()) == [release]
 
 
 def _assert_stopped(root: Path) -> None:
@@ -239,12 +290,25 @@ def test_unverified_termination_raises_typed_cleanup_error(
 
 
 @pytest.mark.parametrize("captured", [False, True])
-@pytest.mark.parametrize("times_out", [False, True])
-def test_cleanup_failure_keeps_type_after_check_completion_or_timeout(
-    monkeypatch: MonkeyPatch, captured: bool, times_out: bool
+@pytest.mark.parametrize("failure_kind", ["completed", "timeout", "interrupt"])
+def test_cleanup_failure_preserves_completion_timeout_or_interrupt_status(
+    monkeypatch: MonkeyPatch, captured: bool, failure_kind: str
 ) -> None:
     real_terminate = process_guard.terminate_tree
+    real_observe = process_guard._observe
     cleaned: list[psutil.Process | None] = []
+    interrupted = False
+
+    def observe(known: set[psutil.Process]) -> bool:
+        nonlocal interrupted
+        if (
+            failure_kind == "interrupt"
+            and not interrupted
+            and any(process.pid != os.getpid() for process in known)
+        ):
+            interrupted = True
+            raise KeyboardInterrupt
+        return real_observe(known)
 
     def unverified(
         leader: psutil.Process | None,
@@ -257,12 +321,15 @@ def test_cleanup_failure_keeps_type_after_check_completion_or_timeout(
         )
 
     monkeypatch.setattr(process_guard, "terminate_tree", unverified)
+    monkeypatch.setattr(process_guard, "_observe", observe)
     with TemporaryDirectory(prefix="tradingdev-process-cleanup-test-") as directory:
         root = Path(directory)
         command = [
             sys.executable,
             "-c",
-            "import time; time.sleep(60)" if times_out else "raise SystemExit(0)",
+            "raise SystemExit(0)"
+            if failure_kind == "completed"
+            else "import time; time.sleep(60)",
         ]
         runner = run_captured if captured else run_checked
         with pytest.raises(ProcessCleanupError) as failure:
@@ -270,8 +337,14 @@ def test_cleanup_failure_keeps_type_after_check_completion_or_timeout(
         assert len(cleaned) == 1
         leader = cleaned[0]
         assert leader is None or not process_guard._alive(leader)
-        if times_out:
-            assert isinstance(failure.value.__cause__, subprocess.TimeoutExpired)
+        assert failure.value.interrupted is (failure_kind == "interrupt")
+        if failure_kind != "completed":
+            expected = (
+                KeyboardInterrupt
+                if failure_kind == "interrupt"
+                else subprocess.TimeoutExpired
+            )
+            assert isinstance(failure.value.__cause__, expected)
             assert "cleanup failed" in str(failure.value)
     assert not root.exists()
 
@@ -294,4 +367,25 @@ def test_checked_child_cleanup_protocol_is_distinct_from_regular_failure(
                 env=dict(os.environ),
                 timeout=5,
             )
+    assert not root.exists()
+
+
+def test_timeout_does_not_hide_child_cleanup_failure_during_grace_period() -> None:
+    with TemporaryDirectory(prefix="tradingdev-process-protocol-test-") as directory:
+        root = Path(directory)
+        code = (
+            "import time\n"
+            "try:\n    time.sleep(60)\n"
+            "except KeyboardInterrupt:\n"
+            f"    raise SystemExit({CLEANUP_UNVERIFIED_EXIT_CODE})\n"
+        )
+        with pytest.raises(ProcessCleanupError) as error:
+            run_checked(
+                [sys.executable, "-c", code],
+                cwd=root,
+                env=dict(os.environ),
+                timeout=0.5,
+            )
+        assert isinstance(error.value.__cause__, subprocess.TimeoutExpired)
+        assert error.value.code == "process_cleanup_unverified"
     assert not root.exists()

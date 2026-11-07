@@ -1,9 +1,4 @@
-"""Strategy configuration for the optional declarative rolling schemes.
-
-The switch lives here and defaults to off.  When it is off, nothing in this
-package is imported by the strategies and the classic retraining loop runs
-unchanged; the configuration block is the only thing that decides that.
-"""
+"""Optional named geometry overrides for the shared rolling execution core."""
 
 from __future__ import annotations
 
@@ -49,7 +44,7 @@ class RollingSchemeConfig(BaseModel):
     predict_lookback: int | None = Field(
         default=None,
         ge=1,
-        description="Feature context per scored bar; unset follows 2 x lookback",
+        description="Prior context bars; unset follows feature requirements",
     )
 
     def resolve(self) -> RollingScheme:
@@ -58,15 +53,15 @@ class RollingSchemeConfig(BaseModel):
 
 
 class RollingGenConfig(RollingSchemeConfig):
-    """The declarative rolling switch and its scheme, as one strategy setting.
+    """Select automatic geometry or explicitly enable a named scheme.
 
-    ``enabled`` is the whole safety story: off means the strategy runs its
-    classic retraining loop, on means the declared geometry scores the run.
+    Both modes use the same prediction engine, feature requirements and
+    causal-model rules. Disabled overrides have no effect.
     """
 
     enabled: bool = Field(
         default=False,
-        description="Off by default; off runs the classic rolling retrainer",
+        description="Off selects automatic geometry; on applies the named scheme",
     )
 
     @model_validator(mode="after")

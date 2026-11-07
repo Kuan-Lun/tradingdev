@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.execution.process_runner import WorkerHandle
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
@@ -16,7 +17,6 @@ from tradingdev.app.run_publisher import RunPublicationBinding, RunPublisher
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
 from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution import ManifestError
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from tradingdev.app.job_store import JobStore
@@ -40,7 +40,7 @@ class ComparisonService:
         self.backtest = backtest_service or BacktestService(
             data_service=DataService(job_store.workspace),
             strategy_gate=StrategyService(job_store.workspace),
-            strategy_loader=StrategyLoader(workspace_root=job_store.workspace.root),
+            strategy_loader=StrategyFactory(workspace_root=job_store.workspace.root),
         )
 
     def _manifest(self, job_id: str) -> ComparisonManifest:

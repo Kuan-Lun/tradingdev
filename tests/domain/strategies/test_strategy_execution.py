@@ -8,15 +8,16 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from pydantic import BaseModel, JsonValue, create_model
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.domain.backtest.schemas import ParallelConfig
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
+from tradingdev.domain.runtime import IsolatedRuntimeError
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 from tradingdev.domain.strategies.execution import (
     StrategyExecution,
     merge_strategy_parameters,
 )
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,10 +28,9 @@ _GENERATED = """\
 from tradingdev.domain.strategies.base import BaseStrategy
 
 class CapturedStrategy(BaseStrategy):
-    def __init__(self, period=14, optional=None, backtest_engine=None):
+    def __init__(self, period=14, optional=None):
         self.period = period
         self.optional = optional
-        self.engine = backtest_engine
 
     def generate_signals(self, df):
         return df.copy()
@@ -41,11 +41,11 @@ class CapturedStrategy(BaseStrategy):
 
 
 @pytest.fixture
-def generated(tmp_path: Path) -> tuple[StrategyLoader, dict[str, Any], Path]:
+def generated(tmp_path: Path) -> tuple[StrategyFactory, dict[str, Any], Path]:
     source = tmp_path / "generated_strategies" / "captured.py"
     source.parent.mkdir()
     source.write_text(_GENERATED)
-    loader = StrategyLoader(workspace_root=tmp_path)
+    loader = StrategyFactory(workspace_root=tmp_path)
     cfg = {
         "id": "captured",
         "class_name": "CapturedStrategy",
@@ -58,7 +58,7 @@ def generated(tmp_path: Path) -> tuple[StrategyLoader, dict[str, Any], Path]:
 def test_bundled_capture_expands_parameters_and_fit_without_changing_declaration() -> (
     None
 ):
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg: dict[str, Any] = {
         "id": "kd_crossover",
         "parameters": {"d_period": 5},
@@ -87,20 +87,19 @@ def test_bundled_capture_expands_parameters_and_fit_without_changing_declaration
 
 
 def test_bundled_omitted_fit_is_explicit_none_and_injections_are_separate() -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "kd_crossover"}
     execution = loader.resolve_execution(cfg)
     engine = SignalBacktestEngine(init_cash=10_000.0)
     parallel = ParallelConfig(reserve_cores=1)
 
-    strategy = loader.create_from_execution(cfg, execution, engine, parallel)
-
-    assert execution.constructor_kwargs["fit_config"] is None
-    assert "backtest_engine" not in execution.constructor_kwargs
-    assert "parallel_config" not in execution.constructor_kwargs
-    assert vars(strategy)["_fit_config"] is None
-    assert vars(strategy)["_backtest_engine"] is engine
-    assert vars(strategy)["_parallel_config"] is parallel
+    with loader.open_from_execution(cfg, execution, engine, parallel) as strategy:
+        assert execution.constructor_kwargs["fit_config"] is None
+        assert "backtest_engine" not in execution.constructor_kwargs
+        assert "parallel_config" not in execution.constructor_kwargs
+        assert vars(strategy)["_fit_config"] is None
+        assert vars(strategy)["_backtest_engine"] is engine
+        assert vars(strategy)["_parallel_config"] is parallel
 
 
 def test_capture_never_calls_strategy_constructor(
@@ -110,8 +109,8 @@ def test_capture_never_calls_strategy_constructor(
         def __init__(self, config: KDStrategyConfig) -> None:
             raise AssertionError("Capture must not execute the strategy constructor")
 
-    loader = StrategyLoader()
-    monkeypatch.setattr(loader, "load_class", lambda _cfg: UninstantiableKD)
+    loader = StrategyFactory()
+    monkeypatch.setattr(loader, "_load_bundled_class", lambda _cfg: UninstantiableKD)
     monkeypatch.setattr(loader, "_bundled_config_model", lambda _cls: KDStrategyConfig)
 
     execution = loader.resolve_execution({"id": "kd_crossover"})
@@ -122,7 +121,7 @@ def test_capture_never_calls_strategy_constructor(
 def test_changed_bundled_default_cannot_change_captured_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "kd_crossover"}
     execution = loader.resolve_execution(cfg)
     changed = create_model(
@@ -130,15 +129,14 @@ def test_changed_bundled_default_cannot_change_captured_value(
     )
     monkeypatch.setattr(loader, "_bundled_config_model", lambda _cls: changed)
 
-    strategy = loader.create_from_execution(cfg, execution, engine=None)
-
-    assert strategy.get_parameters()["k_period"] == 14
+    with loader.open_from_execution(cfg, execution, engine=None) as strategy:
+        assert strategy.get_parameters()["k_period"] == 14
 
 
 def test_new_bundled_field_cannot_silently_supply_a_worker_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "kd_crossover"}
     execution = loader.resolve_execution(cfg)
     changed = create_model(
@@ -146,12 +144,15 @@ def test_new_bundled_field_cannot_silently_supply_a_worker_default(
     )
     monkeypatch.setattr(loader, "_bundled_config_model", lambda _cls: changed)
 
-    with pytest.raises(ValueError, match="no longer match"):
-        loader.create_from_execution(cfg, execution, engine=None)
+    with (
+        pytest.raises(ValueError, match="no longer match"),
+        loader.open_from_execution(cfg, execution, engine=None),
+    ):
+        pass
 
 
 def test_nested_model_defaults_are_captured_and_grid_overlays_preserve_them() -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "xgboost_direction", "parameters": {"model": {"random_state": 7}}}
     execution = loader.resolve_execution(cfg)
     config = execution.constructor_kwargs["config"]
@@ -161,13 +162,12 @@ def test_nested_model_defaults_are_captured_and_grid_overlays_preserve_them() ->
     assert model["n_jobs"] is None
     assert model["n_estimators"] == 100
 
-    strategy = loader.create_from_execution(
+    with loader.open_from_execution(
         cfg, execution, None, parameter_overrides={"model": {"max_depth": 4}}
-    )
-
-    actual = vars(strategy)["_config"].model.model_dump()
-    assert actual == {**model, "max_depth": 4}
-    assert model["max_depth"] == 6
+    ) as strategy:
+        actual = vars(strategy)["_config"].model.model_dump()
+        assert actual == {**model, "max_depth": 4}
+        assert model["max_depth"] == 6
 
 
 def test_parameter_merge_preserves_nested_defaults_and_detaches_both_inputs() -> None:
@@ -205,7 +205,7 @@ def test_empty_object_candidate_retains_captured_nested_values() -> None:
 def test_grid_rejects_unknown_or_implicitly_converted_values(
     overrides: dict[str, Any],
 ) -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "xgboost_direction"}
     execution = loader.resolve_execution(cfg)
 
@@ -217,21 +217,20 @@ def test_grid_rejects_unknown_or_implicitly_converted_values(
 def test_integer_grid_candidates_are_valid_for_float_model_fields(
     overbought: int,
 ) -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "kd_crossover"}
     execution = loader.resolve_execution(cfg)
 
     loader.validate_parameter_overrides(cfg, execution, {"overbought": overbought})
-    strategy = loader.create_from_execution(
+    with loader.open_from_execution(
         cfg, execution, None, parameter_overrides={"overbought": overbought}
-    )
-
-    assert strategy.get_parameters()["overbought"] == float(overbought)
+    ) as strategy:
+        assert strategy.get_parameters()["overbought"] == float(overbought)
 
 
 @pytest.mark.parametrize("value", [True, "80"])
 def test_float_grid_rejects_boolean_and_string_coercion(value: object) -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "kd_crossover"}
     execution = loader.resolve_execution(cfg)
 
@@ -240,7 +239,7 @@ def test_float_grid_rejects_boolean_and_string_coercion(value: object) -> None:
 
 
 def test_nested_float_grid_rejects_lossy_integer_conversion() -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "xgboost_direction"}
     execution = loader.resolve_execution(cfg)
 
@@ -250,96 +249,70 @@ def test_nested_float_grid_rejects_lossy_integer_conversion() -> None:
         )
 
 
-def test_generated_defaults_and_none_are_explicit_and_survive_default_changes(
-    generated: tuple[StrategyLoader, dict[str, Any], Path],
+def test_generated_defaults_are_fixed_even_when_new_configuration_is_supplied(
+    generated: tuple[StrategyFactory, dict[str, Any], Path],
 ) -> None:
     loader, cfg, source = generated
     execution = loader.resolve_execution(cfg)
-    source.write_text(_GENERATED.replace("period=14", "period=21"))
+    cfg["parameters"] = {"period": 21}
 
-    strategy = loader.create_from_execution(cfg, execution, engine=None)
-
-    assert execution.constructor_kwargs == {"period": 14, "optional": None}
-    assert strategy.get_parameters() == {"period": 14, "optional": None}
-    assert cfg["parameters"] == {}
+    with loader.open_from_execution(cfg, execution, engine=None) as strategy:
+        assert execution.constructor_kwargs == {"period": 14, "optional": None}
+        assert strategy.get_parameters() == {"period": 14, "optional": None}
+        assert cfg["parameters"] == {"period": 21}
 
 
 def test_generated_added_constructor_default_requires_resubmission(
-    generated: tuple[StrategyLoader, dict[str, Any], Path],
+    generated: tuple[StrategyFactory, dict[str, Any], Path],
 ) -> None:
     loader, cfg, source = generated
     execution = loader.resolve_execution(cfg)
     source.write_text(_GENERATED.replace("optional=None", "optional=None, new_field=2"))
 
-    with pytest.raises(ValueError, match="explicit constructor setting 'new_field'"):
-        loader.create_from_execution(cfg, execution, engine=None)
+    with (
+        pytest.raises(ValueError, match="revision source has changed"),
+        loader.open_from_execution(cfg, execution, engine=None),
+    ):
+        pass
 
 
 @pytest.mark.parametrize("default", ["object()", "float('nan')", "(1, 2)"])
 @pytest.mark.parametrize("validation_entry", [False, True])
 def test_generated_non_json_defaults_fail_before_submission(
-    generated: tuple[StrategyLoader, dict[str, Any], Path],
+    generated: tuple[StrategyFactory, dict[str, Any], Path],
     default: str,
     validation_entry: bool,
 ) -> None:
     loader, cfg, source = generated
     source.write_text(_GENERATED.replace("optional=None", f"optional={default}"))
 
-    with pytest.raises(ValueError, match="finite JSON"):
+    with pytest.raises(IsolatedRuntimeError, match="finite JSON"):
         if validation_entry:
-            loader.create_from_config({"strategy": cfg}, None)
+            with loader.open_from_config({"strategy": cfg}, None):
+                pass
         else:
             loader.resolve_execution(cfg)
 
 
-def test_generated_validation_and_execution_share_parallel_injection(
-    generated: tuple[StrategyLoader, dict[str, Any], Path],
-) -> None:
-    loader, cfg, source = generated
-    source.write_text(
-        _GENERATED.replace(
-            "backtest_engine=None):", "backtest_engine=None, parallel_config=None):"
-        ).replace(
-            "self.engine = backtest_engine",
-            "self.engine = backtest_engine\n        self.parallel = parallel_config",
-        )
-    )
-    raw: dict[str, Any] = {"strategy": cfg, "parallel": {"reserve_cores": 1}}
-    engine = SignalBacktestEngine(init_cash=10_000.0)
-
-    checked = loader.create_from_config(raw, engine)
-    captured = loader.resolve_execution(cfg)
-    executed = loader.create_from_execution(
-        cfg, captured, engine, ParallelConfig.model_validate(raw["parallel"])
-    )
-
-    assert vars(checked)["parallel"] == vars(executed)["parallel"]
-    assert vars(checked)["parallel"].reserve_cores == 1
-    assert vars(checked)["engine"] is engine
-    assert vars(executed)["engine"] is engine
-    assert "parallel_config" not in captured.constructor_kwargs
-
-
 def test_generated_kwargs_keep_explicit_values(
-    generated: tuple[StrategyLoader, dict[str, Any], Path],
+    generated: tuple[StrategyFactory, dict[str, Any], Path],
 ) -> None:
     loader, cfg, source = generated
     source.write_text(
-        _GENERATED.replace("backtest_engine=None):", "backtest_engine=None, **extras):")
+        _GENERATED.replace("optional=None):", "optional=None, **extras):")
     )
     cfg["parameters"] = {"extra_value": {"limit": 3}}
 
     execution = loader.resolve_execution(cfg)
-    strategy = loader.create_from_execution(cfg, execution, None)
-
-    assert execution.constructor_kwargs["extra_value"] == {"limit": 3}
-    assert strategy.get_parameters()["period"] == 14
+    with loader.open_from_execution(cfg, execution, None) as strategy:
+        assert execution.constructor_kwargs["extra_value"] == {"limit": 3}
+        assert strategy.get_parameters()["period"] == 14
 
 
 def test_grid_validation_resolves_class_and_models_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     cfg = {"id": "kd_crossover"}
     execution = loader.resolve_execution(cfg)
     loaded: list[dict[str, Any]] = []
@@ -353,7 +326,7 @@ def test_grid_validation_resolves_class_and_models_once(
         models.append(cls)
         return KDStrategyConfig
 
-    monkeypatch.setattr(loader, "load_class", load_class)
+    monkeypatch.setattr(loader, "_load_bundled_class", load_class)
     monkeypatch.setattr(loader, "_bundled_config_model", model_type)
 
     loader.validate_parameter_grid(
@@ -365,10 +338,13 @@ def test_grid_validation_resolves_class_and_models_once(
 
 
 def test_execution_kind_mismatch_is_rejected(
-    generated: tuple[StrategyLoader, dict[str, Any], Path],
+    generated: tuple[StrategyFactory, dict[str, Any], Path],
 ) -> None:
     loader, cfg, _ = generated
     mismatched = StrategyExecution(kind="bundled", constructor_kwargs={})
 
-    with pytest.raises(ValueError, match="kind does not match"):
-        loader.create_from_execution(cfg, mismatched, None)
+    with (
+        pytest.raises(ValueError, match="kind does not match"),
+        loader.open_from_execution(cfg, mismatched, None),
+    ):
+        pass

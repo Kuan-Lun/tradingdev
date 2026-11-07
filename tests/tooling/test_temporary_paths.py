@@ -97,20 +97,20 @@ def test_tmp_path_cleanup_failure_is_a_test_error(tmp_path: Path) -> None:
     result = _run_pytest(
         tmp_path,
         """\
+        import shutil
         from pathlib import Path
-        from tempfile import TemporaryDirectory
 
         def test_cannot_remove_directory(tmp_path):
             Path('allocated_path').write_text(str(tmp_path))
             (tmp_path / 'strategy.py').write_text('temporary strategy')
-            original = TemporaryDirectory._rmtree
+            original = shutil.rmtree
 
             def refuse_directory(path, *args, **kwargs):
-                if path == str(tmp_path):
-                    raise PermissionError('intentional cleanup denial: ' + path)
+                if Path(path) == tmp_path:
+                    raise PermissionError('intentional cleanup denial: ' + str(path))
                 return original(path, *args, **kwargs)
 
-            TemporaryDirectory._rmtree = staticmethod(refuse_directory)
+            shutil.rmtree = refuse_directory
         """,
     )
     assert result.returncode == 1, result.stdout + result.stderr

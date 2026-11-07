@@ -1,6 +1,6 @@
 """Scoring a window that overlaps the training frame must not replay it.
 
-``RollingRetrainer`` and ``SafetyVolumeStrategy._predict_risk_rolling`` build a
+The shared rolling core and ``SafetyVolumeStrategy._predict_risk_rolling`` build a
 prediction context by concatenating saved training rows with the frame being
 scored.  When the scored frame is the training frame itself -- which is exactly
 what ``fit(train)`` followed by ``generate_signals(train)`` does for training
@@ -18,7 +18,7 @@ import pytest
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
-from tradingdev.domain.ml.retrainer import RollingRetrainer
+from tradingdev.domain.ml.rolling_gen import run_rolling
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.ml.scoring_history import align_scoring_history
 from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
@@ -50,12 +50,28 @@ class _AlwaysLong(XGBoostDirectionModel):
     def __init__(self) -> None:
         super().__init__(XGBoostModelConfig())
 
+    def train(self, df: pd.DataFrame, eval_df: pd.DataFrame | None = None) -> None:
+        pass
+
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({-1: 0.0, 1: 1.0}, index=df.index)
 
 
+class _AlwaysSafe(_AlwaysLong):
+    def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({0: 0.0, 1: 1.0}, index=df.index)
+
+
 class _RecordingFeatureEngineer(FeatureEngineer):
     """Record the prediction contexts without computing real indicators."""
+
+    @property
+    def minimum_context_rows(self) -> int:
+        return 1
+
+    @property
+    def context_rows(self) -> int:
+        return 124
 
     def __init__(self) -> None:
         super().__init__(lookback=24, target_horizon=1)
@@ -119,15 +135,21 @@ def test_retrainer_replay_context_stays_chronological() -> None:
     """``run(train, train, ...)`` must not concatenate the frame with itself."""
     frame = _market_frame(60)
     recorder = _RecordingFeatureEngineer()
-    retrainer = RollingRetrainer(
-        XGBoostModelConfig(),
-        retrain_interval=1000,
+
+    signals = run_rolling(
+        frame,
+        frame,
+        None,
+        model=_AlwaysLong(),
+        fe=recorder,
+        label_horizon=(recorder).target_horizon,
+        model_config=XGBoostModelConfig(),
+        retrain_interval=20,
+        model_factory=lambda _: _AlwaysLong(),
         threshold=0.6,
         cooldown=0,
         lookback=1000,
     )
-
-    signals = retrainer.run(frame, frame, _AlwaysLong(), recorder)
 
     assert len(signals) == len(frame)
     _assert_chronological(recorder.contexts)
@@ -139,15 +161,21 @@ def test_retrainer_keeps_history_that_genuinely_precedes_scoring() -> None:
     history = frame.iloc[:60].copy()
     scored = frame.iloc[60:].copy()
     recorder = _RecordingFeatureEngineer()
-    retrainer = RollingRetrainer(
-        XGBoostModelConfig(),
-        retrain_interval=1000,
+
+    run_rolling(
+        history,
+        scored,
+        None,
+        model=_AlwaysLong(),
+        fe=recorder,
+        label_horizon=(recorder).target_horizon,
+        model_config=XGBoostModelConfig(),
+        retrain_interval=20,
+        model_factory=lambda _: _AlwaysLong(),
         threshold=0.6,
         cooldown=0,
         lookback=1000,
     )
-
-    retrainer.run(scored, history, _AlwaysLong(), recorder)
 
     first = recorder.contexts[0]
     assert pd.Timestamp(first["timestamp"].iloc[-1]) == pd.Timestamp(
@@ -166,30 +194,42 @@ def test_retrainer_refuses_frames_without_a_time_identity() -> None:
     """
     scored = pd.DataFrame({"close": [100.0, 101.0, 102.0]})
     history = pd.DataFrame({"close": [99.0, 99.5]})
-    retrainer = RollingRetrainer(
-        XGBoostModelConfig(),
-        retrain_interval=1000,
-        threshold=0.6,
-        cooldown=0,
-        lookback=1000,
-    )
 
     with pytest.raises(ValueError, match="timestamp"):
-        retrainer.run(scored, history, _AlwaysLong(), _RecordingFeatureEngineer())
+        run_rolling(
+            history,
+            scored,
+            None,
+            model=_AlwaysLong(),
+            fe=_RecordingFeatureEngineer(),
+            label_horizon=(_RecordingFeatureEngineer()).target_horizon,
+            model_config=XGBoostModelConfig(),
+            retrain_interval=20,
+            model_factory=lambda _: _AlwaysLong(),
+            threshold=0.6,
+            cooldown=0,
+            lookback=1000,
+        )
 
 
 def test_retrainer_scores_an_empty_frame_without_validating_it() -> None:
     """An empty scored frame produces no signals, so there is nothing to order."""
     empty = pd.DataFrame({"close": pd.Series(dtype=float)})
-    retrainer = RollingRetrainer(
-        XGBoostModelConfig(),
-        retrain_interval=1000,
+
+    signals = run_rolling(
+        empty,
+        empty,
+        None,
+        model=_AlwaysLong(),
+        fe=_RecordingFeatureEngineer(),
+        label_horizon=(_RecordingFeatureEngineer()).target_horizon,
+        model_config=XGBoostModelConfig(),
+        retrain_interval=20,
+        model_factory=lambda _: _AlwaysLong(),
         threshold=0.6,
         cooldown=0,
         lookback=1000,
     )
-
-    signals = retrainer.run(empty, empty, _AlwaysLong(), _RecordingFeatureEngineer())
 
     assert signals.tolist() == []
 
@@ -201,42 +241,53 @@ def test_retrainer_refuses_duplicated_history_timestamps() -> None:
     repeated = pd.concat(
         [frame.iloc[:3], frame.iloc[[2]], frame.iloc[3:]], ignore_index=True
     )
-    retrainer = RollingRetrainer(
-        XGBoostModelConfig(),
-        retrain_interval=1000,
-        threshold=0.6,
-        cooldown=0,
-        lookback=1000,
-    )
 
     with pytest.raises(ValueError, match="unique"):
-        retrainer.run(frame, repeated, _AlwaysLong(), _RecordingFeatureEngineer())
+        run_rolling(
+            repeated,
+            frame,
+            None,
+            model=_AlwaysLong(),
+            fe=_RecordingFeatureEngineer(),
+            label_horizon=(_RecordingFeatureEngineer()).target_horizon,
+            model_config=XGBoostModelConfig(),
+            retrain_interval=20,
+            model_factory=lambda _: _AlwaysLong(),
+            threshold=0.6,
+            cooldown=0,
+            lookback=1000,
+        )
 
 
 def _safety_strategy(
     train: pd.DataFrame,
 ) -> tuple[SafetyVolumeStrategy, _RecordingRiskFeatureEngineer]:
-    """Build a fitted-looking strategy whose retraining is switched off."""
+    """Build a fitted strategy whose causal refits can be observed by tests."""
     strategy = SafetyVolumeStrategy(
         SafetyVolumeStrategyConfig(
             risk_model=XGBoostModelConfig(n_estimators=2, max_depth=2, n_jobs=1),
             lookback_candidates=[24],
             target_holding_bars=3,
+            retrain_interval=100,
             min_holding_bars=1,
             max_holding_bars=7,
         )
     )
     recorder = _RecordingRiskFeatureEngineer()
     strategy._risk_fe = recorder
-    strategy._risk_model = _AlwaysLong()
+    strategy._risk_model = _AlwaysSafe()
     strategy._train_data = train.copy()
-    # A lookback this large keeps ``window`` below the retraining threshold, so
-    # only the prediction context is exercised.
-    strategy._best_lookback = 10_000
+    strategy._best_lookback = 24
     return strategy, recorder
 
 
-def test_safety_risk_replay_context_stays_chronological() -> None:
+def test_safety_risk_replay_context_stays_chronological(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tradingdev.domain.ml.rolling_gen.engine.XGBoostDirectionModel",
+        lambda _: _AlwaysSafe(),
+    )
     """``fit(train)`` then ``generate_signals(train)`` must not replay itself."""
     frame = _market_frame(300)
     strategy, recorder = _safety_strategy(frame)
@@ -247,7 +298,13 @@ def test_safety_risk_replay_context_stays_chronological() -> None:
     _assert_chronological(recorder.contexts)
 
 
-def test_safety_risk_scoring_keeps_preceding_history() -> None:
+def test_safety_risk_scoring_keeps_preceding_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tradingdev.domain.ml.rolling_gen.engine.XGBoostDirectionModel",
+        lambda _: _AlwaysSafe(),
+    )
     frame = _market_frame(400)
     history = frame.iloc[:300].copy()
     scored = frame.iloc[300:].copy()
@@ -260,7 +317,8 @@ def test_safety_risk_scoring_keeps_preceding_history() -> None:
     assert pd.Timestamp(first["timestamp"].iloc[-1]) == pd.Timestamp(
         scored["timestamp"].iloc[0]
     )
-    assert len(first) == len(history) + 1
+    assert len(first) == recorder.context_rows
+    pd.testing.assert_frame_equal(first.iloc[:-1], history.iloc[-215:])
     _assert_chronological(recorder.contexts)
 
 
@@ -288,15 +346,22 @@ def test_mixed_time_representations_keep_real_features_and_signals(
     np.testing.assert_array_equal(
         normalized["timestamp"].to_numpy(), frame["timestamp"].iloc[160:].to_numpy()
     )
-    retrainer = RollingRetrainer(
-        XGBoostModelConfig(),
-        retrain_interval=1000,
+
+    # Real feature filtering; a long horizon leaves no mature retraining rows.
+    signals = run_rolling(
+        history,
+        scored,
+        None,
+        model=_AlwaysLong(),
+        fe=FeatureEngineer(80, 1000),
+        label_horizon=(FeatureEngineer(80, 1000)).target_horizon,
+        model_config=XGBoostModelConfig(),
+        retrain_interval=20,
+        model_factory=lambda _: _AlwaysLong(),
         threshold=0.6,
         cooldown=0,
         lookback=80,
     )
-    # Real feature filtering; a long horizon leaves no mature retraining rows.
-    signals = retrainer.run(scored, history, _AlwaysLong(), FeatureEngineer(80, 1000))
     np.testing.assert_array_equal(signals, np.ones(len(scored), dtype=int))
     pd.testing.assert_frame_equal(history, original_history)
     pd.testing.assert_frame_equal(scored, original_scored)

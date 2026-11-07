@@ -1,0 +1,22 @@
+{
+  "name": "klwang-slides-tradingdev",
+  "compatibility_date": "2026-11-05",
+  "workers_dev": true,
+  "previews": {},
+  "build": {
+    "command": "bash scripts/stage-presentations.sh"
+  },
+  "routes": [
+    {
+      "pattern": "slides.klwang.tw/tradingdev",
+      "zone_name": "klwang.tw"
+    },
+    {
+      "pattern": "slides.klwang.tw/tradingdev/*",
+      "zone_name": "klwang.tw"
+    }
+  ],
+  "assets": {
+    "directory": "./site-dist"
+  }
+}

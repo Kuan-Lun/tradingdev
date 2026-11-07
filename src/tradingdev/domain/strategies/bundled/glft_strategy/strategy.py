@@ -23,6 +23,13 @@ from tradingdev.domain.optimization.grid_search import (
     tuple_grid,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.glft_time import (
+    ensure_glft_fit_scale,
+    glft_bar_seconds,
+)
+from tradingdev.domain.strategies.bundled.glft_volatility import (
+    compute_glft_volatility,
+)
 from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
@@ -80,7 +87,7 @@ def _evaluate_glft_combo(
     trial._best_min_entry_edge = entry_edge
     trial._best_trend_ema_window = trend_ema
     trial._best_profit_target_ratio = pt_ratio
-    trial._best_signal_agg_minutes = sig_agg
+    trial._best_signal_agg_bars = sig_agg
     trial._best_edge_for_full_size = efs
 
     signals = generate_checked_signals(trial, df)
@@ -97,6 +104,10 @@ class GLFTStrategy(BaseStrategy):
     - **Reservation price**: mid-price adjusted for inventory risk
     - **Optimal spread**: adapts to volatility and time horizon
 
+    Windows, holding horizons and aggregation are measured in input bars.
+    Timestamps must have a uniform interval (at least two bars); gaps are errors.
+    Annualized DVOL is converted to that per-bar scale using a 365.25-day year.
+    After fit(), generating signals at a different bar duration requires refitting.
     The strategy is purely analytical -- no ML model required.
     """
 
@@ -106,6 +117,7 @@ class GLFTStrategy(BaseStrategy):
         backtest_engine: BaseBacktestEngine | None = None,
         parallel_config: ParallelConfig | None = None,
     ) -> None:
+        self._fitted_bar_seconds: float | None = None
         self._config = config
         self._backtest_engine = backtest_engine
         self._parallel_config = parallel_config
@@ -119,7 +131,7 @@ class GLFTStrategy(BaseStrategy):
         self._best_min_entry_edge: float = config.min_entry_edge
         self._best_trend_ema_window: int = config.trend_ema_window
         self._best_profit_target_ratio: float = config.profit_target_ratio
-        self._best_signal_agg_minutes: int = config.signal_agg_minutes
+        self._best_signal_agg_bars: int = config.signal_agg_bars
         self._best_edge_for_full_size: float = config.edge_for_full_size
 
     # ------------------------------------------------------------------
@@ -134,6 +146,7 @@ class GLFTStrategy(BaseStrategy):
         threshold are considered.  Among those, the combination with the
         best ``target_metric`` according to the metric catalog is selected.
         """
+        bar_seconds = glft_bar_seconds(df)
         if self._backtest_engine is None:
             logger.warning(
                 "No backtest engine; skipping fit()",
@@ -149,7 +162,7 @@ class GLFTStrategy(BaseStrategy):
         best_entry_edge = self._config.min_entry_edge
         best_trend_ema = self._config.trend_ema_window
         best_pt_ratio = self._config.profit_target_ratio
-        best_sig_agg = self._config.signal_agg_minutes
+        best_sig_agg = self._config.signal_agg_bars
         best_efs = self._config.edge_for_full_size
         target = self._config.target_metric
         direction = metric_direction(target)
@@ -179,7 +192,7 @@ class GLFTStrategy(BaseStrategy):
                 self._config.min_entry_edge_candidates,
                 self._config.trend_ema_candidates,
                 self._config.profit_target_ratio_candidates,
-                self._config.signal_agg_minutes_candidates,
+                self._config.signal_agg_bars_candidates,
                 efs_candidates,
             )
         ]
@@ -245,6 +258,7 @@ class GLFTStrategy(BaseStrategy):
                 "No GLFT parameter combination has a finite eligible objective"
             )
 
+        self._fitted_bar_seconds = bar_seconds
         self._best_gamma = best_gamma
         self._best_kappa = best_kappa
         self._best_ema_window = best_ema
@@ -253,7 +267,7 @@ class GLFTStrategy(BaseStrategy):
         self._best_min_entry_edge = best_entry_edge
         self._best_trend_ema_window = best_trend_ema
         self._best_profit_target_ratio = best_pt_ratio
-        self._best_signal_agg_minutes = best_sig_agg
+        self._best_signal_agg_bars = best_sig_agg
         self._best_edge_for_full_size = best_efs
 
         logger.info(
@@ -276,7 +290,9 @@ class GLFTStrategy(BaseStrategy):
         )
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate position-state signals via the GLFT model."""
+        """Generate signals using uniform input bars as the common time unit."""
+        bar_seconds = glft_bar_seconds(df)
+        ensure_glft_fit_scale(bar_seconds, self._fitted_bar_seconds)
         close = np.asarray(df["close"].astype(float).values)
         high = np.asarray(df["high"].astype(float).values)
         low = np.asarray(df["low"].astype(float).values)
@@ -292,9 +308,11 @@ class GLFTStrategy(BaseStrategy):
         ema = self._compute_ema(
             close,
             self._best_ema_window,
-            self._best_signal_agg_minutes,
+            self._best_signal_agg_bars,
         )
-        sigma = self._compute_volatility(close, high, low, dvol=dvol)
+        sigma = self._compute_volatility(
+            close, high, low, dvol=dvol, bar_seconds=bar_seconds
+        )
 
         # Trend filter: slow EMA direction (+1=up, -1=down, 0=flat,
         # NaN while the slow EMA is still warming up)
@@ -347,7 +365,7 @@ class GLFTStrategy(BaseStrategy):
         params["best_min_entry_edge"] = self._best_min_entry_edge
         params["best_trend_ema_window"] = self._best_trend_ema_window
         params["best_profit_target_ratio"] = self._best_profit_target_ratio
-        params["best_signal_agg_minutes"] = self._best_signal_agg_minutes
+        params["best_signal_agg_bars"] = self._best_signal_agg_bars
         params["best_edge_for_full_size"] = self._best_edge_for_full_size
         return params
 
@@ -359,30 +377,30 @@ class GLFTStrategy(BaseStrategy):
     def _compute_ema(
         close: npt.NDArray[np.floating[Any]],
         ema_window: int,
-        agg_minutes: int,
+        agg_bars: int,
     ) -> npt.NDArray[np.floating[Any]]:
-        """Compute EMA, optionally on aggregated N-min bars.
+        """Compute EMA on groups of N consecutive input bars.
 
-        When ``agg_minutes > 1``, the close series is resampled to
-        N-minute bars (taking the last close in each window), the
+        When ``agg_bars > 1``, the close series is resampled to
+        N-bar groups (taking the last close in each window), the
         EMA is computed on these resampled values, and the result
-        is mapped back to 1-minute resolution using only aggregated
+        is mapped back to input-bar resolution using only aggregated
         bars that have already closed. Bars before the first
-        aggregated bar closes, and bars inside the EMA warm-up, are
+        aggregated group closes, and bars inside the EMA warm-up, are
         NaN so the strategy stays flat there.
 
         Returns an array of the same length as *close*.
         """
-        if agg_minutes <= 1:
+        if agg_bars <= 1:
             return np.asarray(
                 indicators.ema(pd.Series(close), ema_window),
                 dtype=np.float64,
             )
 
         n = len(close)
-        ag = agg_minutes
+        ag = agg_bars
 
-        # Resample: take close at end of each N-min window
+        # Group from the first input row; take each complete group's last close
         # Indices: ag-1, 2*ag-1, 3*ag-1, ...
         n_complete = (n // ag) * ag
         agg_close = close[ag - 1 : n_complete : ag]
@@ -393,8 +411,8 @@ class GLFTStrategy(BaseStrategy):
             dtype=np.float64,
         )
 
-        # Map back to 1-min resolution.
-        # At 1-min bar i, the most recently completed N-min bar
+        # Map back to input-bar resolution.
+        # At input bar i, the most recently completed N-bar group
         # has index k = (i + 1) // ag - 1. k < 0 for bars before the
         # first window completes; those bars stay NaN so a later
         # bar's value is never used. The largest k is the last
@@ -409,16 +427,14 @@ class GLFTStrategy(BaseStrategy):
     # Volatility estimation
     # ------------------------------------------------------------------
 
-    # Minutes in a year (365.25 * 24 * 60) — used for
-    # annualized-to-per-bar volatility conversion.
-    _MINUTES_PER_YEAR: float = 525_960.0
-
     def _compute_volatility(
         self,
         close: npt.NDArray[np.floating[Any]],
         high: npt.NDArray[np.floating[Any]],
         low: npt.NDArray[np.floating[Any]],
         dvol: npt.NDArray[np.floating[Any]] | None = None,
+        *,
+        bar_seconds: float,
     ) -> npt.NDArray[np.floating[Any]]:
         """Compute volatility (sigma).
 
@@ -426,36 +442,15 @@ class GLFTStrategy(BaseStrategy):
         (annualized % from Deribit DVOL).  Otherwise a rolling
         historical estimator is used.
         """
-        if self._config.vol_type == "implied":
-            if dvol is None:
-                msg = "dvol array is required when vol_type is 'implied'"
-                raise ValueError(msg)
-            # DVOL is annualized vol in % (e.g. 45 = 45%).
-            # Convert to per-bar (1 min) sigma:
-            #   sigma = DVOL / 100 / sqrt(minutes_per_year)
-            sigma = dvol / 100.0 / np.sqrt(self._MINUTES_PER_YEAR)
-        elif self._config.vol_type == "parkinson":
-            window = self._best_vol_window
-            # Parkinson estimator: uses high-low range
-            log_hl = np.log(
-                np.maximum(high, 1e-10) / np.maximum(low, 1e-10),
-            )
-            parkinson_var = log_hl**2 / (4.0 * math.log(2))
-            sigma = np.sqrt(
-                pd.Series(parkinson_var).rolling(window, min_periods=1).mean().values,
-            )
-        else:
-            window = self._best_vol_window
-            # Realized volatility: rolling std of log returns
-            log_ret = np.diff(
-                np.log(np.maximum(close, 1e-10)),
-            )
-            log_ret = np.concatenate([[0.0], log_ret])
-            sigma = pd.Series(log_ret).rolling(window, min_periods=1).std().values
-
-        # Keep unknown volatility missing; only floor nonpositive observations.
-        sigma = np.where(sigma <= 0, 1e-10, sigma)
-        return np.asarray(sigma, dtype=np.float64)
+        return compute_glft_volatility(
+            close,
+            high,
+            low,
+            vol_type=self._config.vol_type,
+            window=self._best_vol_window,
+            dvol=dvol,
+            bar_seconds=bar_seconds,
+        )
 
     # ------------------------------------------------------------------
     # GLFT state machine

@@ -6,13 +6,15 @@ import json
 import os
 import signal
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 
 from tests.e2e.codex_harness import runtime_environment, verify_generated_strategy
+from tests.integration.mcp_harness import temporary_mcp_workspace
+from tests.runtime_cleanup import recover_test_strategy_units
+from tradingdev.adapters.execution.container_runtime import DockerRuntime
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.strategy_service import StrategyService
@@ -113,8 +115,8 @@ def _fixture_strategy(
 def test_verifier_checks_generated_strategy_in_a_separate_process(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    with TemporaryDirectory(prefix="tradingdev-verifier-") as temporary:
-        root = Path(temporary)
+    with temporary_mcp_workspace() as temporary:
+        root = temporary.root
         for key, value in runtime_environment(root).items():
             monkeypatch.setenv(key, value)
         _fixture_strategy(root)
@@ -131,16 +133,11 @@ def test_novice_verifier_rejects_executed_short_revision_after_current_is_repair
     runs here. The old strategy is genuinely executed by the bounded verifier,
     and the independent long-only signal comparison must reject its shorts.
     """
-    with TemporaryDirectory(prefix="tradingdev-novice-verifier-") as temporary:
-        root = Path(temporary)
+    with temporary_mcp_workspace() as temporary:
+        root = temporary.root
         for key, value in runtime_environment(root).items():
             monkeypatch.setenv(key, value)
-        marker = root / "executed-revision.pid"
-        wrong_code = (
-            _CODE
-            + "\nimport os\nfrom pathlib import Path\n"
-            + f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
-        )
+        wrong_code = _CODE
         executed_source = _fixture_strategy(root, wrong_code, periods=(10, 30))
         executed_revision = executed_source.parent.name
         workspace = WorkspacePaths(root / "workspace")
@@ -175,9 +172,7 @@ def test_novice_verifier_rejects_executed_short_revision_after_current_is_repair
         assert "Series are different" in str(error.value), (
             "Failure must come from the long-only oracle, not missing fixture metrics"
         )
-        assert marker.exists(), "The verifier did not load the executed source revision"
-        with pytest.raises(ProcessLookupError):
-            os.kill(int(marker.read_text(encoding="utf-8")), 0)
+        assert not list((workspace.root / ".strategy-runtime").glob("*.json"))
         assert store.list_runs()[0]["revision_id"] == executed_revision
         assert executed_source.read_text(encoding="utf-8") == wrong_code
     assert not root.exists()
@@ -186,32 +181,49 @@ def test_novice_verifier_rejects_executed_short_revision_after_current_is_repair
 def test_verifier_terminates_hanging_generated_code_and_removes_artifacts(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    with TemporaryDirectory(prefix="tradingdev-verifier-") as temporary:
-        root = Path(temporary)
+    with temporary_mcp_workspace() as temporary:
+        root = temporary.root
         for key, value in runtime_environment(root).items():
             monkeypatch.setenv(key, value)
-        marker = root / "verifier.pid"
-        _fixture_strategy(
-            root,
-            _CODE
-            + "\nimport os\nfrom pathlib import Path\n"
-            + f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
-            + "while True:\n    pass\n",
-        )
+        _fixture_strategy(root, _CODE + "\nwhile True:\n    pass\n")
         group_signals: list[int] = []
+        observed_units: list[str] = []
 
         def deny_group_signal(pid: int, sig: int) -> None:
             group_signals.append(sig)
             raise PermissionError("Simulate restricted macOS process group signals")
 
         monkeypatch.setattr(os, "killpg", deny_group_signal)
+
+        def recover(directory: Path) -> None:
+            controls = directory / "workspace/.strategy-runtime"
+            records = list(controls.glob("*.json"))
+            assert len(records) == 1, "Verifier never started the generated unit"
+            record = json.loads(records[0].read_text())
+            owner = record["owner"]
+            assert len(record["container_id"]) == 64
+            observed_units.append(record["container_id"])
+            runtime = DockerRuntime(controls)
+            # The trusted attach CLI may forward TERM and remove the unit first.
+            # Recovery must still verify absence and release the saved identity.
+            recover_test_strategy_units(directory)
+            remaining = runtime.command(
+                "ps",
+                "--all",
+                "--quiet",
+                "--filter",
+                f"label=org.tradingdev.execution.owner={owner}",
+            )
+            assert remaining.returncode == 0 and not remaining.stdout.strip()
+
+        monkeypatch.setattr(
+            "tests.e2e.codex_harness.recover_test_strategy_units", recover
+        )
         with pytest.raises(AssertionError, match="verification exceeded"):
             verify_generated_strategy(
-                root, timeout_seconds=3, startup_timeout_seconds=30
+                root, timeout_seconds=10, startup_timeout_seconds=30
             )
         assert group_signals == [signal.SIGTERM]
-        assert marker.exists(), "Verifier never reached the hanging strategy"
-        pid = int(marker.read_text(encoding="utf-8"))
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
+        assert len(observed_units) == 1
+        assert not list((root / "workspace/.strategy-runtime").glob("*.json"))
     assert not root.exists()

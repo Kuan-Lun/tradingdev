@@ -117,7 +117,16 @@ def test_ml_probability_row_mismatch_is_rejected(
     monkeypatch.setattr(strategy, "_feature_eng", features)
     monkeypatch.setattr(strategy, "_ml_model", model)
     with pytest.raises(ValueError, match="probabilities must preserve"):
-        strategy.generate_signals(pd.DataFrame({"close": [100.0] * 6}))
+        strategy.generate_signals(
+            pd.DataFrame(
+                {
+                    "close": [100.0] * 6,
+                    "timestamp": pd.date_range(
+                        "2024-01-01", periods=6, freq="h", tz="UTC"
+                    ),
+                }
+            )
+        )
 
 
 @pytest.mark.parametrize("tune", [False, True])
@@ -126,7 +135,10 @@ def test_missing_predictions_do_not_pause_holding_age_in_search_or_execution(
     tune: bool,
 ) -> None:
     frame = pd.DataFrame({"close": [100.0, 98.0, 98.0, 98.0, 102.0, 102.0]}).assign(
-        high=104.0, low=97.0, dvol=50.0
+        high=104.0,
+        low=97.0,
+        dvol=50.0,
+        timestamp=pd.date_range("2024-01-01", periods=6, freq="h", tz="UTC"),
     )
     engine = Mock()
     engine.run.return_value.metrics = {"total_volume": 1.0}

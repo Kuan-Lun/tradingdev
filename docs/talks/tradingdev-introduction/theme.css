@@ -102,3 +102,57 @@ section.compact table { font-size: 23px; }
 section.compact table th, section.compact table td { padding: 13px 16px; }
 section.references { font-size: 25px; }
 section.references li { margin: 13px 0; }
+
+/* Actual browser captures: scale proportionally and crop only in the slide. */
+section.case-shot { justify-content: flex-start; padding-top: 60px; }
+section.case-shot h2 { font-size: 38px; margin: 0 0 20px; }
+section.case-shot p:has(> img) {
+  width: 1120px;
+  height: 470px;
+  margin: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 1px solid #c9d4d2;
+}
+section.case-shot p > img {
+  display: block;
+  width: 1120px;
+  max-width: none;
+  height: auto;
+  transform: translateY(-51px);
+}
+section.case-shot p:not(:has(> img)) { font-size: 20px; margin: 14px 0 0; }
+section.case-native p > img { transform: none; }
+section.case-equity p > img {
+  width: auto;
+  max-width: 100%;
+  height: 470px;
+  object-fit: contain;
+  margin: 0 auto;
+}
+
+/* Visible conversation text remains selectable and readable at presentation scale. */
+section.case-dialogue { font-size: 24px; justify-content: center; }
+section.case-dialogue h2 { font-size: 38px; margin: 0 0 16px; }
+section.case-dialogue > p { font-weight: 650; font-size: 19px; line-height: 1.25; color: #567076; margin: 12px 0 6px; }
+section.case-dialogue blockquote {
+  font-size: 24px;
+  line-height: 1.45;
+  margin: 0 0 8px;
+  padding: 5px 0 5px 20px;
+}
+section.case-dialogue blockquote:nth-of-type(2) { border-left-color: #087f79; }
+section.case-dialogue blockquote p, section.case-dialogue blockquote ul { margin: 6px 0; }
+section.case-dialogue blockquote li { margin: 3px 0; }
+section.case-options blockquote { font-size: 22px; }
+section.case-options table { font-size: 20px; line-height: 1.3; margin: 8px 0; }
+section.case-options th, section.case-options td { padding: 6px 12px; }
+section.case-transcript > blockquote { border-left-color: #087f79; }
+section.case-transcript.case-with-input > blockquote:first-of-type { border-left-color: #d2714a; }
+section.case-transcript blockquote blockquote {
+  border-left: 2px solid #c9d4d2;
+  font-size: 22px;
+  line-height: 1.5;
+  padding-left: 16px;
+  margin: 8px 0;
+}

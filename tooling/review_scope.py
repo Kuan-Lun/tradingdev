@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
 
+from tooling.documentation import markdown_heading_locations
+from tooling.requirements import DOCUMENT_SCOPES
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -116,6 +119,9 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         **_headings({"ml", "strategy", "interfaces"}, "ML 訊號研究"),
         **_headings(_PRODUCT, "設定與儲存一致性", "MCP 回覆契約"),
         **_headings({"execution", "tooling", "interfaces"}, "程序控制與清理"),
+        **_headings(
+            {"strategy", "execution", "interfaces", "tooling"}, "容器執行 adapter"
+        ),
     },
     "AGENTS.md": {
         **_headings(_ALL, "AGENTS.md", "政策與溝通", "設計原則", "完成回報"),
@@ -135,6 +141,9 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     "CLAUDE.md": _headings(_ALL, "Claude Code"),
     "docs/development.md": {
         **_headings(_ALL, "開發指南", "更新文件"),
+        **_headings(
+            {"strategy", "execution", "interfaces", "tooling"}, "容器建置與驗證"
+        ),
         **_headings(
             {"tooling", "presentation"},
             "環境與常用命令",
@@ -162,6 +171,10 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     "docs/strategy_contract.md": {
         **_headings(_ALL, "Strategy Contract"),
         **_headings(
+            {"strategy", "execution", "interfaces", "tooling"},
+            "Security Model",
+        ),
+        **_headings(
             _PRODUCT, "Contract References", "Research Inputs and Simulation Policy"
         ),
         **_headings(
@@ -173,7 +186,6 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Revision Identity and Eligibility",
             "Execution and Parameter Experiments",
             "Legacy Recovery",
-            "Security Model",
         ),
         **_headings(
             {"strategy", "execution", "results", "interfaces"},
@@ -235,6 +247,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Completed Run Files",
             "Performance Scopes and Provenance",
             "Historical Observation Queries",
+            "Ranking Saved Run Scopes",
             "Research Notes and Archives",
             "Composable Offline Reports",
         ),
@@ -316,6 +329,7 @@ _DOC_HEADINGS["docs/execution_plans.md"].update(
 # are deliberately not matched by a wildcard: an unfamiliar document widens
 # context until its responsibility has been reviewed and registered.
 _WHOLE_DOC_SCOPES: dict[str, frozenset[str]] = {
+    **{path: frozenset(scopes) for path, scopes in DOCUMENT_SCOPES.items()},
     **dict.fromkeys(
         (
             "docs/strategies/README.md",
@@ -354,7 +368,10 @@ _PREFIX_SCOPES: tuple[tuple[str, str], ...] = (
     ("configs/strategies/", "strategy"),
 )
 _EXACT_SCOPES = {
+    **{path: scopes[0] for path, scopes in DOCUMENT_SCOPES.items()},
     "tooling/presentations.py": "presentation",
+    "tooling/presentation_errors.py": "presentation",
+    "tooling/presentation_html.py": "presentation",
     "scripts/presentations.sh": "presentation",
     "scripts/check-presentations.sh": "presentation",
     "tests/tooling/test_presentations.py": "presentation",
@@ -365,6 +382,8 @@ _EXACT_SCOPES = {
     "pyproject.toml": "tooling",
     "uv.lock": "tooling",
     "docs/development.md": "tooling",
+    # Explicit model-test options only; shared fixtures remain conservative.
+    "tests/llm_plugin.py": "tooling",
     "docs/strategy_contract.md": "strategy",
     "docs/run_artifacts.md": "results",
     "docs/ml_research.md": "ml",
@@ -379,6 +398,7 @@ _MODULE_EXACT_SCOPES = {
     "domain/backtest/metrics.py": "results",
     "domain/backtest/test_performance_metrics.py": "results",
     "domain/presentation/confirmation.py": "execution",
+    "domain/presentation/confirmation_contract.py": "execution",
     "adapters/presentation/confirmation.py": "execution",
 }
 _MODULE_PREFIX_SCOPES = (
@@ -611,4 +631,41 @@ def sections_for_scope(scope: str, path: str, text: str) -> tuple[MarkdownSectio
                 if sections[previous].headings == headings[:length]:
                     selected.add(previous)
                     break
+    return tuple(section for index, section in enumerate(sections) if index in selected)
+
+
+def sections_for_reference(
+    path: str, text: str, fragment: str
+) -> tuple[MarkdownSection, ...]:
+    """Keep the cited original subtree, its ancestors and reference definitions."""
+    sections, references = _parse_sections(path, text)
+    if not fragment:
+        return sections
+    line = markdown_heading_locations(text).get(fragment)
+    if line is None:
+        raise ValueError(f"Missing SRS contract heading: {path}#{fragment}")
+    target = next(
+        index
+        for index, section in enumerate(sections)
+        if section.start_line <= line <= section.end_line
+    )
+    headings = sections[target].headings
+    selected = {target}
+    # Container headings belong to their enclosing section, not its later siblings.
+    if headings and line == sections[target].start_line:
+        for index in range(target + 1, len(sections)):
+            if len(sections[index].headings) <= len(headings):
+                break
+            selected.add(index)
+    for length in range(1, len(headings)):
+        for index in range(target - 1, -1, -1):
+            if sections[index].headings == headings[:length]:
+                selected.add(index)
+                break
+    selected.update(
+        index
+        for index, section in enumerate(sections)
+        if not section.headings
+        or any(section.start_line <= line <= section.end_line for line in references)
+    )
     return tuple(section for index, section in enumerate(sections) if index in selected)

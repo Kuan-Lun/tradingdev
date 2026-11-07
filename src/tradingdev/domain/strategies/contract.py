@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import ExitStack
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,13 +14,19 @@ from pydantic import ValidationError
 
 from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
 from tradingdev.domain.randomness import execution_randomness
+from tradingdev.domain.runtime import IsolatedRuntimeError
 from tradingdev.domain.strategies.base import BaseStrategy
-from tradingdev.domain.strategies.loader import StrategyLoader
-from tradingdev.domain.strategies.signals import check_signal_frame, copy_signal_frame
+from tradingdev.domain.strategies.signals import (
+    SignalContractError,
+    check_signal_frame,
+    copy_signal_frame,
+    signal_analysis,
+)
 from tradingdev.domain.strategies.validator import diagnostic
 
 if TYPE_CHECKING:
     from tradingdev.domain.strategies.execution import StrategyExecution
+    from tradingdev.domain.strategies.factory import StrategyFactoryPort
     from tradingdev.domain.strategies.schemas import (
         StrategyDiagnostic,
         StrategyMetadata,
@@ -37,8 +44,8 @@ class SignalContractChecker:
     (input preservation, aligned market rows and finite signals in -1/0/1).
     """
 
-    def __init__(self, loader: StrategyLoader | None = None) -> None:
-        self._loader = loader or StrategyLoader()
+    def __init__(self, loader: StrategyFactoryPort) -> None:
+        self._loader = loader
 
     def check(
         self,
@@ -123,10 +130,10 @@ class SignalContractChecker:
             effective_config["parallel"] = (
                 run_config.parallel or ParallelConfig()
             ).model_dump(mode="json")
-            with execution_randomness(run_config.random_seed):
+            with execution_randomness(run_config.random_seed), ExitStack() as stack:
                 if execution is None:
-                    strategy = self._loader.create_from_config(
-                        effective_config, engine=None
+                    strategy = stack.enter_context(
+                        self._loader.open_from_config(effective_config, engine=None)
                     )
                 else:
                     selected = execution
@@ -134,11 +141,13 @@ class SignalContractChecker:
                         selected = self._loader.override_execution(
                             effective_config["strategy"], execution, parameter_overrides
                         )
-                    strategy = self._loader.create_from_execution(
-                        effective_config["strategy"],
-                        selected,
-                        None,
-                        run_config.parallel or ParallelConfig(),
+                    strategy = stack.enter_context(
+                        self._loader.open_from_execution(
+                            effective_config["strategy"],
+                            selected,
+                            None,
+                            run_config.parallel or ParallelConfig(),
+                        )
                     )
                 if not isinstance(strategy, BaseStrategy):
                     diagnostics.append(
@@ -167,9 +176,28 @@ class SignalContractChecker:
                 }
             return {
                 "diagnostics": diagnostics,
-                "signal_analysis": _signal_analysis(result),
+                "signal_analysis": signal_analysis(result),
                 "effective_config": effective_config,
             }
+        except SignalContractError as exc:
+            diagnostics.extend(exc.diagnostics)
+            return {
+                "diagnostics": diagnostics,
+                "signal_analysis": exc.analysis,
+                "effective_config": effective_config,
+            }
+        except IsolatedRuntimeError as exc:
+            diagnostics.append(
+                _contract_diagnostic(
+                    code=exc.code,
+                    message=str(exc),
+                    fix=(
+                        "Check the isolated runtime or repair the generated strategy "
+                        "and retry."
+                    ),
+                )
+            )
+            return {"diagnostics": diagnostics, "effective_config": effective_config}
         except Exception as exc:  # noqa: BLE001
             diagnostics.append(
                 _contract_diagnostic(
@@ -208,30 +236,3 @@ def _fixture_df(rows: int) -> pd.DataFrame:
             "volume": [1000.0 + (i % 24) * 10.0 for i in range(rows)],
         }
     )
-
-
-def _signal_analysis(result: pd.DataFrame) -> dict[str, Any]:
-    signals = result["signal"]
-    distribution = {
-        str(key): int(value)
-        for key, value in signals.value_counts(dropna=False).to_dict().items()
-    }
-    transitions = int(signals.fillna(0).ne(signals.fillna(0).shift()).sum() - 1)
-    active = int(signals.isin([-1, 1]).sum())
-    return {
-        "rows": int(len(result)),
-        "signal_distribution": distribution,
-        "nan_count": int(signals.isna().sum()),
-        "transition_count": max(transitions, 0),
-        "active_signal_ratio": active / max(len(result), 1),
-        "first_timestamp": (
-            str(result["timestamp"].iloc[0])
-            if "timestamp" in result.columns and not result.empty
-            else None
-        ),
-        "last_timestamp": (
-            str(result["timestamp"].iloc[-1])
-            if "timestamp" in result.columns and not result.empty
-            else None
-        ),
-    }

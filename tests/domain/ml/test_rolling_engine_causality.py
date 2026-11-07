@@ -54,6 +54,14 @@ def _market_frame(rows: int) -> pd.DataFrame:
 class _RecordingFeatureEngineer(FeatureEngineer):
     """Record the windows and contexts instead of computing real indicators."""
 
+    @property
+    def minimum_context_rows(self) -> int:
+        return 1
+
+    @property
+    def context_rows(self) -> int:
+        return 21
+
     def __init__(self) -> None:
         super().__init__(lookback=10, target_horizon=1)
         self.windows: list[pd.DataFrame] = []
@@ -325,7 +333,7 @@ def test_a_window_below_the_minimum_keeps_the_previous_model() -> None:
     )
 
     assert factory.calls == 0
-    assert probabilities["p_long"].tolist() == [1.0] * len(scored)
+    assert probabilities[1].tolist() == [1.0] * len(scored)
 
 
 def test_replaying_the_training_frame_does_not_replay_it() -> None:
@@ -383,12 +391,12 @@ def test_an_empty_scored_frame_produces_no_signals() -> None:
     ("rows", "cooldown", "expected"),
     [
         (
-            [(0.9, 0.1), (0.1, 0.9), (0.5, 0.5), (None, None), (0.7, 0.7)],
+            [(0.9, 0.1), (0.1, 0.9), (0.5, 0.5), (None, None), (0.7, 0.3)],
             0,
             [1, -1, 0, 0, 1],
         ),
         (
-            [(0.9, 0.1), (0.1, 0.9), (0.5, 0.5), (None, None), (0.7, 0.7)],
+            [(0.9, 0.1), (0.1, 0.9), (0.5, 0.5), (None, None), (0.7, 0.3)],
             2,
             [1, 0, 0, 0, 1],
         ),
@@ -401,7 +409,7 @@ def test_signals_follow_the_threshold_and_cooldown(
     cooldown: int,
     expected: list[int],
 ) -> None:
-    frame = pd.DataFrame(rows, columns=["p_long", "p_short"])
+    frame = pd.DataFrame(rows, columns=[1, -1])
 
     signals = signals_from_probabilities(frame, threshold=0.6, cooldown=cooldown)
 
@@ -549,7 +557,7 @@ def test_replay_waits_for_a_model_that_has_not_seen_the_scored_future() -> None:
         model_factory=_AlwaysLong,
     )
     assert outcome.probabilities.iloc[:5].isna().all().all()
-    assert outcome.probabilities.iloc[5:]["p_long"].eq(1).all()
+    assert outcome.probabilities.iloc[5:][1].eq(1).all()
 
 
 def test_replay_without_a_successful_refit_reports_model_availability() -> None:

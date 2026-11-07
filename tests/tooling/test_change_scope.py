@@ -9,10 +9,13 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
+from tooling.git import change_scope
 from tooling.git.change_scope import ChangeScope, classify_changes
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from pytest import CaptureFixture, MonkeyPatch
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -55,6 +58,9 @@ def repository() -> Iterator[tuple[Path, str]]:
         ("tooling/git/claim_issue.py", "tooling"),
         ("tooling/git/change_scope.py", "tooling"),
         ("tooling/review_scope.py", "tooling"),
+        ("tooling/presentation_html.py", "tooling"),
+        ("tooling/presentation_errors.py", "tooling"),
+        ("tooling/requirements.py", "tooling"),
         ("tests/tooling/test_new_tool.py", "tooling"),
         ("scripts/check-tooling.sh", "tooling"),
         ("tests/conftest.py", "code"),
@@ -141,6 +147,127 @@ def test_invalid_git_identity_fails_instead_of_selecting_docs(
 
 
 @pytest.mark.parametrize(
+    "paths, commit, delivery, candidate",
+    [
+        (["README.md"], "docs", "docs", ["docs"]),
+        (["docs/requirements.md"], "docs", "docs", ["docs", "documentation_review"]),
+        (
+            [
+                "docs/requirements/execution.md",
+                "docs/talks/tradingdev-introduction/slides.md",
+            ],
+            "presentations",
+            "presentations",
+            ["presentations", "documentation_review"],
+        ),
+        (
+            ["docs/talks/tradingdev-introduction/slides.md"],
+            "presentations",
+            "presentations",
+            ["presentations"],
+        ),
+        (["AGENTS.md"], "fast", "tooling", ["documentation_review", "tooling"]),
+        (["app.py"], "fast", "full", ["documentation_review", "full"]),
+        (
+            ["app.py", "docs/talks/tradingdev-introduction/slides.md"],
+            "fast",
+            "full",
+            ["presentations", "documentation_review", "full"],
+        ),
+    ],
+)
+def test_plan_cli_reports_required_checks_for_the_staged_tree(
+    repository: tuple[Path, str],
+    capsys: CaptureFixture[str],
+    paths: list[str],
+    commit: str,
+    delivery: str,
+    candidate: list[str],
+) -> None:
+    root, base = repository
+    for name in paths:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Changed\n")
+        _git(root, "add", name)
+    staged = _git(root, "write-tree")
+    (root / "app.py").write_text("Unstaged edits must not affect this plan\n")
+    assert change_scope.main(["--repo", str(root), "--base", base, "--staged"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["code"] == "verification_planned"
+    assert plan["source"] == "staged"
+    assert (plan["base_tree"], plan["candidate_tree"]) == (base, staged)
+    assert plan["commit_profile"] == commit
+    assert plan["delivery_profile"] == delivery
+    assert plan["candidate_checks"] == candidate
+    assert _git(root, "write-tree") == staged
+    assert (root / "app.py").read_text() == "Unstaged edits must not affect this plan\n"
+
+
+def test_plan_cli_uses_explicit_trees_and_rejects_missing_identity(
+    repository: tuple[Path, str], capfd: CaptureFixture[str]
+) -> None:
+    root, base = repository
+    (root / "README.md").write_text("# Changed\n")
+    _git(root, "add", "README.md")
+    candidate = _git(root, "write-tree")
+    (root / "app.py").write_text("VALUE = 2\n")
+    _git(root, "add", "app.py")
+    arguments = ["--repo", str(root), "--base", base, "--tree", candidate]
+    assert change_scope.main(arguments) == 0
+    plan = json.loads(capfd.readouterr().out)
+    assert plan["source"] == "tree"
+    assert plan["candidate_tree"] == candidate
+    assert plan["scope"] == "docs"
+    assert change_scope.main([*arguments[:-1], "missing-tree"]) == 1
+    output = capfd.readouterr()
+    assert output.out == ""
+    assert json.loads(output.err)["code"] == "verification_plan_failed"
+
+
+def test_plan_cli_keeps_git_blob_read_failures_in_json(
+    repository: tuple[Path, str], capfd: CaptureFixture[str]
+) -> None:
+    root, base = repository
+    path = root / "docs/.nojekyll"
+    path.write_text("nonempty marker\n")
+    _git(root, "add", "docs/.nojekyll")
+    candidate = _git(root, "write-tree")
+    blob = _git(root, "rev-parse", f"{candidate}:docs/.nojekyll")
+    (root / ".git/objects" / blob[:2] / blob[2:]).unlink()
+    assert (
+        change_scope.main(["--repo", str(root), "--base", base, "--tree", candidate])
+        == 1
+    )
+    output = capfd.readouterr()
+    assert output.out == ""
+    failure = json.loads(output.err)
+    assert failure["code"] == "verification_plan_failed"
+    assert "fatal:" in failure["error"]
+
+
+def test_plan_cli_rejects_index_movement_without_discarding_it(
+    repository: tuple[Path, str],
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    root, base = repository
+
+    def racing_plan(*args: Path | str) -> ChangeScope:
+        result = classify_changes(root, base, base)
+        (root / "README.md").write_text("# Concurrent staged change\n")
+        _git(root, "add", "README.md")
+        return result
+
+    monkeypatch.setattr(change_scope, "classify_changes", racing_plan)
+    assert change_scope.main(["--repo", str(root), "--base", base, "--staged"]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert json.loads(output.err)["code"] == "verification_plan_failed"
+    assert _git(root, "write-tree") != base
+
+
+@pytest.mark.parametrize(
     "name, content, expected",
     [
         ("docs/talks/tradingdev-introduction/slides.md", "# Slides\n", "presentations"),
@@ -182,6 +309,87 @@ def test_mixed_changes_retain_presentation_validation(
         ]
     )
     assert scope.presentations_changed
+
+
+@pytest.mark.parametrize("change", ["add", "modify", "delete"])
+def test_saved_report_changes_use_presentation_checks(
+    repository: tuple[Path, str], change: str
+) -> None:
+    root, base = repository
+    name = "docs/talks/tradingdev-introduction/evidence/demo/cases/example/report.html"
+    target = root / name
+    target.parent.mkdir(parents=True)
+    if change != "add":
+        target.write_text('<a href="index.html">Report</a>\n')
+        _git(root, "add", name)
+        base = _git(root, "write-tree")
+    if change == "delete":
+        target.unlink()
+    else:
+        target.write_text('<a href="missing.html">Broken report</a>\n')
+    _git(root, "add", name)
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.kind == "presentations"
+    assert scope.candidate_checks == ("presentations",)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "executable",
+        "symlink",
+        "remove_executable",
+        "product_rename",
+        "mixed",
+        "unknown",
+    ],
+)
+def test_evidence_registration_does_not_bypass_code_checks(
+    repository: tuple[Path, str], change: str
+) -> None:
+    root, base = repository
+    name = "docs/talks/tradingdev-introduction/evidence/demo/cases/example/strategy.py"
+    target = root / name
+    target.parent.mkdir(parents=True)
+    if change == "product_rename":
+        _git(root, "mv", "app.py", name)
+    elif change == "symlink":
+        target.symlink_to(root / "app.py")
+        _git(root, "add", name)
+    else:
+        target.write_text("# Saved source, never imported by the product\n")
+        _git(root, "add", name)
+        if change in {"executable", "remove_executable"}:
+            _git(root, "update-index", "--chmod=+x", name)
+            if change == "remove_executable":
+                base = _git(root, "write-tree")
+                _git(root, "update-index", "--chmod=-x", name)
+        elif change == "mixed":
+            (root / "app.py").write_text("VALUE = 2\n")
+            _git(root, "add", "app.py")
+        else:
+            _git(root, "mv", name, str(target.with_name("run.py")))
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.kind == "code"
+    assert scope.candidate_checks == ("presentations", "documentation_review", "full")
+
+
+def test_evidence_formats_use_both_git_blobs_not_unstaged_repairs(
+    repository: tuple[Path, str],
+) -> None:
+    root, base = repository
+    name = "docs/talks/tradingdev-introduction/evidence/demo/case.json"
+    target = root / name
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"\xff")
+    _git(root, "add", name)
+    invalid = _git(root, "write-tree")
+    target.write_text("{}")
+    assert classify_changes(root, base, invalid).kind == "code"
+    _git(root, "add", name)
+    valid = _git(root, "write-tree")
+    assert classify_changes(root, base, valid).kind == "presentations"
+    assert classify_changes(root, invalid, valid).kind == "code"
 
 
 @pytest.mark.parametrize(
@@ -317,3 +525,35 @@ def test_vscode_tasks_only_allow_known_presentation_tasks(
     scope = classify_changes(root, base, _git(root, "write-tree"))
     assert scope.kind == ("presentations" if change == "known" else "code")
     assert scope.presentations_changed
+
+
+@pytest.mark.parametrize("change", ["delete", "rename", "edit", "unsafe_mode", "mixed"])
+def test_srs_review_tracks_both_git_sides_and_keeps_stronger_checks(
+    repository: tuple[Path, str], change: str
+) -> None:
+    root, _ = repository
+    source = root / "docs/requirements.md"
+    source.write_text("# SRS\n")
+    _git(root, "add", ".")
+    base = _git(root, "write-tree")
+    if change == "delete":
+        source.unlink()
+        _git(root, "add", "--update", "docs/requirements.md")
+    elif change == "rename":
+        _git(root, "mv", "docs/requirements.md", "docs/other.md")
+    elif change == "unsafe_mode":
+        _git(root, "update-index", "--chmod=+x", "docs/requirements.md")
+    else:
+        source.write_text("# Revised SRS\n")
+        if change == "mixed":
+            (root / "app.py").write_text("VALUE = 2\n")
+        _git(root, "add", ".")
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.requirements_changed
+    assert "documentation_review" in scope.candidate_checks
+    assert scope.commit_profile == (
+        "fast" if change in {"mixed", "unsafe_mode"} else "docs"
+    )
+    assert scope.delivery_profile == (
+        "full" if change in {"mixed", "unsafe_mode"} else "docs"
+    )

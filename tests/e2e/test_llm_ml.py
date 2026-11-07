@@ -200,7 +200,10 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert ranked.arguments.get("metric") == "hit_rate"
     assert ranked.arguments.get("dataset_id") == dataset_id
     leaderboard = ranked.result
-    assert leaderboard["metric"] == "hit_rate"
+    # The echo is source-qualified: one tool ranks two sources now, so the
+    # answer names the one it read instead of restating a bare metric name.
+    assert leaderboard["metric"] == "signal.hit_rate"
+    assert leaderboard["source"] == "signal"
     assert leaderboard["n_candidates"] == leaderboard["n_ranked"] == 1
     assert leaderboard["caveats"], "Leaderboard must retain interpretation caveats"
     row = leaderboard["ranked"][0]
@@ -455,6 +458,7 @@ def test_natural_request_interprets_training_provenance(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
                 "max_tool_calls": 24,
             }
@@ -474,7 +478,6 @@ def test_natural_request_interprets_training_provenance(
                         case.request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, case.request, **options))
@@ -505,6 +508,7 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "tool_names": ML_TOOLS,
                 "user_reply": observe_final,
                 "max_tool_calls": 16,
@@ -519,7 +523,6 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
                     ML_PROMPT,
                     base_url=pytestconfig.getoption("llm_base_url"),
                     temperature=pytestconfig.getoption("llm_temperature"),
-                    reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
 
@@ -611,6 +614,7 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": reply,
                 "max_tool_calls": 18,
             }
@@ -630,7 +634,6 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))
@@ -676,6 +679,7 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
     with temporary_mcp_workspace() as workspace:
         entries = seed_ml_report_candidates(WorkspacePaths(workspace.workspace))
         turns: list[ModelTurn] = []
+        observed_calls: list[ToolCall] = []
 
         async def observe_final(turn: ModelTurn) -> None:
             turns.append(turn)
@@ -684,8 +688,10 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
                 "max_tool_calls": 18,
+                "on_tool_call": observed_calls.append,
             }
             async with workspace.connect() as client:
                 names = list(client.output_schemas)
@@ -703,14 +709,22 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
                         ML_REPORT_REQUEST,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(
                 await run_codex(workspace.root, ML_REPORT_REQUEST, **options)
             )
 
-        calls = asyncio.run(run())
+        try:
+            calls = asyncio.run(run())
+        except Exception as error:
+            error.add_note(
+                "ML report calls before model failure:\n"
+                + json.dumps(
+                    [asdict(call) for call in observed_calls], ensure_ascii=False
+                )
+            )
+            raise
         transcript = {
             "calls": [asdict(call) for call in calls],
             "turns": [asdict(turn) for turn in turns],
@@ -788,6 +802,7 @@ def test_natural_request_discovers_rolling_evidence(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
             }
             async with workspace.connect() as client:
@@ -807,41 +822,90 @@ def test_natural_request_discovers_rolling_evidence(
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))
 
         attempted = asyncio.run(run())
-        assert all(call.name in readonly_tools for call in attempted), attempted
-        calls = effective_workflow_calls(attempted)
-        assert any(
-            c.name == "get_ml_contract" and c.result.get("success") for c in calls
-        )
-        summaries = [
-            c.result
-            for c in calls
-            if c.name == "get_run_metrics" and c.result.get("success")
-        ]
-        assert (
-            summaries and summaries[-1]["metadata"]["rolling_trace"]["roll_count"] == 4
-        )
-        evidence = [
-            c.result
-            for c in calls
-            if c.name == "get_artifact"
-            and c.result.get("success")
-            and c.arguments.get("artifact_id") == "rolling_saved:performance_json"
-            and "content" in c.result
-            and "content_page" in c.result
-        ]
-        assert evidence and any(
-            re.search(r'"n_train_rows"\s*:\s*57\b', page["content"])
-            for page in evidence
-        )
-        assert turns and "57" in turns[-1].text
+        transcript = {
+            "calls": [asdict(call) for call in attempted],
+            "turns": [asdict(turn) for turn in turns],
+        }
+        try:
+            assert all(call.name in readonly_tools for call in attempted), attempted
+            artifact = store.get_artifact("rolling_saved:performance_json")
+            assert artifact is not None
+            assert turns
+            verify_rolling_evidence(
+                attempted, turns[-1].text, Path(artifact["path"]).read_text()
+            )
+        except (AssertionError, KeyError, ValueError, IndexError) as error:
+            pytest.fail(
+                f"Incomplete rolling evidence: {error}\n"
+                + json.dumps(transcript, ensure_ascii=False)
+            )
         print(
             "[rolling-evidence] Final reply for semantic review:\n" + turns[-1].text,
             flush=True,
         )
     assert not workspace.root.exists()
+
+
+def verify_rolling_evidence(
+    attempted: list[ToolCall], reply: str, saved_text: str
+) -> None:
+    """Accept a bound summary plus detail, or complete saved artifact evidence."""
+    calls = effective_workflow_calls(attempted)
+    assert any(c.name == "get_ml_contract" and c.result.get("success") for c in calls)
+    summaries = [
+        c.result.get("metadata", {}).get("rolling_trace", {})
+        for c in calls
+        if c.name == "get_run_metrics"
+        and c.result.get("success")
+        and c.arguments.get("run_id") == "rolling_saved"
+        and c.result.get("scope") == "fold/0/test"
+    ]
+    summary = any(
+        item.get("roll_count") == 4
+        and item.get("trained_roll_count") == 3
+        and item.get("artifact_id") == "rolling_saved:performance_json"
+        for item in summaries
+    )
+    covered = bytearray(len(saved_text))
+    contents: list[str] = []
+    for call in calls:
+        if not (
+            call.name == "get_artifact"
+            and call.result.get("success")
+            and call.arguments.get("artifact_id") == "rolling_saved:performance_json"
+            and "content" in call.result
+            and "content_page" in call.result
+        ):
+            continue
+        assert (
+            call.result["artifact"]["artifact_id"] == "rolling_saved:performance_json"
+        )
+        page = call.result["content_page"]
+        content = call.result["content"]
+        offset = page["offset"]
+        assert page["total_characters"] == len(saved_text)
+        assert page["content_sha256"] == hashlib.sha256(saved_text.encode()).hexdigest()
+        assert 0 <= offset <= offset + len(content) <= len(saved_text)
+        assert content == saved_text[offset : offset + len(content)]
+        covered[offset : offset + len(content)] = b"1" * len(content)
+        contents.append(content)
+    observed_text = "".join(
+        character if covered[index] else "\0"
+        for index, character in enumerate(saved_text)
+    )
+    assert contents and re.search(r'"n_train_rows"\s*:\s*57\b', observed_text), (
+        "Read the second roll's saved labeled-row count"
+    )
+    assert summary or (covered and all(covered)), (
+        "Read bound roll counts or the complete saved trace"
+    )
+    prose = visible_text(reply)
+    assert all(re.search(rf"(?<!\d){number}(?!\d)", prose) for number in (4, 3, 57)), (
+        "Explain all requested roll counts"
+    )
+    assert "rolling_saved" in prose, "Identify the saved evidence in the final reply"

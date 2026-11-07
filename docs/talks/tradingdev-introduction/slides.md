@@ -19,7 +19,7 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 *完整閱讀版 · 2026 年 10 月。歷史回測與策略研究。*
 
 <!--
-封面後先提供閱讀路線，再交代實驗室研究需求、第三方工具的能力範圍，以及本專案可由提示詞驅動的工程回饋方式。用具體案例說明預期價值，再介紹目前基礎、使用情境與策略實驗，最後展開工程回饋的驗證及專用 Skill 等後續目標。
+封面後先提供閱讀路線，再交代實驗室研究需求、第三方工具的能力範圍，以及本專案的工程回饋方式。用具體案例說明預期價值，再介紹目前基礎、使用情境與策略實驗，最後展開專用 Skill 與工程回饋的後續驗證目標。
 初稿專案事實基準：d57da5c20aa7dc578dabef92bbf14d796df8adb6；執行確認與報告交付流程依對應頁面所列的新版本更新。外部資料查核：2026-10-25 至 2026-10-26。
 開場的第三方能力摘要另於 2026-10-31 查核所列官方文件；「目前已建立的研究基礎」依 cd95d6091bbc2a46c6a58cdb326aa5df730519c4 更新。
 來源：https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/README.md
@@ -35,8 +35,8 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 | --- | --- | --- |
 | 01 | [開發動機與專案定位](index.html#3) | 現成工具的範圍、自製理由與使用情境 |
 | 02 | [策略研究](index.html#11) | 角色分工、運算安排與策略實驗 |
-| 03 | [經驗如何回饋專案](index.html#25) | 共用改進、驗證方式與開發流程 |
-| 04 | [後續開發方向](index.html#29) | 可獨立指定的開發目標 |
+| 03 | [經驗如何回饋專案](index.html#50) | 開發經驗的整合與驗證 |
+| 04 | [後續開發方向](index.html#53) | 可獨立指定的開發目標 |
 
 <!-- _footer: "點選章名跳轉。方向鍵換頁，P 開啟講者模式。" -->
 
@@ -86,15 +86,15 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 檢查策略問題，分析實驗結果，協助下一輪修正。
 
 **AI 協助後端迭代**
-透過提示詞，讓 AI 開發助手依研究經驗提出並驗證後端改進。
+透過提示詞，讓 AI 代理依研究經驗提出並驗證後端改進。
 
 <!-- _footer: "開發目標，尚未全部完成。" -->
 
 <!--
 共用實驗基礎需要清楚區分各自的策略、版本及結果，並保存重現實驗所需的設定與依據。多樣的策略與模型包含交易規則、統計方法及機器學習模型的建構，以及適用的訓練與驗證。
 策略回饋應引用檢查與實驗證據，協助提出修改，再驗證修改是否有效。
-人員可選擇策略開發案例，以提示詞啟動 AI 開發助手，讀取證據並提出後端改進方案及程式修改，執行測試並依結果繼續修正。通過審查後，將適合共用的檢查、元件或流程改善整合回後端，支援下一輪研究。
-目前已有回測、研究紀錄與可擴充的共用元件，支援上述維護方式。工程回饋的專用 Skill、多人的服務身分與權限仍待開發；現有架構不代表已提供服務自行觸發改進或不中斷更新。以下以這些需求檢視現有工具與整合責任。
+人員可選擇策略開發案例，以提示詞啟動 AI 代理，讀取證據並提出後端改進方案及程式修改，執行測試並依結果繼續修正。通過審查後，將適合共用的檢查、元件或流程改善整合回後端，支援下一輪研究。
+目前已有回測、研究紀錄與可擴充的共用元件，支援上述維護方式。工程回饋由 research-feedback Skill 引導外部開發助手執行，多人的服務身分與權限仍待開發；此流程不代表服務會自行觸發改進或不中斷更新。以下以這些需求檢視現有工具與整合責任。
 -->
 
 ---
@@ -109,7 +109,7 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 | VectorBT PRO MCP | AI 程式研究與按需研究指引 |
 | QuantConnect | 研究代理、診斷、專案記憶與共用程式庫 |
 
-**本專案聚焦：把跨研究案例轉成後端修改，
+**本專案聚焦：把跨研究案例轉成 TradingDev 的改進，
 並驗證改進能否供其他策略重用。**
 
 *下列公開文件未描述完整提供這項流程；不代表無法擴充。*
@@ -128,23 +128,23 @@ VectorBT 與 Backtrader 的官方文件提供回測、參數研究與擴充能�
 
 <!-- _class: compact -->
 
-## 為何需要自行建立研究後端
+## 為何需要自行開發 TradingDev
 
-**自行維護共用後端，讓研究經驗能回饋下一次開發。**
+**自行維護 TradingDev，讓研究經驗能回饋下一次開發。**
 
 - **案例與證據**：連結問題、修正依據與適用條件。
 - **修改與驗證**：AI 提出檢查或元件，經跨策略測試與審查整合。
 - **追蹤與評估**：保留改進版本，檢查後續研究是否減少重複錯誤。
 
-這需要掌握**研究證據、後端檢查與版本更新流程**。
+這需要掌握**研究證據、檢查規則與版本更新流程**。
 
-*已有架構基礎，可透過提示詞驅動整合；後續以專用 Skill 標準化流程。*
+*透過 research-feedback Skill，讓開發助手依案例完成整合與驗證。*
 
 <!--
-自製的研發理由是掌握研究證據、共用檢查與更新流程，讓案例能回饋到自己維護的後端。現成回測、記憶與程式庫可作基礎，案例如何形成改進、如何判斷適用、如何驗證及追蹤版本，則需依研究需求安排。
-本專案已有策略版本、固定執行設定、檢查、結果查詢與研究筆記，以及可擴充的 domain 元件與 service 組裝點。人員可透過提示詞啟動外部開發助手，依案例進行修改、測試與審查；後續建立專用 Skill 將這套流程標準化。跨研究自動檢索仍待開發，也未提供服務自行觸發修改或不中斷更新。
+自製的研發理由是掌握研究證據、共用檢查與更新流程，讓案例能回饋到 TradingDev 的共用能力。現成回測、記憶與程式庫可作基礎，案例如何形成改進、如何判斷適用、如何驗證及追蹤版本，則需依研究需求安排。
+本專案已有策略版本、固定執行設定、檢查、結果查詢與研究筆記，以及可擴充的 domain 元件與 service 組裝點。人員可透過 research-feedback Skill 啟動外部開發助手，依選定案例進行評估、修改、測試與審查；不適合共用時可不修改。跨研究自動檢索仍待開發，也未提供服務自行觸發修改或不中斷更新。
 現有工具可以繼續作為計算基礎，外部開發助手也可負責提案與程式修改。自製研究服務不要求重寫回測引擎、對話模型或整個交易平台；哪些元件需維護由具體案例決定。
-來源：本專案 ARCHITECTURE.md 的策略生命週期、診斷擴充與研究筆記，以及後續開發目標 TODO-02、TODO-03。
+來源：本專案 ARCHITECTURE.md 的策略生命週期、診斷擴充與研究筆記，以及 TODO-02、TODO-03 的後續驗證方向。
 -->
 
 ---
@@ -152,29 +152,29 @@ VectorBT 與 Backtrader 的官方文件提供回測、參數研究與擴充能�
 ## 一次修正如何幫助其他研究
 
 1. 成員 A 發現資料時間對齊錯誤，保留可重現案例。
-2. 人員提示 AI 開發助手，提出共用檢查與測試。
-3. 其他策略通過回歸驗證，審查後更新後端。
+2. 人員提示 AI 代理，提出共用檢查與測試。
+3. 其他策略通過回歸驗證，審查後更新 TradingDev。
 4. 成員 B 開發不同策略時，提早攔下同類錯誤。
 
 **已具備將研究經驗整合為共用能力的架構基礎，
-可透過提示詞驅動 AI 開發助手進行整合。**
+可透過提示詞驅動 AI 代理進行整合。**
 
-後續將建立專用 Skill，標準化案例分析、修改、驗證與審查流程。
+research-feedback Skill 引導案例分析、修改、驗證與審查流程。
 
 *情境示意；減少重複錯誤的效果尚待實測。*
 
 <!--
 這是可由人員透過提示詞啟動的工程回饋示例。假設某種新資料來源的時間語意造成對齊問題，從個別修正抽出共用檢查，再驗證其他策略是否適用。示例不代表已發生的實驗室案例或目前尚未修復的產品 bug，也尚未量測減少重複錯誤的效果。
-現有架構與開發工具支援外部助手修改、測試與審查，專用 Skill 尚未建立。此處說明可採用的維護方式，不表示服務已內建自主修改或熱更新機制。
+research-feedback Skill 引導外部助手固定來源、判斷共用價值、整合與驗證，仍須遵循測試及審查政策。此處說明維護流程，不表示服務已內建自主修改或熱更新機制。
 預期成果包括可重現案例、問題及修正證據、適用條件、共用檢查或元件、測試及改進版本。AI 提案須經測試與審查，不代表自動發布核心程式，也不會自動分享私人策略。
-能否泛化仍待實驗。後段「工程回饋的驗證方式」說明與既有工具、指引及記憶的對照，以及重複錯誤、誤判與人工工時等觀察方式。
+能否泛化仍待實驗。後段「開發經驗的整合與驗證」說明共用能力的抽取與驗證流程；講者稿保留與既有工具、指引及記憶的對照，以及重複錯誤、誤判與人工工時等觀察方式。
 -->
 
 ---
 
 ## 目前已建立的研究基礎
 
-> 透過 MCP，讓 AI 運用研究指引建立與修正策略，
+> TradingDev 透過 MCP，讓 AI 運用研究指引建立與修正策略，
 > 依據檢查與實驗結果，提出可追問的分析。
 
 - **策略實驗**：建立與修正策略，完成檢查與歷史回測。
@@ -185,9 +185,9 @@ VectorBT 與 Backtrader 的官方文件提供回測、參數研究與擴充能�
 <!-- _footer: "現況依據：[TradingDev 使用說明](https://github.com/Kuan-Lun/tradingdev/blob/cd95d6091bbc2a46c6a58cdb326aa5df730519c4/README.md)與[架構](https://github.com/Kuan-Lun/tradingdev/blob/cd95d6091bbc2a46c6a58cdb326aa5df730519c4/ARCHITECTURE.md)" -->
 
 <!--
-後端除了接收工具請求、執行計算和保存資料，也提供模型可讀取的研究流程指引、策略契約與診斷。使用者不必自己把一次次實驗的程式、設定和結果拼回來。
-診斷先提供規則式提示，外部 LLM 的報告解讀須保留觀察依據與限制，研究建議不會自動啟動新實驗。研究筆記可保存階段摘要及引用報告，供外部開發助手依提示詞讀取及改進後端；跨研究自動檢索與工程回饋的專用 Skill 仍待開發。
-TradingDev 不內建對話模型。這些能力是研究後端的現有基礎，不代表已提供多人權限或完整執行隔離。
+TradingDev 除了接收工具請求、執行計算和保存資料，也提供模型可讀取的研究流程指引、策略契約與診斷。使用者不必自己把一次次實驗的程式、設定和結果拼回來。
+診斷先提供規則式提示，外部 LLM 的報告解讀須保留觀察依據與限制，研究建議不會自動啟動新實驗。研究筆記可保存階段摘要及引用報告，供外部開發助手透過 research-feedback Skill 讀取選定案例及改進 TradingDev；跨研究自動檢索仍待開發。
+TradingDev 不內建對話模型。這些能力是 TradingDev 的現有基礎，不代表已提供多人權限或完整執行隔離。
 基礎計算包含行情、技術指標、回測與參數研究，採用 VectorBT、TA-Lib、QuantStats 等套件，沒有把 Freqtrade 整合為依賴。ML 訊號研究是現有能力，並非本專案獨有，也不代表已有任意模型支援或真實下單。
 ML 模型包含 XGBoost、LightGBM、CatBoost 方向模型；QuantConnect 也提供機器學習研究，支援更多常見框架。模型種類不代表較泛用。
 基礎計算與 ML 來源：pyproject.toml、src/tradingdev/domain/ml/models/registry.py；https://www.quantconnect.com/docs/v2/writing-algorithms/machine-learning/popular-libraries/pytorch
@@ -198,7 +198,7 @@ ML 模型包含 XGBoost、LightGBM、CatBoost 方向模型；QuantConnect 也提
 
 <!-- _class: compact -->
 
-## 共用後端的使用情境
+## TradingDev 的使用情境
 
 | 情境 | 如何使用 |
 | --- | --- |
@@ -213,7 +213,7 @@ ML 模型包含 XGBoost、LightGBM、CatBoost 方向模型；QuantConnect 也提
 <!--
 這些是依現有能力提出的使用情境，不是已完成的客戶案例。教學重點是如何檢查假說，不是比較誰的回測收益最高。
 團隊可以沿用自己的資料、實驗格式與檢查規則，再將驗證過的共用規則改進到服務中。初期可在可信環境採獨立部署；同一 server 的 workspace 不是現成的多租戶或執行安全隔離。
-公司可將研究後端接到既有 AI 入口，由產品入口選擇對話模型、計量 token 用量及安排收費，行情、主機與結果保存則由整合者安排。公開多人服務仍須另行開發權限、隔離與資源管理，收費上線前也須核實依賴及行情授權。
+公司可將 TradingDev 接到既有 AI 入口，由產品入口選擇對話模型、計量 token 用量及安排收費，行情、主機與結果保存則由整合者安排。公開多人服務仍須另行開發權限、隔離與資源管理，收費上線前也須核實依賴及行情授權。
 個人助手、公司模型服務及私有部署並非 TradingDev 獨有；QuantConnect Private Cloud 也有公司資料與運算的方案，不能把私有部署當作自製的唯一理由。
 來源：README 的 MCP 連接方式與執行限制、ARCHITECTURE.md 的產品邊界與整合層分工。
 -->
@@ -243,81 +243,47 @@ TradingDev 透過 MCP 提供**研究流程指引與檢查規則**，
 
 <!--
 研究不是泛稱投資分析。此處具體指策略程式的建立、檢查、歷史回測、參數實驗、時序驗證與結果查詢。
-指引由後端提供，推理與互動由使用者選擇的 AI 客戶端承擔。直接在 Codex 開發策略時，Codex 就是這個角色，不需要另建一套助手服務。實際呈現與指引採用方式由客戶端決定，不能把提示詞當成所有客戶端必然遵循的保證。
+指引由 TradingDev 提供，推理與互動由使用者選擇的 AI 代理承擔。直接在 Codex 開發策略時，Codex 就是這個角色，不需要另建一套助手服務。實際呈現與指引採用方式由客戶端決定，不能把提示詞當成所有客戶端必然遵循的保證。
 來源：src/tradingdev/mcp/prompts.py、server.py 與 tools/strategy.py。
 -->
 
 ---
 
-<!-- _class: compact -->
-
-## MCP 的提示詞引導：均線策略案例
-
-> **使用者**：「我想測試短均線高於長均線時買進。」
-
-| TradingDev 的指引 | 前端 AI 可能接著問 |
-| --- | --- |
-| **缺項時追問** | 「想測哪個標的、哪段期間？每根 K 棒代表多久？」 |
-| **將策略具體化** | 「均線各用幾根？短均線跌破時，是平倉還是做空？」 |
-| **執行前確認** | 「本金、手續費與滑價有指定嗎？若沒有，我先列出模擬預設供你確認。」 |
-
-*示意對話，問法依情境調整；整理成確認單後，使用者同意才回測。*
-
-<!--
-本頁保留使用者只有均線交易構想的情境，以具體問句展示 TradingDev 的指引如何影響前端互動。表中的問題可分散於多輪對話，不是要求一次問完；補齊必要研究選擇後，再釐清策略細節與提出方案。這是依現有指引編寫的示意，不是真實模型逐字紀錄或已執行的回測。
-提示詞引導由 TradingDev 的 server instructions、工具說明與按需策略契約提供；此處不是指另行註冊的 MCP prompts，也不是固定問卷。實際問句與互動由 Codex 等客戶端的 LLM 組織。
-建立新研究前，構想、標的、回測期間與 K 棒頻率缺項時須追問，不能從範例猜出選擇。只有明確要求沿用已選定研究時，才可繼承其設定。
-策略具體化包含整理進場、持有、出場與交易方向，確認參數並形成可驗證的程式。模型可提出有說明依據的方案，不能把自己的假設冒充使用者要求。
-本金與成本未指定時可依共用模擬政策解析，明示有效值優先。前端須呈現後端產生的確認摘要與 HTML，待使用者明確同意該方案才提交執行。這些是歷史回測假設，不是即時費率或真實下單設定；本金與交易規模依執行模式適用。
-提示詞要求不保證所有客戶端一定遵循；後端另檢查必要欄位、設定與執行狀態，但不能證明輸入或同意真的來自使用者。
-來源：src/tradingdev/mcp/prompts.py 的 SERVER_INSTRUCTIONS、server.py 的 instructions 註冊，以及 src/tradingdev/domain/strategies/templates.py 的 research 契約與 src/tradingdev/domain/research_policy.py。
--->
-
----
-
-<!-- _class: compact -->
-
-## 回測證據與 AI 解讀：均線策略案例
-
-> **使用者**：「這個均線策略為什麼虧損？該改哪裡？」
-
-| TradingDev 的機制 | 前端 AI 可能如何回應 |
-| --- | --- |
-| **查詢實驗證據** | 「先核對這次的期間與成本，再查回撤和虧損交易。」 |
-| **規則式診斷** | 「若回撤觸發診斷提示，我會先檢查那段期間的交易。」 |
-| **引導 AI 分析** | 「先區分觀察與假說，再提議用相同期間與成本，比較一種出場規則。」 |
-| **保存報告與引用** | 「把分析與對應的回測結果存入報告，方便你繼續追問。」 |
-
-*以上是現有功能的對話示例，實際分析依回測結果而定。*
-
-<!--
-承接上一頁的均線策略，假設使用者已確認並完成一次歷史回測，再詢問虧損與修改方向。對話是依實作編寫的情境示意，不是真實模型逐字紀錄，也沒有宣稱本例已測得虧損、回撤或改善效果。
-查詢證據：get_run_metrics 回傳保存的指標、定義、有效設定及不可用原因；get_run_trades、get_run_equity 等工具讀取對應執行範圍的原始紀錄。TradeHistoryService 與 PerformanceStore 核對保存資料的身分與完整性，查詢不會重新執行策略。缺少資料須保留原因，不能當成零或由模型猜測。
-規則式診斷：DiagnosticService 讀取保存的結果，交給可替換的 DiagnosticProvider。目前的 MaverickDiagnostics 依六項固定門檻提供數值依據、建議檢查及限制。例如 signal 模式的最大回撤超過 0.25，會提示先檢查回撤期間的交易，再以原策略為基準比較明確的出場或風控變體。門檻不是使用者風險上限，也不證明出場規則就是虧損原因；診斷沒有直接找出虧損期間或完成市場情境、波動敏感度的因果分析。
-AI 分析指引：SERVER_INSTRUCTIONS 要求先讀診斷，涉及特定虧損期間時再查交易或權益資料；解讀須包含 summary、observations、hypotheses_and_limits、next_steps 與精確的 run_id/scope 引用。文字推理由前端 LLM 完成，後端沒有自行呼叫另一個模型產生評語。新比較須另提可確認的方案，研究建議不授權自動執行。
-報告保存：generate_report 接收模型的結構化分析，ReportService 核對引用是否屬於所選報告結果，將分析與規則式診斷保存在 HTML 及 manifest。計算證據與 LLM 解讀分開呈現，沒有解讀時明確標示；引用檢查不等於證明文字推論正確。歷史結果只支持檢驗假說，不保證未來有效。
-來源：src/tradingdev/mcp/prompts.py、mcp/tools/runs.py、mcp/tools/history.py、app/diagnostic_service.py、adapters/reporting/maverick_diagnostics.py、app/contracts/reports.py、app/report_service.py，以及 docs/reports.md「Research interpretation and diagnostic providers」。
--->
-
----
-
-## 使用者、AI 客戶端與 TradingDev
+## 使用者、AI 代理與 TradingDev
 
 | 角色 | 負責的事 |
 | --- | --- |
 | 使用者 | 提出目標、釐清規則、確認實驗 |
-| AI 客戶端 | 依研究指引理解需求、撰寫與修正策略、解讀結果 |
+| AI 代理 | 依研究指引理解需求、撰寫與修正策略、解讀結果 |
 | TradingDev | 研究流程指引、策略契約與檢查、實驗計算與證據 |
 
-**MCP** 將研究指引與工具接到 Codex 等 AI 客戶端。
+TradingDev 透過 **MCP 協定**，提供研究指引與工具給 Codex 等 AI 代理。
 
 可直接使用既有客戶端，也可整合進自己的應用。
 
 <!--
-讀作 MCP，不是 MPC。表中列的是責任，不是要求使用者部署三套系統。直接在 Codex 中開發策略時，Codex 承擔 AI 客戶端角色；TradingDev 不限定對話介面，也不內建對話模型。
-TradingDev 以 server instructions、工具描述與按需契約提供研究指引，並由後端強制檢查可機械驗證的輸入與執行條件。客戶端決定互動與推理方式，提示詞不能保證模型遵循，也不能證明使用者真的閱讀或同意。
+TradingDev 是策略研究後端，MCP 是 AI 代理與它連接的協定。讀作 MCP，不是 MPC。表中列的是責任，不是要求使用者部署三套系統。直接在 Codex 中開發策略時，Codex 承擔 AI 代理角色；TradingDev 不限定對話介面，也不內建對話模型。
+TradingDev 以 server instructions、工具描述與按需契約提供研究指引，並強制檢查可機械驗證的輸入與執行條件。客戶端決定互動與推理方式，提示詞不能保證模型遵循，也不能證明使用者真的閱讀或同意。
 來源：src/tradingdev/mcp/server.py、prompts.py、tools/strategy.py，以及 ARCHITECTURE.md。
 -->
+
+---
+
+## TradingDev 提供的研究流程指引
+
+1. **釐清構想**：確認交易想法、標的、期間與 K 棒頻率。
+2. **開發與修復**：依策略契約撰寫，根據檢查結果修正。
+3. **確認實驗**：閱讀設定，決定是否正式執行。
+4. **解讀證據**：依回測與診斷，區分觀察、假說及限制。
+5. **延續研究**：提出下一步，依需要保存研究筆記。
+
+<!--
+新策略會保存版本，通過驗證及 dry-run 後才取得執行資格；其中的訊號檢查使用固定合成資料，並非歷史回測。準備確認單時只做離線程式與設定檢查，以及適用的合成訊號檢查。單次準備的內建策略不在此時執行訊號；固定參數比較則對每組候選（包含內建策略）執行 80 與 240 根合成 K 棒的訊號檢查。確認前不取得真實行情、不訓練模型、不執行歷史回測；行情、訓練及績效須同意後才開始驗證。
+這些步驟已有 SERVER_INSTRUCTIONS 引導，並搭配工具說明及 get_strategy_contract 的按需內容。缺少必要研究選擇時須追問；保存研究筆記須有保存或分享需求。客戶端可安排自己的互動方式，但工具仍會檢查契約與執行狀態。
+來源：src/tradingdev/mcp/prompts.py、tools/strategy.py、README「完成第一次回測」與 docs/strategy_contract.md。
+-->
+
+<!-- _footer: "來源：[執行確認流程](https://github.com/Kuan-Lun/tradingdev/blob/35d709d4ac9ed8c9d3a71a3e24cd98996bf3a1e6/README.md#完成第一次回測)" -->
 
 ---
 
@@ -336,122 +302,10 @@ TradingDev 以 server instructions、工具描述與按需契約提供研究指�
 *跨設備連線須設定網路轉送與存取控制。集中排程及多人隔離仍待開發。*
 
 <!--
-這頁承接使用者、AI 客戶端與 TradingDev 的責任分工，說明部署時可安排的部分。回測可以由資源較充足的主機負責，不代表已提供多節點叢集或大型租戶平台。
-目前 HTTP 預設綁定 localhost，另一台設備不能直接使用該主機的 localhost 位址，需另行設定網路轉送與存取控制。對話、模型及收費留在客戶端整合層，後端不綁定特定 LLM。
+這頁承接使用者、AI 代理與 TradingDev 的責任分工，說明部署時可安排的部分。回測可以由資源較充足的主機負責，不代表已提供多節點叢集或大型租戶平台。
+目前 HTTP 預設綁定 localhost，另一台設備不能直接使用該主機的 localhost 位址，需另行設定網路轉送與存取控制。對話、模型及收費留在客戶端整合層，TradingDev 不綁定特定 LLM。
 整合者可以維護自己的研究服務、檢查、策略契約及輸出，但需承擔相應的開發與驗證責任；使用現有服務時仍須遵守其確認流程與後端檢查，不能把可自訂解讀成可在對話中略過授權。
 來源：README「手動啟動並使用 HTTP 連接」、ARCHITECTURE.md。
--->
-
----
-
-## 後端提供的研究流程指引
-
-1. **釐清構想**：確認交易想法、標的、期間與 K 棒頻率。
-2. **開發與修復**：依策略契約撰寫，根據檢查結果修正。
-3. **確認實驗**：閱讀設定，決定是否正式執行。
-4. **解讀證據**：依回測與診斷，區分觀察、假說及限制。
-5. **延續研究**：提出下一步，依需要保存研究筆記。
-
-<!--
-新策略會保存版本，通過驗證及 dry-run 後才取得執行資格；其中的訊號檢查使用固定合成資料，並非歷史回測。準備確認單時只做離線程式與設定檢查，以及適用的合成訊號檢查。單次準備的內建策略不在此時執行訊號；固定參數比較則對每組候選（包含內建策略）執行 80 與 240 根合成 K 棒的訊號檢查。確認前不取得真實行情、不訓練模型、不執行歷史回測；行情、訓練及績效須同意後才開始驗證。
-這些步驟已有 SERVER_INSTRUCTIONS 引導，並搭配工具說明及 get_strategy_contract 的按需內容。缺少必要研究選擇時須追問；保存研究筆記須有保存或分享需求。客戶端可安排自己的互動方式，但工具仍會檢查契約與執行狀態。
-來源：src/tradingdev/mcp/prompts.py、tools/strategy.py、README「完成第一次回測」與 docs/strategy_contract.md。
--->
-
-<!-- _footer: "來源：[執行確認流程](https://github.com/Kuan-Lun/tradingdev/blob/35d709d4ac9ed8c9d3a71a3e24cd98996bf3a1e6/README.md#完成第一次回測)" -->
-
----
-
-<!-- header: "02　策略研究　／　02.2　策略實驗與結果" -->
-<!-- _class: subsection statement -->
-
-## 自己的規則也能成為策略
-
-> 研究可以從調整參數，
-> 延伸到修改交易規則本身。
-
-內建策略提供起點，助手也能保存新的 Python 策略版本。
-檢查失敗時，依後端診斷修正，再次驗證。
-
-*策略仍須符合訊號契約與檢查政策。驗證不等於完整安全隔離。*
-
-<!--
-VBT PRO MCP 也能讓助手執行與修正程式；自訂策略不是本專案獨有功能。此頁說明現有研究範圍，不以此作為自製的唯一理由。
--->
-
----
-
-## 執行前的確認單
-
-正式回測前，先確認：
-
-- 交易規則、資料期間與參數。
-- 資金或交易規模、手續費與滑價。
-- 離線檢查的範圍，以及尚未驗證的行情、訓練與績效。
-
-**使用者明確同意後，才提交正式工作。**
-
-*這份 HTML 確認單是執行前流程，與完成後的分析報告不同。*
-
-<!--
-確認前不取得真實行情、不訓練模型、不執行歷史回測；自建策略適用的訊號檢查只用固定合成資料。單次準備的內建策略只檢查設定、執行模式與參數；固定比較的每組候選則都要通過 80 與 240 根合成 K 棒的訊號檢查，包含內建策略。一到八組普通回測的固定候選可共用一份確認單，使用者批准整組後才執行；這不包含需要訓練或 walk-forward 的多組比較，也不會自動擴大搜尋。修改候選或設定後要準備新的計畫並重新確認。後端依賴助手如實轉交使用者決定，不能獨立驗證決定的人類來源。這項限制留在講者稿，操作細節以 README 為準。
-來源：README「完成第一次回測」、docs/run_artifacts.md 的 execution plans。
--->
-
-<!-- _footer: "來源：[執行確認流程](https://github.com/Kuan-Lun/tradingdev/blob/35d709d4ac9ed8c9d3a71a3e24cd98996bf3a1e6/README.md#完成第一次回測)" -->
-
----
-
-## 回測完成後，繼續問問題
-
-> 「哪一段時間損失最多？」
-> 「交易成本占了多少？」
-> 「上次使用什麼參數？和這次差在哪裡？」
-
-TradingDev 提供診斷與分析指引，讓 AI 依保存的證據說明
-**觀察依據、假說與限制，以及下一步研究建議**。
-
-*查詢保存的結果不必重新回測。研究建議仍須驗證，新實驗需確認。*
-
-<!--
-結果主要供 LLM 查詢和分析。詳細交易、帳戶序列與執行紀錄可分頁查詢；不存在的舊紀錄不能靠助手猜測重建。
-SERVER_INSTRUCTIONS 要求先讀 get_run_diagnostics，再以 summary、observations、hypotheses_and_limits、next_steps 及精確的 run/scope 引用提交分析，保留於 HTML。generate_report 的工具說明與 ReportAnalysis schema 也公開這個結構。後端提供規則式診斷並核對引用，文字推理由客戶端模型產生，未提供時會標示；不是後端自行呼叫另一個 LLM。涉及特定虧損期間時須先查交易或權益資料，不能只憑摘要判定原因。
-來源：src/tradingdev/mcp/tools/history.py、runs.py 與 mcp/prompts.py。
--->
-
----
-
-## 修正規則與比較參數
-
-| 想研究的問題 | 系統如何保存 |
-| --- | --- |
-| 改變進出場規則 | 保存新的策略版本，再驗證 |
-| 同一規則換一組參數 | 固定該次實驗的有效設定 |
-| 比較前後差異 | 找回各次結果與比較條件 |
-
-結果有編號，讓對話可以指回特定實驗。
-
-<!--
-strategy/revision、plan、job、run 的用途不同。job 用於進度與取消，run 用於已保存結果；現有 ID 是追蹤基礎，不等於已綁定使用者擁有權。固定比較以同一份行情快照獨立執行各組普通回測，使用各自資金與策略實例，不合併成一個投資組合。完整比較報告依父工作選取所有候選，包含失敗、取消及未執行的原因；成功結果可點選查看明細。
-來源：ARCHITECTURE.md 的 strategy identity 與 run artifacts。
--->
-
----
-
-## 換一段資料，再檢驗一次
-
-**調整規則的期間**與**檢驗效果的期間**分開。
-
-前一段資料用來選參數，後一段觀察是否仍然成立。
-也可以沿時間反覆進行，形成滾動驗證。
-
-> 「這個結果，是普遍有效，還是剛好適合那段歷史？」
-
-*已提供參數最佳化與 walk-forward。驗證仍受資料及實驗設定影響。*
-
-<!--
-避免用「自動找到最佳策略」形容參數最佳化。工具在指定候選、指標與訓練期間中選擇結果，再用保留區間檢驗。
-來源：README「研究與比較參數」、ARCHITECTURE.md 的 optimization。
 -->
 
 ---
@@ -475,22 +329,914 @@ signal 使用 VectorBT，包含初始資金。volume 從零累計 P&L，沒有�
 
 ---
 
-## 對話解讀與報告明細
+<!-- _class: compact -->
 
-日常研究可以在對話中完成查詢、解讀與修正。
+## TradingDev 的研究指引：均線策略案例
 
-完成回測與績效解讀時，預設提供 HTML 報告連結。
-需要細看時，可開啟指標、圖表、交易與帳戶紀錄。
+> **使用者**：「我想測試短均線高於長均線時買進。」
 
-也可以明確要求：「只要摘要，不需要報告」。
+| TradingDev 的指引 | 前端 AI 可能接著問 |
+| --- | --- |
+| **缺項時追問** | 「想測哪個標的、哪段期間？每根 K 棒代表多久？」 |
+| **將策略具體化** | 「均線各用幾根？短均線跌破時，是平倉還是做空？」 |
+| **執行前確認** | 「本金、手續費與滑價有指定嗎？若沒有，我先列出模擬預設供你確認。」 |
 
-**計算結果與助手的文字解讀分開呈現。**
-
-<!-- _footer: "來源：[報告交付方式](https://github.com/Kuan-Lun/tradingdev/blob/7298a4d8cf0769c0db7f92f0df46e2e739c8e470/README.md#交易紀錄與-html-報告)" -->
+*示意對話，問法依情境調整；整理成確認單後，使用者同意才回測。*
 
 <!--
-對話仍是查詢、解讀與修正策略的主要入口，使用者不必閱讀圖表。完成回測並解讀績效、風險時，助手預設交付標準報告連結、對應結果及查看明細的方法；使用者可明確選擇只要摘要。執行後報告與執行前確認單分開。保存紀錄不等於保存完整軟體環境，不能保證跨環境完全重現。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/7298a4d8cf0769c0db7f92f0df46e2e739c8e470/README.md#交易紀錄與-html-報告 及同版本 docs/run_artifacts.md。
+本頁保留使用者只有均線交易構想的情境，以具體問句展示 TradingDev 的指引如何影響前端互動。表中的問題可分散於多輪對話，不是要求一次問完；補齊必要研究選擇後，再釐清策略細節與提出方案。這是依現有指引編寫的示意，不是真實模型逐字紀錄或已執行的回測。
+提示詞引導由 TradingDev 的 server instructions、工具說明與按需策略契約提供；此處不是指另行註冊的 MCP prompts，也不是固定問卷。實際問句與互動由 Codex 等客戶端的 LLM 組織。
+建立新研究前，構想、標的、回測期間與 K 棒頻率缺項時須追問，不能從範例猜出選擇。只有明確要求沿用已選定研究時，才可繼承其設定。
+策略具體化包含整理進場、持有、出場與交易方向，確認參數並形成可驗證的程式。模型可提出有說明依據的方案，不能把自己的假設冒充使用者要求。
+本金與成本未指定時可依共用模擬政策解析，明示有效值優先。前端須呈現 TradingDev 產生的確認摘要與 HTML，待使用者明確同意該方案才提交執行。這些是歷史回測假設，不是即時費率或真實下單設定；本金與交易規模依執行模式適用。
+提示詞要求不保證所有客戶端一定遵循；TradingDev 另檢查必要欄位、設定與執行狀態，但不能證明輸入或同意真的來自使用者。
+來源：src/tradingdev/mcp/prompts.py 的 SERVER_INSTRUCTIONS、server.py 的 instructions 註冊，以及 src/tradingdev/domain/strategies/templates.py 的 research 契約與 src/tradingdev/domain/research_policy.py。
+-->
+
+---
+
+<!-- _class: compact -->
+<!-- _header: "02　策略研究　／　新版 0050 案例" -->
+
+## 同一個構想，以修正後版本重新研究
+
+> 「我想用均線來買賣 0050，可以幫我看看嗎？」
+
+- **沿用案例條件**：0050 日 K、2024/1/1 至 7/1、20 日 SMA 與相同模擬成本。
+- **重新互動與執行**：八輪實際對話、一次回測，取得可比較的台股大盤數值。
+- **保留來源**：Sol 的回覆與 MCP 紀錄來自真實執行；示範操作者由助理依委託擔任。
+
+*下頁依序保留操作者輸入與各輪最終回覆全文，長回覆分頁呈現。*
+
+<!-- _footer: "Codex CLI app-server · gpt-6.1-sol / medium；產品版本 fccde5b（PR #182 合併後）。" -->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 1／8 輪" -->
+
+## 實際對話：提出選項與追問（1/2）
+
+<!-- dialogue-message: 01-intake/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 我想用均線來買賣 0050，可以幫我看看嗎？
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: 01-intake/4 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 可以。我們可以先把均線想法變成明確規則，再回測看是否適合 0050。
+>
+> 兩種可討論的做法：
+>
+> - **單條均線**：價格站上均線買進，跌破時賣出。
+> - **雙均線**：短均線高於長均線時持有，低於時賣出、空手等待。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#01-intake)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 1／8 輪" -->
+
+## 實際對話：提出選項與追問（2/2）
+
+<!-- dialogue-message: 01-intake/4 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 均線的取捨是訊號較慢；盤整時也可能反覆買賣，增加成本。因此除了報酬，還要看最大跌幅、交易次數，並與買進持有比較。目前尚未回測，不能判斷哪種較好。
+>
+> 先請你補充：
+>
+> 1. **想看哪段期間？** 請提供起訖日期。
+> 2. **想用日線、週線，還是盤中 K 線？**
+> 3. **偏好哪種規則？** 單均線、雙均線，或還沒決定？若已有均線天數，也一起告訴我。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#01-intake)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 2／8 輪" -->
+
+## 實際對話：選定期間與均線天數（1/3）
+
+<!-- dialogue-message: 02-discuss/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 先看 2024 年 1 月 1 日到 7 月 1 日，用日線。我想先從單均線開始，天數你建議怎麼選？
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: 02-discuss/5 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 我建議先比較 **10、20、60 日簡單移動平均線（SMA）**，若只選一條，就從 **20 日**開始。這是依反應速度提出的研究設定，尚未經回測或外部資料驗證，不能視為最佳天數。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#02-discuss)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 2／8 輪" -->
+
+## 實際對話：選定期間與均線天數（2/3）
+
+<!-- dialogue-message: 02-discuss/5 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> | 均線 | 選擇理由 | 取捨 |
+> |---|---|---|
+> | 10 日 | 觀察較快的進出反應 | 容易反覆買賣，成本可能較高 |
+> | 20 日 | 作為快慢之間的起點 | 仍可能在盤整時頻繁進出 |
+> | 60 日 | 觀察較慢的趨勢判斷 | 買進與退出都可能較晚 |
+>
+> 為了公平比較，三組都使用同一套規則：**收盤價高於均線時持有 0050；低於或等於均線時賣出並空手，不放空**。訊號需等收盤確認，成交時點會在回測計畫中列清楚。
+>
+> 你指定的 **2024/1/1～2024/7/1、日線**只有半年，結果對這段行情可能很敏感；60 日均線也需要足夠資料暖機，解讀時要一併考慮。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#02-discuss)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 2／8 輪" -->
+
+## 實際對話：選定期間與均線天數（3/3）
+
+<!-- dialogue-message: 02-discuss/5 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 你想先比較這三組，還是只測 20 日？另外，這次是否先不計算年化指標，著重看區間報酬、最大回撤與交易次數？
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#02-discuss)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+
+## 實際對話：釐清持有並準備確認單（1/6）
+
+<!-- dialogue-message: 03-holding-question/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 先測 20 日一組。你說高於均線就持有，是每天都會再買嗎？我希望買了就持有，低於均線再賣掉；剛好等於均線時維持原部位，不另外交易。
+>
+> 年化設定沿用每年 252 根，但這只是半年案例，解讀仍以區間報酬、回撤與交易次數為主，不把年化數字當成未來預測。
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: 03-holding-question/11 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> **不會每天再買。** 已設定為持倉期間不加碼，等於均線時維持原部位。程式與合成資料檢查已通過，尚未執行歷史回測。前 19 根日線會因均線暖機保持空手；成本使用專案模擬預設，並非已核實的台股實際費稅。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+
+## 實際對話：釐清持有並準備確認單（2/6）
+
+<!-- dialogue-message: 03-holding-question/11 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> > 回測前確認
+>
+> > 策略說明：2024/1/1至7/1台北日期（含7/1），初始空手，高於20日SMA持多、低於空手、等於延續，不加碼、不放空。收盤訊號於下一根開盤交易。以區間報酬、回撤與交易次數為主；252年化因子僅作描述，非未來預測。
+>
+> > 執行方式：單次歷史回測；參數依據：使用者提供
+>
+> > 回測商品：0050.TW；回測 K 線週期：每根 K 線 1 天；回測開始：2023-12-31T16:00:00+00:00；回測結束：2024-07-01T15:59:59+00:00；時間邊界：依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+
+## 實際對話：釐清持有並準備確認單（3/6）
+
+<!-- dialogue-message: 03-holding-question/11 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> > 計算方式：依帳戶資金計算報酬；初始資金：10000.0 報價貨幣；單次投入金額：未指定固定金額 報價貨幣；手續費率：0.06%；滑價率：0.05%；年化計算的每年日數：252.0 天；本金與成本來源：本金：專案模擬預設（research-v1）；手續費：專案模擬預設（research-v1）；滑價：專案模擬預設（research-v1）；年化統計取樣：有觀測值的 UTC 每日帳戶報酬；缺日不補零
+>
+> > 訊號與成交時點：訊號延後一根 K 棒，一般訊號進出場使用下一棒 open；缺少 open 欄位才使用 close。尚未平倉部位以當棒 close 評價。
+>
+> > 多空與零訊號：1 表示做多，-1 表示做空（不是只賣出平多倉）。0 表示平倉。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+
+## 實際對話：釐清持有並準備確認單（4/6）
+
+<!-- dialogue-message: 03-holding-question/11 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> > 反向訊號：相反的非零訊號平掉舊方向並嘗試建立新方向；停損停利先於訊號處理。
+>
+> > 投入金額：未指定固定金額，以當時可用資金及成交成本決定最大可成交數量；不是固定數量或固定初始本金比例。
+>
+> > 同方向持倉：持續相同方向的訊號不加碼。
+>
+> > 資金與槓桿限制：不模擬完整保證金、清算、借券或資金費率規則，也沒有固定槓桿倍數設定。
+>
+> > 停損停利成交：停損 未設定；停利 未設定。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+
+## 實際對話：釐清持有並準備確認單（5/6）
+
+<!-- dialogue-message: 03-holding-question/11 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> > 成交成本：手續費率 0.06%；滑價率 0.05%。各成交收取手續費，一般訊號的滑價反映於成交價。
+>
+> > 年化解讀：使用觀測到的 UTC 日報酬，缺日不補值；須有有效時間戳及不粗於日線的資料。保存的每年日數為 252。
+>
+> > 資料結束時：剩餘持倉保留為未平倉，以最後 close 評價，不虛構出場成交。
+>
+> > 確認前僅檢查程式，未取得真實行情、訓練或執行回測。
+>
+> > 請先閱讀完整 HTML 確認單中的設定與檢查限制，再於對話回覆同意、拒絕或修改要求。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 3／8 輪" -->
+
+## 實際對話：釐清持有並準備確認單（6/6）
+
+<!-- dialogue-message: 03-holding-question/11 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> [閱讀確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html)
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#03-holding-question)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-shot case-native -->
+<!-- _header: "02　策略研究　／　新版 0050 案例" -->
+
+## 原生確認單：閱讀後回到對話決定
+
+![TradingDev 新版案例的原生確認單](assets/0050-taiex-confirmation.png)
+
+[開啟完整確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html) · [日期與年化問答](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#04-plan-questions)
+
+<!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
+
+<!--
+來源：新案例 screenshots/01-confirmation-native.png。閱讀文件不啟動回測；不能據此證明真人已閱讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 4／8 輪" -->
+
+## 實際對話：確認日期與年化設定（1/2）
+
+<!-- dialogue-message: 04-plan-questions/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 我看過確認單了。開始日期顯示 2023-12-31 16:00 UTC、結束顯示 2024-07-01 15:59:59 UTC，這就是台灣日期 2024 年 1 月 1 日到 7 月 1 日、包含 7 月 1 日全天嗎？另外，每年 252 根只是年化設定，不代表這次會取得 252 根資料，對嗎？先幫我說明，這一輪先不要執行。
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: 04-plan-questions/1 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 對，兩項理解都正確。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#04-plan-questions)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 4／8 輪" -->
+
+## 實際對話：確認日期與年化設定（2/2）
+
+<!-- dialogue-message: 04-plan-questions/1 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> - **日期範圍**：台灣時間是 UTC+8，因此開始時間換算為 **2024/1/1 00:00:00**，結束為 **2024/7/1 23:59:59**，包含 7 月 1 日全天。系統依 K 棒時間戳記篩選，實際涵蓋哪些日線仍取決於資料來源。
+> - **252 年化設定**：它是計算年化指標時使用的每年日數因子，**不是本次要取得的資料根數**。實際根數由指定期間內可取得的日線決定，休市日通常沒有 K 棒。
+>
+> 這一輪不會執行回測。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#04-plan-questions)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 5／8 輪" -->
+
+## 實際對話：暫停後核對確認單（1/2）
+
+<!-- dialogue-message: 05-refresh-plan/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 剛才暫停並重啟電腦，隔了一段時間才回來。日期和 252 的說明我理解了。請先確認原本那份確認單是否仍有效；若已過期，沿用同一個策略版本和全部設定，重新產生確認單給我看。這輪先不要執行回測，也不要新增其他策略或參數組合。
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: 05-refresh-plan/3 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 已查詢原確認單，**目前仍有效，無須重新產生**。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#05-refresh-plan)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 5／8 輪" -->
+
+## 實際對話：暫停後核對確認單（2/2）
+
+<!-- dialogue-message: 05-refresh-plan/3 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> - 狀態：`ready`，尚未提交執行，沒有回測工作。
+> - 有效期限：**2026/11/7 19:50:18（台灣時間）**。
+> - 查詢時間：約 **2026/11/7 19:10（台灣時間）**。
+> - 原策略版本與全部設定維持不變。
+>
+> [閱讀原確認單](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html)
+>
+> 本輪未執行回測，也未新增策略或參數組合。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#05-refresh-plan)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 6／8 輪" -->
+
+## 實際對話：同意執行並取得結果（1/4）
+
+<!-- dialogue-message: 06-execute/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 我已閱讀原確認單和限制，確認以這份有效確認單執行：0050.TW 日 K、台灣時間 2024/1/1 到 7/1（含全天）、20 日 SMA，高於均線持多、低於空手、相等維持原部位，不重複加碼，下一根開盤成交。接受模擬本金 10000、手續費率 0.0006、滑價率 0.0005、年化因子 252；這不是台股實際費稅模型。同意開始這一次回測，完成後給我原生報告並說明結果；不要另外跑參數或其他策略。
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: 06-execute/15 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 已完成這一次 **0050／20 日 SMA** 回測，沒有另跑其他參數或策略。
+>
+> [開啟 TradingDev 原生完整報告](evidence/0050-taiex/cases/01-ma-discussion/earlier-reports/d41835e9438f31c69328ef37bbcf86609f42d315be54b409680418f8de90f2e8.html)
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#06-execute)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 6／8 輪" -->
+
+## 實際對話：同意執行並取得結果（2/4）
+
+<!-- dialogue-message: 06-execute/15 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> | 指標 | 結果 |
+> |---|---:|
+> | 區間報酬 | **24.33%** |
+> | 期末權益（初始 10,000） | **12,433.03** |
+> | 最大回撤 | **8.61%** |
+> | 已平倉交易 | **5 筆，2 勝 3 負** |
+> | 期末未平倉 | **1 筆** |
+> | 實際日線資料 | **118 根** |
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#06-execute)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 6／8 輪" -->
+
+## 實際對話：同意執行並取得結果（3/4）
+
+<!-- dialogue-message: 06-execute/15 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 成交紀錄共 **6 次買進、5 次賣出，持倉期間沒有加碼**。期末仍持有的部位包含約 **910.15** 未實現淨損益，已計入上述區間報酬，沒有假設期末賣出。
+>
+> 這段期間有獲利，但已平倉交易只有 5 筆，尚不足以判斷長期可靠性。年化報酬換算為 59.21%，僅是使用 252 因子的樣本統計；成本仍是你核准的模擬模型。
+>
+> 報告操作指引：
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#06-execute)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 6／8 輪" -->
+
+## 實際對話：同意執行並取得結果（4/4）
+
+<!-- dialogue-message: 06-execute/15 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> > 點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。
+>
+> 結果編號：`af6a758f1ded43eea193638330be7aaf`；分析範圍：`full`（完整區間）。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#06-execute)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-shot case-native case-equity -->
+<!-- _header: "02　策略研究　／　新版 0050 案例" -->
+
+## 原生報告：權益曲線與回撤明細
+
+![新版回測的權益與回撤曲線](assets/0050-taiex-equity.png)
+
+[開啟報告並查看結果明細](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0)
+
+<!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
+
+<!--
+來源：新案例 screenshots/02-equity-native.png。畫面節錄曲線區段，完整序列及互動明細保留在原生報告。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 7／8 輪" -->
+
+## 實際對話：對照大盤並討論改進（1/4）
+
+<!-- dialogue-message: 07-critique/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 你覺得這個策略最大的問題是什麼？如果要改，會先改哪裡，為什麼？也請根據這次已保存的基準數值，說明跟台股大盤相比如何。先討論，不用再跑。
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: 07-critique/10 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 我最在意的是：**這次擇時沒有展現降低風險的價值，報酬也落後大盤。** 至於原因，半年、5 筆已平倉交易還不足以定論。
+>
+> 依這次已保存、完整對齊 118 根日線的數值：
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#07-critique)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 7／8 輪" -->
+
+## 實際對話：對照大盤並討論改進（2/4）
+
+<!-- dialogue-message: 07-critique/10 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> | 指標 | 20 日 SMA 策略 | 台股加權指數基準 |
+> |---|---:|---:|
+> | 區間報酬 | 24.33% | 29.01% |
+> | 最大回撤 | 8.61% | 6.66% |
+> | 夏普比率 | 2.91 | 3.48 |
+>
+> 策略**少賺 4.68 個百分點，最大回撤多 1.95 個百分點**。因此這個案例沒有呈現「犧牲一些報酬、換取較小回撤」的效果。
+>
+> 基準是 **^TWII 加權指數價格報酬**，不含股利；套用同樣模擬成本，首根收盤買進、期末估值。它不是 0050 買進持有，因此落後幅度包含標的成分與權重差異，不能全部歸因於均線進出場。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#07-critique)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 7／8 輪" -->
+
+## 實際對話：對照大盤並討論改進（3/4）
+
+<!-- dialogue-message: 07-critique/10 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 若要改交易規則，我會先研究**均線周圍加緩衝區**：
+>
+> - 空手時，超過均線上方門檻才買進。
+> - 持倉時，跌破均線下方門檻才賣出。
+> - 中間維持原部位，仍不加碼、下一根開盤成交。
+>
+> 理由是這次有幾筆短期進出虧損，例如 4/19～4/22 虧損 298.49、6/4～6/5 虧損 118.51，值得檢查均線附近的反覆切換。但緩衝區可能讓退出更慢、回撤更大，**目前只是待驗證的改法，沒有證據保證改善**。40% 勝率本身反而不是首要問題，因為獲利交易的幅度仍能抵銷虧損。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#07-critique)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 7／8 輪" -->
+
+## 實際對話：對照大盤並討論改進（4/4）
+
+<!-- dialogue-message: 07-critique/10 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 研究順序上，我會先補清楚區間前暖機及 0050 自身買進持有的對照，再評估規則修改，才能分辨差距來自哪裡。本輪沒有新增回測。
+>
+> 已將這些解讀補入[原生完整報告](evidence/0050-taiex/cases/01-ma-discussion/earlier-reports/4098c0384cfdeed43d4bd6cf136c2822444decf1b1feb3e3e122231c6e5cba4a.html)。結果編號：`af6a758f1ded43eea193638330be7aaf`，範圍：`full`。
+>
+> > 點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#07-critique)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-shot case-native -->
+<!-- _header: "02　策略研究　／　新版 0050 案例" -->
+
+## 原生報告：台股大盤已有可比較數值
+
+![策略與台股加權指數的基準比較表](assets/0050-taiex-benchmark.png)
+
+[開啟完整基準與資料覆蓋](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · [保存的基準資料](evidence/0050-taiex/cases/01-ma-discussion/benchmark.json)
+
+<!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
+
+<!--
+來源：新案例 screenshots/03-benchmark-native.png。^TWII 價格指數未含股利；完整對齊118根。同成本假設不等於同標的，差距不能全歸因於擇時。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options case-with-input -->
+<!-- _header: "02　策略研究　／　實際對話　第 8／8 輪" -->
+
+## 實際對話：保存研究筆記與分享包（1/3）
+
+<!-- dialogue-message: 08-package/0 -->
+
+操作者輸入
+
+<!-- dialogue-text-start -->
+
+> 這次先保留台股大盤作為唯一基準，不增加 0050 買進持有或其他回測。請把這次討論、已執行的設定、結果、大盤比較和仍待驗證的建議整理成研究筆記並打包，讓我可以分享給別人。報告與筆記請清楚說明基準是另行取得的 ^TWII 價格指數、不是同一份 0050 行情，也不是含息總報酬；先前報告若有讓人誤解成同標的的說法，請更正。保留原生報告、交易明細與實際資料覆蓋，提供可開啟的報告與研究包。
+
+<!-- dialogue-text-end -->
+
+<!-- dialogue-message: 08-package/10 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 已完成更正與打包，**未新增任何回測**。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#08-package)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 8／8 輪" -->
+
+## 實際對話：保存研究筆記與分享包（2/3）
+
+<!-- dialogue-message: 08-package/10 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> - [開啟更正版原生報告](evidence/0050-taiex/cases/01-ma-discussion/report.html)
+> - [開啟研究筆記（第 2 版）](evidence/0050-taiex/cases/01-ma-discussion/notebook/index.html)
+> - [取得完整研究包 ZIP](evidence/0050-taiex/cases/01-ma-discussion/research.zip)
+>
+> 報告與筆記均明確說明：**唯一基準是另行取得的 ^TWII 加權價格指數，不是同一份 0050 行情，也不是含息總報酬**。分享時請使用此更正版。
+>
+> 研究包包含設定、結果、大盤比較、討論與未驗證建議，以及完整原生報告；保留 **118 根日線的實際覆蓋、11 筆成交、5 筆已平倉及 1 筆未平倉交易**。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#08-package)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: case-dialogue case-transcript case-options -->
+<!-- _header: "02　策略研究　／　實際對話　第 8／8 輪" -->
+
+## 實際對話：保存研究筆記與分享包（3/3）
+
+<!-- dialogue-message: 08-package/10 -->
+
+gpt-6.1-sol｜該輪最終回覆
+
+<!-- dialogue-text-start -->
+
+> 下載 ZIP 後請**完整解壓，開啟 `index.html`**；`reports/` 保留連結報告。上述連結為本機檔案路徑，分享給別人時請傳送 ZIP。
+>
+> 報告操作指引：
+>
+> > 點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；再以「返回」或「切換結果」查看其他組。已選取的詳情章節：設定與資料覆蓋、績效分析與保存指標、基準比較（Benchmark）、權益與回撤、委託、成交與帳戶核對、配對交易損益。所有內容保存在同一份離線 HTML。
+>
+> 保存結果：`af6a758f1ded43eea193638330be7aaf`，範圍：`full`。
+
+<!-- dialogue-text-end -->
+
+<!-- _footer: "CLI 實際對話原文；操作者由助理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/dialogue.html#08-package)" -->
+
+<!--
+來源：evidence/0050-taiex/cases/01-ma-discussion/transcript.json。逐字保留本輪操作者與最終回覆，只分頁並將原文連結指向同一產物的離線副本。其他可見訊息與工具原文由連結續讀。
+-->
+
+---
+
+<!-- _class: compact -->
+<!-- _header: "02　策略研究　／　保存與分享" -->
+
+## 討論完成，再把研究整理分享
+
+- **產品研究包**：研究筆記、固定設定、原生報告與尚未驗證的建議。
+- **完整案例證據**：八輪可見對話與 MCP 原文、各版報告、策略、指標與校驗資料。
+- **比較界線**：台股大盤是唯一基準；緩衝區只是建議，沒有新增回測。
+
+[開啟完整案例](evidence/0050-taiex/index.html) · [下載產品研究包](evidence/0050-taiex/cases/01-ma-discussion/research.zip) · [下載完整案例證據包](evidence/0050-taiex/natural-case-evidence.zip)
+
+*完整解壓後可離線閱讀；研究筆記是摘要，逐字內容另由對話紀錄查閱。*
+
+<!--
+原生研究包不含全部逐字對話，完整案例證據包另行整理，不冒稱產品原生功能。舊案例保留在 evidence/0050-ma/，未改寫歷史報告或結果。原始研究工作區另行保留，可持續查詢；離線證據包不是可攜式執行環境。
+-->
+
+---
+
+<!-- _class: case-shot case-native -->
+<!-- _header: "02　策略研究　／　新版 0050 案例" -->
+
+## 原生研究筆記：保留結果與未完成事項
+
+![新版原生研究筆記及台股大盤比較](assets/0050-taiex-notebook.png)
+
+[開啟研究筆記](evidence/0050-taiex/cases/01-ma-discussion/notebook/index.html) · [完整對話與檔案校驗](evidence/0050-taiex/index.html)
+
+<!-- _footer: "原生 HTML 的實際瀏覽器截圖；完整內容由連結續讀。" -->
+
+<!--
+來源：新案例 screenshots/04-notebook-native.png。筆記第2版於最後一輪要求後保存；未宣稱每輪自動保存。
 -->
 
 ---
@@ -510,51 +1256,35 @@ signal 使用 VectorBT，包含初始資金。volume 從零累計 P&L，沒有�
 **整合開發經驗**
 把個別問題轉成共用檢查與程式元件。
 
-**組合交易策略**
+**組合交易策略** (TODO)
 研究不同策略如何配置資金、互補風險。
 
 <!--
-兩種整合共享研究證據，但目的與工程責任不同。工程回饋改善開發工具，策略配置研究整體資金與風險。
+兩種整合共享研究證據，但目的與工程責任不同。工程回饋改善開發工具，策略配置研究整體資金與風險。下一頁說明「整合開發經驗」的流程與驗證，不涵蓋組合交易策略的實作。
 -->
 
 ---
 
 <!-- _class: compact -->
 
-## 工程回饋的驗證方式
+## 開發經驗的整合與驗證
 
-| 要驗證什麼 | 觀察方式 |
-| --- | --- |
-| 解法能否重用 | 用未參與開發的策略，檢查同類錯誤是否被攔下 |
-| 是否破壞既有研究 | 比較正常案例的誤判與回歸結果 |
-| 是否減少人工工作 | 記錄診斷、修正與審查所需工時 |
+由人員啟動 research-feedback Skill，引導外部開發助手改善 TradingDev。
 
-對照既有工具搭配研究指引與記憶的做法。
+1. **辨識共性與差異**：比較案例與既有元件，抽取共用機制、保留策略假設。
+2. **定義契約並整合**：明確輸入、輸出與適用條件，依責任分層並提供使用入口。
+3. **驗證實際使用情境**：固定資料與設定，檢查其他案例、正常案例及既有行為。
+4. **審查與版本更新**：完成獨立審查，記錄行為變更與版本，再依流程更新服務。
 
-*這是待執行的驗證設計，尚無比較結果。*
-
-<!--
-承接開場的時間對齊示例，工程回饋要證明改進能用在後續研究，而非只讓原案例通過。應保留未參與開發的策略案例，以及沒有該問題的正常案例，檢查適用條件與誤判。
-對照不應只採用缺少指引的裸 LLM。比較既有工具搭配研究指引與記憶的做法，以及透過提示詞將案例整合為共用能力的做法；專用 Skill 完成後，再評估其標準化流程的效果。固定模型、任務、資料及可用資訊，記錄人工介入、運算與模型成本。
-回歸驗證需確認其他策略與既有結果契約沒有受到非預期影響。重複錯誤、修復及審查工時是待量測結果，尚未設定效益數字，也不以回測收益變高代替工程成效。
--->
-
----
-
-## 外部開發助手的擴充方式
-
-透過提示詞，讓外部開發助手讀取**策略案例、執行證據與專案程式**。
-
-將共用規則整合回後端，完成測試與審查後，在維護時更新服務。
-
-> 現有架構支援整合；專用 Skill 將標準化這套流程。
-
-*修改範圍依問題決定；服務尚未內建自主修改或不中斷更新。*
+*設計綜合考慮 SOLID、KISS、YAGNI；減少重複錯誤與人工工時的成效仍待實測。*
 
 <!--
-人員可在獨立開發環境，以提示詞啟動整合工作，無須讓整段分析與開發期間都停機。共用演算法、指標與驗證規則可整合至 domain；流程協調、儲存及工具入口則依責任更新 app、adapters 或 MCP，不能把所有修改都塞入 domain。
-現有 record_feature_request、revision、run 與研究筆記可作輸入，沿用專案的測試及審查流程。專用 Skill 將整理案例選擇、證據讀取、共用邏輯抽取、修改、測試與審查步驟；個別需求仍可能需要補充介面或資料，不能宣稱所有情境都只差一份 Skill。
-架構依據：ARCHITECTURE.md 的責任分組、診斷擴充與研究筆記，以及 AGENTS.md 的開發檢查與審查流程。
+本頁承接「整合開發經驗」，說明人員啟動的外部開發流程，不涵蓋多策略的資金配置。research-feedback Skill 引導助手讀取選定的策略案例、執行證據與專案程式，固定來源版本及可共用範圍，再比較共性、差異與既有替代方案；沒有足夠共用價值時可以不修改。
+共用邏輯抽取須保留個別策略的假設與參數，明確定義輸入、輸出、適用條件與失敗行為。SOLID 中的單一職責、介面隔離與依賴反轉可協助設計，KISS 與 YAGNI 提醒避免不必要的抽象；遵循設計原則本身不是行為正確或改善效益的證據。
+人員可在獨立開發環境進行分析與修改，無須讓整段開發期間都停機。共用演算法、指標與驗證規則依責任整合至 domain；流程協調、儲存及工具入口則更新 app、adapters 或 MCP 整合層。提供後續作者可查找的契約或工具入口，讓共用能力能被實際使用；只有 Python import 不代表 MCP 客戶端能發現它。
+使用端與回歸驗證須固定資料與有效設定，比較修改前後行為，並檢查獨立預期值、邊界與失敗情境。承接開場的時間對齊示例，應以未參與開發的策略案例檢查同類錯誤能否被攔下，也用正常案例檢查誤判，確認其他策略與既有結果契約沒有受到非預期影響；證據不足時說明適用範圍。測試及獨立審查完成後提交，依開發流程安排服務更新；服務尚未內建自主修改或不中斷更新。
+上述流程的工程效益仍待對照實驗：比較既有工具搭配研究指引與記憶的做法，以及透過提示詞將案例整合為共用能力的做法，再評估 research-feedback Skill 的引導效果。固定模型、任務、資料及可用資訊，記錄重複錯誤、誤判、診斷／修正／審查工時，以及運算與模型成本。尚無比較結果，不以回測收益變高代替工程成效。
+來源：.agents/skills/research-feedback/SKILL.md 的四階段流程、ARCHITECTURE.md 的責任分組，以及 AGENTS.md 的設計原則、開發檢查與審查流程。
 -->
 
 ---
@@ -575,184 +1305,22 @@ signal 使用 VectorBT，包含初始資金。volume 從零累計 P&L，沒有�
 
 | 已提供 | 後續方向 |
 | --- | --- |
-| 研究流程指引、策略開發與驗證 | 更完整的研究引導 |
-| 規則式診斷、AI 解讀與研究建議 | 市場情境、波動敏感度與跨實驗引導 |
+| 固定參數批次執行、歷史結果比較與排序 | 依跨實驗證據選擇下一個實驗 |
+| 規則式診斷、AI 解讀與研究建議 | 市場情境與波動敏感度診斷 |
 | 研究筆記、報告引用、續讀與匯出 | 跨研究自動檢索與假說追蹤 |
-| 背景執行、參數研究、歷史結果查詢 | 多策略組合與資金配置 |
-| 可由提示詞驅動的後端整合基礎 | 工程回饋的專用 Skill |
-| 策略及實驗編號、共用檢查 | 多人權限與策略隔離 |
+| 各次回測獨立記錄設定、成本與結果 | 多策略組合與資金配置 |
+| 工程回饋 Skill 與 TradingDev 整合基礎 | 跨研究採用與成效驗證 |
+| HTTP／Docker 部署、策略及實驗編號 | 多人權限與策略隔離 |
 
 *後續項目尚未完成，也沒有在此承諾開發時程。*
 
+<!-- _footer: "現況查核：2026-11-05／[TradingDev 7e7a997](https://github.com/Kuan-Lun/tradingdev/tree/7e7a997c67a6e9765b124c80286ddc75f8b506d7)" -->
+
 <!--
 現有身分 ID 是未來權限設計可用的基礎，尚未完成使用者隔離。此頁集中區分已提供的產品能力與未來方向。
-規則式診斷、外部 AI 解讀及研究筆記，已能支持研究判斷與成果續用。現有共用元件與開發流程可由提示詞驅動後端整合，右欄的專用 Skill 則將這項維護工作標準化，不把現有整合基礎一併列為未來功能。AI 解讀由外部助手提供，未提供時報告會標示，建議不會自動啟動新實驗。
-現況來源：README「在對話中查詢」「保存研究筆記與打包分享」，ARCHITECTURE.md「績效計算與對話摘要」「研究筆記與可攜封存」。
--->
-
----
-
-<!-- _class: compact -->
-
-## 後續開發目標
-
-| ID | 目標 |
-| --- | --- |
-| TODO-01 | 研究引導與診斷 |
-| TODO-02 | 可引用證據的研究記憶 |
-| TODO-03 | 工程回饋 Skill |
-| TODO-04 | 多策略配置研究 |
-| TODO-05 | 成熟引擎評估 |
-| TODO-06 | 多人服務身分與權限 |
-
-<!--
-以下目標保持簡短。之後可指定「閱讀 TODO-04 再調查與開發」，開始時仍需重新確認需求、程式與外部套件現況，不把候選方案視為已決定的規格。
--->
-
----
-
-<!-- header: "04　後續開發方向　／　TODO-01" -->
-<!-- _class: subsection -->
-
-## TODO-01 研究引導與診斷
-
-**目標**：深化研究狀態與失敗原因的分析，協助選擇下一個實驗。
-
-已提供研究流程指引、規則式診斷與 LLM 解讀。
-
-診斷元件可以替換，報告保留依據與未驗證事項。
-
-*市場情境、波動敏感度與跨實驗引導仍待深度開發。*
-
-<!-- _footer: "參考：[QC Agents 與 diagnostics](https://www.quantconnect.com/docs/v2/ai-assistance/agents)、[backtrader-mcp](https://github.com/cloudQuant/backtrader-mcp/tree/ad6312a11c2fe7ff9a4c3fcfcfab5037a951b58c)" -->
-
-<!--
-初期 adapter 移植 Maverick 的六項適用門檻規則，保留固定來源版本與 MIT 授權，沒有安裝整個上游 server。
-DiagnosticProvider 接收原生績效與觀察值；替換入口及證據模型擴充方式見 ARCHITECTURE.md「診斷擴充與替換」。目前沒有完成市場情境或波動敏感度的因果診斷，研究建議仍待驗證，也不自動授權下一個實驗。
--->
-
----
-
-<!-- header: "04　後續開發方向　／　TODO-02" -->
-<!-- _class: subsection -->
-
-## TODO-02 可引用證據的研究記憶
-
-**目標**：讓下一次對話知道已經試過什麼，以及為何保留或放棄某個假說。
-
-PoC 已可保存需求與階段摘要，引用報告並匯出離線閱讀包。
-
-追加想法維護在同一本筆記，已匯出的版本獨立保留。
-
-*跨研究的自動檢索與假說追蹤仍待開發，目前可依筆記代號續讀。*
-
-<!-- _footer: "參考：[QC Custom Memories](https://www.quantconnect.com/docs/v2/ai-assistance/agents#Custom-Memories)" -->
-
-<!--
-外部 LLM 整理可編輯的研究摘要，後端提供版本檢查、保存與封存。ZIP 包含 HTML、JSON 與所引用報告，任何階段都可產生，沒有逐字聊天攔截器。
-這只完成可保存、續讀與分享的 PoC；跨研究搜尋與自動追蹤假說尚未實作。研究核心不綁定對話模型供應商，參考方向仍可包含 QuantConnect project memory。
--->
-
----
-
-<!-- header: "04　後續開發方向　／　TODO-03" -->
-<!-- _class: subsection -->
-
-## TODO-03 工程回饋 Skill
-
-**目標**：標準化案例分析、修改、驗證與審查流程。
-
-目前可透過提示詞，讓 AI 開發助手將解法整合為共用元件。
-
-專用 Skill 將明確列出所需證據、操作步驟與完成條件。
-
-*Skill 待建立。共享案例時，須區分共用知識與私人策略內容。*
-
-<!-- _footer: "參考：[QC Shared Libraries](https://www.quantconnect.com/docs/v2/local-platform/projects/shared-libraries)" -->
-
-<!--
-現有架構支援由提示詞驅動的整合，這項 TODO 聚焦將外部開發流程整理成專用 Skill。流程須涵蓋案例與適用條件、修改責任、跨策略驗證、失敗處理與審查；實際使用仍須遵循專案的授權及更新流程。
-可參考 QC Shared Libraries 的元件重用方式。元件更新後，仍要能解釋舊實驗引用的版本；依需求補充介面、資料及追蹤機制，不預設一份 Skill 就能完成所有改進。
--->
-
----
-
-<!-- header: "04　後續開發方向　／　TODO-04" -->
-<!-- _class: subsection -->
-
-## TODO-04 多策略配置研究
-
-**目標**：理解多個策略放在一起，能否改善整體風險與表現。
-
-先做日期、成本與資本基準一致的固定權重分析。
-再按需求評估 Riskfolio-Lib 或 PyPortfolioOpt 的配置功能。
-
-*待開發。signal 淨值與 volume 累計損益不能直接混算。共用資金及訂單衝突另需執行模型。*
-
-<!-- _footer: "候選：[Riskfolio-Lib](https://portfoliooptimization.org/riskfoliolib/portfolio.html)、[PyPortfolioOpt](https://pyportfolioopt.readthedocs.io/en/latest/MeanVariance.html)、[VectorBT shared cash](https://vectorbt.dev/api/portfolio/base/)" -->
-
-<!--
-先區分訊號投票、獨立淨值加權、配置最佳化和共享帳戶。初始配置後讓權重漂移，與每期固定權重再平衡也不同。此頁記錄目標，不要求現在完成這些設計。
--->
-
----
-
-<!-- header: "04　後續開發方向　／　TODO-05" -->
-<!-- _class: subsection -->
-
-## TODO-05 成熟引擎評估
-
-**目標**：確認 LEAN 等引擎，是否更適合未來的資產、委託與帳務需求。
-
-| 可能優勢 | 需要付出的成本 |
-| --- | --- |
-| 成熟的交易時間、資產與帳務模型 | 調整策略契約與資料轉接 |
-| 減少自行維護基礎機制 | 核對成交語意、結果與執行管理 |
-
-*待評估。先用可人工核對的案例比較，再決定是否遷移。*
-
-<!-- _footer: "參考：[LEAN Reality Modeling](https://www.quantconnect.com/docs/v2/writing-algorithms/reality-modeling/key-concepts)" -->
-
-<!--
-保留研究服務責任，不代表凍結目前的訊號契約。若需要事件、委託與成交回報，應允許原生事件策略設計。其他候選依需求再調查，例如 order book/多 venue 需求才評估 NautilusTrader。
--->
-
----
-
-## 成熟引擎仍需要正確假設
-
-LEAN 的內建回測成交模型預設完全成交。
-預設券商模型使用零滑價模型。
-
-**資料時間、交易成本、流動性與訓練切分，仍需核對。**
-
-> 採用成熟引擎可以減少基礎實作，正確的實驗仍需要驗證。
-
-<!-- _footer: "來源：[LEAN Trade Fills](https://www.quantconnect.com/docs/v2/writing-algorithms/reality-modeling/trade-fills/key-concepts)、[Slippage](https://www.quantconnect.com/docs/v2/writing-algorithms/reality-modeling/slippage/key-concepts)" -->
-
-<!--
-具體是 DefaultBrokerageModel 的 NullSlippageModel，不是說 LEAN 無法模擬滑價。部分成交、流動性等可自訂，代價是仍須設定與驗證模型。
--->
-
----
-
-<!-- header: "04　後續開發方向　／　TODO-06" -->
-<!-- _class: subsection -->
-
-## TODO-06 多人服務身分與權限
-
-**目標**：將使用者、專案、策略版本與執行紀錄關聯起來。
-
-依個人、團隊或公開產品情境，決定哪些內容可以共用、哪些需要隔離。
-
-現有 ID 與工作紀錄，提供後續設計的基礎。
-
-*待開發。現有 workspace 與靜態檢查不是完整的租戶或執行安全隔離。*
-
-<!-- _footer: "現況依據：[TradingDev 架構與執行限制](https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/ARCHITECTURE.md)" -->
-
-<!--
-不把缺口重複鋪陳成警告清單。真正開始多人產品開發時，再確認權限、隔離、配額與工作排程需求。
+規則式診斷、外部 AI 解讀及研究筆記，已能支持研究判斷與成果續用。現有共用元件與 research-feedback Skill 支援由外部開發助手將共用能力整合至 TradingDev；跨研究採用及長期效益仍須驗證，不能從 Skill 存在推論已改善真實研究。AI 解讀由外部助手提供，未提供時報告會標示，建議不會自動啟動新實驗。
+現況來源：7e7a997 的 README「比較參數」「在對話中查詢」「保存研究筆記與打包分享」，ARCHITECTURE.md「績效計算與對話摘要」「研究筆記與可攜封存」，docs/run_artifacts.md「Fixed Comparison Evidence」「Ranking Saved Run Scopes」。
+固定比較執行、已保存 scope 比較與排序已提供研究基礎，但不等於自動規劃實驗或合併多策略資金。HTTP／Docker 是部署能力，Host／Origin 檢查也不是使用者登入或租戶隔離。
 -->
 
 ---
@@ -763,8 +1331,8 @@ LEAN 的內建回測成交模型預設完全成交。
 
 | 使用場合 | 優先處理 |
 | --- | --- |
-| 個人反覆研究 | 引導、診斷與研究記憶 |
-| 團隊共享開發經驗 | 工程回饋 Skill 與共用元件 |
+| 個人反覆研究 | 進階診斷、實驗引導與跨研究檢索 |
+| 團隊共享開發經驗 | 共用元件採用與工程回饋成效驗證 |
 | 多個策略一起評估 | 組合分析與配置模型 |
 | 對外提供多人服務 | 身分、權限與執行隔離 |
 
@@ -782,15 +1350,15 @@ LEAN 的內建回測成交模型預設完全成交。
 ## TradingDev 的方向
 
 今天，讓自己的 AI 助手完成**可追問的策略實驗**，
-並透過提示詞，讓開發助手將研究經驗整合回後端。
+並透過提示詞，讓開發助手將研究經驗整合回 TradingDev。
 
-接下來，以**專用 Skill** 標準化工程回饋流程，
-持續累積可重用的研究能力。
+以 **research-feedback Skill** 引導工程回饋，
+持續驗證可重用的研究能力。
 
 *後續附有參考來源。演講後可繼續在線上閱讀。*
 
 <!--
-結尾區分現有的策略研究與提示詞驅動的後端整合，以及後續專用 Skill 的流程標準化。後端修改仍須經過測試與審查，沒有在此宣稱已完成服務內建的自主改進或測得績效優勢。
+結尾區分現有策略研究、research-feedback Skill 引導的 TradingDev 改進流程，以及後續真實研究採用與成效驗證。TradingDev 的修改仍須經過測試與審查，沒有在此宣稱已完成服務內建的自主改進或測得績效優勢。
 -->
 
 ---

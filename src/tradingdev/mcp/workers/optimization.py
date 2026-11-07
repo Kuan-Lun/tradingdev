@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 from joblib import Parallel, delayed
 
 from tradingdev.adapters.execution.process_runner import WorkerHandle
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
@@ -45,7 +46,6 @@ from tradingdev.domain.optimization.grid_search import (
 )
 from tradingdev.domain.performance.artifacts import build_artifacts, scope_from_backtest
 from tradingdev.domain.randomness import execution_randomness
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
@@ -172,27 +172,24 @@ def _run_single_combo(
             strategy_execution,
             parameter_overrides=param_dict,
         )
-        strategy = StrategyLoader().create_from_execution(
+        with StrategyFactory().open_from_execution(
             strategy_cfg,
             strategy_execution,
             engine,
             parallel_cfg,
             parameter_overrides=param_dict,
-        )
-
-        signals_df = generate_checked_signals(strategy, df)
+        ) as strategy:
+            signals_df = generate_checked_signals(strategy, df)
+            parameters = deepcopy(strategy.get_parameters())
+            rolling_trace = deepcopy(strategy.rolling_trace())
         result = engine.run(signals_df)
-
         result.metric_metadata["execution_context"] = {
             **bt_cfg.model_dump(mode="json"),
             "random_seed": random_seed,
         }
-        result.metric_metadata["strategy_parameters"] = deepcopy(
-            strategy.get_parameters()
-        )
-        rolling_trace = strategy.rolling_trace()
+        result.metric_metadata["strategy_parameters"] = parameters
         if rolling_trace is not None:
-            result.metric_metadata["rolling_trace"] = deepcopy(rolling_trace)
+            result.metric_metadata["rolling_trace"] = rolling_trace
 
     return ComboEvaluation(deepcopy(param_dict), metric_name, result)
 

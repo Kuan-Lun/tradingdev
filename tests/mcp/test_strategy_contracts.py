@@ -79,6 +79,7 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
         "research",
         "evidence",
         "indicators",
+        "runtime",
     }
     content = contract["content"]
     assert set(content) == {
@@ -90,7 +91,7 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
     assert "class BaseStrategy" in content["base_strategy_source"]
     assert "get_numpy_rng()" in " ".join(content["requirements"])
     assert "effective_config" in " ".join(content["lifecycle"])
-    assert "security sandbox" in " ".join(content["requirements"])
+    assert "section=runtime" in " ".join(content["requirements"])
     assert "-1 means short, never sell-only" in " ".join(content["requirements"])
     base_source = content["base_strategy_source"]
     assert 'In ``mode="signal"``, each row specifies a position state' in base_source
@@ -113,6 +114,9 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
         assert selected["section"] == item["id"]
         assert selected["available_sections"] == contract["available_sections"]
         sections[item["id"]] = selected["content"]
+    from tradingdev.domain.runtime import RuntimeLimits
+
+    assert sections["runtime"]["limits_schema"] == RuntimeLimits.model_json_schema()
     schema = sections["configuration"]["config_schema"]
     assert schema["additionalProperties"] is False
     assert "random_seed" in schema["properties"]

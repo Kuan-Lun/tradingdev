@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from filelock import FileLock, Timeout
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
@@ -60,7 +61,9 @@ def _manifest(source: Path, window: int) -> ExecutionManifest:
             },
         },
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs={"window": window}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"window": window},
         ),
     )
 

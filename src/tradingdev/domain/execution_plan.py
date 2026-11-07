@@ -12,8 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from tradingdev.domain.approved_research import ApprovedResearch  # noqa: TC001
 from tradingdev.domain.execution_target import ExecutionTarget  # noqa: TC001
 from tradingdev.domain.preflight import ProgramReceipt, verify_program_receipt
-from tradingdev.domain.presentation.confirmation import (
-    ConfirmationDocument,  # noqa: TC001
+from tradingdev.domain.presentation.confirmation_contract import (
+    ConfirmationDocument,
 )
 
 type PlanState = Literal[

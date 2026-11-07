@@ -21,16 +21,19 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-class _DirectionProbe(XGBoostDirectionModel):
+class _DirectionProbe:
     """A deterministic predictor that consumes the actual engineered features."""
 
     def __init__(self) -> None:
-        super().__init__(XGBoostModelConfig())
         self.frames: list[pd.DataFrame] = []
 
-    def predict(self, df: pd.DataFrame) -> pd.Series[float]:
+    def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
         self.frames.append(df.copy(deep=True))
-        return pd.Series(np.sign(df["log_return"]), index=df.index)
+        directions = np.sign(df["log_return"])
+        return pd.DataFrame(
+            {label: (directions == label).astype(float) for label in (-1, 0, 1)},
+            index=df.index,
+        )
 
 
 @pytest.mark.parametrize("use_ml_direction", [False, True], ids=["sma", "ml"])
@@ -65,7 +68,11 @@ def test_public_signals_are_invariant_to_future_rows(
     strategy.fit(history)
     assert history["timestamp"].iloc[-1] < scored["timestamp"].iloc[0]
     predictor = _DirectionProbe()
-    strategy._dir_model = predictor
+    monkeypatch.setattr(
+        XGBoostDirectionModel,
+        "predict_proba",
+        lambda _model, frame: predictor.predict_proba(frame),
+    )
     risk_calls: list[int] = []
 
     def allow_entries(
@@ -85,7 +92,7 @@ def test_public_signals_are_invariant_to_future_rows(
     perturbed = strategy.generate_signals(changed_future)
 
     assert risk_calls == [180, 90, 180]
-    assert len(predictor.frames) == (3 if use_ml_direction else 0)
+    assert bool(predictor.frames) is use_ml_direction
     assert prefix["signal"].ne(0).any(), "the causal comparison must exercise entries"
     pd.testing.assert_series_equal(full["signal"].iloc[:90], prefix["signal"])
     pd.testing.assert_series_equal(
@@ -98,3 +105,78 @@ def test_public_signals_are_invariant_to_future_rows(
         assert strategy._dir_fe is not None
         assert all(not frame.empty for frame in predictor.frames)
         assert all("log_return" in frame.columns for frame in predictor.frames)
+
+
+@pytest.mark.parametrize("declared", [False, True], ids=["automatic", "declared"])
+@pytest.mark.parametrize("overlap", [False, True], ids=["held_out", "replay"])
+def test_both_models_only_score_after_their_training_labels_mature(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    declared: bool,
+    overlap: bool,
+) -> None:
+    """A causal risk gate must not hide a direction model trained on the future."""
+    trained: dict[XGBoostDirectionModel, pd.Timestamp] = {}
+    predictions: list[tuple[int, pd.Timestamp, pd.Timestamp]] = []
+
+    def train(
+        model: XGBoostDirectionModel,
+        frame: pd.DataFrame,
+        eval_df: pd.DataFrame | None = None,
+    ) -> None:
+        trained[model] = frame["timestamp"].max()
+
+    def predict(model: XGBoostDirectionModel, frame: pd.DataFrame) -> pd.DataFrame:
+        horizon = 3 if model._config.n_estimators == 2 else 1
+        predictions.append((horizon, trained[model], frame["timestamp"].min()))
+        classes = (0, 1) if horizon == 3 else (-1, 0, 1)
+        return pd.DataFrame(
+            {label: float(label == 1) for label in classes}, index=frame.index
+        )
+
+    monkeypatch.setattr(XGBoostDirectionModel, "train", train)
+    monkeypatch.setattr(XGBoostDirectionModel, "predict_proba", predict)
+    strategy = SafetyVolumeStrategy(
+        SafetyVolumeStrategyConfig.model_validate(
+            {
+                "risk_model": {"n_estimators": 2},
+                "direction_model": {"n_estimators": 3},
+                "lookback_candidates": [24],
+                "use_ml_direction": True,
+                "target_holding_bars": 3,
+                "retrain_interval": 100,
+                "rolling_gen": {"enabled": declared},
+            }
+        )
+    )
+    history = large_ohlcv_df.iloc[:300]
+    scored = history if overlap else large_ohlcv_df.iloc[300:450]
+    strategy.fit(history)
+    predictions.clear()
+    result = strategy.generate_signals(scored)
+
+    assert {horizon for horizon, _, _ in predictions} == {1, 3}
+    for horizon, trained_until, scored_from in predictions:
+        assert trained_until + pd.Timedelta(hours=horizon) < scored_from
+    assert result["signal"].ne(0).any()
+    if overlap:
+        assert result["signal"].iloc[:100].eq(0).all()
+        assert result["signal"].iloc[100] == 1
+    trace = strategy.rolling_trace()
+    assert trace is not None
+    for model_trace in (trace, trace["direction"]):
+        assert model_trace["initial_model_available"] is not overlap
+        assert model_trace["bars_scored"] > 0
+        assert model_trace["scheme"] == ("roll_sd" if declared else "automatic")
+
+    # A later direction failure cannot leave either the previous trace or a
+    # partial risk-only trace looking like evidence of a successful execution.
+    def fail_direction(
+        _strategy: SafetyVolumeStrategy, _frame: pd.DataFrame
+    ) -> NDArray[np.float64]:
+        raise RuntimeError("direction failed")
+
+    monkeypatch.setattr(SafetyVolumeStrategy, "_compute_ml_directions", fail_direction)
+    with pytest.raises(RuntimeError, match="direction failed"):
+        strategy.generate_signals(scored)
+    assert strategy.rolling_trace() is None

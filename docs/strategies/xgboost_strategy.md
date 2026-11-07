@@ -57,8 +57,11 @@ designed for research on market-making volume targets, not live execution.
 - `generate_signals()` requires a fitted model and rolling retrains according to
   `retrain_interval`.
 - A bar with unavailable features emits no entry signal; it does not reuse the
-  preceding bar's prediction. Cooldown counts all source bars, including gaps,
-  and threshold selection uses the same timing. See the
+  preceding bar's prediction. A scored frame in which no bar can be scored fails
+  instead of returning an all-flat result; the [rolling
+  rules](../ml_research.md#rolling-retraining-schemes) cover the context it needs
+  and the error it reports. Cooldown counts all source bars, including gaps, and
+  threshold selection uses the same timing. See the
   [dataset and model input contract](../ml_research.md#dataset-and-model-inputs).
 - Scored data must carry chronological timestamps. The
   [training contract](../strategy_contract.md#training-before-scoring) covers the
@@ -67,8 +70,9 @@ designed for research on market-making volume targets, not live execution.
 
 ## Declarative Rolling Schemes
 
-`rolling_gen` replaces the rolling retrainer with a named window geometry. It is
-off unless enabled, and while it is off the classic loop above is what runs. The
+`rolling_gen` selects a named training geometry when enabled; otherwise the
+shared core uses automatic geometry. Both modes use feature-owned prediction
+context, causal refits and saved execution traces. The
 schemes, their optional fields and the causal boundary are described once in the
 [ML research contract](../ml_research.md#rolling-retraining-schemes); this
 strategy needs only the switch:

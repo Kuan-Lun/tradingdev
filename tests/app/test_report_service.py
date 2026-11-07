@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.cli.reports import main as report_cli_main
 from tradingdev.adapters.reporting.labels import metric_label, unit_label
@@ -25,6 +26,7 @@ from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.report_service import ReportService
+from tradingdev.domain.benchmark import BENCHMARKS
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.performance.artifacts import (
     BenchmarkScope,
@@ -106,7 +108,9 @@ def _save(
                 },
             },
             strategy_execution=StrategyExecution(
-                kind="generated", constructor_kwargs={"slow": 26, "signal": 9}
+                kind="generated",
+                program=GENERATED_PROGRAM,
+                constructor_kwargs={"slow": 26, "signal": 9},
             ),
         )
     digest = manifest.manifest_hash if manifest else None
@@ -1706,27 +1710,44 @@ def _benchmark(**changes: Any) -> BenchmarkScope:
     )
 
 
+@pytest.mark.parametrize("asset_class", ["crypto", "tw_equity"])
 def test_benchmark_section_compares_the_saved_baseline_with_the_strategy(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    asset_class: str,
 ) -> None:
     workspace, _, service = context
-    _save(context, benchmarks={"full": _benchmark()})
+    definition = BENCHMARKS[asset_class]
+    snapshot = asdict(definition)
+    snapshot.pop("sources")
+    _save(
+        context,
+        benchmarks={
+            "full": _benchmark(
+                asset_class=asset_class,
+                definition=snapshot,
+                source=definition.sources[0],
+                market_type="futures/um" if asset_class == "crypto" else None,
+                dataset_id=f"{definition.symbol}:1d:2024-01-01:2024-01-31",
+            )
+        },
+    )
     response = service.generate_report(["run"], sections=["overview", "benchmark"])
     assert response["success"], response
     path = Path(response["path"])
     payload = _payload(path)
     scope = payload["runs"][0]["scopes"][0]
     assert scope["benchmark"]["status"] == "available"
-    assert scope["benchmark"]["definition"]["symbol"] == "BTC/USDT"
+    assert scope["benchmark"]["definition"]["symbol"] == definition.symbol
     text = path.read_text()
-    assert "基準：BTC/USDT 買進持有" in text
+    assert f"基準：{definition.label}" in text
+    assert definition.rationale in text
     assert "策略與基準對照" in text
     # Overview columns carry the baseline return and the strategy's excess.
     assert "基準報酬（買進持有）" in text
     assert "超額報酬（策略−基準）" in text
     assert "15.00%" in text
     manifest = json.loads(path.with_name("manifest.json").read_text())
-    assert manifest["benchmarks"]["run"]["full"]["symbol"] == "BTC/USDT"
+    assert manifest["benchmarks"]["run"]["full"]["symbol"] == definition.symbol
     assert manifest["benchmarks"]["run"]["full"]["status"] == "available"
     assert manifest["sections"] == ["overview", "benchmark"]
 

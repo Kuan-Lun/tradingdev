@@ -22,6 +22,7 @@ from tooling.git.candidates import (
     verify_candidate,
 )
 from tooling.git.change_scope import ChangeScope, classify_changes
+from tooling.process_guard import ProcessCleanupError, report_cleanup_failure
 from tooling.review_options import add_review_arguments, validate_review_options
 
 
@@ -44,7 +45,7 @@ def check_commit() -> None:
         if base.returncode == 0
         else ChangeScope("code")
     )
-    profile = "fast" if scope.kind in {"code", "tooling"} else scope.kind
+    profile = scope.commit_profile
     print(f"Commit checks: {profile}", flush=True)
     check_snapshot(tree, profile)
     assert_index_unchanged(tree)
@@ -238,6 +239,8 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except ProcessCleanupError as error:
+        raise SystemExit(report_cleanup_failure(error)) from error
     except (RuntimeError, subprocess.SubprocessError, OSError) as error:
         print(f"Git checks failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error

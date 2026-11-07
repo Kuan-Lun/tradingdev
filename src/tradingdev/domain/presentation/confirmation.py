@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Annotated, Literal, Self
-
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from typing import TYPE_CHECKING
 
 from tradingdev.domain.backtest.execution_policy import DEFAULT_VOLUME_POSITION_SIZE
+from tradingdev.domain.data.crawlers.registry import describe_sources
 from tradingdev.domain.execution_assumptions import (
     resolve_execution_assumptions,
     summarize_execution_assumptions,
@@ -16,164 +15,22 @@ from tradingdev.domain.execution_assumptions import (
 from tradingdev.domain.parameter_values import effective_candidates, parameter_leaves
 from tradingdev.domain.performance.sampling import daily_observation_unavailable_reason
 from tradingdev.domain.preflight import PreflightReceipt
+from tradingdev.domain.presentation.confirmation_contract import (
+    SECTION_TITLES,
+    ConfirmationDocument,
+    ConfirmationField,
+    ConfirmationIdentity,
+    ConfirmationPresentation,
+    ConfirmationSection,
+    SectionId,
+    validate_presentation,
+)
 from tradingdev.domain.research import ResearchMetadata
 from tradingdev.domain.validation.config import parse_walk_forward_config
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 
 if TYPE_CHECKING:
     from tradingdev.domain.execution import ExecutionManifest
-
-type NonemptyText = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1)
-]
-type PresentationLabel = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)
-]
-type PresentationExplanation = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)
-]
-type PresentationPath = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
-MAX_PRESENTATION_PARAMETER_DESCRIPTIONS = 4096
-
-type SectionId = Literal[
-    "strategy",
-    "market",
-    "parameters",
-    "execution",
-    "validation",
-    "optimization",
-    "preflight",
-    "limitations",
-]
-
-SECTION_TITLES: dict[SectionId, str] = {
-    "strategy": "這次要測試什麼",
-    "market": "市場與資料",
-    "parameters": "策略設定",
-    "execution": "資金、交易成本與執行設定",
-    "validation": "分段驗證方式",
-    "optimization": "參數搜尋方式",
-    "preflight": "確認前的程式檢查",
-    "limitations": "限制與待確認事項",
-}
-
-
-class _ConfirmationModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
-
-
-class ParameterDescription(_ConfirmationModel):
-    """Model-authored wording for a parameter, never its executable value."""
-
-    label: PresentationLabel
-    description: PresentationExplanation
-    unit: PresentationLabel | None = None
-
-
-class ConfirmationPresentation(_ConfirmationModel):
-    """Plain-language metadata bound to the exact constructor in an execution plan."""
-
-    title: PresentationLabel
-    summary: PresentationExplanation
-    parameter_descriptions: dict[PresentationPath, ParameterDescription] = Field(
-        max_length=MAX_PRESENTATION_PARAMETER_DESCRIPTIONS,
-        description=(
-            "Human labels, meanings and units for every effective constructor "
-            "parameter, including defaults; never executable values. Keys are JSON "
-            "pointers into constructor arguments: /fast_period for generated "
-            "strategies, /config/k_period or /fit_config/... for bundled strategies. "
-            "Preparation returns required_parameter_paths for missing descriptions."
-        ),
-    )
-
-
-class ConfirmationField(_ConfirmationModel):
-    """One authoritative displayed value with an optional explanation."""
-
-    label: NonemptyText
-    value_text: str
-    description: str = ""
-    unit: NonemptyText | None = None
-    detail: bool = False
-    explanation_source: Literal["backend", "model"] = "backend"
-
-
-class ConfirmationSection(_ConfirmationModel):
-    """A mandatory block that is shared by text and HTML output."""
-
-    id: SectionId
-    title: NonemptyText
-    fields: tuple[ConfirmationField, ...] = ()
-    paragraphs: tuple[str, ...] = ()
-    summary_paragraphs: tuple[str, ...] = ()
-
-
-class ConfirmationIdentity(_ConfirmationModel):
-    """Machine identity and storage details kept outside the main explanation."""
-
-    plan_id: str | None = None
-    manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    details: tuple[ConfirmationField, ...] = ()
-
-
-class ConfirmationDocument(_ConfirmationModel):
-    """The complete built-in template, without caller-selected omissions."""
-
-    schema_version: Literal[2] = 2
-    title: NonemptyText
-    summary: NonemptyText
-    sections: tuple[ConfirmationSection, ...]
-    identity: ConfirmationIdentity
-
-    @model_validator(mode="after")
-    def complete_template(self) -> Self:
-        if tuple(section.id for section in self.sections) != tuple(SECTION_TITLES):
-            raise ValueError("Confirmation requires every built-in section in order")
-        for section in self.sections:
-            if section.title != SECTION_TITLES[section.id]:
-                raise ValueError("Confirmation section titles are fixed by the backend")
-            if not section.fields and not section.paragraphs:
-                raise ValueError("Confirmation sections cannot be empty")
-        return self
-
-
-class ConfirmationPresentationError(ValueError):
-    """Missing or ambiguous metadata can be repaired without editing a revision."""
-
-    def __init__(self, message: str, *, required_parameter_paths: list[str]) -> None:
-        super().__init__(message)
-        self.required_parameter_paths = required_parameter_paths
-
-
-def parameter_paths(manifest: ExecutionManifest) -> list[str]:
-    """Return exact JSON pointers relative to the captured constructor arguments."""
-    manifest.verify()
-    paths = set(parameter_leaves(manifest.strategy_execution.constructor_kwargs))
-    for _group, _candidate, pointer, value in effective_candidates(manifest):
-        paths.update(parameter_leaves(value, pointer))
-    return sorted(paths)
-
-
-def validate_presentation(
-    manifest: ExecutionManifest, presentation: ConfirmationPresentation
-) -> None:
-    """Require unambiguous human labels for every captured parameter leaf."""
-    paths = parameter_paths(manifest)
-    actual = set(presentation.parameter_descriptions)
-    required = set(paths)
-    missing, extra = required - actual, actual - required
-    if missing or extra:
-        raise ConfirmationPresentationError(
-            "Parameter descriptions must exactly cover the captured constructor; "
-            f"missing={sorted(missing)}, extra={sorted(extra)}",
-            required_parameter_paths=paths,
-        )
-    labels = [entry.label for entry in presentation.parameter_descriptions.values()]
-    if len(labels) != len(set(labels)):
-        raise ConfirmationPresentationError(
-            "Parameter labels must distinguish every captured value",
-            required_parameter_paths=paths,
-        )
 
 
 def _object(value: object, name: str) -> dict[str, object]:
@@ -326,6 +183,13 @@ def _market_fields(
     _known_fields(requirements, {"market", "features"}, "data requirements")
     market = _object(requirements["market"], "market data")
     _known_fields(market, {"source", "symbol", "timeframe"}, "market data")
+    source = market["source"]
+    source_details = next(
+        (item for item in describe_sources() if item["source"] == source), None
+    )
+    if source_details is None:
+        raise ValueError(f"Unknown market data source: {source}")
+    uses_market_type = bool(source_details["market_types"])
     market_type = {
         "spot": "現貨",
         "futures/um": "以穩定幣保證金計價的合約",
@@ -349,14 +213,24 @@ def _market_fields(
         _field("預設資料來源", _source(data["source"]), detail=True),
         _field(
             "市場類型",
-            market_type,
-            "此選項用於 Binance 歷史資料庫；其他資料來源依其商品定義。",
+            market_type if uses_market_type else f"不適用（{_source(source)}）",
+            "本次行情來源使用此設定選擇市場。"
+            if uses_market_type
+            else "此行情來源不使用市場類型設定；商品種類依來源與商品代碼定義。",
         ),
     ]
     technical = [
         _field("原始行情保存位置", data["raw_dir"]),
         _field("處理後行情保存位置", data["processed_dir"]),
     ]
+    if not uses_market_type:
+        technical.append(
+            _field(
+                "未適用的市場類型設定",
+                data["market_type"],
+                "保留的共用設定值，不參與本次行情選擇。",
+            )
+        )
     feature_values = requirements["features"]
     if not isinstance(feature_values, list):
         raise ValueError("Confirmation feature requirements must be a list")

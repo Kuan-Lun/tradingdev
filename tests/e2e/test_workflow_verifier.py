@@ -22,8 +22,8 @@ import yaml
 from tests.e2e.codex_harness import verify_generated_strategy
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
-from tests.e2e.test_llm_workflows import assert_workflow
 from tests.e2e.verify_strategy import verify_execution_snapshot
+from tests.e2e.workflow_evidence import assert_workflow
 from tests.integration.execution_fixtures import execution_evidence_draft
 from tests.integration.mcp_harness import (
     MCPWorkspace,

@@ -10,6 +10,7 @@ from tooling.review_scope import (
     SCOPES,
     markdown_sections,
     scope_for_path,
+    sections_for_reference,
     sections_for_scope,
     selection_reason,
 )
@@ -172,6 +173,8 @@ def test_repeated_headings_remain_distinct_with_correct_ancestors() -> None:
     [
         ("tooling/review_docs.py", "tooling"),
         ("tests/tooling/test_review_docs.py", "tooling"),
+        ("tests/llm_plugin.py", "tooling"),
+        ("tests/conftest.py", "general"),
         (".githooks/pre-commit", "tooling"),
         (".Codex/hooks/finalize-python", "tooling"),
         ("pyproject.toml", "tooling"),
@@ -183,6 +186,7 @@ def test_repeated_headings_remain_distinct_with_correct_ancestors() -> None:
         ("src/tradingdev/domain/backtest/engines.py", "execution"),
         ("tests/app/test_execution_plan_service.py", "execution"),
         ("src/tradingdev/app/contracts/plans.py", "execution"),
+        ("src/tradingdev/domain/presentation/confirmation_contract.py", "execution"),
         ("src/tradingdev/app/contracts/jobs.py", "execution"),
         ("src/tradingdev/mcp/workers/backtest.py", "execution"),
         ("tests/adapters/execution/test_worker_supervisor.py", "execution"),
@@ -206,6 +210,8 @@ def test_repeated_headings_remain_distinct_with_correct_ancestors() -> None:
         ("src/tradingdev/adapters/cli/main.py", "interfaces"),
         ("docs/talks/tradingdev-introduction/slides.md", "presentation"),
         ("tooling/presentations.py", "presentation"),
+        ("tooling/presentation_errors.py", "presentation"),
+        ("tooling/presentation_html.py", "presentation"),
         ("tooling/marp/package-lock.json", "presentation"),
         ("tests/tooling/test_presentations.py", "presentation"),
         ("scripts/check-presentations.sh", "presentation"),
@@ -436,6 +442,27 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
     ("path", "owner", "heading", "scopes", "evidence"),
     [
         (
+            "ARCHITECTURE.md",
+            "general",
+            "容器執行 adapter",
+            {"strategy", "execution", "interfaces", "tooling"},
+            "runtime.recover_abandoned()",
+        ),
+        (
+            "docs/development.md",
+            "tooling",
+            "容器建置與驗證",
+            {"strategy", "execution", "interfaces", "tooling"},
+            "TRADINGDEV_RUNTIME_LIMITS",
+        ),
+        (
+            "docs/strategy_contract.md",
+            "strategy",
+            "Security Model",
+            {"strategy", "execution", "interfaces", "tooling"},
+            "UID/GID",
+        ),
+        (
             "docs/development.md",
             "tooling",
             "測試設計與精簡",
@@ -493,7 +520,7 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
         ),
     ],
 )
-def test_relocated_contracts_retain_complete_evidence_for_responsible_scopes(
+def test_registered_contracts_retain_complete_evidence_for_responsible_scopes(
     path: str, owner: str, heading: str, scopes: set[str], evidence: str
 ) -> None:
     root = Path(__file__).resolve().parents[2]
@@ -627,3 +654,66 @@ def test_contract_headings_have_reviewed_ownership(path: str) -> None:
                 selection_reason(scope, path, text)
                 == "registered-heading-responsibility"
             )
+
+
+def test_explicit_contract_subtree_and_duplicate_anchor() -> None:
+    text = (
+        "Intro\r\n# Contract\r\nContext.\r\n## Repeat\r\nFirst.\r\n"
+        "### Child\r\nFirst child.\r\n## Repeat\r\nSecond.\r\n"
+        "### Child\r\nSecond child.\r\n## Tail\r\nUnrelated.\r\n"
+    )
+    selected = sections_for_reference("docs/contract.md", text, "repeat-1")
+    original = "".join(section.text for section in selected)
+    assert "Intro\r\n# Contract\r\nContext." in original
+    assert "Second.\r\n### Child\r\nSecond child." in original
+    assert "First." not in original and "Unrelated." not in original
+    assert (
+        "".join(section.text for section in sections_for_reference("x", text, ""))
+        == text
+    )
+    with pytest.raises(ValueError, match="Missing SRS contract heading"):
+        sections_for_reference("docs/contract.md", text, "deleted")
+
+
+def test_srs_registry_drives_change_ownership_and_context() -> None:
+    from tooling.requirements import DOCUMENT_SCOPES
+
+    for path, scopes in DOCUMENT_SCOPES.items():
+        assert set(scopes) <= SCOPES.keys()
+        assert scope_for_path(path) == scopes[0]
+        for scope in SCOPES:
+            parts = sections_for_scope(scope, path, "# Requirements\nContent.\n")
+            assert bool(parts) == (scope == "general" or scope in scopes)
+
+
+@pytest.mark.parametrize("container", [">", "-"])
+@pytest.mark.parametrize("fragment", ["repeat", "repeat-1"])
+def test_contract_reference_uses_link_checker_container_anchors(
+    tmp_path: Path, container: str, fragment: str
+) -> None:
+    from tooling.documentation import check_local_links
+
+    text = (
+        f"# Contract\n\n{container} ## Repeat\n\n"
+        "## Repeat\nactual second\n\n## Tail\nunrelated\n"
+    )
+    contract = tmp_path / "contract.md"
+    contract.write_text(text)
+    source = tmp_path / "README.md"
+    source.write_text(f"[contract](contract.md#{fragment})\n")
+    check_local_links(tmp_path, [source])
+    parts = sections_for_reference("contract.md", text, fragment)
+    selected = "".join(part.text for part in parts)
+    assert "unrelated" not in selected
+    if fragment == "repeat-1":
+        assert "actual second" in selected
+    else:
+        assert f"{container} ## Repeat" in selected
+        assert "actual second" not in selected
+
+
+def test_first_line_container_reference_does_not_expand_the_document() -> None:
+    prelude = "> ## Quote\n> cited evidence\n\n"
+    text = prelude + "# Actual\nunrelated actual\n\n## Tail\nunrelated tail\n"
+    parts = sections_for_reference("contract.md", text, "quote")
+    assert "".join(part.text for part in parts) == prelude

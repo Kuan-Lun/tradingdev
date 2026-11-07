@@ -7,6 +7,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -116,6 +117,7 @@ def _publish(
         config=config,
         strategy_execution=StrategyExecution(
             kind="bundled" if bundled else "generated",
+            program=None if bundled else GENERATED_PROGRAM,
             constructor_kwargs={"config": params} if bundled else params,
         ),
         optimization=search,
@@ -443,7 +445,7 @@ def test_read_only_queries_need_no_strategy_or_pickle_and_return_detached_values
 
     monkeypatch.setattr("pickle.load", forbidden)
     for module in (
-        "tradingdev.domain.strategies.loader",
+        "tradingdev.adapters.execution.strategy_factory",
         "tradingdev.domain.backtest.engines",
         "tradingdev.app.backtest_service",
     ):

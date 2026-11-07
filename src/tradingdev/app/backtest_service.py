@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.app.benchmark_service import BenchmarkService
 from tradingdev.app.data_service import DataService, LoadedDataset
 from tradingdev.app.execution_dataset import ExecutionDataset
@@ -35,7 +36,6 @@ from tradingdev.domain.strategies.contract import (
     VALIDATE_FIXTURE_ROWS,
     SignalContractChecker,
 )
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.domain.validation.config import (
     ExplicitWalkForwardConfig,
@@ -95,12 +95,12 @@ class BacktestService:
         self,
         *,
         data_service: DataService | None = None,
-        strategy_loader: StrategyLoader | None = None,
+        strategy_loader: StrategyFactory | None = None,
         strategy_gate: StrategyExecutionGate | None = None,
         benchmark_service: BenchmarkService | None = None,
     ) -> None:
         self._data_service = data_service or DataService()
-        self._strategy_loader = strategy_loader or StrategyLoader()
+        self._strategy_loader = strategy_loader or StrategyFactory()
         self._strategy_gate = strategy_gate or StrategyService()
         self._benchmark_service = benchmark_service or BenchmarkService(
             self._data_service
@@ -276,6 +276,10 @@ class BacktestService:
         ensure_execution_mode(
             spec.strategy_id, spec.execution_capabilities, manifest.kind
         )
+        if manifest.strategy_execution.kind == "bundled":
+            self._strategy_loader.validate_execution(
+                raw_config["strategy"], manifest.strategy_execution
+            )
         self.check_execution(raw_config, manifest.strategy_execution)
 
     def run_manifest(
@@ -320,39 +324,39 @@ class BacktestService:
             )
         )
         engine = self.create_engine(bt_cfg)
-        strategy = self._strategy_loader.create_from_execution(
+        with self._strategy_loader.open_from_execution(
             raw_config["strategy"], manifest.strategy_execution, engine, parallel_cfg
-        )
+        ) as strategy:
+            if manifest.kind == "walk_forward":
+                wf_cfg = parse_walk_forward_config(raw_config["validation"])
+                validator = WalkForwardValidator(config=wf_cfg, engine=engine)
+                folds = validator.validate(strategy, dataset.frame)
+                pipeline = PipelineResult(
+                    mode="walk_forward",
+                    fold_results=folds,
+                    config_snapshot=raw_config,
+                    execution_manifest=manifest,
+                    benchmark=self._benchmark(
+                        dataset.frame, raw_config, bt_cfg, benchmark
+                    ),
+                )
+                return BacktestRun(
+                    mode="walk_forward",
+                    pipeline=pipeline,
+                    metrics=summarize_results(folds),
+                    processed_path=dataset.processed_path,
+                    dataset_id=dataset.dataset_id,
+                )
 
-        if manifest.kind == "walk_forward":
-            wf_cfg = parse_walk_forward_config(raw_config["validation"])
-            validator = WalkForwardValidator(config=wf_cfg, engine=engine)
-            folds = validator.validate(strategy, dataset.frame)
-            pipeline = PipelineResult(
-                mode="walk_forward",
-                fold_results=folds,
-                config_snapshot=raw_config,
-                execution_manifest=manifest,
-                benchmark=self._benchmark(dataset.frame, raw_config, bt_cfg, benchmark),
-            )
-            return BacktestRun(
-                mode="walk_forward",
-                pipeline=pipeline,
-                metrics=summarize_results(folds),
-                processed_path=dataset.processed_path,
-                dataset_id=dataset.dataset_id,
-            )
-
-        signals = generate_checked_signals(strategy, dataset.frame)
+            signals = generate_checked_signals(strategy, dataset.frame)
+            parameters = deepcopy(strategy.get_parameters())
+            rolling_trace = deepcopy(strategy.rolling_trace())
         result = engine.run(signals)
-        result.metric_metadata["strategy_parameters"] = deepcopy(
-            strategy.get_parameters()
-        )
-        rolling_trace = strategy.rolling_trace()
+        result.metric_metadata["strategy_parameters"] = parameters
         if rolling_trace is not None:
             # Provenance, not a parameter: which window trained the model that
             # scored each roll. Absent whenever the rolling switch is off.
-            result.metric_metadata["rolling_trace"] = deepcopy(rolling_trace)
+            result.metric_metadata["rolling_trace"] = rolling_trace
         pipeline = PipelineResult(
             mode="simple",
             backtest_result=result,

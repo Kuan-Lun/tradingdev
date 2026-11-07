@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import mkdtemp
@@ -408,7 +409,25 @@ def test_isolated_dashboard_process_and_workspace_are_cleaned_on_every_exit(
 
     def record_process(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
         process: subprocess.Popen[str] = real_popen(*args, **kwargs)
-        started.append((process, Path(kwargs["cwd"])))
+        root = Path(kwargs["cwd"])
+        started.append((process, root))
+        if outcome == "timeout":
+            real_communicate = process.communicate
+
+            def communicate(*, timeout: float) -> tuple[str, str]:
+                # Start the injected deadline only after AppTest has changed
+                # __main__. Keep startup bounded and let _run_isolated own
+                # cleanup even when readiness fails.
+                deadline = time.monotonic() + 90
+                while not (root / "app-ready").exists():
+                    if process.poll() is not None:
+                        return real_communicate(timeout=timeout)
+                    if time.monotonic() >= deadline:
+                        raise AssertionError("AppTest did not report readiness")
+                    time.sleep(0.01)
+                return real_communicate(timeout=timeout)
+
+            monkeypatch.setattr(process, "communicate", communicate)
         return process
 
     monkeypatch.setattr(subprocess, "Popen", record_process)
@@ -416,11 +435,18 @@ def test_isolated_dashboard_process_and_workspace_are_cleaned_on_every_exit(
         "from pathlib import Path\n"
         "import sys\n"
         "import time\n"
-        "from tests.adapters.test_dashboard_render import _app, _pipeline\n"
+        "from streamlit.testing.v1 import AppTest\n"
         "original_main = sys.modules['__main__']\n"
-        "_app(Path.cwd(), _pipeline('signal'))\n"
+        "script = Path('app.py')\n"
+        "script.write_text(\"import streamlit as st\\nst.write('cleanup probe')\\n\")\n"
+        "app = AppTest.from_file(script, default_timeout=15).run()\n"
+        "assert not app.exception\n"
         "assert sys.modules['__main__'] is not original_main\n"
-        "print('AppTest completed', flush=True)\n"
+        # Deliberately longer than the injected one-second deadline. Cleanup
+        # tests must not depend on cold imports or rendering finishing first.
+        + ("time.sleep(2)\n" if outcome == "timeout" else "")
+        + "print('AppTest completed', flush=True)\n"
+        "Path('app-ready').touch()\n"
     )
     if outcome == "normal":
         _run_isolated(script)
@@ -431,7 +457,7 @@ def test_isolated_dashboard_process_and_workspace_are_cleaned_on_every_exit(
         assert "AppTest completed" in failure.value.stdout
     else:
         with pytest.raises(subprocess.TimeoutExpired) as timeout:
-            _run_isolated(script + "time.sleep(60)\n", timeout=15)
+            _run_isolated(script + "time.sleep(60)\n", timeout=1)
         assert timeout.value.stdout is not None
         assert b"AppTest completed" in timeout.value.stdout
     assert sys.modules["__main__"] is original_main

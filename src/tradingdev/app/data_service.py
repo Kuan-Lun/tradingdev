@@ -12,7 +12,6 @@ from typing import Any
 import pandas as pd
 
 from tradingdev.adapters.storage.data_cache import DataCache
-from tradingdev.adapters.storage.feature_samples import read_feature_sample
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
     sha256_file,
@@ -21,18 +20,17 @@ from tradingdev.adapters.storage.filesystem import (
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.data import CachedDataset
 from tradingdev.app.data_manager import DataManager
-from tradingdev.app.dvol_data import DVOLData
+from tradingdev.app.dataset_inspection import DatasetInspection
+from tradingdev.app.feature_data import FeatureData
 from tradingdev.app.market_sample import load_market_sample
 from tradingdev.app.pagination import paginate
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.cache import CacheReceipt, DataIdentity
-from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
 from tradingdev.domain.data.crawlers.registry import create_crawler, describe_sources
 from tradingdev.domain.data.loader import DataLoader
 from tradingdev.domain.data.processor import DataProcessor
 from tradingdev.domain.data.requirements import (
     DataRequirement,
-    FeatureSpec,
     MarketDataSpec,
 )
 from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
@@ -55,6 +53,8 @@ class DataService:
         self._workspace = workspace or WorkspacePaths()
         self._workspace.ensure()
         self._loader = DataLoader()
+        self._features = FeatureData(self._loader, self._resolve_data_path)
+        self._inspection = DatasetInspection(self._loader)
 
     def data_config(self, raw_config: dict[str, Any]) -> DataConfig:
         """Build DataConfig with workspace defaults."""
@@ -177,7 +177,7 @@ class DataService:
         )
 
         for feature in requirements.features:
-            frame = self._merge_feature(
+            frame = self._features.merge(
                 frame, feature, request, data_config=data_config
             )
 
@@ -341,7 +341,9 @@ class DataService:
         for feature in requirements.features:
             selected = feature
             if feature.type == "dvol" and not feature.path:
-                path = self._managed_dvol(feature, request, data_config).reusable_path()
+                path = self._features.managed(
+                    feature, request, data_config
+                ).reusable_path()
                 if path is not None:
                     selected = feature.model_copy(update={"path": str(path)})
             features.append(selected)
@@ -363,8 +365,12 @@ class DataService:
                         "raw_path": str(output_dir / f"feature-{index}.csv"),
                     }
                 )
-            frame = self._merge_feature(
-                frame, selected, request, sample_max_rows=max_rows
+            frame = self._features.merge(
+                frame,
+                selected,
+                request,
+                data_config=data_config,
+                sample_max_rows=max_rows,
             )
         processed_path = output_dir / "sample.parquet"
         frame.to_parquet(processed_path, index=False)
@@ -482,15 +488,16 @@ class DataService:
             request.end_date.isoformat(),
             raw_config=raw_config,
         )
-        response["market"] = self._inspect_market(request, data_config)
-        response["dataset_fingerprint"] = self._dataset_fingerprint_report(
-            request,
+        response["market"] = self._inspection.market(
+            request, self._market_cache(request, data_config)
+        )
+        response["dataset_fingerprint"] = self._inspection.fingerprint(
             requirements,
             response["market"],
-            data_config,
+            self._dataset_id(request, requirements, data_config),
         )
         response["features"] = [
-            self._inspect_feature(feature, request, data_config)
+            self._features.inspect(feature, request, data_config)
             for feature in requirements.features
         ]
         return response
@@ -518,137 +525,6 @@ class DataService:
         )
         return manager.load()
 
-    def _merge_feature(
-        self,
-        frame: pd.DataFrame,
-        feature: FeatureSpec,
-        request: MarketDataRequest,
-        *,
-        data_config: DataConfig | None = None,
-        sample_max_rows: int | None = None,
-    ) -> pd.DataFrame:
-        path = self._resolve_data_path(feature.path) if feature.path else None
-        if sample_max_rows is not None and path is not None and path.exists():
-            merged = read_feature_sample(
-                path,
-                timestamps=frame["timestamp"],
-                column=feature.column,
-                max_rows=sample_max_rows,
-                fallback_column="dvol_close" if feature.type == "dvol" else None,
-            )
-        elif feature.type == "dvol":
-            feature_df = self._load_or_fetch_dvol(
-                feature,
-                request,
-                data_config=data_config,
-                sample_max_rows=sample_max_rows,
-                sample_timestamps=pd.DatetimeIndex(frame["timestamp"].unique())
-                if sample_max_rows is not None
-                else None,
-            )
-            value_column = feature.column
-            if (
-                value_column not in feature_df.columns
-                and "dvol_close" in feature_df.columns
-            ):
-                value_column = "dvol_close"
-            merged = feature_df[["timestamp", value_column]].rename(
-                columns={value_column: feature.column}
-            )
-        else:
-            if not feature.path:
-                msg = (
-                    f"{feature.type} feature requires data.requirements.features[].path"
-                )
-                raise ValueError(msg)
-            feature_df = self._loader.load_parquet(
-                self._resolve_data_path(feature.path)
-            )
-            merged = feature_df[["timestamp", feature.column]]
-
-        if sample_max_rows is not None:
-            merged = merged.loc[merged["timestamp"].isin(frame["timestamp"])]
-            counts = merged["timestamp"].value_counts()
-            expected_rows = sum(
-                max(int(counts.get(timestamp, 0)), 1)
-                for timestamp in frame["timestamp"]
-            )
-            if expected_rows > sample_max_rows:
-                raise ValueError("Feature joins exceeded the sample row budget")
-        result = frame.merge(merged, on="timestamp", how="left")
-        # Leading gaps are unknown; later observations cannot fill earlier bars.
-        result[feature.column] = result[feature.column].ffill()
-        return result
-
-    def _load_or_fetch_dvol(
-        self,
-        feature: FeatureSpec,
-        request: MarketDataRequest,
-        *,
-        data_config: DataConfig | None = None,
-        sample_max_rows: int | None = None,
-        sample_timestamps: pd.DatetimeIndex | None = None,
-    ) -> pd.DataFrame:
-        if not feature.path:
-            if sample_max_rows is not None:
-                raise ValueError("Sample DVOL requires an isolated output path")
-            return self._managed_dvol(
-                feature, request, data_config or self.data_config({})
-            ).load(DeribitDVOLCrawler)
-        processed_path = self._resolve_data_path(feature.path)
-        if processed_path.exists():
-            if sample_max_rows is not None and sample_timestamps is not None:
-                return read_feature_sample(
-                    processed_path,
-                    timestamps=pd.Series(sample_timestamps),
-                    column=feature.column,
-                    fallback_column="dvol_close",
-                    max_rows=sample_max_rows,
-                )
-            return self._loader.load_parquet(processed_path)
-
-        if feature.source != "deribit":
-            raise ValueError("Automatic DVOL downloads require source='deribit'")
-        crawler = DeribitDVOLCrawler()
-        currency = request.symbol.split("/")[0]
-        if sample_max_rows is None:
-            raw = crawler.fetch(
-                symbol=currency,
-                timeframe=request.timeframe,
-                start=request.start_date,
-                end=request.end_date,
-            )
-        else:
-            raw = crawler.fetch_sample(
-                symbol=currency,
-                timeframe=request.timeframe,
-                start=request.start_date,
-                end=request.end_date,
-                max_rows=sample_max_rows,
-                timestamps=sample_timestamps,
-            )
-            if len(raw) > sample_max_rows:
-                raise ValueError("Feature provider exceeded the sample row budget")
-        raw_path = (
-            self._resolve_data_path(feature.raw_path)
-            if feature.raw_path
-            else processed_path.with_suffix(".csv")
-        )
-        crawler.save_raw(raw, raw_path)
-        if raw["timestamp"].dt.tz is None:
-            raw["timestamp"] = raw["timestamp"].dt.tz_localize("UTC")
-        processed_path.parent.mkdir(parents=True, exist_ok=True)
-        raw.to_parquet(processed_path, index=False)
-        return raw
-
-    @staticmethod
-    def _managed_dvol(
-        feature: FeatureSpec, request: MarketDataRequest, config: DataConfig
-    ) -> DVOLData:
-        if feature.source != "deribit":
-            raise ValueError("Automatic DVOL downloads require source='deribit'")
-        return DVOLData(config, request)
-
     def _data_dirs(self) -> tuple[Path, Path]:
         data_root = os.environ.get("TRADINGDEV_DATA_ROOT")
         if data_root:
@@ -675,7 +551,8 @@ class DataService:
             ),
         )
 
-    def _resolve_data_path(self, value: str | None) -> Path:
+    @staticmethod
+    def _resolve_data_path(value: str | None) -> Path:
         if not value:
             msg = "data path is required"
             raise ValueError(msg)
@@ -683,135 +560,6 @@ class DataService:
         if path.is_absolute():
             return path
         return (Path.cwd() / path).resolve()
-
-    def _inspect_market(
-        self, request: MarketDataRequest, config: DataConfig
-    ) -> dict[str, Any]:
-        cache = self._market_cache(request, config)
-        paths: list[Path] = []
-        errors: list[str] = []
-        queries: list[dict[str, Any]] = []
-        for year in range(request.start_date.year, request.end_date.year + 1):
-            try:
-                receipt = cache.receipt(str(year))
-                if receipt is not None:
-                    paths.append(cache.processed_path(receipt))
-                    queries.append(
-                        receipt.model_dump(
-                            mode="json", exclude={"identity", "generation", "version"}
-                        )
-                    )
-            except (OSError, ValueError) as error:
-                errors.append(str(error))
-        report: dict[str, Any] = {
-            "symbol": request.symbol,
-            "timeframe": request.timeframe,
-            "source": cache.identity.source,
-            "market_type": cache.identity.market_type,
-            "queries": queries,
-            "paths": [str(path) for path in paths],
-            "exists": len(paths) == request.end_date.year - request.start_date.year + 1,
-            "rows": None,
-            "columns": [],
-            "start_timestamp": None,
-            "end_timestamp": None,
-            "timezone": None,
-            "missing_values": {},
-            "errors": errors,
-        }
-        frames: list[pd.DataFrame] = []
-        for path in paths:
-            if not path.exists():
-                continue
-            try:
-                frames.append(self._loader.load_parquet(path))
-            except Exception as exc:  # noqa: BLE001
-                report["errors"].append(f"{path}: {exc}")
-        if not frames:
-            return report
-
-        frame = pd.concat(frames, ignore_index=True)
-        report["rows"] = int(len(frame))
-        report["columns"] = [str(column) for column in frame.columns]
-        report["missing_values"] = {
-            str(column): int(count)
-            for column, count in frame.isna().sum().to_dict().items()
-        }
-        if "timestamp" in frame.columns and not frame.empty:
-            timestamps = frame["timestamp"]
-            report["start_timestamp"] = str(timestamps.min())
-            report["end_timestamp"] = str(timestamps.max())
-            tz = getattr(timestamps.dt, "tz", None)
-            report["timezone"] = str(tz) if tz is not None else None
-        return report
-
-    def _inspect_feature(
-        self,
-        feature: FeatureSpec,
-        request: MarketDataRequest,
-        config: DataConfig,
-    ) -> dict[str, Any]:
-        path = self._resolve_data_path(feature.path) if feature.path else None
-        query = None
-        query_reusable = None
-        if feature.type == "dvol" and not feature.path:
-            managed = self._managed_dvol(feature, request, config)
-            receipt = managed.receipt()
-            query_reusable = False
-            if receipt is not None:
-                path = managed.cache.processed_path(receipt)
-                query = receipt.model_dump(
-                    mode="json", exclude={"identity", "generation", "version"}
-                )
-                query_reusable = receipt.reusable(request.start_date, request.end_date)
-        exists = bool(path and path.exists())
-        missing_values: int | None = None
-        rows: int | None = None
-        if exists and path is not None:
-            try:
-                frame = self._loader.load_parquet(path)
-                rows = len(frame)
-                if feature.column in frame.columns:
-                    missing_values = int(frame[feature.column].isna().sum())
-                elif feature.type == "dvol" and "dvol_close" in frame.columns:
-                    missing_values = int(frame["dvol_close"].isna().sum())
-            except Exception:  # noqa: BLE001
-                missing_values = None
-        return {
-            "type": feature.type,
-            "source": feature.source,
-            "column": feature.column,
-            "path": str(path) if path is not None else None,
-            "exists": exists,
-            "rows": rows,
-            "missing_values": missing_values,
-            "query": query,
-            "query_reusable": query_reusable,
-        }
-
-    def _dataset_fingerprint_report(
-        self,
-        request: MarketDataRequest,
-        requirements: DataRequirement,
-        market_report: object,
-        data_config: DataConfig,
-    ) -> dict[str, str]:
-        file_hashes = []
-        if isinstance(market_report, dict):
-            for value in market_report.get("paths", []):
-                path = Path(str(value))
-                if path.exists():
-                    file_hashes.append({"path": str(path), "sha256": sha256_file(path)})
-        dataset_id = self._dataset_id(request, requirements, data_config)
-        payload = {
-            "dataset_id": dataset_id,
-            "files": file_hashes,
-            "requirements": requirements.model_dump(mode="json"),
-        }
-        return {
-            "dataset_id": dataset_id,
-            "fingerprint": sha256_text(json.dumps(payload, sort_keys=True)),
-        }
 
     def _dataset_id(
         self,

@@ -343,7 +343,11 @@ def _verify_interpretation(text: str) -> None:
         re.IGNORECASE,
     )
     sentences = re.split(r"[。！？!?；;\n]|\.(?=\s|$)", visible)
-    assert re.search(r"回測|backtest", visible, re.IGNORECASE) and any(
+    outcome_terms = re.compile(
+        r"回測|獲利|損益|收益|報酬|\b(?:backtests?|profit\w*|returns?|pnl)\b",
+        re.IGNORECASE,
+    )
+    assert outcome_terms.search(visible) and any(
         cost_terms.search(sentence) and limitation_terms.search(sentence)
         for sentence in sentences
     ), "Final reply must discuss signal evidence and cost-aware backtest limits"
@@ -365,7 +369,7 @@ def _require_unknown_sample_provenance(sentences: list[str]) -> None:
     sample_label = re.compile(r"樣本[內外]")
     identity = re.compile(
         r"是否|與否|歸屬|屬於|來源|關係|判定|確認|認定|區分|身分|身份|"
-        r"樣本內[／/或與、 ]*外"
+        r"樣本(?:內[／/或與、 ]*(?:樣本)?外|外[／/或與、 ]*(?:樣本)?內)"
     )
     assert any(
         unknown.search(sentence)
@@ -377,32 +381,188 @@ def _require_unknown_sample_provenance(sentences: list[str]) -> None:
     ), "Final reply must explain that training/evaluation provenance is unknown"
 
 
+_CLAIM_PREDICATE = r"(?:屬於?|是|為|僅(?:能|可)?支持|只(?:能|可)?支持|可(?:以)?支持)"
+_SAMPLE_CLAIM = re.compile(_CLAIM_PREDICATE + r"\s*(?:已證實的?\s*)?樣本[內外]")
+_IN_SAMPLE_DEFINITION = re.compile(_CLAIM_PREDICATE + r"\s*樣本內")
+# Only a bare category may stand before the predicate: any leading noun phrase
+# ("兩個候選", "模型", "視窗 12", "報告中") makes it a claim about saved rows.
+_GENERIC_EVALUATION_SUBJECT = re.compile(
+    r"(?:凡(?:是)?|所有|任何|一切)?"
+    r"(?:在|以|用|拿|對|就|至於)?"
+    r"(?:曾|都|僅|只)?"
+    r"(?:用於|參與|拿來)?"
+    r"訓練(?:的)?(?:資料|樣本|集)?(?:上|中)?"
+    r"(?:所)?(?:做|進行|執行|跑|完成)?的?"
+    r"(?:評估|測試|驗證|檢驗)"
+)
+_TRAILING_PARTICLE = re.compile(r"(?:都|即|均|則|就|也|亦|皆|便|仍|一律)+$")
+_REPORTING_VERB = re.compile(
+    r"(?:說明|指出|表示|載明|記載|寫明|提到|註明)(?:了|的是|：)?"
+)
+_SUBJECT_QUOTES = "「」『』（）()《》〈〉\"'"
+_SUBJECT_SEPARATORS = "，,；;：: \t"
+_CLAUSE_BREAK = re.compile(r"[，,；;：:。！？!?]")
+_SAVED_ROW_REFERENCE = re.compile(
+    r"候選|結果|分數|排名|視窗|兩者|兩項|這些|上述|該批|本批|紀錄|記錄"
+)
+_REPEAT_MARKER = re.compile(
+    r"亦然|亦同|皆然|均然|亦如此|亦是如此|也是如此|同樣如此|亦如是|"
+    r"同樣適用|也適用於|亦適用於|也一樣|也不例外|正是如此|也成立|亦復如此"
+)
+_UNAVAILABLE_SCORE = re.compile(
+    r"(?:分數|指標|相關性|IC)[^，,。；;]*"
+    r"(?:不可用|缺值|缺失|未提供|未取得|未知|不明|尚待確認)"
+)
+_UNCERTAIN_RESTATEMENT = re.compile(r"是否|不確定|無法(?:確認|判定)|尚待(?:確認|驗證)")
+_CONCESSIVE_PREFIX = re.compile(r"雖(?:然)?|儘管|即使")
+_FOLLOW_UP_ACTION = re.compile(
+    r"\s*(?:仍)?(?:需要|須|需|要)(?:先)?(?:確認|核對|補查|查明)"
+)
+
+
+def _subject_before_claim(before: str) -> str:
+    """Drop separators and adverbs that sit between the subject and predicate.
+
+    "凡在訓練資料上做的評估，都屬於樣本內" separates the same subject from the
+    predicate with a comma and 都; removing them cannot turn a subject that names
+    the saved rows into a category, because that is checked on the raw text.
+    """
+    tail = before
+    while True:
+        stripped = _TRAILING_PARTICLE.sub("", tail.rstrip(_SUBJECT_SEPARATORS))
+        if stripped == tail:
+            break
+        tail = stripped
+    return _CLAUSE_BREAK.split(tail)[-1].strip()
+
+
+def _reported_subject(subject: str) -> str:
+    """Drop a reporting frame such as "工具一般規則說明" before the category.
+
+    A report may quote the product rule instead of stating it directly. Only the
+    words before the verb are removed; what follows must still be the bare
+    category, so "工具說明這些結果屬於樣本內" stays a claim about the rows.
+    """
+    last = None
+    for match in _REPORTING_VERB.finditer(subject):
+        last = match
+    return "" if last is None else subject[last.end() :]
+
+
+def _states_training_data_definition(before: str, match: re.Match[str]) -> bool:
+    """Recognize the product's definition instead of a claim about the rows.
+
+    ``ml_service`` states that training-data evaluation remains in-sample and
+    that the saved artifact is fitted on all dataset rows, so a sentence whose
+    subject is that bare category — "在訓練資料上做的評估" — states the
+    definition, whether it is asserted directly or quoted through a reporting
+    frame ("工具一般規則說明…"). Naming the reported records anywhere in the
+    clause ("兩個候選", "模型", "視窗 12", "報告中", or a topic phrase like
+    "對這兩個候選而言") or merely wrapping the claim in rule framing
+    ("依一般規則") keeps it a claim about the candidate, which this guard still
+    rejects. Only the documented in-sample direction is exempt, so an inverted
+    rule and the separate-dataset direction stay rejected for human review.
+    """
+    if not _IN_SAMPLE_DEFINITION.fullmatch(match.group()):
+        return False
+    if _SAVED_ROW_REFERENCE.search(before):
+        return False
+    subject = _subject_before_claim(before)
+    for candidate in (subject, _reported_subject(subject)):
+        if _GENERIC_EVALUATION_SUBJECT.fullmatch(candidate.strip(_SUBJECT_QUOTES)):
+            return True
+    return False
+
+
+def _repeats_definition_for_saved_rows(remainder: str, following: list[str]) -> bool:
+    """Catch an exempted definition restated for the saved rows.
+
+    "在訓練資料上做的評估是樣本內；候選結果亦然。" and its same-clause form
+    "…，這也適用於本次兩個候選" label the candidate through an anaphor, so the
+    definition must not excuse them. The first part that names the saved rows
+    decides: an anaphor is a restatement unless it asks about the relationship,
+    refers to an unavailable score ("視窗 24 的分數不可用，視窗 12 亦然"), or
+    modifies a follow-up action ("兩個候選也一樣需要確認切分證據"). Merely
+    lacking split evidence does not excuse an affirmative restatement, including
+    concessions such as "雖然無法確認切分證據，同樣如此".
+    """
+    for candidate in (remainder, *following):
+        if not _SAVED_ROW_REFERENCE.search(candidate):
+            continue
+        marker = _REPEAT_MARKER.search(candidate)
+        if marker is None:
+            return False
+        before = candidate[: marker.start()]
+        after = candidate[marker.end() :]
+        return not (
+            (
+                _UNCERTAIN_RESTATEMENT.search(before)
+                and not _CONCESSIVE_PREFIX.search(before)
+            )
+            or _UNAVAILABLE_SCORE.search(before)
+            or _FOLLOW_UP_ACTION.match(after)
+        )
+    return False
+
+
 def _reject_unsupported_sample_claims(text: str) -> None:
     """Catch observed affirmative labels, not every mention of sample provenance.
 
     This is a regression guard for common assertions, not a semantic classifier.
-    Questions, explicit uncertainty and conditional explanations remain valid.
+    Questions, explicit uncertainty, conditional explanations and the product's
+    own definition of a training-data evaluation remain valid. Printed wording
+    still needs human semantic review.
     """
-    claim = re.compile(
-        r"(?:屬於?|是|為|僅(?:能|可)?支持|只(?:能|可)?支持|可(?:以)?支持)"
-        r"\s*(?:已證實的?\s*)?樣本[內外]"
-    )
     uncertain = re.compile(
         r"無法|不能|不(?:足以|代表|可|是)|尚未|未能|沒有證據|缺乏證據|是否|(?:不|非|究竟)$"
     )
     conditional = re.compile(
         r"若|如果|假如|倘若|(?:^|[：:,，\s])如[^，,。；;]*(?<!規)則"
     )
+    # Only exempt an explicitly general contract condition. Claims that this
+    # research satisfies it still need evidence, even when phrased with "only".
+    general_rule = re.compile(r"一般而言|一般判讀原則|契約的一般規則|(?:依|根據)契約")
+    asserted_case = re.compile(
+        r"本(?:研究|次|候選)|這(?:份|些)|因為|由於|既然|已(?:確認|證實)"
+    )
+    same_data_condition = re.compile(
+        r"(?=[^，,。；;]*(?:訓練|\btraining_dataset_id\b))"
+        r"(?=[^，,。；;]*(?:評估|\bdataset_id\b))"
+        r"[^，,。；;]*(?:相同|等於)[^，,。；;]*"
+        r"(?:(?:[，,]\s*)?(?:時(?:才(?:可|能))?|才(?:可|能))"
+        r"(?:據此|依此)?|[，,]\s*可(?:以)?)"
+        r"(?:判(?:定)?|認定|視|確認)?(?:此評分|該評估)?$"
+    )
     unknown_after = re.compile(r"仍(?:然)?(?:未知|不明)|尚待(?:確認|驗證)|尚未確認")
-    for sentence in re.split(r"[。！？!?；;\n]|但|然而|不過", text):
-        for match in claim.finditer(sentence):
-            before = sentence[: match.start()]
-            after = re.split(r"[，,]", sentence[match.end() :], maxsplit=1)[0]
+    unknown_alternative = re.compile(
+        r"^\s*(?:或|[／/])(?:樣本)?[內外](?:仍(?:然)?|均|皆)?(?:未知|不明)\s*$"
+    )
+    clauses = re.split(r"[。！？!?；;\n]|但|然而|不過", text)
+    for index, clause in enumerate(clauses):
+        for match in _SAMPLE_CLAIM.finditer(clause):
+            before = clause[: match.start()]
+            after = re.split(r"[，,]", clause[match.end() :], maxsplit=1)[0]
             if (
                 uncertain.search(before)
                 or conditional.search(before)
                 or unknown_after.search(after)
+                or unknown_alternative.fullmatch(after)
             ):
+                continue
+            if _states_training_data_definition(before, match) or (
+                _IN_SAMPLE_DEFINITION.fullmatch(match.group())
+                and general_rule.search(before)
+                and not asserted_case.search(before)
+                and same_data_condition.search(before)
+            ):
+                if _repeats_definition_for_saved_rows(
+                    clause[match.end() :], clauses[index + 1 :]
+                ):
+                    raise AssertionError(
+                        "Saved leaderboard has no evidence for an affirmative "
+                        "in-sample/out-of-sample claim: the definition is "
+                        "restated for the saved records"
+                    )
                 continue
             raise AssertionError(
                 "Saved leaderboard has no evidence for an affirmative "

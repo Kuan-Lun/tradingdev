@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from tests.app.test_backtest_service import _raw_config, _service, _SignalStrategy
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.randomness import (
@@ -48,7 +50,9 @@ def test_service_replays_seeded_constructor_fit_and_signals(
     service, _data, loader, _strategy = _service(tmp_path, rows=100)
     events: list[tuple[str, int | None, float]] = []
     monkeypatch.setattr(
-        loader, "create_from_execution", lambda *args: _random_strategy(events)
+        loader,
+        "open_from_execution",
+        lambda *args: nullcontext(_random_strategy(events)),
     )
     config = _raw_config(random_seed=42)
     if walk_forward:
@@ -78,7 +82,7 @@ def test_service_failure_restores_enclosing_execution(
         assert get_seed() == 42
         raise ValueError("constructor failed")
 
-    monkeypatch.setattr(loader, "create_from_execution", fail)
+    monkeypatch.setattr(loader, "open_from_execution", fail)
     with execution_randomness(7):
         generator = get_numpy_rng()
         with pytest.raises(ValueError, match="constructor failed"):
@@ -94,15 +98,17 @@ def test_trial_streams_do_not_depend_on_prior_trials_or_execution_transport(
     prepared_spec = service.prepare_strategy(_raw_config())
     monkeypatch.setattr(service, "prepare_strategy", lambda *args: prepared_spec)
     monkeypatch.setattr(optimization, "BacktestService", lambda: service)
-    monkeypatch.setattr(optimization, "StrategyLoader", lambda: loader)
+    monkeypatch.setattr(optimization, "StrategyFactory", lambda: loader)
     monkeypatch.setattr(
         loader,
-        "create_from_execution",
-        lambda *args, **kwargs: _random_strategy(events),
+        "open_from_execution",
+        lambda *args, **kwargs: nullcontext(_random_strategy(events)),
     )
     config = BacktestConfig(**_raw_config()["backtest"])
     strategy = {"id": "fixture", "parameters": {}}
-    execution = StrategyExecution(kind="generated", constructor_kwargs={})
+    execution = StrategyExecution(
+        kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+    )
 
     def evaluate(seed: int) -> None:
         result = optimization._run_single_combo(

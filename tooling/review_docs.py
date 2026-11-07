@@ -12,14 +12,16 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from threading import Event
 from typing import Any
 
 from tooling.codex_binary import resolve_codex_binary
 from tooling.process_guard import (
+    ProcessCleanupError,
     process_descendants,
     process_identity,
+    process_workspace,
+    report_cleanup_failure,
     terminate_tree,
 )
 from tooling.review_evidence import (
@@ -45,10 +47,11 @@ MAX_PROMPT_CHARS = 1_024_000
 MAX_PARALLEL_REVIEWS = 8
 # Per-channel output limits in Unicode characters, not model token budgets.
 MAX_DIAGNOSTIC_CHARS = 4000
+DEFAULT_REVIEW_MODEL = "gpt-6-luna"
+DEFAULT_REVIEW_REASONING_EFFORT = "high"
 SCHEMA = {
     "type": "object",
     "properties": {
-        "passed": {"type": "boolean"},
         "findings": {
             "type": "array",
             "items": {
@@ -62,7 +65,7 @@ SCHEMA = {
             },
         },
     },
-    "required": ["passed", "findings"],
+    "required": ["findings"],
     "additionalProperties": False,
 }
 
@@ -150,11 +153,30 @@ def _stderr_diagnostic(path: Path) -> str:
     return tail
 
 
+def reviewer_settings() -> tuple[str, str]:
+    """Keep evidence review independent of product tests and user CLI defaults."""
+    model = os.environ.get("TRADINGDEV_DOC_REVIEW_MODEL", DEFAULT_REVIEW_MODEL)
+    effort = os.environ.get(
+        "TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", DEFAULT_REVIEW_REASONING_EFFORT
+    )
+    if not model.strip():
+        raise ReviewError("TRADINGDEV_DOC_REVIEW_MODEL must not be empty.")
+    if effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+        raise ReviewError(
+            "TRADINGDEV_DOC_REVIEW_REASONING_EFFORT must be "
+            "none, low, medium, high, xhigh or max."
+        )
+    return model, effort
+
+
 def _command(root: Path) -> list[str]:
+    model, effort = reviewer_settings()
     command = [
         resolve_codex_binary(),
         "exec",
         "--ignore-user-config",
+        "--model",
+        model,
         "--ephemeral",
         "--skip-git-repo-check",
         "--sandbox",
@@ -170,7 +192,9 @@ def _command(root: Path) -> list[str]:
         str(root / "verdict.json"),
     ]
     config: dict[str, Any] = {
+        "model_reasoning_effort": effort,
         "features.shell_tool": False,
+        "features.sleep_tool": False,
         "features.shell_snapshot": False,
         "web_search": "disabled",
         "history.persistence": "none",
@@ -179,8 +203,6 @@ def _command(root: Path) -> list[str]:
     }
     for key, value in config.items():
         command.extend(["-c", f"{key}={json.dumps(value)}"])
-    if model := os.environ.get("TRADINGDEV_CODEX_MODEL"):
-        command.extend(["--model", model])
     return [*command, "-"]
 
 
@@ -236,8 +258,18 @@ def _run(
         finally:
             try:
                 terminate_tree(identity, descendants)
-            finally:
+            except ProcessCleanupError as error:
+                try:
+                    process.communicate(timeout=5)
+                except (OSError, subprocess.SubprocessError) as reap_error:
+                    error.add_note(f"Reviewer communication also failed: {reap_error}")
+                raise
+            try:
                 process.communicate(timeout=5)
+            except subprocess.TimeoutExpired as error:
+                raise ProcessCleanupError(
+                    "Reviewer did not finish communication after process cleanup."
+                ) from error
     diagnostics = _inspect_events(root / "events.jsonl")
     if process.returncode:
         parts = []
@@ -266,10 +298,10 @@ def _run(
 
 def _validate_verdict(raw: str) -> None:
     verdict = json.loads(raw)
-    if not isinstance(verdict, dict) or set(verdict) != {"passed", "findings"}:
+    if not isinstance(verdict, dict) or set(verdict) != {"findings"}:
         raise ReviewError("Codex returned a malformed documentation verdict.")
-    passed, findings = verdict["passed"], verdict["findings"]
-    if not isinstance(passed, bool) or not isinstance(findings, list):
+    findings = verdict["findings"]
+    if not isinstance(findings, list):
         raise ReviewError("Codex returned a malformed documentation verdict.")
     for finding in findings:
         if (
@@ -280,8 +312,6 @@ def _validate_verdict(raw: str) -> None:
             )
         ):
             raise ReviewError("Codex returned a malformed documentation finding.")
-    if passed != (len(findings) == 0):
-        raise ReviewError("Codex returned an inconsistent documentation verdict.")
     if findings:
         raise ReviewError(
             "Documentation needs updates:\n"
@@ -368,7 +398,7 @@ def review(
     max_prompt_bytes: int | None = None,
     max_total_prompt_bytes: int | None = None,
 ) -> None:
-    """Raise ReviewError for stale documentation or an incomplete review."""
+    """Reject incomplete reviews; propagate ProcessCleanupError to retain evidence."""
     if (
         isinstance(timeout_seconds, bool)
         or not math.isfinite(timeout_seconds)
@@ -387,6 +417,10 @@ def review(
         max_total_prompt_bytes=max_total_prompt_bytes,
     )
     plan.verify()
+    model, effort = reviewer_settings()
+    print(
+        f"Documentation reviewer: model={model}, reasoning_effort={effort}", flush=True
+    )
     prompts = plan.prompts
     print(
         f"Documentation review plan {plan.manifest['plan_hash']}: "
@@ -407,14 +441,16 @@ def review(
             raise ReviewError(
                 "Codex documentation review timed out before batch start."
             )
-        with TemporaryDirectory(prefix="tradingdev-doc-review-") as temporary:
-            root = Path(temporary)
+        with process_workspace(
+            prefix="tradingdev-doc-review-", label="Documentation review"
+        ) as root:
             (root / "schema.json").write_text(json.dumps(SCHEMA), encoding="utf-8")
             _run(root, prompt, timeout_seconds, deadline=deadline, cancelled=cancelled)
             _validate_verdict((root / "verdict.json").read_text(encoding="utf-8"))
 
     try:
         errors: list[str] = []
+        cleanup_failures: list[ProcessCleanupError] = []
         with ThreadPoolExecutor(max_workers=MAX_PARALLEL_REVIEWS) as executor:
             futures: list[Future[None]] = []
             try:
@@ -423,6 +459,9 @@ def review(
                 for index, future in enumerate(futures, start=1):
                     try:
                         future.result()
+                    except ProcessCleanupError as exc:
+                        cleanup_failures.append(exc)
+                        errors.append(f"Batch {index}/{len(prompts)}: {exc}")
                     except ReviewError as exc:
                         errors.append(f"Batch {index}/{len(prompts)}: {exc}")
                     except (
@@ -442,6 +481,8 @@ def review(
                 executor.shutdown(wait=True, cancel_futures=True)
                 # Joining alone hides failures held by the running futures.
                 # Preserve the interrupt and report any cleanup/execution error.
+                cleanup_errors: list[str] = []
+                interrupted_cleanups: list[ProcessCleanupError] = []
                 for index, future in enumerate(futures, start=1):
                     if future.cancelled():
                         continue
@@ -451,14 +492,44 @@ def review(
                         and error is not interrupted
                         and not isinstance(error, _ReviewCancelledError)
                     ):
-                        interrupted.add_note(
+                        detail = (
                             f"Batch {index}/{len(prompts)}: "
                             f"{type(error).__name__}: {error}"
                         )
+                        interrupted.add_note(detail)
+                        if isinstance(error, ProcessCleanupError):
+                            cleanup_errors.append(detail)
+                            interrupted_cleanups.append(error)
+                if cleanup_errors:
+                    raise ProcessCleanupError(
+                        f"{type(interrupted).__name__}: {interrupted}; "
+                        "documentation review cleanup unverified:\n"
+                        + "\n".join(cleanup_errors),
+                        retained_workspaces=(
+                            root
+                            for failure in interrupted_cleanups
+                            for root in failure.retained_workspaces
+                        ),
+                        interrupted=True,
+                    ) from interrupted
                 raise
         if errors:
+            if cleanup_failures:
+                raise ProcessCleanupError(
+                    "Documentation review cleanup unverified:\n" + "\n".join(errors),
+                    retained_workspaces=(
+                        root
+                        for failure in cleanup_failures
+                        for root in failure.retained_workspaces
+                    ),
+                    interrupted=any(
+                        failure.interrupted for failure in cleanup_failures
+                    ),
+                )
             raise ReviewError("Documentation review failed:\n" + "\n".join(errors))
         plan.verify()
+    except ProcessCleanupError:
+        raise
     except ReviewError:
         raise
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -513,6 +584,8 @@ def main() -> int:
             max_evidence_bytes=args.max_evidence_bytes,
             **options,
         )
+    except ProcessCleanupError as exc:
+        return report_cleanup_failure(exc)
     except ReviewError as exc:
         print(str(exc), file=sys.stderr)
         return 1

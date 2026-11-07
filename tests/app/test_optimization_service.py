@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from tradingdev.adapters.execution.process_runner import WorkerHandle
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.execution_submission import (
@@ -21,7 +22,6 @@ from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.strategy_service import StrategyNotExecutableError
 from tradingdev.domain.strategies.execution import StrategyExecution
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ class _RunnerStub:
         return WorkerHandle(2468, 100.0, "a" * 32)
 
 
-class _StrategyLoaderStub(StrategyLoader):
+class _StrategyFactoryStub(StrategyFactory):
     def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
         return StrategyExecution(
             kind="bundled",
@@ -101,7 +101,7 @@ def _service(
         strategy_service=cast("StrategyService", _StrategyServiceStub(metadata)),
         job_store=job_store,
         process_runner=cast("ProcessRunner", runner),
-        strategy_loader=_StrategyLoaderStub(workspace_root=workspace.root),
+        strategy_loader=_StrategyFactoryStub(workspace_root=workspace.root),
         project_root=tmp_path,
     )
     return service, job_store, runner

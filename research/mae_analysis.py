@@ -46,9 +46,13 @@ def compute_mae(
       - mae_long:  (entry - rolling_min(low))  / entry
       - mae_short: (rolling_max(high) - entry) / entry
       - mae_worst: max(mae_long, mae_short)
+
+    Dates are inclusive UTC calendar dates. Only entries with a full future
+    window inside that period are returned.
     """
+    end_exclusive = pd.Timestamp(end_date, tz="UTC") + pd.Timedelta(days=1)
     mask = (df["timestamp"] >= pd.Timestamp(start_date, tz="UTC")) & (
-        df["timestamp"] <= pd.Timestamp(end_date, tz="UTC")
+        df["timestamp"] < end_exclusive
     )
     data = df.loc[mask].copy().reset_index(drop=True)
 
@@ -84,7 +88,8 @@ def compute_mae(
         }
     )
     # Drop tail rows that don't have a full forward window.
-    return result.iloc[: len(result) - holding_bars].reset_index(drop=True)
+    complete_entries = max(0, len(result) - holding_bars)
+    return result.iloc[:complete_entries].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +220,9 @@ def main() -> None:
         return
 
     df = load_data(str(DATA_PATH))
+    if df.empty:
+        st.warning("行情資料為空，無法建立完整持倉視窗。請提供行情資料後重新分析。")
+        return
 
     # --- Sidebar controls ---
     st.sidebar.header("Parameters")
@@ -253,6 +261,13 @@ def main() -> None:
 
     with st.spinner("Computing MAE..."):
         mae_df = compute_mae(df, holding_bars, start_str, end_str)
+
+    if mae_df.empty:
+        st.warning(
+            f"所選期間內沒有具備完整持倉視窗（{holding_bars} 根 K 棒）的觀察資料。"
+            "請擴大日期範圍或縮短持倉視窗。"
+        )
+        return
 
     st.success(f"Analyzed **{len(mae_df):,}** hypothetical entries")
 
