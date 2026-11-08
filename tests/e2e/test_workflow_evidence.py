@@ -97,8 +97,12 @@ def _repair_evidence() -> list[ToolCall]:
                 "plan_id": "plan",
                 "manifest_hash": "a" * 64,
                 "confirmation_summary": "確認本次參數與歷史模擬期間。",
-                "html_path": "/fixture/confirmation.html",
-                "artifact_id": "plan:confirmation",
+                "confirmation_artifact": {
+                    "server_path": "/fixture/confirmation.html",
+                    "artifact_id": "plan:confirmation",
+                    "sha256": "c" * 64,
+                    "mime_type": "text/html",
+                },
                 "preflight": synthetic_preflight_receipt("a" * 64),
             },
         ),
@@ -675,7 +679,7 @@ def test_legacy_approval_field_does_not_match_the_decision_contract() -> None:
 
 
 @pytest.mark.parametrize(
-    "field", ["confirmation_summary", "html_path", "artifact_id", "preflight"]
+    "field", ["confirmation_summary", "confirmation_artifact", "preflight"]
 )
 def test_preparation_requires_reviewable_confirmation_evidence(field: str) -> None:
     calls = _repair_evidence()

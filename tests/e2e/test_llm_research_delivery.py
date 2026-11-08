@@ -13,6 +13,7 @@ import pytest
 from tests.app.test_report_service import _benchmark, _payload, _save, _scope
 from tests.e2e.codex_harness import run_codex
 from tests.e2e.conversation import links_to_file
+from tests.e2e.conversation_user import assert_undelivered_confirmation
 from tests.e2e.llm_client import codex_calls, run_local_model
 from tests.e2e.report_delivery import (
     verify_archive_delivery,
@@ -20,17 +21,131 @@ from tests.e2e.report_delivery import (
     verify_report_delivery,
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
+from tests.mcp.execution_fixtures import plan_context
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.contracts.plans import PlanResponse
 from tradingdev.app.contracts.research_notes import NoteExport
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.research_note_service import ResearchNoteService
+from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.presentation.reports import REPORT_RECIPES
 
 pytestmark = pytest.mark.live_llm
 
 if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
+    from tests.e2e.llm_client import ToolCall
+
+
+@pytest.mark.parametrize("copy_available", [True, False])
+def test_remote_confirmation_delivery(
+    pytestconfig: pytest.Config, copy_available: bool
+) -> None:
+    """Real model lookup/decline; a host-delivered copy or no file facility.
+
+    Preparation uses substituted offline program checks. The client copy is real
+    and hash-checked by the host fixture, not a model-authored or fake attachment.
+    This exercises link selection, not a desktop client's attachment UI.
+    """
+    import hashlib
+    from urllib.parse import quote, unquote
+
+    with temporary_mcp_workspace() as workspace:
+        context = plan_context(workspace.root)
+        arguments = dict(context.arguments)
+        evidence_id = arguments.pop("evidence_id")
+        prepared = context.service.prepare(
+            PreflightRequest(kind="backtest", arguments=arguments), evidence_id
+        )
+        assert isinstance(prepared, PlanResponse), prepared
+        artifact = prepared.confirmation_artifact
+        source = Path(artifact.server_path)
+        delivered = workspace.root / "client 確認單 (副本).html"
+        if copy_available:
+            delivered.write_bytes(source.read_bytes())
+            assert hashlib.sha256(delivered.read_bytes()).hexdigest() == artifact.sha256
+            environment = (
+                f"客戶端已把這份確認單完整下載到 {delivered}，"
+                f"並核對 SHA-256 為 {artifact.sha256}，我能開啟這份本機副本。"
+            )
+        else:
+            environment = "目前客戶端沒有檔案下載、附件或寫入本機檔案的功能。"
+        request = (
+            f"請重新取得剛才準備的計畫 {prepared.plan_id}，讓我閱讀確認單與設定摘要。"
+            "我在另一台電腦使用，無法存取伺服器上的檔案。"
+            f"{environment}我還沒有同意執行。"
+        )
+        turns: list[ModelTurn] = []
+
+        async def user(turn: ModelTurn) -> str | None:
+            turns.append(turn)
+            assert source.read_bytes()
+            assert str(source) not in unquote(turn.text), turn.text
+            assert quote(str(source), safe="/") not in turn.text, turn.text
+            assert not any(
+                c.name == "submit_execution_decision"
+                and c.arguments.get("decision") == "approve"
+                for c in turn.calls
+            )
+            assert not context.service.jobs.list_all_jobs()
+            if len(turns) == 1:
+                assert any(
+                    c.name == "get_execution_plan"
+                    and c.arguments.get("plan_id") == prepared.plan_id
+                    and c.result.get("success")
+                    for c in turn.calls
+                )
+                if copy_available:
+                    from tests.e2e.conversation_user import _assert_summary
+
+                    _assert_summary(prepared.confirmation_summary, turn.text)
+                    assert links_to_file(turn.text, delivered), turn.text
+                else:
+                    assert not delivered.exists()
+                    assert not links_to_file(turn.text, delivered)
+                    assert_undelivered_confirmation(
+                        turn.text, prepared.confirmation_summary
+                    )
+                    assert any(word in turn.text for word in ("無法", "不能", "不支援"))
+                print("[confirmation-delivery] First reply:\n" + turn.text, flush=True)
+                return "我決定不執行這份計畫，請取消它。"
+            return None
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "user_reply": user,
+            }
+            async with workspace.connect() as client:
+                names = [t.name for t in (await client.session.list_tools()).tools]
+                assert all(name not in request for name in names)
+                if pytestconfig.getoption("llm_provider") == "local":
+                    return await run_local_model(
+                        client,
+                        request,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        tool_names=names,
+                        **options,
+                    )
+            return codex_calls(
+                await run_codex(workspace.root, request, tool_names=names, **options)
+            )
+
+        calls = asyncio.run(run())
+        assert len(turns) == 2
+        decisions = [c for c in calls if c.name == "submit_execution_decision"]
+        assert len(decisions) == 1
+        assert decisions[0].arguments == {
+            "plan_id": prepared.plan_id,
+            "decision": "decline",
+        }
+        assert decisions[0].result["code"] == "confirmation_declined"
+        assert not any(c.name.startswith("prepare_") for c in calls)
+        assert not context.service.jobs.list_all_jobs()
 
 
 def test_saved_research_interpretation(pytestconfig: pytest.Config) -> None:

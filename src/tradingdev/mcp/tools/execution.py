@@ -121,8 +121,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         recursively overrides base parameters; costs belong only in research,
         backtest_overrides changes other execution settings. Explicit inheritance
         of a generated strategy requires revision_id.
-        Follow the shared confirmation workflow: show confirmation_summary and
-        HTML confirmation_link verbatim, end the turn and await explicit approval."""
+        Follow the shared confirmation workflow: quote confirmation_summary verbatim,
+        deliver confirmation_artifact as readable HTML, end the turn and await
+        explicit approval."""
         args = {
             "strategy_id": strategy_id,
             "research": research,
@@ -147,8 +148,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         backtest strategies only; training-required research needs walk-forward.
         evidence_id must cover every candidate's effective parameter leaves;
         see get_strategy_contract(section="evidence"). Preparation is synthetic only.
-        Follow the shared confirmation workflow: show confirmation_summary and
-        HTML confirmation_link verbatim, end the turn and await whole-set approval.
+        Follow the shared confirmation workflow: quote confirmation_summary verbatim,
+        deliver confirmation_artifact as readable HTML, end the turn and await
+        whole-set approval.
         Report the completed set with generate_report(comparison_job_id=job_id)."""
         return await prepare(
             "comparison",
@@ -178,8 +180,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         the selected configuration. Choose mode=automatic folds, mode=explicit
         inclusive UTC day windows, or mode=purged folds with positive label_horizon.
         Explicit windows must fit the research period. Supply saved evidence_id.
-        Follow the shared confirmation workflow: show confirmation_summary and
-        HTML confirmation_link verbatim, end the turn and await explicit approval."""
+        Follow the shared confirmation workflow: quote confirmation_summary verbatim,
+        deliver confirmation_artifact as readable HTML, end the turn and await
+        explicit approval."""
         args = {
             "strategy_id": strategy_id,
             "research": research,
@@ -211,8 +214,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         Research covers exactly train_start 00:00 through test_end 23:59:59.999999 UTC.
         evidence_id must cover base and every merged search-axis option;
         see get_strategy_contract(section="evidence").
-        Follow the shared confirmation workflow: show confirmation_summary and
-        HTML confirmation_link verbatim, end the turn and await explicit approval."""
+        Follow the shared confirmation workflow: quote confirmation_summary verbatim,
+        deliver confirmation_artifact as readable HTML, end the turn and await
+        explicit approval."""
         args = {
             "strategy_id": strategy_id,
             "research": research,

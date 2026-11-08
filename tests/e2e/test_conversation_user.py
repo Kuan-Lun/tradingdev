@@ -10,7 +10,13 @@ from urllib.parse import quote
 import pytest
 
 from tests.e2e.conversation import ModelTurn
-from tests.e2e.conversation_user import ObservedPlanUser, _assert_summary, review_text
+from tests.e2e.conversation_user import (
+    ObservedPlanUser,
+    _assert_summary,
+    assert_undelivered_confirmation,
+    read_presented_plan,
+    review_text,
+)
 from tests.e2e.llm_client import ToolCall
 from tests.integration.mcp_harness import MCPWorkspace
 from tests.mcp.execution_fixtures import PlanContext, plan_context
@@ -172,7 +178,7 @@ def test_user_accepts_rendered_links_to_the_saved_artifact(
     context = plan_context(root)
     user = ObservedPlanUser(MCPWorkspace(root))
     prepared = _prepare(context)
-    path = prepared.result["html_path"]
+    path = prepared.result["confirmation_artifact"]["server_path"]
     link = {
         "inline": f"[閱讀確認單]({path})",
         "angle": f"[閱讀確認單](<{path}>)",
@@ -188,16 +194,93 @@ def test_user_accepts_rendered_links_to_the_saved_artifact(
     "directory",
     ["with spaces", "繁體中文", "literal%20space", "nested (a(b))", "query?#part"],
 )
-def test_backend_confirmation_link_is_directly_presentable_for_special_paths(
+def test_client_can_present_exact_confirmation_paths_with_special_characters(
     tmp_path: Path, directory: str
 ) -> None:
     root = tmp_path / directory
     context = plan_context(root)
     user = ObservedPlanUser(MCPWorkspace(root))
     prepared = _prepare(context)
-    assert prepared.result["confirmation_link"] in review_text(prepared.result)
+    assert "confirmation_link" not in prepared.result
     assert "同意" in str(asyncio.run(user(_present(prepared))))
     assert not context.runner.calls
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "original_link", "truncated_copy", "wrong_copy"]
+)
+def test_remote_review_requires_only_the_complete_client_copy(
+    tmp_path: Path, fault: str | None
+) -> None:
+    root = tmp_path / "server"
+    context = plan_context(root)
+    prepared = _prepare(context)
+    artifact = prepared.result["confirmation_artifact"]
+    source = Path(artifact["server_path"]).read_bytes()
+    destination = tmp_path / "client (研究) 100%.html"
+    destination.write_bytes(
+        source[:8192]
+        if fault == "truncated_copy"
+        else b"other plan"
+        if fault == "wrong_copy"
+        else source
+    )
+    text = prepared.result["confirmation_summary"] + (
+        f"\n[閱讀確認單](<{quote(str(destination), safe='/')}>)"
+    )
+    if fault == "original_link":
+        # Regression: a valid copy plus the original server link used to satisfy
+        # the observer that required server html_path to appear in the reply.
+        text += f"\n[伺服器原始路徑](<{quote(artifact['server_path'], safe='/')}>)"
+    turn = ModelTurn(1, text, [prepared])
+    if fault is None:
+        read_presented_plan(MCPWorkspace(root), turn, delivered_path=destination)
+    else:
+        with pytest.raises(
+            AssertionError, match="inaccessible server path|complete prepared"
+        ):
+            read_presented_plan(MCPWorkspace(root), turn, delivered_path=destination)
+    assert not context.runner.calls
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "quoted_summary",
+        "approval_request",
+        "conditional_approval",
+        "invented_link",
+        "invented_html_link",
+    ],
+)
+def test_undelivered_document_rejects_review_and_approval_claims(
+    tmp_path: Path, fault: str
+) -> None:
+    prepared = _prepare(plan_context(tmp_path)).result
+    summary = prepared["confirmation_summary"]
+    text = {
+        "quoted_summary": "\n".join("> " + line for line in summary.splitlines()),
+        "approval_request": "目前無法交付確認單。請回覆同意，我就執行。",
+        "conditional_approval": "目前無法交付確認單。如果你同意，我就開始回測。",
+        "invented_link": "目前無法交付確認單。[閱讀確認單](https://example.com/plan.html)",
+        "invented_html_link": '<a href="https://example.com/plan.html">閱讀確認單</a>',
+    }[fault]
+    with pytest.raises(AssertionError):
+        assert_undelivered_confirmation(text, summary)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "目前無法交付確認單，也沒有開始回測。需要能取得檔案的客戶端。",
+        "目前無法交付確認單，不會請你同意執行。",
+        "目前無法取得檔案。請不要同意執行尚未閱讀的計畫。",
+        "目前無法交付確認單，因此無法請你核准執行。",
+        "目前無法交付確認單。請先改用能下載附件的客戶端，目前不要同意執行。",
+    ],
+)
+def test_undelivered_document_accepts_honest_limitations(text: str) -> None:
+    assert_undelivered_confirmation(text, _SUMMARY)
 
 
 @pytest.mark.parametrize(
@@ -225,7 +308,7 @@ def test_user_requires_a_clickable_markdown_link_to_this_html(
     context = plan_context(root)
     user = ObservedPlanUser(MCPWorkspace(root))
     prepared = _prepare(context)
-    path = prepared.result["html_path"]
+    path = prepared.result["confirmation_artifact"]["server_path"]
     link = f"[閱讀確認單](<{path}>)"
     invalid = {
         "bare": path,
@@ -258,7 +341,9 @@ def test_user_rejects_full_confirmation_content_even_with_a_valid_link(
     user = ObservedPlanUser(MCPWorkspace(tmp_path))
     prepared = _prepare(context)
     full_text = (
-        Path(prepared.result["html_path"]).with_name("confirmation.txt").read_text()
+        Path(prepared.result["confirmation_artifact"]["server_path"])
+        .with_name("confirmation.txt")
+        .read_text()
     )
     if repetition == "document_code":
         repeated = f"```text\n{full_text}\n```"
@@ -288,11 +373,13 @@ def test_user_rejects_missing_or_changed_review_evidence(
     prepared = _prepare(context)
     text = review_text(prepared.result)
     if omission == "summary":
-        text = prepared.result["html_path"]
+        text = prepared.result["confirmation_artifact"]["server_path"]
     elif omission == "html":
         text = prepared.result["confirmation_summary"]
     else:
-        Path(prepared.result["html_path"]).write_text("changed document")
+        Path(prepared.result["confirmation_artifact"]["server_path"]).write_text(
+            "changed document"
+        )
     with pytest.raises(AssertionError):
         asyncio.run(user(ModelTurn(1, text, [prepared])))
     assert not user.replies and not context.runner.calls
