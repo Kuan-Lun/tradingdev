@@ -37,6 +37,25 @@ uv sync --locked --all-extras --python 3.14
 | `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
 | `scripts/cleanup-pr.sh PR編號 --branch 分支` | 核對已合併 PR 後刪除符合條件的本地分支。 | 改清理條件時維護 `tests/tooling/test_pr_cleanup.py`。 |
 
+檢查與格式化入口在開始工作前，以 [tooling/environment.py](../tooling/environment.py)
+確認所需的 Python 工具；缺少時回報套件名稱與 `uv sync --locked --all-extras`。
+格式化會在第一次修改檔案前完成工具確認。完整測試另共用產品的
+`DockerRuntime.resolve()`，確認本機 Docker 端點、daemon 資源能力、策略映像及
+有效資源設定；失敗時不啟動品質檢查或 pytest，也不自動下載或建置映像。
+快速、文件與開發工具檢查不要求 Docker 或模型服務。簡報入口在安裝或編譯前
+確認 Node.js 版本，檢查入口亦先核對已安裝的鎖定工具鏈。
+
+可只確認完整測試的前置環境：
+
+```bash
+uv run --no-sync python -m tooling.environment full
+```
+
+此命令回報解析到的策略映像 ID，不啟動策略容器；它確認的是當下的前置條件，
+不保證映像與來源同步，也不取代實際容器、程序清理或策略行為測試。
+依下方容器建置流程準備映像後，再執行完整檢查。直接執行 pytest 選測個別案例時，
+仍須自行備妥該案例需要的環境。
+
 Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.githooks/)，
 實作集中於 [tooling/](../tooling/)。測試按 domain、app、adapters、MCP、整合流程及
 開發工具放在 [tests/](../tests/)；新增能力時依責任擴充相應測試，避免只依檔名選取。

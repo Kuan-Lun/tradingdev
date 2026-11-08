@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+from tooling.environment import EnvironmentCheckError, check_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_PATHS = ["src", "tests", "tooling", "research"]
@@ -21,14 +22,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["check", "format"])
     arguments = parser.parse_args()
-    if arguments.action == "check":
-        try:
-            importlib.metadata.distribution("streamlit")
-            importlib.metadata.distribution("plotly")
-        except importlib.metadata.PackageNotFoundError:
-            parser.error(
-                "Run uv sync --locked --all-extras before checking dashboard types."
-            )
+    try:
+        check_environment("fast" if arguments.action == "check" else "format")
+    except EnvironmentCheckError as error:
+        parser.error(str(error))
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     markdown = sorted(
         str(path.relative_to(ROOT))

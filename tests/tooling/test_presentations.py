@@ -392,7 +392,7 @@ def test_missing_toolchain_reports_the_install_step_that_can_succeed(
 def test_build_command_cannot_load_candidate_config_or_local_engine(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/usr/bin/node")
     command = presentations._command(
         tmp_path / "tools",
         tmp_path / "slides.md",
@@ -443,6 +443,7 @@ def test_check_cleans_temporary_files_and_child_processes(
 
     monkeypatch.setattr(presentations, "mkdtemp", make_space)
     monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     marker = tmp_path / "child.pid"
     observed = tmp_path / "child.observed"
     child_code = "import time; time.sleep(60)"
@@ -530,7 +531,7 @@ def test_unverified_process_cleanup_preserves_workspace(
 
     monkeypatch.setattr(presentations, "mkdtemp", make_space)
     monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
 
     def fail(*args: object, **kwargs: object) -> None:
         raise ProcessCleanupError("Could not terminate subprocesses")
@@ -574,6 +575,8 @@ def test_cli_propagates_only_typed_cleanup_failure_and_retains_its_workspace(
 def test_check_reuses_markdown_local_link_validation(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     deck = _deck(tmp_path)
     (deck / "slides.md").write_text("# Slides\n\n[broken](missing.md)\n")
 
@@ -621,6 +624,8 @@ def test_watch_rebuilds_static_output_for_source_and_theme_changes(
 def test_check_reuses_markdown_formatting_validation(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     deck = _deck(tmp_path)
     (deck / "slides.md").write_text("# Slides\nMissing heading spacing\n")
 

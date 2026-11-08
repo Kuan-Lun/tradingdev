@@ -238,6 +238,7 @@ def test_snapshot_retains_workspace_when_real_presentation_cli_reports_cleanup_e
     project = Path(presentations.__file__).resolve().parent
     for name in (
         "__init__.py",
+        "environment.py",
         "presentations.py",
         "presentation_errors.py",
         "presentation_html.py",
