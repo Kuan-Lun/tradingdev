@@ -59,23 +59,23 @@ UnavailableReason = Literal[
 
 @dataclass(frozen=True)
 class IntervalUnavailable:
-    """Why a bootstrap interval is missing, with what could still be computed.
+    """Why a Sharpe interval is missing, with what could still be computed.
 
     The reasons are checked in this order, so the first that applies wins:
 
     * ``"insufficient_observations"``: fewer than ``min_observations``
-      returns (after alignment, for comparisons), so the block length
-      cannot be estimated. Monthly returns over one year always land here.
-    * ``"undefined_statistic"``: the statistic of the returns themselves
-      is undefined, such as the Sharpe ratio of constant returns.
-    * ``"no_valid_resample"``: no resample defines the statistic.
+      returns, so the sample is too short for the bootstrap. Monthly
+      returns over one year always land here.
+    * ``"undefined_statistic"``: the Sharpe ratio of the returns is
+      undefined, such as for constant returns.
+    * ``"no_valid_resample"``: no resample has a defined Sharpe ratio.
 
     Attributes:
         reason: Which of the cases above applies.
-        estimate: The statistic of the returns, or ``None`` when it is
+        estimate: The annualised Sharpe ratio, or ``None`` when it is
             undefined; it is reported even when the sample is too short to
-            bootstrap. For a paired comparison it is the difference.
-        observations: Number of returns, after alignment for comparisons.
+            bootstrap.
+        observations: Number of returns in the input series.
         min_observations: Number of returns the bootstrap requires.
         reps: Resamples drawn; ``0`` when the bootstrap did not run.
     """
@@ -222,19 +222,10 @@ def sharpe_interval_outcome(
     give no interval. That is 20 periods at any frequency: 20 days of daily
     returns, but 20 months of monthly ones.
 
-    The rule improves coverage but does not guarantee it. In the review
-    simulation (two volatility regimes with standard deviations 0.001 and
-    0.02, switching with probability 0.01 per period, 1000 periods, 100
-    samples, 300 resamples), nominal 95% intervals covered the true Sharpe
-    ratio in 70 samples, against 49 with blocks fitted to the returns
-    alone; regimes lasting about a hundred periods are few in one sample,
-    which no block length repairs. The jackknife influence values used for
-    paired differences covered 60 in the same simulation, because the
-    variance term is diluted by the mean term. With the same settings the
-    rule kept the previous coverage on independent returns (94 of 100) and
-    on AR(1) returns with coefficient 0.5 (93); on GARCH(1,1) returns with
-    a per-period Sharpe ratio of 0.05 it covered 89 against 91, within the
-    sampling error of 100 samples.
+    Automatic block selection does not guarantee nominal coverage. When
+    regimes persist for much of the sample, too few transitions may be
+    observed to estimate the sampling variability reliably, regardless
+    of block length.
 
     Pass ``block_size`` to use a fixed mean block length instead, reported
     back unchanged. Give one whenever the estimate is known to be too
