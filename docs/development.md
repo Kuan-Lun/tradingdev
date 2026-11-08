@@ -297,12 +297,14 @@ Cloudflare 使用 `scripts/build-presentations-site.sh` 先安裝鎖定的 npm �
 套件，不安裝本機 Chrome。
 [render-diagrams.mjs](../tooling/marp/render-diagrams.mjs) 使用鎖定的 Mermaid 與 Noto Sans TC
 在獨立 headless 瀏覽器產生 SVG，圖表頁面不載入網路資源；完成或失敗後關閉瀏覽器，
-外層程序監督器負責逾時清理。[build.mjs](../tooling/marp/build.mjs) 是本機與雲端共用的
+本機 Python 入口的程序監督器負責逾時清理。Cloudflare staging 直接呼叫 Node，
+沒有這層 Python 逾時監督。[build.mjs](../tooling/marp/build.mjs) 是本機與雲端共用的
 編譯入口。SVG 與所需字型嵌入 HTML，觀看端不需要建置工具。
 替代工具鏈的套件宣告、lock 及渲染腳本都須與受查 snapshot 相符。
 瀏覽器版本仍可能影響 SVG 版面；須以瀏覽器確認本機與分支預覽的圖表。本機使用已安裝
 的 Chrome 或明示執行檔；渲染器在 `WORKERS_CI=1` 的建置環境選用鎖定的 Linux x64
-Chromium 套件與內附函式庫，在獨立臨時目錄解壓並於關閉後清理。雲端使用該套件的
+Chromium 套件與內附函式庫，在獨立臨時目錄解壓並於正常關閉後清理；
+若無法確認瀏覽器關閉，會回報錯誤並保留該目錄。雲端使用該套件的
 serverless 啟動參數，包含停用瀏覽器 sandbox；僅在隔離的建置環境渲染 repository 來源，
 渲染時封鎖外部網路請求，不將此流程宣稱為執行任意來源的安全隔離。
 圖表編輯方式與支援範圍見[簡報編輯指南](talks/tradingdev-introduction/README.md#頁面版型與撰寫方式)。

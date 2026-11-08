@@ -28,7 +28,8 @@
 `evidence/`。分享完整簡報時，請將 `index.html`、`assets/` 與 `evidence/`
 一起複製並保留相對位置；單獨複製 HTML 會缺少圖片、對話、報告與研究包。
 
-可用下列命令檢查並建立可分享的資料夾及 ZIP；輸出位置必須尚未存在：
+可用下列命令檢查並建立可分享的資料夾及 ZIP；輸出位置必須尚未存在，
+並位於 `docs/talks/tradingdev-introduction/` 編輯目錄之外（也不能使用其子目錄）：
 
 ```bash
 scripts/presentations.sh package --output /absolute/path/to/tradingdev-talk
