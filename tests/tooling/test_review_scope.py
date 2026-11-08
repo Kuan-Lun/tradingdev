@@ -981,6 +981,12 @@ def test_research_contracts_reach_all_product_reviewers_without_tooling_duplicat
             {"results", "interfaces"},
             "do not modify runs",
         ),
+        (
+            "docs/run_artifacts.md",
+            "Reading Artifact Delivery",
+            {"execution", "results", "interfaces"},
+            "anyone holding one can read those bytes until expiry",
+        ),
     ],
 )
 def test_focused_contract_sections_retain_semantics_without_unrelated_context(

@@ -142,6 +142,40 @@ def test_numeric_analysis_review_preserves_its_source_and_contract(
     assert excluded not in plan.prompts[0]
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/tradingdev/app/execution_plan_service.py",
+        "src/tradingdev/app/artifact_service.py",
+        "src/tradingdev/mcp/artifact_downloads.py",
+    ],
+)
+def test_artifact_delivery_review_retains_contract_and_complete_source(
+    tmp_path: Path, path: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, path, "VALUE = 'old'\n")
+    contract = (
+        "# Run Artifacts\n\n## MCP Lookup\n\n### Reading Artifact Delivery\n"
+        "Hash-bound bearer URLs expire without changing saved artifacts.\n"
+    )
+    _write(tmp_path, "docs/run_artifacts.md", contract)
+    base = _tree(tmp_path)
+    source = "VALUE = 'new'\n"
+    _write(tmp_path, path, source)
+    plan = review_docs.prepare_review(base, _tree(tmp_path), repo=tmp_path)
+    batch = _payload(plan.prompts[0])
+    assert batch["candidate_files"][path] == source
+    assert "+VALUE = 'new'" in batch["path_diffs"][path]
+    selected = "".join(
+        section["text"]
+        for section in batch["document_sections"]
+        if section["path"] == "docs/run_artifacts.md"
+    )
+    assert "### Reading Artifact Delivery\n" in selected
+    assert contract.split("### Reading Artifact Delivery\n", 1)[1] in selected
+
+
 def test_each_changed_file_has_one_complete_owner_and_one_cross_scope_audit(
     change: tuple[Path, str, str],
 ) -> None:
