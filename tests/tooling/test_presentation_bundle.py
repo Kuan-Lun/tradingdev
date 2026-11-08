@@ -21,7 +21,7 @@ from tooling.presentation_bundle import (
 )
 from tooling.presentation_errors import PresentationError
 from tooling.presentation_html import check_html
-from tooling.presentations import DECK, presentation_change_allowed
+from tooling.presentations import DECK, _toolchain, presentation_change_allowed
 from tooling.process_guard import (
     process_identity,
     process_workspace,
@@ -223,6 +223,7 @@ def test_cloudflare_stages_all_entries_and_removes_only_stale_output(
         "[Report](evidence/report.html#result)\n\n---\n# End\n"
     )
     repository = Path(__file__).resolve().parents[2]
+    installed = _toolchain(repository)
     shutil.copyfile(repository / DECK / "theme.css", source / "theme.css")
     tooling = tmp_path / "tooling"
     shutil.copytree(
@@ -231,7 +232,7 @@ def test_cloudflare_stages_all_entries_and_removes_only_stale_output(
         ignore=shutil.ignore_patterns("node_modules"),
     )
     (tooling / "marp/node_modules").symlink_to(
-        repository / "tooling/marp/node_modules", target_is_directory=True
+        installed / "node_modules", target_is_directory=True
     )
     for name in (
         "__init__.py",
