@@ -16,8 +16,10 @@ A period's closing equity is the last observation inside it. Its P&L is that
 closing equity minus the previous period's closing equity; the first period
 is measured against the first observation of the curve. Periods without any
 observation (weekends on equity markets, data gaps) are omitted rather than
-filled with zero. Period P&L therefore always sums to
-``equity_curve[-1] - equity_curve[0]``.
+filled with zero. In exact arithmetic, period P&L sums to
+``equity_curve[-1] - equity_curve[0]``. Floating-point rounding or overflow
+can break this identity, including producing nonfinite period changes from
+finite equity values.
 """
 
 from __future__ import annotations
@@ -53,7 +55,8 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
     nanoseconds), so without this the same timestamps would give period
     series with different index dtypes depending on how they were passed.
 
-    Numbers are rejected, not read as times. A number carries no unit:
+    Numeric arrays and numeric elements retained in object arrays are
+    rejected, not read as times. A number carries no unit:
     pandas reads ``1_704_067_200`` as nanoseconds after the epoch, so Unix
     seconds silently became a fraction of a second on 1970-01-01, and 30
     days of hourly bars one daily period. There is no ``unit`` parameter on
@@ -62,12 +65,18 @@ def to_utc_index(timestamps: npt.ArrayLike) -> pd.DatetimeIndex:
     and the caller can state the unit once, for example with
     ``pd.to_datetime(values, unit="s")``. Run outputs already hold datetimes.
 
+    Non-DatetimeIndex inputs pass through ``np.asarray`` before validation.
+    Mixed sequences can therefore lose their original element types: for
+    example, ``[2024, "2025-01-01"]`` becomes strings and parses as dates.
+    Numeric rejection does not cover values already coerced to date strings;
+    callers must normalize mixed numeric/text inputs before calling.
+
     Empty input gives an empty UTC index; whether that is acceptable is the
     caller's rule, and :func:`equity_series` rejects empty equity.
 
     Raises:
-        ValueError: If ``timestamps`` is not one-dimensional, holds numbers,
-            booleans, durations, bytes or missing values (``NaT``,
+        ValueError: If the converted input is not one-dimensional, holds
+            numbers, booleans, durations, bytes or missing values (``NaT``,
             ``None``), mixes naive and aware timestamps, or has a value that
             cannot be parsed as a timestamp. No other
             exception type escapes for a value of the wrong kind.
@@ -203,7 +212,12 @@ def period_returns(
 ) -> pd.Series[float]:
     """Simple return of each UTC period relative to its opening equity.
 
-    Compounding the returns reproduces ``equity_curve[-1] / equity_curve[0]``.
+    In exact arithmetic, compounding the returns reproduces
+    ``equity_curve[-1] / equity_curve[0]``. Floating-point rounding, underflow
+    or overflow can break this identity. In particular, a sufficiently small
+    positive closing/opening ratio can round to a return of -1, losing the
+    remaining capital when compounded; finite inputs do not ensure finite
+    return values.
 
     Raises:
         ValueError: If any equity value is not strictly positive, as with a
