@@ -322,6 +322,8 @@ Workers Builds 可自動建立部署 token，不需將 token 放進 repository�
 使用已安裝的工具重新編譯及驗證成品；直接執行 Wrangler 前須先準備簡報工具與瀏覽器。
 Workers Builds 的 Build command 由 Cloudflare 獨立保存；請將 **Production** 與
 **Preview base** 同步設定為上述安裝與編譯腳本。
+既有分支預覽保留各自的設定，不會因修改 Preview base 自動同步；亦須進入該預覽的
+**Settings** 更新建置命令、建置變數與監看路徑，再重試建置。
 
 分支預覽使用 `wrangler.jsonc` 的 `previews` 區塊；即使沒有獨立設定，也須保留空物件。
 靜態資源仍使用頂層 `assets`，正式網域的 `routes` 不放入 `previews`。
