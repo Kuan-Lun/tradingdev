@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from tooling import review_docs
+from tooling import environment, review_docs
 from tooling.presentations import PRESENTATION_PATHS
 from tooling.process_guard import (
     CLEANUP_UNVERIFIED_EXIT_CODE,
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def isolated_review_settings(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(review_docs, "require_codex", lambda: "unused-codex")
     monkeypatch.delenv("TRADINGDEV_DOC_REVIEW_MODEL", raising=False)
     monkeypatch.delenv("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", raising=False)
 
@@ -67,6 +68,8 @@ def fake_codex(monkeypatch: MonkeyPatch) -> Iterator[Path]:
         binary.write_text(
             f"#!{sys.executable}\n"
             "import json, os, pathlib, signal, sys, time\n"
+            "if sys.argv[1:] == ['login', 'status']:\n"
+            "    raise SystemExit(int(os.environ.get('REVIEW_FAKE_AUTH_EXIT', '0')))\n"
             "prompt = sys.stdin.read()\n"
             "mode = os.environ.get('REVIEW_FAKE_MODE', 'pass')\n"
             "evidence = json.loads(prompt.rsplit('\\n\\n', 1)[-1])\n"
@@ -121,6 +124,8 @@ def fake_codex(monkeypatch: MonkeyPatch) -> Iterator[Path]:
         )
         binary.chmod(0o700)
         monkeypatch.setenv("TRADINGDEV_CODEX_BIN", str(binary))
+        monkeypatch.setattr(review_docs, "require_codex", environment.require_codex)
+        monkeypatch.delenv("REVIEW_FAKE_AUTH_EXIT", raising=False)
         monkeypatch.setenv("REVIEW_FAKE_RECORD", str(record))
         monkeypatch.delenv("REVIEW_FAKE_MODE", raising=False)
         monkeypatch.delenv("REVIEW_FAKE_BATCH_MODES", raising=False)
@@ -170,6 +175,18 @@ def test_review_uses_immutable_candidate_and_removes_temporary_files(
     assert "--ephemeral" in record["args"]
     assert "read-only" in record["args"]
     assert not Path(record["root"]).exists()
+
+
+def test_failed_login_prevents_every_review_batch(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repo, base, tree = repository
+    monkeypatch.setenv("REVIEW_FAKE_AUTH_EXIT", "1")
+    with pytest.raises(review_docs.ReviewError, match="Codex is not logged in"):
+        review_docs.review(base, tree, repo=repo)
+    assert not fake_codex.exists()
 
 
 @pytest.mark.parametrize("override", [False, True])

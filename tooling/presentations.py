@@ -14,6 +14,12 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING
 
+from tooling.environment import (
+    EnvironmentCheckError,
+    check_environment,
+    node_environment,
+    require_node,
+)
 from tooling.presentation_bundle import (
     IMAGE_SUFFIXES,
     bundle_files,
@@ -241,12 +247,7 @@ def _environment(temporary: Path) -> dict[str, str]:
     global_config = temporary / "npm-global.rc"
     user_config.touch()
     global_config.touch()
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key != "DEBUG"
-        and not key.upper().startswith(("NODE_", "NPM_CONFIG_", "MARP_"))
-    }
+    environment = node_environment()
     environment.update(
         TMPDIR=str(temporary),
         TMP=str(temporary),
@@ -396,10 +397,15 @@ def _toolchain(root: Path) -> Path:
 
 
 def _command(toolchain: Path, source: Path, theme: Path, output: Path) -> list[str]:
-    node = shutil.which("node")
-    if node is None:
-        raise PresentationError(f"Node.js is unavailable. {_install_help()}")
+    node = _node()
     return [node, str(toolchain / "build.mjs"), str(source), str(theme), str(output)]
+
+
+def _node(*, npm: bool = False) -> str:
+    try:
+        return require_node(npm=npm)
+    except EnvironmentCheckError as error:
+        raise PresentationError(f"{error} {_SETUP_HELP}") from error
 
 
 def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> None:
@@ -434,12 +440,20 @@ def _build_delivery(root: Path, destination: Path, *, timeout: float = 120) -> i
     return count
 
 
-def check_presentations(root: Path, *, timeout: float = 120) -> None:
-    """Check documents, rebuild with the locked compiler and verify the output."""
+def _check_sources(root: Path) -> None:
+    """Check prerequisites before importing document tools or preparing delivery."""
+    check_environment("docs")
+    _toolchain(root)
+    _node()
     from tooling.documentation import check_documents
 
-    root = root.resolve()
     check_documents(root)
+
+
+def check_presentations(root: Path, *, timeout: float = 120) -> None:
+    """Check documents, rebuild with the locked compiler and verify the output."""
+    root = root.resolve()
+    _check_sources(root)
     with _workspace() as temporary:
         count = _build_delivery(root, temporary, timeout=timeout)
     print(
@@ -449,6 +463,7 @@ def check_presentations(root: Path, *, timeout: float = 120) -> None:
 
 
 def setup(root: Path, *, timeout: float = 300) -> None:
+    _node(npm=True)
     npm = shutil.which("npm")
     if npm is None:
         raise PresentationError("Node.js and npm are required to install the compiler.")
@@ -464,6 +479,8 @@ def setup(root: Path, *, timeout: float = 300) -> None:
 
 
 def watch(root: Path) -> None:
+    _toolchain(root)
+    _node()
     # Rebuild static HTML on changes; Marp's native --watch injects a reload
     # WebSocket into the artifact, which must never enter the delivered output.
     inputs = [root / DECK / name for name in ("slides.md", "theme.css")]
@@ -511,9 +528,7 @@ def main() -> int:
                 raise PresentationError(
                     "Bundle output must be outside its source directory"
                 )
-            from tooling.documentation import check_documents
-
-            check_documents(root)
+            _check_sources(root)
             with _workspace() as temporary:
                 _build_delivery(root, temporary)
                 archive = write_bundle(temporary, args.output.resolve())

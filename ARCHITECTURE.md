@@ -83,6 +83,8 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | ---- | -------- |
 | `scripts/`、`.githooks/` | Shell 操作與 Git hook 入口，選定 repository 與 interpreter 後呼叫 Python 模組 |
 | `tooling/quality.py` | 共用品質檢查與格式化，涵蓋 `src/`、`tests/`、`tooling/`、`research/` |
+| `tooling/environment.py` | 按開發操作組合套件、工具鏈、策略 runtime 與模型服務的前置確認，供各入口共用 |
+| `tooling/llm_check.py` | 選取並啟動真實模型測試情境，在實際執行前確認環境，保留 pytest 資訊與選測模式 |
 | `tooling/requirements.py` | SRS 編號、欄位、導航與引用檢查；`DOCUMENT_SCOPES` 共用於需求文件驗證與審查責任選取 |
 | `tooling/git/` | 候選 snapshot／合併 tree 的建立與驗證，以及 hook、本機 full、PR 檢查與分支清理流程 |
 | `tooling/review_evidence.py` | 擷取固定 Git 版本的完整來源、diff 與內容身分 |
@@ -92,7 +94,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | `tests/` | 測試案例、fixtures、MCP 與模型測試情境 |
 | `research/` | 獨立研究原型；MAE 原型直接讀取指定行情檔案，與正式 Dashboard 分開 |
 
-`tooling` 不依賴 `tests`；測試可直接使用共用工具。Git gate 與 PR 檢查共用候選
+`tooling` 不直接匯入 `tests`；測試可直接使用共用工具。Git gate 與 PR 檢查共用候選
 驗證服務，文件審查使用執行檢查的 checkout 內的工具讀取候選 Git 內容，
 品質檢查與離線測試則使用候選 snapshot 內的入口與程式。
 `tooling/`、`research/` 不隨產品 wheel 發佈，也不屬於產品 application services。

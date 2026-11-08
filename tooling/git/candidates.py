@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from tooling.environment import check_environment
 from tooling.git.change_scope import classify_changes
 from tooling.process_guard import process_workspace, run_captured, run_checked
 from tooling.review_options import review_arguments, validate_review_options
@@ -292,6 +293,8 @@ def verify_candidate(
     print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
     scope = classify_changes(candidate.repository, candidate.base, candidate.tree)
     checks = scope.candidate_checks
+    if scope.kind in {"tooling", "code"}:
+        check_environment(scope.delivery_profile)
     if "documentation_review" not in checks:
         label = "Documentation-only" if scope.kind == "docs" else "Presentation"
         print(
