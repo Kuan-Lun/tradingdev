@@ -14,9 +14,10 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務。簡報建置與檢查另需 Node.js 22.17 以上、npm 與鎖定工具鏈，
-含 Mermaid 時另需 Chrome／Chromium。完整離線 pytest 與 `tests/tooling` 包含真實圖表
-渲染測試，也需要這些工具；離線表示執行時不呼叫模型或下載依賴。
+一般文件檢查不需要模型服務。簡報建置與檢查另需 Node.js 22.17 以上及已初始化的鎖定工具鏈，
+含 Mermaid 時另需 Chrome／Chromium。npm 用於初始化依賴，建置與測試執行時不呼叫 npm。
+完整離線 pytest 與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器；
+離線表示執行時不呼叫模型或下載依賴。
 初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
 安裝器調整的 Git 設定及
 執行環境限制見[注意事項](#注意事項)。
