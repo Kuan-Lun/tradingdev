@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tooling import review_docs, review_evidence
+from tooling.environment import EnvironmentCheckError
 from tooling.git import candidates, check_pr, gate
 
 if TYPE_CHECKING:
@@ -28,6 +29,31 @@ from tests.tooling.git_check_scenarios import (
 from tests.tooling.git_check_scenarios import (
     scenario as scenario,
 )
+
+
+@pytest.mark.parametrize("runner", ["pr", "local"])
+def test_candidate_missing_environment_stops_before_review_and_tests(
+    scenario: Scenario,
+    monkeypatch: MonkeyPatch,
+    runner: str,
+) -> None:
+    before = _source_state(scenario.source)
+
+    def unavailable(profile: str) -> None:
+        assert profile == "full"
+        raise EnvironmentCheckError("Missing strategy runtime image")
+
+    monkeypatch.setattr(candidates, "check_environment", unavailable)
+    monkeypatch.setattr(
+        candidates, "run", lambda *_, **__: pytest.fail("Review or tests started")
+    )
+    with pytest.raises(EnvironmentCheckError, match="Missing strategy runtime image"):
+        if runner == "pr":
+            check_pr.check_pr(7)
+        else:
+            gate.check_full("main", "feature/work")
+    assert _source_state(scenario.source) == before
+    _assert_cleaned(scenario)
 
 
 @pytest.mark.parametrize("runner", ["pr", "full"])

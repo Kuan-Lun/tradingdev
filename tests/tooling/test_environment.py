@@ -6,6 +6,7 @@ import importlib.metadata
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from contextlib import suppress
@@ -309,3 +310,63 @@ def test_presentation_prerequisites_fail_before_installation_or_document_checks(
         else:
             presentations.check_presentations(tmp_path)
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_codex_probe_only_reads_login_and_cleans_its_workspace(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    exit_code: int,
+) -> None:
+    binary = tmp_path / "codex"
+    record = tmp_path / "probe.json"
+    binary.write_text(
+        f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\n"
+        f"Path({str(record)!r}).write_text(json.dumps(\n"
+        "    {'args': sys.argv[1:], 'cwd': str(Path.cwd()),\n"
+        "     'cache': os.environ['XDG_CACHE_HOME']}))\n"
+        "print('credential-like diagnostic must not be forwarded')\n"
+        f"raise SystemExit({exit_code})\n"
+    )
+    binary.chmod(0o755)
+    monkeypatch.setenv("TRADINGDEV_CODEX_BIN", str(binary))
+    if exit_code:
+        with pytest.raises(
+            environment.EnvironmentCheckError, match="not logged in"
+        ) as failure:
+            environment.require_codex()
+        assert "credential-like" not in str(failure.value)
+    else:
+        assert environment.require_codex() == str(binary)
+    observed = json.loads(record.read_text())
+    assert observed["args"] == ["login", "status"]
+    assert not Path(observed["cwd"]).exists()
+    assert not Path(observed["cache"]).exists()
+
+
+def test_local_probe_checks_connectivity_without_requesting_a_model() -> None:
+    with socket.socket() as listener:
+        listener.settimeout(2)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        environment.require_local_service(
+            f"http://127.0.0.1:{listener.getsockname()[1]}/v1"
+        )
+        connection, _ = listener.accept()
+        with connection:
+            assert connection.recv(1) == b""
+
+
+def test_unreachable_local_service_reports_a_bounded_failure(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    def unreachable(address: tuple[str, int], *, timeout: float) -> None:
+        assert address == ("::1", 1234)
+        assert timeout == 5
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(socket, "create_connection", unreachable)
+    with pytest.raises(
+        environment.EnvironmentCheckError, match="Local model service is unreachable"
+    ):
+        environment.require_local_service("http://[::1]:1234/v1")

@@ -6,10 +6,12 @@ import argparse
 import importlib.metadata
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib.parse import urlsplit
 
 
 class EnvironmentCheckError(RuntimeError):
@@ -92,6 +94,73 @@ def require_strategy_runtime() -> str:
             "See docs/development.md (container build and verification)."
         ) from error
     return spec.image_id
+
+
+def require_codex() -> str:
+    """Check the selected CLI's login without making a model request."""
+    from tooling.codex_binary import resolve_codex_binary
+    from tooling.process_guard import process_workspace, run_captured
+
+    try:
+        binary = resolve_codex_binary()
+    except RuntimeError as error:
+        raise EnvironmentCheckError(str(error)) from error
+    try:
+        with process_workspace(
+            prefix="tradingdev-codex-environment-", label="Codex login probe"
+        ) as root:
+            result = run_captured(
+                [binary, "login", "status"],
+                cwd=root,
+                env={**os.environ, "XDG_CACHE_HOME": str(root / "cache")},
+                timeout=15,
+            )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise EnvironmentCheckError(
+            "Cannot check Codex login status; check the selected CLI installation."
+        ) from error
+    if result.returncode:
+        raise EnvironmentCheckError(
+            "Codex is not logged in. "
+            "Run the selected CLI with 'login', then 'login status'."
+        )
+    return binary
+
+
+def local_service_address(base_url: str) -> tuple[str, int]:
+    """Validate the same local-only endpoint for options and readiness checks."""
+    diagnostic = "--llm-base-url must be a local loopback URL"
+    try:
+        url = urlsplit(base_url)
+        port = url.port
+    except ValueError as error:
+        raise EnvironmentCheckError(diagnostic) from error
+    if (
+        url.scheme not in {"http", "https"}
+        or url.hostname not in {"localhost", "127.0.0.1", "::1"}
+        or url.username
+        or url.password
+        or url.query
+        or url.fragment
+    ):
+        raise EnvironmentCheckError(diagnostic)
+    assert url.hostname is not None
+    return url.hostname, port if port is not None else (
+        443 if url.scheme == "https" else 80
+    )
+
+
+def require_local_service(base_url: str) -> None:
+    """Probe connectivity only; model/API/tool support belongs to live scenarios."""
+    address = local_service_address(base_url)
+    try:
+        with socket.create_connection(address, timeout=5):
+            pass
+    except OSError as error:
+        raise EnvironmentCheckError(
+            "Local model service is unreachable. "
+            "Start the selected service and check --llm-base-url."
+        ) from error
 
 
 def check_environment(profile: str) -> None:

@@ -168,6 +168,11 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
             destination = root / "tooling" / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(_PROJECT / "tooling" / name, destination)
+        with (root / "tooling/environment.py").open("a") as module:
+            module.write(
+                "\n# The fixture uses fake snapshot checkers.\n"
+                "def check_environment(profile): pass\n"
+            )
         repo.write("scripts/test_checker.py", _CHECKER)
         for profile, mode in (
             ("fast", "fast"),

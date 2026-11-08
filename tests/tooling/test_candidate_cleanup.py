@@ -350,6 +350,7 @@ plan = SimpleNamespace(prompts=('evidence',), verify=lambda: None, manifest={
     'plan_hash': 'test', 'path_owners': {}, 'selected_scopes': ['tooling'],
     'evidence_utf8_bytes': 8, 'total_prompt_utf8_bytes': 8})
 review_docs.prepare_review = lambda *args, **kwargs: plan
+review_docs.require_codex = lambda: 'unused-codex'
 def unverified(root, *args, **kwargs):
     (candidate / 'review-path').write_text(str(root))
     (root / 'diagnostic.txt').write_text('unverified; no reviewer launched')

@@ -467,6 +467,13 @@ Codex 需要已登入的 CLI 與所選模型存取權；Local 需要已啟動且
 服務，預設 `http://localhost:11434/v1`，以 `--llm-base-url` 指定其他 loopback 位址。
 工具不下載模型、不自動切換 provider；所選能力不可用會失敗。
 
+入口由 [tooling/llm_check.py](../tooling/llm_check.py) 保留情境選擇與 pytest 選項，
+在選出實際要執行的情境後、建立測試工作區前共用環境確認：檢查策略容器前置條件，
+再確認 Codex CLI 登入狀態或 Local 服務連線。help、列出情境／fixtures、
+`--setup-plan` 等純資訊模式與沒有選到情境時不檢查服務；`--setup-only` 會執行
+fixtures，仍須確認環境。Local 前置確認只建立有期限的連線，不呼叫模型；它不證明 API、
+所選模型、工具呼叫或上下文容量可用，這些能力仍由真實情境驗證。
+
 Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順序為 `--llm-model`／
 `--llm-reasoning-effort`、專用環境變數 `TRADINGDEV_LLM_MODEL`／
 `TRADINGDEV_LLM_REASONING_EFFORT`、固定基準；不沿用宿主或文件審查的模型設定。
@@ -605,6 +612,10 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 ```bash
 ./scripts/check-pr.sh 27
 ```
+
+程式與開發工具候選會先確認所選測試分流的前置環境，再啟動耗時檢查及模型審查；
+文件審查亦先確認 Codex CLI 登入，缺少時不啟動審查批次。一般文件與簡報候選
+仍只要求其分流需要的工具。環境確認不取代候選內容、版本與執行結果驗證。
 
 須有乾淨且已提交的工作樹、可存取 repository 的 `gh`，以及開啟且指向主線的 PR。
 工具在隔離 repository 檢查合併候選，不切換開發分支：
