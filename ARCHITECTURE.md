@@ -53,6 +53,7 @@ flowchart LR
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
+| `domain/statistics/` | 由呼叫端提供觀察值的獨立期間統計、績效摘要及 Sharpe 推論 |
 | `domain/ranking.py` | 候選無關的排序核心：依指標宣告方向排序、同分名次、缺值原因與比較群組。目前只有訊號排名使用；回測候選是預定接入的第二個來源，尚未接上 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 依資產類別固定的基準定義、買進持有計算與基準行情取得 |
 | `domain/data/`、`domain/indicators/`、`domain/ml/` | 行情與特徵資料處理、技術指標、模型及訓練邏輯 |
@@ -305,6 +306,14 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 不可用值保留原因，不能以零代替。解讀使用當次保存的定義、單位與設定；詳細查詢不重跑策略
 或載入 pickle。Walk-forward 摘要是分折分布，最佳化區分 trial 與樣本外結果。
 完整取樣、年化、數值及比較限制見[績效產物契約](docs/performance_artifacts.md)。
+
+需要從原始觀察值獨立計算時，`domain/statistics/periods.py` 提供 UTC 期間權益、
+損益及報酬序列；`performance.summarize_performance` 接受權益、時間戳與交易紀錄，
+`sharpe.py` 則接受呼叫端的報酬序列及年化設定，提供 Sharpe、bootstrap 區間及
+PSR／DSR。各可呼叫函式的 docstring 維護輸入、不可用條件與推論假設。
+這些計算不讀取 run／artifact，也未接入績效發佈或 MCP 結果查詢；其摘要採零無風險
+利率、金額型 `max_drawdown`，交易統計計入所有提供的紀錄，不能直接套用已保存
+績效指標的同名欄位契約。保存結果仍由上述績效產物流程負責。
 
 ### 診斷擴充與替換
 

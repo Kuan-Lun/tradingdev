@@ -4,13 +4,12 @@ All functions take a return series supplied by the caller, such as the
 daily returns from :func:`tradingdev.domain.statistics.periods.period_returns`,
 and never read runs, artifacts, or caches.
 
-Frequency: compute these statistics on daily returns. Annualising
-intraday returns with ``sqrt(periods_per_year)`` assumes independent
-periods, but intraday strategy returns are autocorrelated, so an hourly
-Sharpe is systematically biased against the daily one; a KD strategy
-measured -8.70 annualised from hourly returns versus -7.57 from daily
-returns. ``periods_per_year`` is therefore normally 365 for crypto or 252
-for exchange-traded markets.
+Frequency: use daily returns for daily-return analysis and choose
+``periods_per_year`` for the caller's annualisation basis. Square-root
+annualisation does not remove frequency dependence: serial correlation and
+compounding can change the ratio, and the direction depends on the return
+process. Report the frequency and compare ratios at matching frequencies
+and annualisation bases.
 
 Conventions:
 
@@ -326,11 +325,9 @@ def probabilistic_sharpe_ratio(
     Assumption: the returns are independent. The standard error in the
     denominator is the variance of the Sharpe estimator for iid returns; it
     accounts for skew and fat tails but has no term for serial correlation.
-    Positively autocorrelated returns have a larger true standard error, so
-    the probability is too optimistic (in a simulation with AR(1)
-    coefficient 0.2, ``PSR > 0.95`` occurred 9% of the time instead of the
-    nominal 5%); negatively autocorrelated returns make it too conservative.
-    See "Independence Assumptions" in docs/statistics_bootstrap_methods.md.
+    Serial correlation can invalidate the reported probability; this
+    function does not estimate an effective sample size or adjust for
+    serial correlation.
 
     Returns ``None`` with fewer than two returns, zero dispersion, or a
     non-positive variance term.
@@ -389,10 +386,8 @@ def deflated_sharpe_ratio(
     ``n_trials`` must be the total number of trials searched, including
     failed trials that were dropped because their metric was undefined. It
     defaults to the number of trial Sharpes, which is correct only when no
-    trial was dropped. With plateau analysis, :func:`trials_from_metrics
-    <tradingdev.domain.statistics.plateau.trials_from_metrics>` returns
-    the dropped count for this purpose; pass
-    ``n_trials = len(result.trials) + result.dropped_count``. Passing only
+    trial was dropped. Track all attempted trials before filtering out
+    undefined Sharpes and pass that total as ``n_trials``. Passing only
     the surviving count underestimates ``N`` and under-corrects the
     selection bias, without any error. With ``N = 1`` there is no
     selection, and with equal trial Sharpes there is no dispersion; both
@@ -414,8 +409,8 @@ def deflated_sharpe_ratio(
     correlation of their returns and is out of scope. The DSR is also a
     :func:`probabilistic_sharpe_ratio` against a raised benchmark, so it
     inherits that function's assumption of independent returns unchanged:
-    positively autocorrelated returns make it too optimistic, separately
-    from any error in the trial correction.
+    serial correlation can invalidate its probability, separately from any
+    error in the trial correction.
 
     Two selection corrections: this project corrects for multiple
     comparisons in two ways, one per metric family.
@@ -446,10 +441,11 @@ def deflated_sharpe_ratio(
     is the expected maximum of ``N`` independent trials, as the limitation
     above describes. Within one series: each IC t-statistic Bonferroni
     compares (``ic_statistics`` in ``tradingdev.domain.ml.evaluation.metrics``)
-    treats the ICs of non-overlapping windows as independent, and this
-    function treats the returns as independent through its PSR. So the
-    DSR needs both kinds of independence and Bonferroni only the second.
-    See "Independence Assumptions" in docs/statistics_bootstrap_methods.md.
+    approximates effective sample size as ``bars // window`` to account for
+    overlap, without estimating remaining serial dependence. This function
+    uses the independent-return variance through its PSR. Bonferroni's
+    robustness to dependence between tests does not repair miscalibrated
+    individual IC tests.
 
     Returns ``None`` when :func:`probabilistic_sharpe_ratio` is undefined
     for ``returns``, or when ``N >= 2`` but fewer than two trial Sharpes
