@@ -136,7 +136,9 @@ class DeflatedSharpe:
             for comparison; ``psr_vs_zero - dsr`` is what the
             selection-bias correction costs.
         hurdle_annualised: The hurdle ``SR*_0`` annualised, the expected
-            maximum Sharpe of ``n_trials`` skill-less trials.
+            maximum Sharpe of ``n_trials`` skill-less trials. This can
+            overflow to infinity even when the validated per-period
+            hurdle is finite; this output is not separately validated.
         n_trials: Number of trials ``N`` used for the hurdle.
         trial_sharpe_std_annualised: Sample standard deviation
             (``ddof=1``) of the annualised trial Sharpe ratios; ``None``
@@ -453,8 +455,8 @@ def deflated_sharpe_ratio(
             return or trial Sharpe is not a finite number, ``n_trials`` is
             not a positive integer or too large for a float, ``n_trials``
             is smaller than the number of trial Sharpes, no trial
-            Sharpes are given without ``n_trials``, or the trial Sharpes
-            are so dispersed that the hurdle is not a finite number.
+            Sharpes are given without ``n_trials``, the dispersion
+            calculation overflows, or the per-period hurdle is nonfinite.
     """
     scale = _annualisation(periods_per_year)
     trial_sharpes = np.array(
