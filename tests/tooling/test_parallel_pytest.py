@@ -8,15 +8,24 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Protocol
 from unittest.mock import Mock
 
 import pytest
 from tests import parallel_plugin
 from tooling.process_guard import run_captured
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+
+class SuiteRunner(Protocol):
+    def __call__(
+        self,
+        mode: str,
+        override: str,
+        *,
+        fail: bool = False,
+        stall: bool = False,
+        timeout: float = 30,
+    ) -> subprocess.CompletedProcess[str]: ...
 
 
 @pytest.fixture
@@ -112,7 +121,7 @@ def test_preserve_xdist_policy_for_intel_mac_and_explicit_logical_mode(
 
 
 @pytest.fixture
-def run_suite(tmp_path: Path) -> Callable[..., subprocess.CompletedProcess[str]]:
+def run_suite(tmp_path: Path) -> SuiteRunner:
     temporary = tmp_path / "temporary"
     temporary.mkdir()
     retained = temporary / f"pytest-of-{getpass.getuser()}" / "pytest-0"
@@ -192,7 +201,7 @@ def run_suite(tmp_path: Path) -> Callable[..., subprocess.CompletedProcess[str]]
 )
 def test_real_pytest_executes_every_case_once_and_propagates_failures(
     tmp_path: Path,
-    run_suite: Callable[..., subprocess.CompletedProcess[str]],
+    run_suite: SuiteRunner,
     mode: str,
     override: str,
     fail: bool,
@@ -207,7 +216,7 @@ def test_real_pytest_executes_every_case_once_and_propagates_failures(
 
 
 def test_invalid_count_prevents_actual_test_execution(
-    tmp_path: Path, run_suite: Callable[..., subprocess.CompletedProcess[str]]
+    tmp_path: Path, run_suite: SuiteRunner
 ) -> None:
     result = run_suite("auto", "invalid")
     assert result.returncode == pytest.ExitCode.USAGE_ERROR
@@ -216,7 +225,7 @@ def test_invalid_count_prevents_actual_test_execution(
 
 
 def test_timed_out_workers_stop_and_remove_pytest_session_directory(
-    tmp_path: Path, run_suite: Callable[..., subprocess.CompletedProcess[str]]
+    tmp_path: Path, run_suite: SuiteRunner
 ) -> None:
     with pytest.raises(subprocess.TimeoutExpired):
         run_suite("2", "2", stall=True, timeout=10)
