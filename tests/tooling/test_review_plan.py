@@ -183,12 +183,13 @@ def test_required_deck_context_is_distinguished_from_actual_changes(
         _write(tmp_path, path, "Existing presentation content.\n")
     compiler = "tooling/presentations.py"
     bundle = "tooling/presentation_bundle.py"
-    _write(tmp_path, compiler, "VALUE = 'old'\n")
-    _write(tmp_path, bundle, "VALUE = 'old'\n")
+    quality = "tooling/quality.py"
+    for path in (compiler, bundle, quality):
+        _write(tmp_path, path, "VALUE = 'old'\n")
     base = _tree(tmp_path)
-    _write(tmp_path, compiler, "VALUE = 'new'\n")
-    _write(tmp_path, bundle, "VALUE = 'new'\n")
-    changed = {compiler, bundle}
+    for path in (compiler, bundle, quality):
+        _write(tmp_path, path, "VALUE = 'new'\n")
+    changed = {compiler, bundle, quality}
     if change_deck:
         _write(tmp_path, f"{DECK}/slides.md", "Changed slide.\n")
         changed.add(f"{DECK}/slides.md")
@@ -203,8 +204,11 @@ def test_required_deck_context_is_distinguished_from_actual_changes(
         )
         assert "UNSTAGED_STYLE" not in prompt
         if payload["scope"] == "presentation":
-            assert set(payload["assigned_paths"]) == PRESENTATION_PATHS | {compiler}
-            assert set(payload["path_diffs"]) == changed - {bundle}
+            assert set(payload["assigned_paths"]) == PRESENTATION_PATHS | {
+                compiler,
+                bundle,
+            }
+            assert set(payload["path_diffs"]) == changed - {quality}
             for path in PRESENTATION_PATHS:
                 assert (
                     payload["candidate_files"][path]

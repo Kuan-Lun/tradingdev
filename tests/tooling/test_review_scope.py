@@ -197,6 +197,14 @@ def test_repeated_headings_remain_distinct_with_correct_ancestors() -> None:
         ("tests/test_mae_analysis.py", "tooling"),
         ("research/new_analysis.py", "general"),
         ("tests/test_new_analysis.py", "general"),
+        ("src/tradingdev/shared/utils/json_values.py", "general"),
+        ("src/tradingdev/adapters/storage/filesystem.py", "general"),
+        ("src/tradingdev/adapters/storage/sqlite.py", "general"),
+        ("src/tradingdev/domain/research_evidence.py", "general"),
+        ("tests/conftest.py", "general"),
+        ("tests/research_fixtures.py", "general"),
+        ("tests/parallel_plugin.py", "general"),
+        (".agents/skills/new-skill/SKILL.md", "general"),
         ("tests/app/test_trade_history.py", "results"),
         ("src/tradingdev/app/contracts/reports.py", "results"),
         ("src/tradingdev/app/contracts/history.py", "results"),
@@ -295,6 +303,355 @@ def test_actual_module_owner_receives_its_documented_behavior(
     )
     assert required, f"Expected the actual documented behavior in {document}"
     assert set(required) <= set(sections_for_scope(scope, document, text))
+
+
+@pytest.mark.parametrize(
+    ("scope", "document", "heading", "paths"),
+    [
+        (
+            "interfaces",
+            "README.md",
+            "終端機用法",
+            (
+                "src/tradingdev/__main__.py",
+                "src/tradingdev/main.py",
+                "tests/adapters/test_cli.py",
+                "tests/adapters/test_cli_execution_guidance.py",
+                "tests/adapters/test_cli_report.py",
+            ),
+        ),
+        (
+            "interfaces",
+            "docs/reports.md",
+            "Codex CLI recording adapter",
+            (
+                "src/tradingdev/adapters/clients/codex_history.py",
+                "src/tradingdev/adapters/clients/codex_protocol.py",
+                "src/tradingdev/adapters/clients/codex_session.py",
+                "src/tradingdev/adapters/clients/codex_transport.py",
+                "tests/adapters/test_codex_recording.py",
+            ),
+        ),
+        (
+            "data",
+            "ARCHITECTURE.md",
+            "行情快取",
+            (
+                "src/tradingdev/app/dataset_inspection.py",
+                "src/tradingdev/app/dvol_data.py",
+                "src/tradingdev/app/feature_data.py",
+                "tests/app/test_dvol_cache.py",
+            ),
+        ),
+        (
+            "execution",
+            "docs/execution_plans.md",
+            "Execution Plans and Confirmation Documents",
+            (
+                "src/tradingdev/app/comparison_service.py",
+                "src/tradingdev/app/prepared_execution.py",
+                "src/tradingdev/app/research_preparation.py",
+                "src/tradingdev/domain/comparison.py",
+                "src/tradingdev/domain/presentation/comparison_confirmation.py",
+                "src/tradingdev/domain/presentation/research_confirmation.py",
+                "tests/app/test_comparison_lifecycle.py",
+                "tests/app/test_comparison_plans.py",
+                "tests/app/test_comparison_preflight.py",
+                "tests/app/test_research_preparation.py",
+                "tests/app/test_rolling_preflight.py",
+                "tests/app/test_signal_boundaries.py",
+                "tests/domain/test_comparison.py",
+                "tests/domain/test_comparison_confirmation.py",
+                "tests/domain/test_research_confirmation.py",
+            ),
+        ),
+        (
+            "execution",
+            "ARCHITECTURE.md",
+            "容器執行 adapter",
+            (
+                "src/tradingdev/domain/runtime.py",
+                "tests/adapters/test_container_runtime.py",
+                "tests/adapters/test_frame_codec.py",
+            ),
+        ),
+        (
+            "execution",
+            "docs/strategy_contract.md",
+            "Randomness",
+            (
+                "src/tradingdev/domain/randomness.py",
+                "tests/domain/test_randomness.py",
+            ),
+        ),
+        (
+            "results",
+            "docs/performance_artifacts.md",
+            "Benchmarks",
+            (
+                "src/tradingdev/app/benchmark_service.py",
+                "src/tradingdev/domain/benchmark.py",
+                "tests/app/test_benchmark_service.py",
+                "tests/domain/test_benchmark.py",
+            ),
+        ),
+        (
+            "results",
+            "docs/run_artifacts.md",
+            "Ranking Saved Run Scopes",
+            (
+                "src/tradingdev/app/ranking_service.py",
+                "src/tradingdev/domain/ranking.py",
+                "tests/domain/test_ranking.py",
+            ),
+        ),
+        (
+            "results",
+            "docs/reports.md",
+            "Research interpretation and diagnostic providers",
+            (
+                "src/tradingdev/app/diagnostic_service.py",
+                "src/tradingdev/domain/diagnostics.py",
+                "tests/app/test_diagnostics.py",
+            ),
+        ),
+        (
+            "results",
+            "docs/reports.md",
+            "Research notebooks and archives",
+            (
+                "src/tradingdev/adapters/storage/research_archives.py",
+                "src/tradingdev/adapters/storage/research_notes.py",
+                "src/tradingdev/app/contracts/research_notes.py",
+                "src/tradingdev/app/research_note_service.py",
+                "src/tradingdev/domain/research_notes.py",
+                "tests/app/test_research_notes.py",
+            ),
+        ),
+        (
+            "results",
+            "docs/reports.md",
+            "Recorded conversations",
+            (
+                "src/tradingdev/adapters/storage/conversation_exports.py",
+                "src/tradingdev/adapters/storage/conversations.py",
+                "src/tradingdev/app/contracts/conversations.py",
+                "src/tradingdev/app/conversation_service.py",
+                "src/tradingdev/domain/conversations.py",
+                "tests/app/test_conversations.py",
+            ),
+        ),
+        (
+            "results",
+            "docs/run_artifacts.md",
+            "Fixed Comparison Evidence",
+            (
+                "src/tradingdev/adapters/storage/comparisons.py",
+                "src/tradingdev/domain/comparison_results.py",
+                "tests/adapters/test_comparisons.py",
+                "tests/app/test_comparison_report.py",
+            ),
+        ),
+        (
+            "results",
+            "docs/performance_artifacts.md",
+            "Performance Scopes and Provenance",
+            (
+                "src/tradingdev/app/contracts/research.py",
+                "src/tradingdev/app/rolling_trace_summary.py",
+                "src/tradingdev/domain/research_scope.py",
+                "tests/app/test_metric_json_contract.py",
+                "tests/app/test_saved_walk_forward.py",
+                "tests/app/test_volume_monthly_loss_artifacts.py",
+                "tests/domain/test_research_walk_forward.py",
+            ),
+        ),
+        (
+            "results",
+            "docs/reports.md",
+            "Composable Offline Reports",
+            (
+                "tests/adapters/test_bokeh_tables.py",
+                "tests/adapters/test_dashboard_analysis.py",
+                "tests/adapters/test_dashboard_render.py",
+                "tests/adapters/test_dashboard_report.py",
+                "tests/adapters/test_presentation_html.py",
+                "tests/adapters/test_quantstats_report.py",
+                "tests/adapters/test_research_report.py",
+                "tests/app/test_research_report_service.py",
+                "tests/domain/test_ledger_presentation.py",
+            ),
+        ),
+        (
+            "presentation",
+            "docs/development.md",
+            "簡報網站發布設定",
+            (
+                "tooling/presentation_bundle.py",
+                "scripts/stage-presentations.sh",
+                "scripts/build-presentations-site.sh",
+                "wrangler.jsonc",
+                "tests/tooling/test_presentation_bundle.py",
+            ),
+        ),
+        (
+            "tooling",
+            "docs/development.md",
+            "研究成果工程回饋",
+            (".agents/skills/research-feedback/SKILL.md",),
+        ),
+        (
+            "tooling",
+            "docs/development.md",
+            "2. 在 GitHub 建立 PR，交由審閱者檢查",
+            (".agents/skills/wait-for-check/SKILL.md",),
+        ),
+    ],
+)
+def test_known_components_receive_their_actual_contracts(
+    scope: str, document: str, heading: str, paths: tuple[str, ...]
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / document).read_text(encoding="utf-8")
+    required = next(
+        section
+        for section in markdown_sections(document, text)
+        if section.headings and section.headings[-1] == heading
+    )
+    for path in paths:
+        assert (root / path).is_file()
+        owner = scope_for_path(path)
+        assert owner == scope, path
+        assert required in sections_for_scope(owner, document, text), path
+
+
+@pytest.mark.parametrize(
+    ("path", "headings", "scopes"),
+    [
+        (
+            "README.md",
+            (
+                "使用 Docker 部署",
+                "準備檔案與資料夾",
+                "設定連線入口",
+                "啟動、更新與保存資料",
+            ),
+            {"tooling", "execution", "interfaces"},
+        ),
+        (
+            "README.md",
+            (
+                "保存研究筆記與打包分享",
+                "自動保存 Codex CLI 對話",
+                "閱讀保存的對話",
+                "從終端機操作研究筆記",
+            ),
+            {"results", "interfaces"},
+        ),
+        (
+            "README.md",
+            (
+                "行情來源與下載",
+                "選擇與保存工作區",
+                "升級舊工作區",
+            ),
+            {"strategy", "execution", "results", "data", "ml", "interfaces"},
+        ),
+        (
+            "README.md",
+            ("沒有 Homebrew 時設定 OpenMP（macOS）",),
+            {"tooling", "interfaces", "ml"},
+        ),
+        (
+            "ARCHITECTURE.md",
+            ("行情快取",),
+            {"data", "execution", "ml", "interfaces"},
+        ),
+        (
+            "ARCHITECTURE.md",
+            (
+                "診斷擴充與替換",
+                "研究筆記與可攜封存",
+                "可見對話紀錄",
+            ),
+            {"results", "interfaces"},
+        ),
+        (
+            "docs/development.md",
+            (
+                "平行執行離線測試",
+                "SRS 維護與檢核",
+                "測試證據與文件修正",
+                "檢查期間的主線更新",
+            ),
+            {"tooling", "presentation"},
+        ),
+        (
+            "docs/development.md",
+            (
+                "簡報網站發布設定",
+                "Cloudflare 自動發布",
+                "共用網域與專案路徑",
+            ),
+            {"presentation"},
+        ),
+        (
+            "docs/development.md",
+            ("研究成果工程回饋",),
+            {"tooling"},
+        ),
+        (
+            "docs/ml_research.md",
+            ("Rolling Retraining Schemes",),
+            {"ml", "strategy", "execution", "interfaces"},
+        ),
+        (
+            "docs/reports.md",
+            (
+                "Research interpretation and diagnostic providers",
+                "Research notebooks and archives",
+                "Recorded conversations",
+                "Codex CLI recording adapter",
+            ),
+            {"results", "interfaces"},
+        ),
+    ],
+)
+def test_registered_operational_sections_reach_their_responsible_reviewers(
+    path: str, headings: tuple[str, ...], scopes: set[str]
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / path).read_text(encoding="utf-8")
+    sections = markdown_sections(path, text)
+    for heading in headings:
+        required = next(s for s in sections if s.headings[-1:] == (heading,))
+        for scope in SCOPES:
+            selected = sections_for_scope(scope, path, text)
+            assert (required in selected) == (scope in scopes or scope == "general")
+    expanded = text + "\n## Unregistered behavior\nRetain complete new evidence.\n"
+    for scope in SCOPES:
+        assert "Retain complete new evidence." in "".join(
+            s.text for s in sections_for_scope(scope, path, expanded)
+        )
+
+
+def test_editor_guide_is_scoped_but_product_overviews_remain_shared() -> None:
+    root = Path(__file__).resolve().parents[2]
+    editor = "docs/talks/tradingdev-introduction/README.md"
+    for path in (
+        editor,
+        "docs/talks/tradingdev-introduction/slides.md",
+        "docs/requirements.md",
+    ):
+        text = (root / path).read_text(encoding="utf-8")
+        for scope in SCOPES:
+            selected = "".join(s.text for s in sections_for_scope(scope, path, text))
+            expected = (
+                text
+                if path != editor or scope in {"presentation", "tooling", "general"}
+                else ""
+            )
+            assert selected == expected
 
 
 def test_known_doc_selects_role_and_ancestor_context() -> None:
