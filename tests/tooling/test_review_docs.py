@@ -19,11 +19,15 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from tooling import environment, review_docs
-from tooling.presentations import PRESENTATION_PATHS
+from tooling.presentations import DECK, PRESENTATION_PATHS
 from tooling.process_guard import (
     CLEANUP_UNVERIFIED_EXIT_CODE,
     ProcessCleanupError,
     terminate_tree,
+)
+from tooling.review_evidence import (
+    _operation_definitions_only,
+    automatic_document_paths,
 )
 
 if TYPE_CHECKING:
@@ -314,7 +318,7 @@ def _write_presentation(repo: Path) -> dict[str, str]:
     return files
 
 
-@pytest.mark.parametrize("changed_name", ["README.md", "slides.md", "theme.css"])
+@pytest.mark.parametrize("changed_name", ["slides.md", "theme.css"])
 def test_registered_presentation_includes_unchanged_candidate_context(
     repository: tuple[Path, str, str], changed_name: str
 ) -> None:
@@ -361,6 +365,105 @@ def test_registered_build_changes_include_unchanged_presentation_context(
     )
 
 
+@pytest.mark.parametrize(
+    "changed_path",
+    [f"{DECK}/README.md", ".vscode/tasks.json", "scripts/presentations.sh"],
+)
+def test_presentation_operation_changes_require_guide_not_unchanged_artwork(
+    repository: tuple[Path, str, str], changed_path: str
+) -> None:
+    repo, _, _ = repository
+    files = _write_presentation(repo)
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    target = repo / changed_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("Updated operation\n")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+    raw = review_docs.build_evidence(repo, base, tree)
+    evidence = json.loads(raw)
+    assert evidence["presentation_context_paths"] == [f"{DECK}/README.md"]
+    assert evidence["candidate_files"][changed_path] == "Updated operation\n"
+    assert changed_path in evidence["path_diffs"]
+    assert all(
+        path not in evidence["candidate_files"]
+        for path in files
+        if Path(path).name != "README.md"
+    )
+    assert f"{DECK}/slides.md" not in evidence["automatic_document_paths"]
+    for prompt in review_docs.build_review_prompts(raw):
+        assert "Immutable presentation context: " + DECK + "/slides.md" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("after", "requires_artwork"),
+    [
+        ("def setup(root):\n    install(root)\n", False),
+        ("from filelock import FileLock\ndef setup(root):\n    install(root)\n", False),
+        ("def main():\n    prepare_environment()\n", False),
+        ("def build(root):\n    render(root)\n", True),
+        ("def _command(root):\n    return ['compiler', '--html']\n", True),
+        ("from new_renderer import render\ndef setup(root):\n    pass\n", True),
+        ("from filelock import FileLock as check_html\n", True),
+        ("from typing import Any as check_html\n", True),
+        ("if TYPE_CHECKING:\n    render()\n", True),
+        (
+            "if TYPE_CHECKING:\n"
+            "    from collections.abc import Callable, Generator\n"
+            "def setup(root):\n    install(root)\n",
+            False,
+        ),
+        ("@render\ndef setup(root):\n    pass\n", True),
+        ("def unknown(root):\n    render(root)\n", True),
+        ("SOURCE_FORMAT = 'new'\n", True),
+        ("def setup(:\n", True),
+    ],
+)
+def test_mixed_presentation_module_uses_immutable_changed_definitions(
+    repository: tuple[Path, str, str], after: str, requires_artwork: bool
+) -> None:
+    repo, _, _ = repository
+    files = _write_presentation(repo)
+    module = repo / "tooling/presentations.py"
+    module.parent.mkdir(exist_ok=True)
+    module.write_text("def setup(root):\n    pass\n")
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    module.write_text(after)
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+    module.write_text("def build(root):\n    UNSTAGED_RENDER_CHANGE()\n")
+    evidence = json.loads(review_docs.build_evidence(repo, base, tree))
+    assert evidence["candidate_files"]["tooling/presentations.py"] == after
+    expected = set(files) if requires_artwork else {f"{DECK}/README.md"}
+    assert set(evidence["presentation_context_paths"]) == expected
+
+
+def test_installer_import_cannot_rebind_existing_renderer_dependency() -> None:
+    before = "def build(root):\n    FileLock(root)\n"
+    after = before + "from filelock import FileLock\n"
+    assert not _operation_definitions_only(before, after)
+
+
+def test_deleted_presentation_operations_do_not_hide_missing_artwork(
+    repository: tuple[Path, str, str],
+) -> None:
+    repo, _, _ = repository
+    _write_presentation(repo)
+    module = repo / "tooling/presentations.py"
+    module.parent.mkdir(exist_ok=True)
+    module.write_text("def setup(root):\n    pass\n")
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    module.unlink()
+    (repo / DECK / "slides.md").unlink()
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+    with pytest.raises(review_docs.ReviewError, match="Missing required registered"):
+        review_docs.build_evidence(repo, base, tree)
+
+
 def test_unrelated_change_does_not_load_unchanged_presentation_assets(
     repository: tuple[Path, str, str],
 ) -> None:
@@ -378,7 +481,7 @@ def test_unrelated_change_does_not_load_unchanged_presentation_assets(
     assert all(
         path not in evidence["candidate_files"]
         for path in files
-        if not path.endswith(".md")
+        if Path(path).name != "README.md"
     )
 
 
@@ -912,12 +1015,7 @@ def _candidate_metadata(evidence: dict[str, Any]) -> None:
     files = evidence["candidate_files"]
     evidence["candidate_tree_inventory"] = sorted(files)
     evidence["candidate_file_inventory"] = sorted(files)
-    evidence["automatic_document_paths"] = sorted(
-        path
-        for path in files
-        if path in {"README.md", "ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md"}
-        or (path.startswith("docs/") and path.endswith(".md"))
-    )
+    evidence["automatic_document_paths"] = sorted(automatic_document_paths(set(files)))
     evidence["candidate_file_modes"] = dict.fromkeys(files, "100644")
     evidence["candidate_file_blobs"] = {
         path: _blob_oid(content) for path, content in files.items()

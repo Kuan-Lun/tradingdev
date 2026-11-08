@@ -754,6 +754,15 @@ TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
 每批證據區分實際 Git 變更與必須附上的未修改簡報參照；參照仍保留完整原文，
 供檢查本次變更造成的不一致，不將列入審查等同於本次新增或修改。
+簡報的啟動、安裝、操作指南與部署入口變更附上編輯指南；涉及投影片、主題、渲染器
+或無法辨識的簡報行為時，才一併附上完整投影片與主題，並維持同批審查。
+混合責任模組 `tooling/presentations.py` 會比對固定 base／candidate 的定義；
+只有已登錄的操作定義及其型別／安裝鎖匯入變動時，才採操作範圍。
+未修改的投影片是產物來源，不自動當作所有責任範圍的一般文件；操作範圍可按檔案分批，
+每批與跨範圍審查都附完整編輯指南，仍保留每個變更檔案全文與 diff。正式選取規則見
+[review_evidence.py](../tooling/review_evidence.py) 的 `_presentation_context`、
+`_operation_definitions_only` 與 `automatic_document_paths`；批次規則見
+[review_plan.py](../tooling/review_plan.py) 的 `build_review_plan`。
 上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
 設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
 舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。
