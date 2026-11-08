@@ -3,12 +3,12 @@
 import itertools
 import math
 import warnings
-from typing import Any
 
 import numpy as np
 import pytest
 
 from tradingdev.domain.statistics.plateau import (
+    DEFAULT_RADIUS,
     DroppedTrialsWarning,
     MetricTrials,
     PlateauGrid,
@@ -44,16 +44,27 @@ def _axes(trials: list[Trial]) -> dict[str, list[float]]:
     return {name: sorted({t.params[name] for t in trials}) for name in names}
 
 
-def _scores(trials: list[Trial], **kwargs: Any) -> tuple[PlateauScore, ...]:
-    return plateau_scores(trials, axes=_axes(trials), **kwargs)
+def _scores(
+    trials: list[Trial], *, radius: int = DEFAULT_RADIUS
+) -> tuple[PlateauScore, ...]:
+    return plateau_scores(trials, axes=_axes(trials), radius=radius)
 
 
-def _summary(trials: list[Trial], **kwargs: Any) -> PlateauSummary:
-    return plateau_summary(trials, axes=_axes(trials), **kwargs)
+def _summary(
+    trials: list[Trial],
+    *,
+    radius: int = DEFAULT_RADIUS,
+    min_neighborhood: int | None = None,
+) -> PlateauSummary:
+    return plateau_summary(
+        trials, axes=_axes(trials), radius=radius, min_neighborhood=min_neighborhood
+    )
 
 
-def _grid(trials: list[Trial], **kwargs: Any) -> PlateauGrid:
-    return plateau_grid(trials, axes=_axes(trials), **kwargs)
+def _grid(
+    trials: list[Trial], *, x: str, y: str, radius: int = DEFAULT_RADIUS
+) -> PlateauGrid:
+    return plateau_grid(trials, axes=_axes(trials), x=x, y=y, radius=radius)
 
 
 def _by_params(trials: list[Trial], **params: float) -> int:
@@ -859,11 +870,11 @@ class TestNumpyIntegers:
         trials = _corner_grid()
 
         with pytest.raises(ValueError, match="radius must be a positive integer"):
-            _summary(trials, radius=np.int64(1))
+            _summary(trials, radius=np.int64(1))  # type: ignore[arg-type]
         with pytest.raises(
             ValueError, match="min_neighborhood must be a positive integer"
         ):
-            _summary(trials, min_neighborhood=np.int64(8))
+            _summary(trials, min_neighborhood=np.int64(8))  # type: ignore[arg-type]
 
 
 class TestExtremeMagnitudes:
