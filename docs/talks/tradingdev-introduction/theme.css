@@ -97,15 +97,42 @@ section.references { font-size: 25px; }
 section.references li { margin: 13px 0; }
 
 /* Mermaid SVG is embedded during the build and keeps its intrinsic proportions. */
-section .mermaid-diagram { display: flex; justify-content: center; margin: 0; }
-section .mermaid-diagram > svg { width: 100%; height: 400px; max-width: 1120px; }
+section .mermaid-diagram {
+  --arrowhead-scale: 2.5;
+  --message-line-width: 3px;
+  display: flex;
+  justify-content: center;
+  margin: 0;
+}
+section .mermaid-diagram > svg { width: 100%; height: 400px; max-width: 1120px; overflow: visible; }
+/* Clip Mermaid's extended lifelines while keeping enlarged markers visible. */
+section .mermaid-diagram .actor-line { clip-path: inset(0) view-box; }
+section .mermaid-diagram .messageLine0,
+section .mermaid-diagram .messageLine1 {
+  stroke: #166a65 !important;
+  stroke-width: var(--message-line-width) !important;
+}
+/* Enlarge Mermaid's marker around its tip without moving the arrow endpoint. */
+section .mermaid-diagram marker[id$="-arrowhead"] { overflow: visible; }
+section .mermaid-diagram marker[id$="-arrowhead"] path {
+  transform-origin: 10px 5px;
+  transform: scale(var(--arrowhead-scale));
+  fill: #166a65 !important;
+  stroke: none !important;
+}
 /* Six lanes need larger labels after fitting the wide SVG into a slide. */
+section.diagram-wide .mermaid-diagram {
+  --arrowhead-scale: 4;
+  --message-line-width: 5px;
+}
 section.diagram-wide .mermaid-diagram text { font-size: 54px !important; }
 section.diagram-wide .mermaid-diagram > svg { height: 360px; }
 section.diagram-wide .mermaid-diagram .messageText { transform: translateY(-20px); }
-section.diagram-wide .mermaid-diagram rect.actor { stroke: none; fill: none; }
-section.diagram-wide .mermaid-diagram .messageLine0,
-section.diagram-wide .mermaid-diagram .messageLine1 { stroke-width: 3px !important; }
+section.diagram-wide .mermaid-diagram rect.actor {
+  height: 80px;
+  transform: translateY(-16px);
+  stroke-width: 2px;
+}
 
 /* Visible conversation text remains selectable and readable at presentation scale. */
 section.case-dialogue { font-size: 24px; }
