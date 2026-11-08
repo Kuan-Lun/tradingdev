@@ -683,7 +683,7 @@ uv run --no-sync python -m tooling.review_docs \
 ```bash
 ./scripts/check-pr.sh 27 \
   --review-context-for interfaces:src/tradingdev/mcp/server.py \
-  --documentation-timeout-seconds 900 --snapshot-timeout-seconds 3600
+  --documentation-timeout-seconds 900 --snapshot-timeout-seconds 7200
 ```
 
 請以實際規劃的 scope／檔案代換。預設值與其他選項以 `scripts/check-pr.sh --help`
