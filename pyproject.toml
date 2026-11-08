@@ -137,5 +137,6 @@ dev = [
     # Markdown checks and explicit formatting share tooling/quality.py.
     "pymarkdownlnt>=0.9.41",
     "pytest>=9.1.1",
+    "pytest-xdist>=3.8,<4",
     "types-jsonschema>=4.26.0.20261006",
 ]

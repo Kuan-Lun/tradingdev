@@ -68,6 +68,37 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 `check-tooling.sh`。產品、依賴、共用測試設施及無法確認的變更仍跑完整套件。
 提交與 PR 的檢查分流見下方流程。
 
+### 平行執行離線測試
+
+`check-full.sh` 與 `check-tooling.sh` 使用 pytest-xdist 的 `worksteal` 排程，
+將測試分配給多個程序；worker 異常退出時不自動重啟。完整檢查仍執行全部離線測試。
+直接執行 pytest 預設循序執行，加 `-n auto --dist worksteal` 才啟用平行模式。
+
+`-n auto` 的程序數由 [tests/parallel_plugin.py](../tests/parallel_plugin.py) 決定：
+Apple Silicon macOS 使用 `hw.perflevel0.physicalcpu` 的最高效能層級核心數，
+不計入節能核心；查詢失敗時顯示警告並使用一個 worker。
+Linux／Windows 使用目前程序可用的邏輯核心數減二，最少一個 worker；
+Intel Mac 與其他作業系統沿用 xdist 的實體核心偵測及其後備方式。
+此設定只控制程序數，不綁定 CPU 核心，也不限制測試內啟動的子程序或容器。
+
+可透過標準環境變數覆寫自動程序數，`0` 表示循序執行；負數或無效值會失敗。
+此環境變數也覆寫 `-n logical`；未設定時，該選項沿用 xdist 的邏輯核心數。
+直接使用 pytest 時，明示的 `-n 數字` 優先於此環境變數：
+
+```bash
+PYTEST_XDIST_AUTO_NUM_WORKERS=10 scripts/check-full.sh
+PYTEST_XDIST_AUTO_NUM_WORKERS=0 scripts/check-tooling.sh
+uv run --no-sync python -m pytest -n 4 --dist worksteal --durations=30
+```
+
+直接執行 pytest 時，以 `--durations=30` 檢視最慢的測試階段。完整與 tooling 檢查
+腳本不讀取 `PYTEST_ADDOPTS`，以固定命令確保測試範圍。程序數增加不保證等比例加速，
+須確認記憶體、Docker 資源與測試內部平行工作量。平行測試應隔離檔案、資料庫與
+port，清理只處理自己擁有的程序；session fixture 會在各個使用它的 worker 分別建立。
+未指定 `--basetemp` 時，每次平行執行會建立專屬 pytest 暫存根並於結束後清除，
+不清掃其他 pytest 執行的目錄；既有自訂測試工作區仍逐案例清理。
+偵錯時使用 `-n 0`，或將上述環境變數設為 `0`。
+
 ### 依賴相容性限制
 
 本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；可安裝不代表所有上游
@@ -487,6 +518,8 @@ Codex 需要已登入的 CLI 與所選模型存取權；Local 需要已啟動且
 工具不下載模型、不自動切換 provider；所選能力不可用會失敗。
 
 入口由 [tooling/llm_check.py](../tooling/llm_check.py) 保留情境選擇與 pytest 選項，
+維持循序執行及即時進度輸出；拒絕透過命令列或 `PYTEST_ADDOPTS` 啟用 xdist 平行或監看重跑，
+避免 worker 略過主程序的環境確認。離線套件的平行設定不套用到此入口。
 在選出實際要執行的情境後、建立測試工作區前共用環境確認：檢查策略容器前置條件，
 再確認 Codex CLI 登入狀態或 Local 服務連線。help、列出情境／fixtures、
 `--setup-plan` 等純資訊模式與沒有選到情境時不檢查服務；`--setup-only` 會執行
@@ -622,7 +655,7 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 `verification_planned` 回覆固定 tree 身分與 `ChangeScope.payload` 產生的計畫，並非通過證明。
 `delivery_profile` 指定任務交付要跑的 `scripts/check-<profile>.sh`；`commit_profile`
 供 hook 使用，`candidate_checks` 是 PR／本機合併候選的檢查順序。
-每階段仍只要求受影響的相關測試，當次 PR 候選另外獨立檢查；計畫不新增逐階段完整檢查。
+每階段仍只要求受影響的相關測試，當次 PR 候選另外核對必要證據；計畫不新增逐階段完整檢查。
 暫存模式不包含未暫存或未追蹤內容；這時提交使用 `git-flow-commit.sh "type: message"`，
 不再傳檔名。工具失敗時不能假設可走較輕的分流。
 
@@ -648,7 +681,45 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 
 PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分類器，
 依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode；未知內容保留完整檢查。
-開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更即跑全套。
+開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更需要完整分流的有效證據。
+
+### 測試證據與文件修正
+
+乾淨 checkout 執行 `scripts/check-full.sh` 或 `scripts/check-tooling.sh` 時，會以 Git
+snapshot 執行完整檢查；成功後由工具保存紀錄。手動要求完整檢查仍會實際執行，不讀取
+舊紀錄略過測試。未提交的修改會在目前工作樹檢查，並使該分流的舊紀錄失效，不產生
+可重用紀錄。兩個 scripts 可加 `--timeout-seconds <正整數>` 設定期限，預設 5400 秒；
+PR snapshot 仍使用 PR 命令自己的期限。
+
+PR 與本機合併候選先按整體差異決定檢查範圍，文件語意審查照常執行。隨後由
+[候選檢查](../tooling/git/candidates.py) 核對所需分流的最新紀錄：
+
+- 測試輸入的路徑、Git blob 與 mode 全部相同，只有已登錄的一般文件改變時，
+  沿用測試結果並補做文件格式、連結及 SRS 結構檢查。
+- 程式、測試、政策、模型提示詞、依賴、簡報或未知路徑改變，或環境指紋不同時，
+  重新執行對應的完整分流。`AGENTS.md` 不屬於一般文件例外。
+- 紀錄缺失、無法解析、執行中、失敗或不完整時不重用；不以最後一個文件 commit
+  掩蓋更早的未驗證程式修改，也不退回較舊的成功紀錄。
+
+[紀錄工具](../tooling/git/receipts.py) 將每個分流的最新狀態保存於 Git common directory
+下的 `tradingdev-checks/`，不加入版本控制；同分流使用鎖避免同時寫入。每次先保存
+執行中狀態，才探查環境或補做檢查，避免後續磁碟寫入失敗時留下舊成功紀錄。
+一般文件品質失敗仍阻擋候選；確認清理與環境正常後，可保留原測試 tree 的成功紀錄，
+修正文件後只需補驗證文件。逾時、中斷或清理未確認則不恢復該紀錄。紀錄綁定實際
+通過的 tree、指令、檢查工具內容及環境指紋。環境包含 Python 與已安裝套件、作業系統、
+可用 CPU、Git／uv／Node、已安裝的簡報套件與瀏覽器；完整分流另核對 Docker CLI、
+daemon 身分／版本／資源及容器映像。Python 與 Node 套件核對已安裝清單及檔案的
+路徑、mode、大小與修改時間；不接受無檔案清單的 Python 套件或連結的 Node 套件目錄。
+環境變數只保存雜湊，不把憑證內容寫入紀錄；runner 管理的工作目錄、暫存路徑及
+主機的呼叫／工作階段追蹤身分不參與比較。權限、sandbox 與未知設定仍參與比較。
+工具無法確認環境時仍執行檢查，但不產生可重用成功紀錄。這是本機執行證據，並非
+防竄改或跨機器驗證機制；不匯入手寫摘要或把既有日誌轉成成功紀錄。
+
+重用成功會輸出 `test_evidence_reused` JSON，列出 `tested_tree`、`candidate_tree`、
+`profile` 與紀錄位置；這表示先前測試仍適用，不代表當次又執行了 pytest。
+若要排查新疑慮，直接執行對應的完整檢查 script 即可強制重新驗證。
+
+### 檢查期間的主線更新
 
 同一次 PR 檢查中若只有主線前進，工具會重新取得合併候選。PR 身分與 head 必須不變，
 且 `change_scope.presentation_only_advance` 須確認更新僅含已登錄簡報檔案、與 PR 路徑
@@ -657,7 +728,7 @@ PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分�
 最新 base／head／tree 與補做的 `checks`，審閱者仍須確認新增差異的語意與必要視覺行為。
 主線更新含編譯工具、設定、一般文件、產品變更或改寫歷史不適用；PR 自身涉及簡報或其工具
 也不適用，因為不同檔案可能互為審查脈絡。補驗證期間再次變動也會失敗。
-此路徑不重用跨次執行的 receipt，檢查結束後仍須依下節核對即時版本。
+這是同一次檢查的候選更新處理；跨次測試重用另依上述證據規則，結束後仍須核對即時版本。
 
 真實模型策略測試另依變更選取。涉及 SRS 的文件／簡報、開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
 這一步預設使用 `gpt-6-luna` 與 `high`；以 `TRADINGDEV_DOC_REVIEW_MODEL`、
