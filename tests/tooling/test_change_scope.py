@@ -272,7 +272,7 @@ def test_plan_cli_rejects_index_movement_without_discarding_it(
     [
         ("docs/talks/tradingdev-introduction/slides.md", "# Slides\n", "presentations"),
         ("docs/talks/tradingdev-introduction/theme.css", "body {}\n", "presentations"),
-        ("docs/talks/tradingdev-introduction/index.html", "<html>\n", "presentations"),
+        ("docs/talks/tradingdev-introduction/index.html", "<html>\n", "code"),
         ("docs/.nojekyll", "", "presentations"),
         ("docs/.nojekyll", "unexpected config\n", "code"),
         ("docs/unknown/index.html", "<html>\n", "code"),
@@ -584,4 +584,83 @@ def test_srs_review_tracks_both_git_sides_and_keeps_stronger_checks(
     )
     assert scope.delivery_profile == (
         "full" if change in {"mixed", "unsafe_mode"} else "docs"
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "tooling/marp/package.json",
+        "tooling/marp/package-lock.json",
+        "tooling/marp/render-diagrams.mjs",
+        "tooling/marp/build.mjs",
+        "scripts/build-presentations-site.sh",
+        "wrangler.jsonc",
+    ],
+)
+def test_presentation_compilers_keep_tooling_and_presentation_checks(
+    repository: tuple[Path, str],
+    name: str,
+) -> None:
+    root, base = repository
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("changed compiler")
+    _git(root, "add", name)
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.delivery_profile == "tooling"
+    assert scope.candidate_checks == (
+        "presentations",
+        "documentation_review",
+        "tooling",
+    )
+
+
+@pytest.mark.parametrize(
+    "other", ["tooling/marp/unknown.mjs", "src/app.py", "pyproject.toml"]
+)
+def test_presentation_toolchain_does_not_allow_unregistered_or_product_changes(
+    repository: tuple[Path, str],
+    other: str,
+) -> None:
+    root, base = repository
+    for name in ("tooling/marp/package.json", other):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("changed")
+    _git(root, "add", ".")
+    assert (
+        classify_changes(root, base, _git(root, "write-tree")).delivery_profile
+        == "full"
+    )
+
+
+@pytest.mark.parametrize("extra", ["", "\nsrc/\n", "\n #pattern\n", "\n \n"])
+def test_only_generated_preview_ignore_rule_uses_presentation_scope(
+    repository: tuple[Path, str],
+    extra: str,
+) -> None:
+    root, base = repository
+    (root / ".gitignore").write_text(
+        "/docs/talks/tradingdev-introduction/index.html\n" + extra
+    )
+    _git(root, "add", ".gitignore")
+    assert classify_changes(root, base, _git(root, "write-tree")).kind == (
+        "code" if extra else "presentations"
+    )
+
+
+def test_removing_generated_preview_retains_presentation_validation(
+    repository: tuple[Path, str],
+) -> None:
+    root, _ = repository
+    name = "docs/talks/tradingdev-introduction/index.html"
+    path = root / name
+    path.parent.mkdir(parents=True)
+    path.write_text("<html>saved output</html>")
+    _git(root, "add", name)
+    base = _git(root, "write-tree")
+    _git(root, "rm", "--cached", name)
+    assert classify_changes(root, base, _git(root, "write-tree")).candidate_checks == (
+        "presentations",
     )

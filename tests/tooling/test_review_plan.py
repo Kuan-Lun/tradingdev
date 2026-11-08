@@ -219,6 +219,29 @@ def test_deleted_and_renamed_paths_keep_exact_old_and_new_evidence(
     )
 
 
+def test_every_scope_can_identify_deletions_from_the_candidate_tree(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, "web/index.html", "<p>Generated preview</p>\n")
+    _write(tmp_path, "README.md", "# Preview\nGenerated HTML is tracked.\n")
+    base = _tree(tmp_path)
+    (tmp_path / "web/index.html").unlink()
+    _write(tmp_path, ".gitignore", "/web/index.html\n")
+    _write(tmp_path, "README.md", "# Preview\nGenerated HTML is not tracked.\n")
+    _write(tmp_path, STRATEGY, "VALUE = 'separate review scope'\n")
+    tree = _tree(tmp_path)
+    plan = review_docs.prepare_review(base, tree, repo=tmp_path)
+    payloads = [_payload(prompt) for prompt in plan.prompts]
+    assert len({batch["scope"] for batch in payloads}) > 1
+    expected = _git(tmp_path, "ls-tree", "-r", "--name-only", tree).splitlines()
+    for batch in payloads:
+        assert batch["candidate_tree_inventory"] == expected
+        assert "web/index.html" in batch["changed_paths"]
+        assert "web/index.html" not in batch["candidate_tree_inventory"]
+        assert ".gitignore" in batch["candidate_tree_inventory"]
+
+
 def test_path_diffs_treat_git_pathspec_characters_literally(tmp_path: Path) -> None:
     _git(tmp_path, "init", "-q")
     _write(tmp_path, "src/a[1].py", "OLD_BRACKETS\n")

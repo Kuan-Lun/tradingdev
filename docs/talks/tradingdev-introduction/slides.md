@@ -624,7 +624,24 @@ Application services 負責跨領域流程；MCP、CLI 與 Dashboard 以不同�
 
 <!-- _class: compact -->
 
-![w:1000 使用者、AI 代理與 TradingDev 的外部訊號流程](assets/architecture-external-flow.png)
+```mermaid
+sequenceDiagram
+    accTitle: 使用者、AI 代理與 TradingDev 的外部訊號流程
+    participant U as 使用者
+    participant A as AI 代理
+    participant T as TradingDev
+
+    U->>A: 策略想法
+    A->>U: 追問必要條件
+    U->>A: 補齊研究設定
+    A->>T: 準備回測計畫
+    T->>A: 確認單與檢查摘要
+    A->>U: 顯示計畫、等待決定
+    U->>A: 明確決定
+    A->>T: 同意後提交
+    T->>A: 工作狀態與結果
+    A->>U: AI 解讀結果
+```
 
 準備前會補齊標的、期間、K 棒頻率等必要條件；計畫經同意後才執行。
 
@@ -638,9 +655,31 @@ Application services 負責跨領域流程；MCP、CLI 與 Dashboard 以不同�
 
 ## 內部訊號流程：TradingDev 的主要模組
 
-<!-- _class: compact -->
+<!-- _class: compact diagram-wide -->
 
-![w:1000 TradingDev 內部模組的訊號流程](assets/architecture-internal-flow.png)
+```mermaid
+sequenceDiagram
+    accTitle: TradingDev 內部模組的訊號流程
+    participant MCP
+    participant App
+    participant Plan
+    participant Worker
+    participant Store
+    participant Result
+
+    MCP->>App: prepare
+    App->>Plan: check
+    Plan->>App: receipt
+    App->>MCP: plan
+    MCP->>App: approve
+    App->>Worker: submit job
+    Worker->>Store: save run
+    MCP->>App: query
+    App->>Result: get / compare / rank
+    Result->>Store: read
+    Result->>App: metrics / rank
+    App->>MCP: reply
+```
 
 Plan 代表 ExecutionPlan／Preflight；Worker 使用資料與回測模組；Result 代表 Run、Ranking 與 Report services。
 

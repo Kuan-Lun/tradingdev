@@ -130,10 +130,11 @@
 - `scripts/check-docs.sh` 執行唯讀 Markdown 與本機檔案／標題連結檢查；
   另檢查 SRS 編號、必要欄位、章節導航與本機證據引用；不執行引用的測試。
   不執行文件中的命令，也不連線檢測外部 URL。Markdown 使用專案 PyMarkdown；
-  中文敘述與表格不套用 ASCII 行寬限制。
+  中文敘述與表格不套用 ASCII 行寬限制。簡報來源連向其生成 HTML 的連結，
+  由簡報專項檢查在編譯後核對。
 - `scripts/check-presentations.sh` 檢查文件及已登錄簡報，以鎖定的 Marp 工具鏈
-  在獨立臨時目錄重建並核對 HTML、頁碼與離線資源。檢查不安裝套件、不執行
-  VS Code 工作、不呼叫模型或完整 pytest；缺少工具鏈或輸出不同步須失敗。
+  在獨立臨時目錄建置並驗證 HTML、頁碼與離線資源；產生的簡報 HTML 不納入 Git。檢查不安裝套件、不執行
+  VS Code 工作、不呼叫模型或完整 pytest；缺少工具鏈或產物不符合驗證須失敗。
   建置工具與初始化方式見開發指南；瀏覽器操作及視覺排版仍須另行驗證。
 - `scripts/check-fast.sh` 執行唯讀 Ruff、格式、strict Mypy、上述文件檢查及
   MCP 契約探索／上下文預算檢查。

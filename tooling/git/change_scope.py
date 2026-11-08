@@ -30,6 +30,11 @@ _TOOLING_FILES = frozenset(
         "tooling/presentation_html.py",
         "tooling/presentation_bundle.py",
         "tooling/presentation_errors.py",
+        "tooling/marp/package.json",
+        "tooling/marp/package-lock.json",
+        "tooling/marp/build.mjs",
+        "tooling/marp/render-diagrams.mjs",
+        "wrangler.jsonc",
         "tooling/review_docs.py",
         "tooling/review_evidence.py",
         "tooling/review_options.py",
@@ -63,6 +68,7 @@ _TOOLING_SCRIPTS = frozenset(
         "scripts/install-git-hooks.sh",
         "scripts/presentations.sh",
         "scripts/stage-presentations.sh",
+        "scripts/build-presentations-site.sh",
     }
 )
 

@@ -22,6 +22,7 @@ from tooling.environment import (
 )
 from tooling.presentation_bundle import (
     IMAGE_SUFFIXES,
+    bundle_files,
     check_bundle,
     evidence_content_allowed,
     is_image,
@@ -40,9 +41,18 @@ if TYPE_CHECKING:
 
 DECK = "docs/talks/tradingdev-introduction"
 PRESENTATION_PATHS = frozenset(
-    f"{DECK}/{name}" for name in ("README.md", "slides.md", "theme.css", "index.html")
+    f"{DECK}/{name}" for name in ("README.md", "slides.md", "theme.css")
 )
-_SPECIAL_PATHS = frozenset({"docs/.nojekyll", ".vscode/tasks.json"})
+GENERATED_HTML = f"{DECK}/index.html"
+_SPECIAL_PATHS = frozenset(
+    {"docs/.nojekyll", ".vscode/tasks.json", ".gitignore", GENERATED_HTML}
+)
+TOOLCHAIN_FILES = (
+    "package.json",
+    "package-lock.json",
+    "build.mjs",
+    "render-diagrams.mjs",
+)
 _TOOL_PATHS = frozenset(
     {
         "tooling/presentations.py",
@@ -52,14 +62,13 @@ _TOOL_PATHS = frozenset(
         "scripts/check-presentations.sh",
         "scripts/presentations.sh",
         "scripts/stage-presentations.sh",
+        "scripts/build-presentations-site.sh",
         "wrangler.jsonc",
     }
 )
-_TITLE = "TradingDev｜能學習策略開發經驗、自我演進的研究後端"
-_DESCRIPTION = "產品介紹、使用場景、分類比較與後續開發方向"
 _SETUP_HELP = "Run scripts/presentations.sh setup to install the locked toolchain."
 _NODE_HELP = (
-    "Install Node.js 18+ and npm, confirm `node` is on PATH, then run "
+    "Install Node.js 22.17+ and npm, confirm `node` is on PATH, then run "
     "scripts/presentations.sh setup to install the locked toolchain."
 )
 
@@ -180,6 +189,22 @@ def presentation_change_allowed(
     """
     if path in PRESENTATION_PATHS:
         return True
+    if path == GENERATED_HTML:
+        return after is None
+    if path == ".gitignore":
+        entry = f"/{GENERATED_HTML}"
+
+        def other_rules(value: bytes | None) -> list[str]:
+            return [
+                line
+                for line in (value or b"").decode("utf-8").splitlines()
+                if line and not line.startswith("#") and line != entry
+            ]
+
+        try:
+            return other_rules(before) == other_rules(after)
+        except UnicodeError:
+            return False
     if path.startswith(f"{DECK}/assets/"):
         suffix = Path(path).suffix.lower()
         return suffix in IMAGE_SUFFIXES and all(
@@ -309,7 +334,7 @@ def _toolchain(root: Path) -> Path:
         os.environ.get("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(expected))
     ).resolve()
     try:
-        for name in ("package.json", "package-lock.json"):
+        for name in TOOLCHAIN_FILES:
             if (expected / name).read_bytes() != (installed / name).read_bytes():
                 raise PresentationError(
                     f"Toolchain {name} differs from the checked snapshot."
@@ -373,25 +398,7 @@ def _toolchain(root: Path) -> Path:
 
 def _command(toolchain: Path, source: Path, theme: Path, output: Path) -> list[str]:
     node = _node()
-    return [
-        node,
-        str(toolchain / "node_modules/@marp-team/marp-cli/marp-cli.js"),
-        "--no-config",
-        "--no-html",
-        "--engine",
-        str(toolchain / "node_modules/@marp-team/marp-core/lib/marp.js"),
-        str(source),
-        "--theme-set",
-        str(theme),
-        "--theme",
-        "tradingdev",
-        "--title",
-        _TITLE,
-        "--description",
-        _DESCRIPTION,
-        "--output",
-        str(output),
-    ]
+    return [node, str(toolchain / "build.mjs"), str(source), str(theme), str(output)]
 
 
 def _node(*, npm: bool = False) -> str:
@@ -416,29 +423,39 @@ def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> No
             temporary=temporary,
             timeout=timeout,
         )
-        (output or root / DECK / "index.html").write_bytes(generated.read_bytes())
+        check_html(generated.read_text(encoding="utf-8"), root=root / DECK)
+        (output or root / GENERATED_HTML).write_bytes(generated.read_bytes())
 
 
-def check_presentations(root: Path, *, timeout: float = 120) -> None:
-    """Check documents, rebuild with the locked compiler and verify the output."""
+def _build_delivery(root: Path, destination: Path, *, timeout: float = 120) -> int:
+    """Build and validate a disposable delivery without relying on a local preview."""
+    for source in bundle_files(root / DECK, include_html=False):
+        target = destination / source.relative_to(root / DECK)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    output = destination / "index.html"
+    build(root, output=output, timeout=timeout)
+    count = check_html(output.read_text(encoding="utf-8"), root=destination)
+    check_bundle(destination)
+    return count
+
+
+def _check_sources(root: Path) -> None:
+    """Check prerequisites before importing document tools or preparing delivery."""
     check_environment("docs")
     _toolchain(root)
     _node()
     from tooling.documentation import check_documents
 
-    root = root.resolve()
     check_documents(root)
+
+
+def check_presentations(root: Path, *, timeout: float = 120) -> None:
+    """Check documents, rebuild with the locked compiler and verify the output."""
+    root = root.resolve()
+    _check_sources(root)
     with _workspace() as temporary:
-        output = temporary / "index.html"
-        build(root, output=output, timeout=timeout)
-        committed = root / DECK / "index.html"
-        if output.read_bytes() != committed.read_bytes():
-            raise PresentationError(
-                "Committed index.html is out of date; "
-                "run scripts/presentations.sh build."
-            )
-        count = check_html(output.read_text(encoding="utf-8"), root=root / DECK)
-        check_bundle(root / DECK)
+        count = _build_delivery(root, temporary, timeout=timeout)
     print(
         f"Presentation checks passed ({count} slides; "
         "locked build, links, pages and resources)."
@@ -465,7 +482,7 @@ def watch(root: Path) -> None:
     _toolchain(root)
     _node()
     # Rebuild static HTML on changes; Marp's native --watch injects a reload
-    # WebSocket into the artifact, which must never enter the committed output.
+    # WebSocket into the artifact, which must never enter the delivered output.
     inputs = [root / DECK / name for name in ("slides.md", "theme.css")]
     previous: list[bytes] | None = None
     try:
@@ -507,8 +524,14 @@ def main() -> int:
         if args.action == "package":
             if args.output is None:
                 parser.error("package requires --output <new-folder>")
-            check_presentations(root)
-            archive = write_bundle(root / DECK, args.output.resolve())
+            if args.output.resolve().is_relative_to((root / DECK).resolve()):
+                raise PresentationError(
+                    "Bundle output must be outside its source directory"
+                )
+            _check_sources(root)
+            with _workspace() as temporary:
+                _build_delivery(root, temporary)
+                archive = write_bundle(temporary, args.output.resolve())
             print(f"Offline presentation: {archive}")
             return 0
         if args.output is not None:

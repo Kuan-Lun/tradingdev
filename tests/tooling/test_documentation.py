@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tooling import documentation
+from tooling.presentations import DECK
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -84,6 +85,29 @@ def test_symlink_link_cannot_escape_repository(tmp_path: Path) -> None:
         documentation.DocumentationError, match="outside the repository"
     ):
         documentation.check_local_links(root, [source])
+
+
+@pytest.mark.parametrize(
+    ("name", "destination", "deferred"),
+    [
+        ("slides.md", "index.html#2", True),
+        ("README.md", "index.html#2", False),
+        ("slides.md", "missing.html#2", False),
+    ],
+)
+def test_only_registered_slide_output_links_defer_to_compiled_validation(
+    tmp_path: Path, name: str, destination: str, deferred: bool
+) -> None:
+    source = _write(
+        tmp_path,
+        f"{DECK}/{name}",
+        f"# Deck\n\n[Page]({destination})\n",
+    )
+    if deferred:
+        documentation.check_local_links(tmp_path, [source])
+    else:
+        with pytest.raises(documentation.DocumentationError, match="does not exist"):
+            documentation.check_local_links(tmp_path, [source])
 
 
 def test_symlink_document_is_rejected_before_formatter_reads_it(

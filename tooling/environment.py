@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -42,7 +44,20 @@ def require_command(name: str, *, help_text: str) -> str:
 
 def require_node(*, npm: bool = False) -> str:
     """Check the compiler's host before npm installation or rendering starts."""
-    help_text = "Install Node.js 18 or newer and npm before presentation setup."
+    manifest = Path(__file__).parent / "marp/package.json"
+    try:
+        constraint = json.loads(manifest.read_text())["engines"]["node"]
+        minimum_match = re.fullmatch(r">=(\d+)\.(\d+)\.(\d+)", constraint)
+        if minimum_match is None:
+            raise ValueError("Expected a >=major.minor.patch Node requirement")
+        minimum = tuple(map(int, minimum_match.groups()))
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise EnvironmentCheckError(
+            f"Cannot read the Node.js minimum version from {manifest}"
+        ) from error
+    help_text = (
+        f"Install Node.js {constraint[2:]} or newer and npm before presentation setup."
+    )
     node = require_command("node", help_text=help_text)
     if npm:
         require_command("npm", help_text=help_text)
@@ -56,11 +71,16 @@ def require_node(*, npm: bool = False) -> str:
             env=node_environment(),
         )
         result.check_returncode()
-        major = int(result.stdout.strip().removeprefix("v").split(".")[0])
+        version_match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", result.stdout.strip())
+        if version_match is None:
+            raise ValueError("Unrecognized Node.js version")
+        version = tuple(map(int, version_match.groups()))
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         raise EnvironmentCheckError(f"Cannot verify Node.js. {help_text}") from error
-    if major < 18:
-        raise EnvironmentCheckError(f"Node.js {major} is unsupported. {help_text}")
+    if version < minimum:
+        raise EnvironmentCheckError(
+            f"Node.js {result.stdout.strip()} is unsupported. {help_text}"
+        )
     return node
 
 

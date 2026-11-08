@@ -142,10 +142,10 @@ def check_image(root: Path, url: str) -> None:
         raise PresentationError(f"Expected a raster image under assets/: {url}")
 
 
-def bundle_files(root: Path) -> list[Path]:
+def bundle_files(root: Path, *, include_html: bool = True) -> list[Path]:
     """Only explicit delivery entries are publishable; never follow symlinks."""
     files: list[Path] = []
-    for name in BUNDLE_ENTRIES:
+    for name in BUNDLE_ENTRIES if include_html else BUNDLE_ENTRIES[1:]:
         entry = root / name
         if entry.is_symlink():
             raise PresentationError(f"Bundle symlinks are not allowed: {entry}")

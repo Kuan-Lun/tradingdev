@@ -115,10 +115,14 @@ def test_lightweight_profiles_do_not_require_docker_or_model_tools(
     environment.check_environment(profile)
 
 
-@pytest.mark.parametrize("version", ["v16.0.0", "invalid", "v18.0.0"])
+@pytest.mark.parametrize(
+    ("version", "supported"),
+    [("v18.0.0", False), ("v22.16.9", False), ("invalid", False), ("v22.17.0", True)],
+)
 def test_node_version_is_checked_before_installation(
     monkeypatch: MonkeyPatch,
     version: str,
+    supported: bool,
 ) -> None:
     monkeypatch.setattr(environment, "require_command", lambda name, **_: name)
     monkeypatch.setattr(
@@ -126,11 +130,33 @@ def test_node_version_is_checked_before_installation(
         "run_captured",
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, version, ""),
     )
-    if version == "v18.0.0":
+    if supported:
         assert environment.require_node(npm=True) == "node"
     else:
         with pytest.raises(environment.EnvironmentCheckError, match="Node.js"):
             environment.require_node(npm=True)
+
+
+def test_node_requirement_follows_the_compiler_manifest(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    manifest = tmp_path / "marp/package.json"
+    manifest.parent.mkdir()
+    monkeypatch.setattr(environment, "__file__", str(tmp_path / "environment.py"))
+    monkeypatch.setattr(environment, "require_command", lambda name, **_: name)
+    monkeypatch.setattr(
+        process_guard,
+        "run_captured",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "v24.0.0", ""),
+    )
+    manifest.write_text(json.dumps({"engines": {"node": ">=24.1.0"}}))
+    with pytest.raises(environment.EnvironmentCheckError, match="24.1.0"):
+        environment.require_node()
+    manifest.write_text(json.dumps({"engines": {"node": ">=22.17.0"}}))
+    assert environment.require_node() == "node"
+    manifest.write_text(json.dumps({"engines": {"node": "unsupported range"}}))
+    with pytest.raises(environment.EnvironmentCheckError, match="minimum version"):
+        environment.require_node()
 
 
 def test_cli_reports_prerequisite_failure_without_traceback(
@@ -230,7 +256,7 @@ def test_node_probe_cleans_descendants_on_every_outcome(
         "    start_new_session=True)\n"
         f"Path({str(marker)!r}).write_text(str(child.pid))\n"
         f"while not Path({str(observed)!r}).exists(): time.sleep(0.01)\n"
-        "print('v18.0.0', flush=True)\n"
+        "print('v22.17.0', flush=True)\n"
         + (
             "time.sleep(60)\n"
             if outcome == "timeout"
@@ -283,10 +309,11 @@ def test_node_probe_cleans_descendants_on_every_outcome(
                     child.wait(timeout=5)
 
 
-@pytest.mark.parametrize("action", ["setup", "check", "watch"])
+@pytest.mark.parametrize("action", ["setup", "check", "watch", "package"])
 def test_presentation_prerequisites_fail_before_installation_or_document_checks(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
     action: str,
 ) -> None:
     from tooling import documentation, presentations
@@ -302,6 +329,19 @@ def test_presentation_prerequisites_fail_before_installation_or_document_checks(
     monkeypatch.setattr(
         documentation, "check_documents", lambda *_: pytest.fail("Documents started")
     )
+    if action == "package":
+        monkeypatch.setattr(
+            presentations, "__file__", str(tmp_path / "tooling/presentations.py")
+        )
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["presentations", "package", "--output", str(tmp_path / "bundle")],
+        )
+        assert presentations.main() == 1
+        assert "Node.js unavailable" in capsys.readouterr().err
+        assert not list(tmp_path.iterdir())
+        return
     with pytest.raises(RuntimeError, match="Node.js unavailable"):
         if action == "setup":
             presentations.setup(tmp_path)

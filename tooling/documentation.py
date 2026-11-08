@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlsplit
 
 from markdown_it import MarkdownIt
 
+from tooling.presentations import DECK, GENERATED_HTML
 from tooling.requirements import RequirementsError, check_requirements
 
 if TYPE_CHECKING:
@@ -136,6 +137,12 @@ def check_local_links(root: Path, paths: Iterable[Path]) -> None:
             ).resolve()
             if not target.is_relative_to(root):
                 failures.append(f"{label}: target is outside the repository")
+            elif (
+                source == root / DECK / "slides.md" and target == root / GENERATED_HTML
+            ):
+                # The presentation check validates these links against freshly
+                # compiled output; a local preview is neither required nor evidence.
+                continue
             elif not target.exists():
                 failures.append(f"{label}: target does not exist")
             elif (
