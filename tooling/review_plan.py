@@ -25,7 +25,7 @@ from tooling.review_scope import (
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 4
+SCOPE_POLICY_VERSION = 5
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -92,6 +92,10 @@ SCOPE_INSTRUCTIONS = (
     "the complete actual Git change inventory; unchanged_presentation_context_paths "
     "identifies required deck references that remain assigned with their full "
     "original content. Assignment alone does not mean a file changed. Use the "
+    "complete candidate_tree_inventory to check tracked-file existence: a changed "
+    "path absent from that inventory was deleted, not retained because its name "
+    "appears in changed_paths. The owning scope still receives its exact deletion "
+    "diff; the inventory does not replace source evidence for semantic claims. Use the "
     "actual diffs to identify newly introduced behavior; report an inconsistency "
     "in unchanged material only when this change causes it, not unrelated cleanup. "
     "Missing context "
@@ -243,6 +247,7 @@ def build_review_plan(
     common = {
         "base_tree": raw["base_tree"],
         "candidate_tree": raw["candidate_tree"],
+        "candidate_tree_inventory": raw["candidate_tree_inventory"],
         "evidence_hash": hashlib.sha256(evidence.encode()).hexdigest(),
         "scope_policy_version": SCOPE_POLICY_VERSION,
         "changed_paths": sorted(changed),
@@ -431,7 +436,6 @@ def build_review_plan(
                 p: raw["candidate_file_modes"][p] for p in audit_context
             },
             "document_inventory": doc_index,
-            "candidate_tree_inventory": raw["candidate_tree_inventory"],
             "additional_context_paths": sorted(additional),
             "document_sections": document_context("cross_scope", audit_context),
         }
