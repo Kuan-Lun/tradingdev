@@ -778,6 +778,21 @@ uv run --no-sync python -m tooling.review_docs \
   --repo /absolute/path/to/repository --base origin/main --tree HEAD --plan-only
 ```
 
+檢查規劃中的 `path_owners` 與 `selected_scopes`，確認程式與測試取得其負責文件。
+新模組落入 `general` 時，先依實際使用端與契約判斷責任；已確認的歸屬由
+[review_scope.py](../tooling/review_scope.py) 登錄，並在
+[test_review_scope.py](../tests/tooling/test_review_scope.py) 與
+[test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證必要文件、完整來源與差異仍保留。
+未確認或跨責任的共用內容仍保守選取，不為降低容量任意改派範圍。
+各批 `document_sections` 也列出選取原因；`unknown-sections-preserved` 或
+`unfamiliar-document-full-document` 表示尚未登錄的內容被保守保留。
+盤點時須核對章節讀者、契約及使用端，再更新同一責任登錄與原文保留測試；
+新增章節不能直接沿用父章節歸屬，跨範圍的總覽仍可保留完整內容。
+預設容量是工具的操作上限。若 `--plan-only` 因預設上限中止，可在同一命令提供下表的
+容量選項以完成純規劃；這不呼叫模型，也不代表已核實模型容量。取得唯一證據、單批
+與總 prompt 大小後，再核對所選模型容量並預留輸出空間，明確設定當次檢查選項。
+UTF-8 bytes 與字元數不是 tokens。
+
 通常使用自動推導的範圍；需要調整時，`check-pr.sh` 支援：
 
 | 選項 | 使用目的 |
