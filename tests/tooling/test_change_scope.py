@@ -585,3 +585,49 @@ def test_srs_review_tracks_both_git_sides_and_keeps_stronger_checks(
     assert scope.delivery_profile == (
         "full" if change in {"mixed", "unsafe_mode"} else "docs"
     )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "tooling/marp/package.json",
+        "tooling/marp/package-lock.json",
+        "tooling/marp/render-diagrams.mjs",
+        "wrangler.jsonc",
+    ],
+)
+def test_presentation_compilers_keep_tooling_and_presentation_checks(
+    repository: tuple[Path, str],
+    name: str,
+) -> None:
+    root, base = repository
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("changed compiler")
+    _git(root, "add", name)
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.delivery_profile == "tooling"
+    assert scope.candidate_checks == (
+        "presentations",
+        "documentation_review",
+        "tooling",
+    )
+
+
+@pytest.mark.parametrize(
+    "other", ["tooling/marp/unknown.mjs", "src/app.py", "pyproject.toml"]
+)
+def test_presentation_toolchain_does_not_allow_unregistered_or_product_changes(
+    repository: tuple[Path, str],
+    other: str,
+) -> None:
+    root, base = repository
+    for name in ("tooling/marp/package.json", other):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("changed")
+    _git(root, "add", ".")
+    assert (
+        classify_changes(root, base, _git(root, "write-tree")).delivery_profile
+        == "full"
+    )
