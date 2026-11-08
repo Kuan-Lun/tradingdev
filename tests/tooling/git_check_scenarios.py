@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tooling import process_guard
-from tooling.git import check_pr
+from tooling.git import candidates, check_pr
 from tooling.git.pr_context import PullRequest
 
 if TYPE_CHECKING:
@@ -61,6 +61,8 @@ class Scenario:
 
 @pytest.fixture
 def scenario(monkeypatch: MonkeyPatch) -> Iterator[Scenario]:
+    # These fixtures replace check execution; readiness is tested separately.
+    monkeypatch.setattr(candidates, "check_environment", lambda _profile: None)
     with TemporaryDirectory(prefix="tradingdev-check-pr-test-") as temporary:
         root = Path(temporary)
         source = root / "source"

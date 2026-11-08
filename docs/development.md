@@ -37,6 +37,25 @@ uv sync --locked --all-extras --python 3.14
 | `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
 | `scripts/cleanup-pr.sh PR編號 --branch 分支` | 核對已合併 PR 後刪除符合條件的本地分支。 | 改清理條件時維護 `tests/tooling/test_pr_cleanup.py`。 |
 
+檢查與格式化入口在開始工作前，以 [tooling/environment.py](../tooling/environment.py)
+確認所需的 Python 工具；缺少時回報套件名稱與 `uv sync --locked --all-extras`。
+格式化會在第一次修改檔案前完成工具確認。完整測試另共用產品的
+`DockerRuntime.resolve()`，確認本機 Docker 端點、daemon 資源能力、策略映像及
+有效資源設定；失敗時不啟動品質檢查或 pytest，也不自動下載或建置映像。
+快速、文件與開發工具檢查不要求 Docker 或模型服務。簡報入口在安裝或編譯前
+確認 Node.js 版本，檢查入口亦先核對已安裝的鎖定工具鏈。
+
+可只確認完整測試的前置環境：
+
+```bash
+uv run --no-sync python -m tooling.environment full
+```
+
+此命令回報解析到的策略映像 ID，不啟動策略容器；它確認的是當下的前置條件，
+不保證映像與來源同步，也不取代實際容器、程序清理或策略行為測試。
+依下方容器建置流程準備映像後，再執行完整檢查。直接執行 pytest 選測個別案例時，
+仍須自行備妥該案例需要的環境。
+
 Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.githooks/)，
 實作集中於 [tooling/](../tooling/)。測試按 domain、app、adapters、MCP、整合流程及
 開發工具放在 [tests/](../tests/)；新增能力時依責任擴充相應測試，避免只依檔名選取。
@@ -448,6 +467,13 @@ Codex 需要已登入的 CLI 與所選模型存取權；Local 需要已啟動且
 服務，預設 `http://localhost:11434/v1`，以 `--llm-base-url` 指定其他 loopback 位址。
 工具不下載模型、不自動切換 provider；所選能力不可用會失敗。
 
+入口由 [tooling/llm_check.py](../tooling/llm_check.py) 保留情境選擇與 pytest 選項，
+在選出實際要執行的情境後、建立測試工作區前共用環境確認：檢查策略容器前置條件，
+再確認 Codex CLI 登入狀態或 Local 服務連線。help、列出情境／fixtures、
+`--setup-plan` 等純資訊模式與沒有選到情境時不檢查服務；`--setup-only` 會執行
+fixtures，仍須確認環境。Local 前置確認只建立有期限的連線，不呼叫模型；它不證明 API、
+所選模型、工具呼叫或上下文容量可用，這些能力仍由真實情境驗證。
+
 Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順序為 `--llm-model`／
 `--llm-reasoning-effort`、專用環境變數 `TRADINGDEV_LLM_MODEL`／
 `TRADINGDEV_LLM_REASONING_EFFORT`、固定基準；不沿用宿主或文件審查的模型設定。
@@ -587,6 +613,10 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 ./scripts/check-pr.sh 27
 ```
 
+程式與開發工具候選會先確認所選測試分流的前置環境，再啟動耗時檢查及模型審查；
+文件審查亦先確認 Codex CLI 登入，缺少時不啟動審查批次。一般文件與簡報候選
+仍只要求其分流需要的工具。環境確認不取代候選內容、版本與執行結果驗證。
+
 須有乾淨且已提交的工作樹、可存取 repository 的 `gh`，以及開啟且指向主線的 PR。
 工具在隔離 repository 檢查合併候選，不切換開發分支：
 
@@ -653,7 +683,7 @@ uv run --no-sync python -m tooling.review_docs \
 ```bash
 ./scripts/check-pr.sh 27 \
   --review-context-for interfaces:src/tradingdev/mcp/server.py \
-  --documentation-timeout-seconds 900 --snapshot-timeout-seconds 3600
+  --documentation-timeout-seconds 900 --snapshot-timeout-seconds 7200
 ```
 
 請以實際規劃的 scope／檔案代換。預設值與其他選項以 `scripts/check-pr.sh --help`

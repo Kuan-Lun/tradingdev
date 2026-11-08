@@ -16,6 +16,7 @@ from threading import Event
 from typing import Any
 
 from tooling.codex_binary import resolve_codex_binary
+from tooling.environment import EnvironmentCheckError, require_codex
 from tooling.process_guard import (
     ProcessCleanupError,
     process_descendants,
@@ -418,6 +419,12 @@ def review(
     )
     plan.verify()
     model, effort = reviewer_settings()
+    try:
+        require_codex()
+    except EnvironmentCheckError as prerequisite_error:
+        raise ReviewError(
+            f"Documentation review environment is unavailable: {prerequisite_error}"
+        ) from prerequisite_error
     print(
         f"Documentation reviewer: model={model}, reasoning_effort={effort}", flush=True
     )

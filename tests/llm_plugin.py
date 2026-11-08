@@ -5,9 +5,9 @@ from __future__ import annotations
 import math
 import os
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
 
 import pytest
+from tooling.environment import EnvironmentCheckError, local_service_address
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -92,22 +92,10 @@ def pytest_configure(config: pytest.Config) -> None:
     if provider == "local":
         if not config.getoption("llm_model"):
             raise pytest.UsageError("Local LLM tests require --llm-model")
-        diagnostic = "--llm-base-url must be a local loopback URL"
         try:
-            url = urlsplit(config.getoption("llm_base_url"))
-            # urllib validates the port's syntax and range only on access.
-            _ = url.port
-        except ValueError as error:
-            raise pytest.UsageError(diagnostic) from error
-        if (
-            url.scheme not in {"http", "https"}
-            or url.hostname not in {"localhost", "127.0.0.1", "::1"}
-            or url.username
-            or url.password
-            or url.query
-            or url.fragment
-        ):
-            raise pytest.UsageError(diagnostic)
+            local_service_address(config.getoption("llm_base_url"))
+        except EnvironmentCheckError as error:
+            raise pytest.UsageError(str(error)) from error
 
 
 def pytest_collection_modifyitems(
