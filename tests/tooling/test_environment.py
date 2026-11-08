@@ -35,54 +35,79 @@ _PROJECT = Path(__file__).resolve().parents[2]
     ],
 )
 def test_suite_launcher_checks_environment_before_quality_and_pytest(
-    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
     profile: str,
     preflight_exit: int,
     fast_exit: int,
     pytest_exit: int,
     expected: list[str],
 ) -> None:
+    from tooling.git import suite
+
+    events: list[str] = []
+
+    def preflight(selected: str) -> None:
+        assert selected == profile
+        events.append("environment")
+        if preflight_exit:
+            raise subprocess.CalledProcessError(preflight_exit, ["environment"])
+
+    def run(command: list[str], **kwargs: object) -> None:
+        pytest_command = command[:3] == [sys.executable, "-m", "pytest"]
+        events.append("pytest" if pytest_command else "fast")
+        if pytest_command:
+            assert command[3:] == [
+                *(["tests/tooling"] if profile == "tooling" else []),
+                "-n",
+                "auto",
+                "--dist",
+                "worksteal",
+                "--max-worker-restart=0",
+            ]
+        else:
+            assert command == ["bash", "scripts/check-fast.sh"]
+        exit_code = pytest_exit if pytest_command else fast_exit
+        if exit_code:
+            raise subprocess.CalledProcessError(exit_code, command)
+
+    monkeypatch.setattr(suite, "check_environment", preflight)
+    monkeypatch.setattr(suite, "run_checked", run)
+    expected_exit = preflight_exit or fast_exit or pytest_exit
+    if expected_exit:
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            suite.run_suite(profile, 30)
+        assert error.value.returncode == expected_exit
+    else:
+        suite.run_suite(profile, 30)
+    assert events == expected
+
+
+@pytest.mark.parametrize("profile", ["full", "tooling"])
+def test_suite_shell_forwards_profile_and_deadline(
+    tmp_path: Path, profile: str
+) -> None:
     (tmp_path / "scripts").mkdir()
     shutil.copy2(_PROJECT / f"scripts/check-{profile}.sh", tmp_path / "scripts")
-    fast = tmp_path / "scripts/check-fast.sh"
-    fast.write_text(
-        f"#!{sys.executable}\nfrom pathlib import Path\n"
-        "with Path('events').open('a') as log: log.write('fast\\n')\n"
-        f"raise SystemExit({fast_exit})\n"
-    )
-    fast.chmod(0o755)
     interpreter = tmp_path / "python"
     interpreter.write_text(
         f"#!{sys.executable}\nimport json, sys\nfrom pathlib import Path\n"
-        "preflight = sys.argv[1:3] == ['-m', 'tooling.environment']\n"
-        "with Path('events').open('a') as log:\n"
-        "    log.write('environment\\n' if preflight else 'pytest\\n')\n"
-        "if not preflight:\n"
-        "    Path('pytest.json').write_text(json.dumps(sys.argv[1:]))\n"
-        f"raise SystemExit({preflight_exit} if preflight else {pytest_exit})\n"
+        "Path('arguments.json').write_text(json.dumps(sys.argv[1:]))\n"
     )
     interpreter.chmod(0o755)
     result = run_captured(
-        ["bash", f"scripts/check-{profile}.sh"],
+        ["bash", f"scripts/check-{profile}.sh", "--timeout-seconds", "123"],
         cwd=tmp_path,
         env={**os.environ, "TRADINGDEV_CHECK_PYTHON": str(interpreter)},
         timeout=10,
     )
-    assert result.returncode == (preflight_exit or fast_exit or pytest_exit)
-    assert (tmp_path / "events").read_text().splitlines() == expected
-    if "pytest" in expected:
-        assert json.loads((tmp_path / "pytest.json").read_text()) == [
-            "-m",
-            "pytest",
-            *(["tests/tooling"] if profile == "tooling" else []),
-            "-n",
-            "auto",
-            "--dist",
-            "worksteal",
-            "--max-worker-restart=0",
-        ]
-    else:
-        assert not (tmp_path / "pytest.json").exists()
+    assert result.returncode == 0, result.stderr
+    assert json.loads((tmp_path / "arguments.json").read_text()) == [
+        "-m",
+        "tooling.git.suite",
+        profile,
+        "--timeout-seconds",
+        "123",
+    ]
 
 
 def test_missing_packages_are_reported_together_without_runtime_checks(

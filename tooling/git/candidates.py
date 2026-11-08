@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -11,9 +12,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from filelock import FileLock, Timeout
+
 from tooling.environment import check_environment
-from tooling.git.change_scope import classify_changes
-from tooling.process_guard import process_workspace, run_captured, run_checked
+from tooling.git import receipts
+from tooling.git.change_scope import classify_changes, test_input_fingerprint
+from tooling.process_guard import (
+    ProcessCleanupError,
+    process_workspace,
+    run_captured,
+    run_checked,
+)
 from tooling.review_options import review_arguments, validate_review_options
 
 if TYPE_CHECKING:
@@ -62,6 +71,8 @@ def run(
     temporary_root: Path | None = None,
 ) -> None:
     environment = execution_environment(cwd)
+    environment["TRADINGDEV_CHECK_SNAPSHOT"] = "1"
+    environment["TRADINGDEV_CHECK_SNAPSHOT_TIMEOUT"] = str(timeout)
     if temporary_root is not None:
         temporary_root.mkdir()
         environment.update(
@@ -138,6 +149,161 @@ def check_snapshot(
             or snapshot_git("ls-files", "--others", "--exclude-standard")
         ):
             raise RuntimeError("A check modified the candidate snapshot.")
+
+
+def check_test_snapshot(
+    tree: str,
+    profile: str,
+    *,
+    repo: Path | None = None,
+    timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
+    reuse: bool = True,
+) -> None:
+    """Verify test evidence, refreshing ordinary docs without rerunning pytest."""
+    source = repo or Path.cwd()
+    owner = Path.cwd()
+    path = receipts.receipt_path(owner, profile)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    inputs = test_input_fingerprint(source, tree)
+
+    def environment() -> str | None:
+        try:
+            return receipts.environment_fingerprint(
+                owner, profile, execution_environment(owner)
+            )
+        except ProcessCleanupError as error:
+            try:
+                receipts.write_receipt(
+                    path,
+                    state="failed",
+                    tree=tree,
+                    profile=profile,
+                    inputs=inputs,
+                    environment=None,
+                )
+            except OSError:
+                error.add_note(f"Could not invalidate test evidence at {path}")
+            raise
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            print(
+                f"Test evidence reuse unavailable: {type(error).__name__}", flush=True
+            )
+            return None
+
+    try:
+        with FileLock(str(path.with_suffix(".lock")), timeout=0):
+            before = environment()
+            prior = (
+                receipts.read_receipt(
+                    path, profile=profile, inputs=inputs, environment=before
+                )
+                if reuse and before
+                else None
+            )
+            if prior is not None:
+                if prior["tree"] != tree:
+                    try:
+                        check_snapshot(
+                            tree, "docs", repo=source, timeout_seconds=timeout_seconds
+                        )
+                    except ProcessCleanupError as error:
+                        try:
+                            receipts.write_receipt(
+                                path,
+                                state="failed",
+                                tree=tree,
+                                profile=profile,
+                                inputs=inputs,
+                                environment=None,
+                            )
+                        except OSError:
+                            error.add_note(
+                                f"Could not invalidate test evidence at {path}"
+                            )
+                        raise
+                if environment() != before:
+                    receipts.write_receipt(
+                        path,
+                        state="failed",
+                        tree=tree,
+                        profile=profile,
+                        inputs=inputs,
+                        environment=None,
+                    )
+                    raise RuntimeError(
+                        "The test environment changed while validating reused evidence."
+                    )
+                print(
+                    json.dumps(
+                        {
+                            "code": "test_evidence_reused",
+                            "profile": profile,
+                            "tested_tree": prior["tree"],
+                            "candidate_tree": tree,
+                            "receipt": str(path),
+                        }
+                    ),
+                    flush=True,
+                )
+                return
+            receipts.write_receipt(
+                path,
+                state="running",
+                tree=tree,
+                profile=profile,
+                inputs=inputs,
+                environment=before,
+            )
+            try:
+                check_snapshot(
+                    tree, profile, repo=source, timeout_seconds=timeout_seconds
+                )
+                after = environment()
+                if before is not None and after != before:
+                    raise RuntimeError(
+                        "The test environment changed during checks; "
+                        "no successful evidence was saved."
+                    )
+            except BaseException as error:
+                try:
+                    receipts.write_receipt(
+                        path,
+                        state="failed",
+                        tree=tree,
+                        profile=profile,
+                        inputs=inputs,
+                        environment=before,
+                    )
+                except OSError:
+                    # The running record already blocks reuse. Preserve typed
+                    # cleanup failures so callers retain affected workspaces.
+                    error.add_note(f"Could not record failed test evidence at {path}")
+                raise
+            receipts.write_receipt(
+                path,
+                state="passed" if before is not None else "unavailable",
+                tree=tree,
+                profile=profile,
+                inputs=inputs,
+                environment=before,
+            )
+            print(
+                json.dumps(
+                    {
+                        "code": "test_evidence_recorded"
+                        if before
+                        else "test_evidence_unavailable",
+                        "profile": profile,
+                        "tree": tree,
+                        "receipt": str(path),
+                    }
+                ),
+                flush=True,
+            )
+    except Timeout as error:
+        raise RuntimeError(
+            f"Another {profile} check owns {path}; wait for it to finish."
+        ) from error
 
 
 @dataclass(frozen=True)
@@ -313,7 +479,10 @@ def verify_candidate(
     for check in checks:
         if check != "documentation_review":
             print(f"Candidate test profile: {check}", flush=True)
-            check_snapshot(
+            checker = (
+                check_test_snapshot if check in {"full", "tooling"} else check_snapshot
+            )
+            checker(
                 candidate.tree,
                 check,
                 repo=candidate.repository,

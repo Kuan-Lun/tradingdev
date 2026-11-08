@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -48,6 +49,7 @@ _TOOLING_FILES = frozenset(
         "tooling/git/cleanup_pr.py",
         "tooling/git/gate.py",
         "tooling/git/pr_context.py",
+        "tooling/git/receipts.py",
     }
 )
 _TOOLING_SCRIPTS = frozenset(
@@ -113,6 +115,35 @@ class ChangeScope:
 def classify_changes(repository: Path, base: str, tree: str) -> ChangeScope:
     """Inspect both Git sides; unknown changes keep code checks and related checks."""
     return _classify_diff(repository, _raw_diff(repository, base, tree))
+
+
+def test_input_fingerprint(repository: Path, tree: str) -> str:
+    """Identify every tracked test input except ordinary documentation blobs.
+
+    Preserve paths, object IDs and modes, including unknown files, policy,
+    presentations and symlinks. Renaming code into docs therefore changes the
+    fingerprint. The same path registry governs classification and reuse.
+    """
+    entries = subprocess.check_output(
+        ["git", "-C", str(repository), "ls-tree", "-r", "-z", tree]
+    )
+    digest = hashlib.sha256()
+    for entry in entries.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_name = entry.split(b"\t", 1)
+        mode, kind, _oid = metadata.split()
+        name = raw_name.decode("utf-8", errors="surrogateescape")
+        if (
+            mode == b"100644"
+            and kind == b"blob"
+            and _documentation_path(name)
+            and not _tooling_path(name)
+            and not is_presentation_path(name)
+        ):
+            continue
+        digest.update(entry + b"\0")
+    return digest.hexdigest()
 
 
 def presentation_only_advance(
