@@ -676,7 +676,7 @@ sequenceDiagram
     Worker->>Store: save run
     MCP->>App: query
     App->>Result: get / compare / rank
-    Store->>Result: read
+    Result->>Store: read
     Result->>App: metrics / rank
     App->>MCP: reply
 ```
