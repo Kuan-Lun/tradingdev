@@ -20,8 +20,8 @@ def positive_int(value: object, label: str) -> int:
     """Return ``value`` if it is a built-in ``int`` of at least one.
 
     ``bool`` is an ``int`` subclass and NumPy integers are not ``int``, so
-    both are rejected. This is the rule the annotations already state: mypy
-    rejects ``True`` and ``np.int64(5)`` for an ``int`` parameter as well.
+    both are rejected at runtime. Static typing permits ``bool`` where
+    ``int`` is expected, so the boolean restriction requires this explicit check.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(
