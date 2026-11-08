@@ -4,6 +4,7 @@ from tradingdev.domain.ml.models.catboost_model import CatBoostDirectionModel
 from tradingdev.domain.ml.models.lightgbm_model import LightGBMDirectionModel
 from tradingdev.domain.ml.models.registry import (
     ModelKind,
+    RegisteredModelKind,
     create_direction_model,
     get_model_kind,
     list_model_kinds,
@@ -15,6 +16,7 @@ __all__ = [
     "CatBoostDirectionModel",
     "LightGBMDirectionModel",
     "ModelKind",
+    "RegisteredModelKind",
     "XGBoostDirectionModel",
     "create_direction_model",
     "get_model_kind",

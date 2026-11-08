@@ -13,6 +13,7 @@ from tradingdev.domain.ml.models import (
     list_model_kinds,
 )
 from tradingdev.domain.ml.models.registry import ModelKind, register
+from tradingdev.domain.ml.schemas import LightGBMModelConfig
 
 
 def _features(df: pd.DataFrame) -> pd.DataFrame:
@@ -51,7 +52,7 @@ def test_register_rejects_duplicates() -> None:
     duplicate = ModelKind(
         name="lightgbm_direction",
         description="collision",
-        config_cls=LightGBMDirectionModel,
+        config_cls=LightGBMModelConfig,
         model_cls=LightGBMDirectionModel,
         framework="lightgbm",
     )
