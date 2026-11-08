@@ -593,6 +593,8 @@ def test_check_reuses_markdown_local_link_validation(
 def test_watch_rebuilds_static_output_for_source_and_theme_changes(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     deck = _deck(tmp_path)
     built: list[tuple[str, str]] = []
 
@@ -641,6 +643,8 @@ def test_check_reuses_markdown_formatting_validation(
 def test_watch_recovers_from_build_failure_when_input_is_fixed(
     tmp_path: Path, monkeypatch: MonkeyPatch, timed_out: bool
 ) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     deck = _deck(tmp_path)
     calls = 0
 

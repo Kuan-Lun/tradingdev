@@ -282,7 +282,7 @@ def test_node_probe_cleans_descendants_on_every_outcome(
                     child.wait(timeout=5)
 
 
-@pytest.mark.parametrize("action", ["setup", "check"])
+@pytest.mark.parametrize("action", ["setup", "check", "watch"])
 def test_presentation_prerequisites_fail_before_installation_or_document_checks(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -304,6 +304,8 @@ def test_presentation_prerequisites_fail_before_installation_or_document_checks(
     with pytest.raises(RuntimeError, match="Node.js unavailable"):
         if action == "setup":
             presentations.setup(tmp_path)
+        elif action == "watch":
+            presentations.watch(tmp_path)
         else:
             presentations.check_presentations(tmp_path)
     assert not list(tmp_path.iterdir())

@@ -462,6 +462,8 @@ def setup(root: Path, *, timeout: float = 300) -> None:
 
 
 def watch(root: Path) -> None:
+    _toolchain(root)
+    _node()
     # Rebuild static HTML on changes; Marp's native --watch injects a reload
     # WebSocket into the artifact, which must never enter the committed output.
     inputs = [root / DECK / name for name in ("slides.md", "theme.css")]
