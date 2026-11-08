@@ -1,6 +1,6 @@
 // Render sequence diagrams before delivery; the presentation needs no Mermaid runtime.
 import { createReadStream } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -65,13 +65,24 @@ export async function renderDiagrams(sources) {
         createBrotliDecompress(),
         extract(join(cloudTemporary, 'al2023')),
       );
+      const executablePath = await chromium.executablePath();
+      const fonts = join(cloudTemporary, 'fonts');
+      // The bundled Lambda config points at /tmp/fonts. Our isolated extraction
+      // needs paths relative to this config, including a private writable cache.
+      await writeFile(join(fonts, 'fonts.conf'), `<?xml version="1.0"?>
+<fontconfig>
+  <dir prefix="relative">fonts</dir>
+  <cachedir prefix="xdg">fontconfig</cachedir>
+</fontconfig>`);
       options = {
-        executablePath: await chromium.executablePath(),
+        executablePath,
         args: chromium.args,
         headless: 'shell',
         env: {
           ...process.env,
-          FONTCONFIG_PATH: join(cloudTemporary, 'fonts'),
+          FONTCONFIG_PATH: fonts,
+          FONTCONFIG_FILE: join(fonts, 'fonts.conf'),
+          XDG_CACHE_HOME: join(cloudTemporary, 'cache'),
           LD_LIBRARY_PATH: [join(cloudTemporary, 'al2023/lib'), process.env.LD_LIBRARY_PATH]
             .filter(Boolean).join(':'),
         },

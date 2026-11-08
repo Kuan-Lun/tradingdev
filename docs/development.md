@@ -26,7 +26,7 @@ uv sync --locked --all-extras --python 3.14
 | `scripts/rebuild-env.sh` | 依 lock 重建本專案 `.venv`。 | 依賴變更同步設定、lock 及受影響套件測試。 |
 | `scripts/format.sh` | 修改程式碼的 lint／格式修正。 | 品質政策維護於 `pyproject.toml`，流程實作見 `tooling/quality.py`。 |
 | `scripts/check-docs.sh` | Markdown、連結及 SRS 結構與追溯引用。 | 改檢查器時維護 `tests/tooling/test_documentation.py`、`test_srs_requirements.py`；不執行引用的測試。 |
-| `scripts/check-presentations.sh` | 文件品質、簡報重建一致性、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；視覺與瀏覽器操作另行確認。 |
+| `scripts/check-presentations.sh` | 文件品質、簡報來源建置、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；打包與發布 staging 維護 `tests/tooling/test_presentation_bundle.py`；視覺與瀏覽器操作另行確認。 |
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
 | `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 開發政策與已登錄開發工具；分類來源為 `tooling/git/change_scope.py`。 |
