@@ -1030,10 +1030,8 @@ CLI 的直接回測是同步入口，不使用 MCP 計畫確認或背景 supervi
 | 範圍 | 已提供的內容與限制 |
 | --- | --- |
 | 績效管線 | 一般 run performance、年化報酬、Sharpe、日／月損益及 run leaderboard |
-| 獨立統計 API | `domain/statistics` 提供期間分析、原始資料績效摘要及 Sharpe 推論 |
+| 獨立統計 API | `domain/statistics` 例如提供期間分析、原始資料績效摘要及 Sharpe 推論 |
 | 整合邊界 | 統計 API 尚未接入績效發布或 MCP 結果查詢，並非排行榜新增欄位 |
-
-候選配對比較、參數平台等擴充不屬於此處已提供的統計 API。
 
 <!-- _footer: "模組責任與統計慣例見 ARCHITECTURE.md 的績效計算與對話摘要。" -->
 
