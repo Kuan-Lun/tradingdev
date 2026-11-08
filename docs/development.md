@@ -14,7 +14,7 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務。簡報建置與檢查另需 Node.js 20 以上、npm 與鎖定工具鏈，
+一般文件檢查不需要模型服務。簡報建置與檢查另需 Node.js 22.17 以上、npm 與鎖定工具鏈，
 含 Mermaid 時另需 Chrome／Chromium。完整離線 pytest 與 `tests/tooling` 包含真實圖表
 渲染測試，也需要這些工具；離線表示執行時不呼叫模型或下載依賴。
 初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
@@ -218,7 +218,7 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 ### 簡報的編輯與輸出
 
 [簡報入口](talks/tradingdev-introduction/README.md)提供編輯、預覽與發布操作。
-編輯環境須有 Node.js 20 以上及 npm，再初始化鎖定的 Marp 工具鏈：
+編輯環境須有 Node.js 22.17 以上及 npm，再初始化鎖定的 Marp 工具鏈：
 
 ```bash
 ./scripts/presentations.sh setup
@@ -264,21 +264,25 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 不覆寫既存輸出。打包與檢查都從來源建置，無須先保存預覽 HTML。
 `scripts/stage-presentations.sh` 使用已安裝的簡報工具編譯來源，以 Python 3.14 標準函式庫
 驗證成品後，將 HTML、圖片與案例證據放入 `site-dist/tradingdev/`；成功後才替換舊發布內容。
-Cloudflare 使用 `scripts/build-presentations-site.sh` 先安裝鎖定的 npm 工具與 Chrome，
+Cloudflare 使用 `scripts/build-presentations-site.sh` 先安裝鎖定的 npm 工具與 Chromium，
 再呼叫上述編譯及發布準備步驟，不安裝 TradingDev 的 Python 產品依賴。
 打包、解壓與發布的使用方式見[簡報編輯指南](talks/tradingdev-introduction/README.md)。
 專項檢查在臨時目錄產生與驗證完整交付，不依賴本機預覽檔，也不覆寫工作樹；缺少工具鏈會失敗。
 可用 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定另一套已初始化且 lock 相符的工具鏈。
 
 含 Mermaid 圖表時，build／check 及相關工具測試另需本機 Chrome，或以
-`TRADINGDEV_PRESENTATION_BROWSER` 指定 Chromium 執行檔；`setup` 不安裝瀏覽器。
+`TRADINGDEV_PRESENTATION_BROWSER` 指定 Chromium 執行檔；`setup` 安裝雲端 Chromium
+套件，不安裝本機 Chrome。
 [render-diagrams.mjs](../tooling/marp/render-diagrams.mjs) 使用鎖定的 Mermaid 與 Noto Sans TC
 在獨立 headless 瀏覽器產生 SVG，圖表頁面不載入網路資源；完成或失敗後關閉瀏覽器，
 外層程序監督器負責逾時清理。[build.mjs](../tooling/marp/build.mjs) 是本機與雲端共用的
 編譯入口。SVG 與所需字型嵌入 HTML，觀看端不需要建置工具。
 替代工具鏈的套件宣告、lock 及渲染腳本都須與受查 snapshot 相符。
-瀏覽器版本仍可能影響 SVG 版面；須以瀏覽器確認本機與分支預覽的圖表。雲端 Chrome
-版本由鎖定的 Puppeteer 決定，本機可沿用已安裝的 Chrome 或明示執行檔。
+瀏覽器版本仍可能影響 SVG 版面；須以瀏覽器確認本機與分支預覽的圖表。本機使用已安裝
+的 Chrome 或明示執行檔；Workers Builds 依 `WORKERS_CI=1` 選用鎖定的 Linux x64
+Chromium 套件與內附函式庫，在獨立臨時目錄解壓並於關閉後清理。雲端使用該套件的
+serverless 啟動參數，包含停用瀏覽器 sandbox；僅在隔離的建置環境渲染 repository 來源，
+渲染時封鎖外部網路請求，不將此流程宣稱為執行任意來源的安全隔離。
 圖表編輯方式與支援範圍見[簡報編輯指南](talks/tradingdev-introduction/README.md#頁面版型與撰寫方式)。
 
 ### 簡報網站發布設定

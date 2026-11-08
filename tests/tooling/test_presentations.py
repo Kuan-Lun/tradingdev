@@ -215,7 +215,7 @@ def _fake_toolchain(root: Path) -> Path:
     identity = {"name": "tradingdev-presentations", "version": "1.0.0"}
     manifest = {**identity, "dependencies": {"@marp-team/marp-cli": "4.5.1"}}
     (toolchain / "package.json").write_text(json.dumps(manifest))
-    for name in ("build.mjs", "render-diagrams.mjs", "install-browser.mjs"):
+    for name in ("build.mjs", "render-diagrams.mjs"):
         (toolchain / name).write_text("// test compiler\n")
     (toolchain / "package-lock.json").write_text(
         json.dumps(
@@ -371,10 +371,10 @@ def test_missing_node_directs_to_installing_node_before_setup(
         presentations.build(tmp_path)
 
     message = str(error.value)
-    assert "Node.js 20" in message
+    assert "Node.js 22.17" in message
     assert "npm" in message
     assert "scripts/presentations.sh setup" in message
-    assert message.index("Node.js 20") < message.index("scripts/presentations.sh")
+    assert message.index("Node.js 22.17") < message.index("scripts/presentations.sh")
 
 
 @pytest.mark.parametrize(
@@ -398,7 +398,7 @@ def test_missing_toolchain_reports_the_install_step_that_can_succeed(
 
     message = str(error.value)
     assert "Locked presentation dependencies are unavailable" in message
-    assert ("Node.js 20" in message) is node_step_required
+    assert ("Node.js 22.17" in message) is node_step_required
 
 
 def test_build_command_cannot_load_candidate_config_or_local_engine(
@@ -921,3 +921,60 @@ def test_package_cli_keeps_output_outside_authoring_sources(
     assert bool(built) is not inside_source
     assert output.exists() is not inside_source
     assert output.with_suffix(".zip").exists() is not inside_source
+
+
+@pytest.mark.parametrize("failure", ["launch", "close"])
+def test_workers_browser_prepares_libraries_and_handles_cleanup_failures(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    toolchain = presentations._toolchain(repository)
+    renderer = toolchain / "render-diagrams.mjs"
+    package = toolchain / "node_modules/puppeteer-core"
+    manifest = json.loads((package / "package.json").read_text())
+    module = (package / manifest["exports"]["."]["import"]).as_uri()
+    wrapper = tmp_path / "cloud-browser.mjs"
+    wrapper.write_text(
+        "import assert from 'node:assert/strict';\n"
+        "import { existsSync, readFileSync, rmSync } from 'node:fs';\n"
+        "import { join } from 'node:path';\n"
+        f"import puppeteer from {json.dumps(module)};\n"
+        "Object.defineProperty(process, 'platform', { value: 'linux' });\n"
+        "Object.defineProperty(process, 'arch', { value: 'x64' });\n"
+        "process.env.WORKERS_CI = '1';\n"
+        f"const failure = {json.dumps(failure)};\n"
+        "const previous = process.env.TMPDIR;\n"
+        "let temporary;\n"
+        "puppeteer.launch = async (options) => {\n"
+        "  temporary = options.env.TMPDIR;\n"
+        "  assert.notEqual(temporary, previous);\n"
+        "  assert.equal(options.headless, 'shell');\n"
+        "  assert.ok(options.args.includes('--no-sandbox'));\n"
+        "  const library = join(temporary, 'al2023/lib');\n"
+        "  assert.ok(existsSync(join(library, 'libnss3.so')));\n"
+        "  assert.ok(options.env.LD_LIBRARY_PATH.startsWith(library));\n"
+        "  assert.equal(readFileSync(options.executablePath).subarray(0, 4)"
+        ".toString('hex'), '7f454c46');\n"
+        "  if (failure === 'launch') throw new Error('expected launch failure');\n"
+        "  return {\n"
+        "    newPage: async () => { throw new Error('expected page failure'); },\n"
+        "    close: async () => { throw new Error('expected close failure'); },\n"
+        "  };\n"
+        "};\n"
+        f"const {{ renderDiagrams }} = await import({json.dumps(renderer.as_uri())});\n"
+        "await assert.rejects(renderDiagrams(['sequenceDiagram']), "
+        "(error) => error.cause?.message === `expected ${failure} failure` "
+        "&& (failure !== 'close' || "
+        "error.message.includes(`retained ${temporary}`)));\n"
+        "assert.ok(temporary);\n"
+        "assert.equal(existsSync(temporary), failure === 'close');\n"
+        "assert.equal(process.env.TMPDIR, previous);\n"
+        "// No process was launched; retained test files are safe to remove.\n"
+        "rmSync(temporary, { recursive: true, force: true });\n"
+    )
+    node = shutil.which("node")
+    assert node is not None
+    presentations._execute(
+        [node, str(wrapper)], cwd=tmp_path, temporary=tmp_path, timeout=30
+    )

@@ -46,7 +46,6 @@ TOOLCHAIN_FILES = (
     "package-lock.json",
     "build.mjs",
     "render-diagrams.mjs",
-    "install-browser.mjs",
 )
 _TOOL_PATHS = frozenset(
     {
@@ -63,7 +62,7 @@ _TOOL_PATHS = frozenset(
 )
 _SETUP_HELP = "Run scripts/presentations.sh setup to install the locked toolchain."
 _NODE_HELP = (
-    "Install Node.js 20+ and npm, confirm `node` is on PATH, then run "
+    "Install Node.js 22.17+ and npm, confirm `node` is on PATH, then run "
     "scripts/presentations.sh setup to install the locked toolchain."
 )
 

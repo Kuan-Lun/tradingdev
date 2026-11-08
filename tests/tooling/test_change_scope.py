@@ -594,7 +594,6 @@ def test_srs_review_tracks_both_git_sides_and_keeps_stronger_checks(
         "tooling/marp/package-lock.json",
         "tooling/marp/render-diagrams.mjs",
         "tooling/marp/build.mjs",
-        "tooling/marp/install-browser.mjs",
         "scripts/build-presentations-site.sh",
         "wrangler.jsonc",
     ],

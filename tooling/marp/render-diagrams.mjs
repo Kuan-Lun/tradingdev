@@ -1,10 +1,13 @@
 // Render sequence diagrams before delivery; the presentation needs no Mermaid runtime.
-import { access, readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { createBrotliDecompress } from 'node:zlib';
 import puppeteer from 'puppeteer-core';
-import { Browser, computeExecutablePath } from '@puppeteer/browsers';
+import { extract } from 'tar-fs';
 
 const require = createRequire(import.meta.url);
 const fontRoot = dirname(require.resolve('@fontsource/noto-sans-tc/package.json'));
@@ -39,20 +42,43 @@ export async function renderDiagrams(sources) {
   }
 
   let browser;
+  let cloudTemporary;
+  const previousTemporary = process.env.TMPDIR;
   try {
-    const installed = computeExecutablePath({
-      browser: Browser.CHROME, buildId: puppeteer.browserVersion,
-      cacheDir: fileURLToPath(new URL('./node_modules/.cache/chrome', import.meta.url)),
-    });
-    const available = await access(installed).then(() => true, () => false);
-    const executable = process.env.TRADINGDEV_PRESENTATION_BROWSER ?? (available ? installed : null);
+    const executable = process.env.TRADINGDEV_PRESENTATION_BROWSER;
+    let options = {
+      ...(executable ? { executablePath: executable } : { channel: 'chrome' }),
+      headless: true,
+    };
+    if (process.env.WORKERS_CI === '1') {
+      if (process.platform !== 'linux' || process.arch !== 'x64') {
+        throw new Error('The Workers Builds browser requires Linux x64.');
+      }
+      cloudTemporary = await mkdtemp(join(tmpdir(), 'tradingdev-cloud-browser-'));
+      process.env.TMPDIR = cloudTemporary;
+      const { default: chromium } = await import('@sparticuz/chromium');
+      const binaries = resolve(dirname(require.resolve('@sparticuz/chromium')), '../../bin');
+      // Workers Builds is not Lambda: explicitly extract the bundled libraries
+      // instead of depending on the package's AWS environment detection.
+      await pipeline(
+        createReadStream(join(binaries, 'al2023.tar.br')),
+        createBrotliDecompress(),
+        extract(join(cloudTemporary, 'al2023')),
+      );
+      options = {
+        executablePath: await chromium.executablePath(),
+        args: chromium.args,
+        headless: 'shell',
+        env: {
+          ...process.env,
+          FONTCONFIG_PATH: join(cloudTemporary, 'fonts'),
+          LD_LIBRARY_PATH: [join(cloudTemporary, 'al2023/lib'), process.env.LD_LIBRARY_PATH]
+            .filter(Boolean).join(':'),
+        },
+      };
+    }
     try {
-      browser = await puppeteer.launch({
-        ...(executable
-          ? { executablePath: executable }
-          : { channel: 'chrome' }),
-        headless: true,
-      });
+      browser = await puppeteer.launch(options);
     } catch (error) {
       throw new Error('Mermaid rendering requires Chrome. Install Chrome or set '
         + 'TRADINGDEV_PRESENTATION_BROWSER to a Chromium executable.', { cause: error });
@@ -140,6 +166,17 @@ export async function renderDiagrams(sources) {
     }
     return diagrams;
   } finally {
-    if (browser) await browser.close();
+    if (cloudTemporary) {
+      if (previousTemporary === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTemporary;
+    }
+    try {
+      if (browser) await browser.close();
+    } catch (error) {
+      if (cloudTemporary) throw new Error(
+        `Browser shutdown is unverified; retained ${cloudTemporary}`, { cause: error });
+      throw error;
+    }
+    if (cloudTemporary) await rm(cloudTemporary, { recursive: true, force: true });
   }
 }
