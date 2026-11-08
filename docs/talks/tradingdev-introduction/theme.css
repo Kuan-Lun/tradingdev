@@ -126,11 +126,22 @@ section .mermaid-diagram marker[id$="-arrowhead"] path {
 section.diagram-wide .mermaid-diagram {
   --arrowhead-scale: 4;
   --message-line-width: 5px;
+  --message-offset: 40px;
 }
 section.diagram-wide .mermaid-diagram text { font-size: 54px !important; }
 section.diagram-wide .mermaid-diagram text.actor { font-size: 66px !important; }
 section.diagram-wide .mermaid-diagram > svg { height: 360px; }
-section.diagram-wide .mermaid-diagram .messageText { transform: translateY(-20px); }
+/* Enlarged actor boxes need room above the whole message sequence. */
+section.diagram-wide .mermaid-diagram .messageText {
+  transform: translateY(calc(var(--message-offset) - 20px));
+}
+section.diagram-wide .mermaid-diagram .messageLine0,
+section.diagram-wide .mermaid-diagram .messageLine1 {
+  transform: translateY(var(--message-offset));
+}
+section.diagram-wide .mermaid-diagram .actor-line {
+  clip-path: inset(0 0 calc(-1 * var(--message-offset)) 0) view-box;
+}
 section.diagram-wide .mermaid-diagram rect.actor {
   height: 104px;
   transform: translateY(-28px);
