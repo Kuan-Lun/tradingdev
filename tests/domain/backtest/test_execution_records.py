@@ -52,8 +52,20 @@ def _market(signals: list[int] | None = None) -> pd.DataFrame:
     )
 
 
-def _engine(**kwargs: Any) -> SignalBacktestEngine:
-    return SignalBacktestEngine(init_cash=1000.0, fees=0.001, slippage=0.01, **kwargs)
+def _engine(
+    *,
+    position_size: float | None = None,
+    stop_loss: float | None = None,
+    take_profit: float | None = None,
+) -> SignalBacktestEngine:
+    return SignalBacktestEngine(
+        init_cash=1000.0,
+        fees=0.001,
+        slippage=0.01,
+        position_size=position_size,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+    )
 
 
 def test_buy_reverse_close_and_open_final_have_native_fill_accounting() -> None:

@@ -19,8 +19,8 @@ from tradingdev.domain.ml.evaluation.stratified import quantile_bins
 class SimulatedReturns:
     """Non-overlapping holding-interval returns, indexed by decision bar."""
 
-    long_short: pd.Series
-    long_only: pd.Series
+    long_short: pd.Series[float] | pd.Series[int]
+    long_only: pd.Series[float] | pd.Series[int]
     quantile_means: tuple[float, ...]
     n_quantiles: int
 
@@ -45,7 +45,9 @@ class SimulatedReturns:
         return float(self.long_only.mean())
 
 
-def _causal_positions(signal: pd.Series, n_quantiles: int) -> pd.Series:
+def _causal_positions(
+    signal: pd.Series[float] | pd.Series[int], n_quantiles: int
+) -> pd.Series[int]:
     """Choose positions using expanding thresholds fitted strictly before t."""
     history = signal.shift(1).expanding(min_periods=n_quantiles)
     seen_distinct = (
@@ -62,8 +64,8 @@ def _causal_positions(signal: pd.Series, n_quantiles: int) -> pd.Series:
 
 
 def simulate_strategy_returns(
-    signal: pd.Series,
-    forward_returns: pd.Series,
+    signal: pd.Series[float] | pd.Series[int],
+    forward_returns: pd.Series[float] | pd.Series[int],
     *,
     n_quantiles: int = 5,
     horizon: int = 1,

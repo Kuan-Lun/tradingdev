@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         BaseBacktestEngine,
     )
     from tradingdev.domain.backtest.result import BacktestResult
+    from tradingdev.domain.performance.catalog import MetricScalar
     from tradingdev.domain.strategies.base import BaseStrategy
     from tradingdev.domain.validation.config import WalkForwardConfig
 
@@ -55,8 +56,8 @@ class WalkForwardResult:
     train_end: datetime
     test_start: datetime
     test_end: datetime
-    train_metrics: dict[str, Any] = field(default_factory=dict)
-    test_metrics: dict[str, Any] = field(default_factory=dict)
+    train_metrics: dict[str, MetricScalar] = field(default_factory=dict)
+    test_metrics: dict[str, MetricScalar] = field(default_factory=dict)
     strategy_params: dict[str, Any] = field(default_factory=dict)
     train_backtest: BacktestResult | None = None
     test_backtest: BacktestResult | None = None

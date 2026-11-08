@@ -12,7 +12,7 @@ import pandas as pd
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.domain.ml.evaluation import signal_metrics
 from tradingdev.domain.ml.models.registry import (
-    ModelKind,
+    RegisteredModelKind,
     create_direction_model,
     get_model_kind,
 )
@@ -288,7 +288,7 @@ class MLTrainingService:
 
     @staticmethod
     def _validated_parameters(
-        kind: ModelKind, parameters: dict[str, Any]
+        kind: RegisteredModelKind, parameters: dict[str, Any]
     ) -> dict[str, Any]:
         """Reject undeclared parameters rather than silently training with defaults."""
         allowed = set(kind.config_cls.model_fields)

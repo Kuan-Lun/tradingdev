@@ -29,10 +29,10 @@ type MetricScalar = int | float | None
 
 
 def _aligned_frame(
-    prediction: pd.Series | Sequence[float],
-    forward_return: pd.Series | Sequence[float] | None = None,
+    prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
+    forward_return: pd.Series[float] | pd.Series[int] | Sequence[float] | None = None,
     *,
-    price: pd.Series | Sequence[float] | None = None,
+    price: pd.Series[float] | pd.Series[int] | Sequence[float] | None = None,
 ) -> pd.DataFrame:
     """Stack equal-length series, dropping non-finite rows jointly for alignment."""
     pred_values = np.asarray(prediction, dtype=float)
@@ -109,12 +109,12 @@ def _window_correlation(values: NDArray[np.float64], method: str) -> float:
 
 
 def rolling_ic(
-    prediction: pd.Series | Sequence[float],
-    forward_return: pd.Series | Sequence[float],
+    prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
+    forward_return: pd.Series[float] | pd.Series[int] | Sequence[float],
     *,
     window: int = 60,
     method: str = "spearman",
-) -> pd.Series:
+) -> pd.Series[float]:
     """Rolling Pearson IC or Spearman Rank IC over aligned bars.
 
     Return one coefficient per aligned bar, with the first ``window - 1``
@@ -144,9 +144,12 @@ def rolling_ic(
     )
 
 
-def ic_statistics(ic: pd.Series, *, window: int) -> dict[str, MetricScalar]:
+def ic_statistics(
+    ic: pd.Series[float] | pd.Series[int], *, window: int
+) -> dict[str, MetricScalar]:
     """Use effective sample size ``bars // window`` for the IC t-statistic."""
-    series = pd.Series(ic).replace([np.inf, -np.inf], np.nan)
+    # Integer input has no infinities; pandas-stubs still rejects the NaN replacement.
+    series = pd.Series(ic).replace([np.inf, -np.inf], np.nan)  # type: ignore[arg-type]
     n_bars = len(series)
     n_effective = max(1, n_bars // window)
     values = series.dropna()
@@ -176,7 +179,7 @@ def ic_statistics(ic: pd.Series, *, window: int) -> dict[str, MetricScalar]:
 
 
 def _prefixed_statistics(
-    ic: pd.Series, *, window: int, prefix: str
+    ic: pd.Series[float] | pd.Series[int], *, window: int, prefix: str
 ) -> dict[str, MetricScalar]:
     """Rename :func:`ic_statistics` keys for the Rank IC family."""
     raw = ic_statistics(ic, window=window)
@@ -187,8 +190,8 @@ def _prefixed_statistics(
 
 
 def hit_rate(
-    prediction: pd.Series | Sequence[float],
-    forward_return: pd.Series | Sequence[float],
+    prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
+    forward_return: pd.Series[float] | pd.Series[int] | Sequence[float],
 ) -> float | None:
     """Fraction of bars where prediction and realised return share a sign."""
     frame = _aligned_frame(prediction, forward_return)
@@ -199,7 +202,9 @@ def hit_rate(
     return float(agreement.mean())
 
 
-def signal_turnover(prediction: pd.Series | Sequence[float]) -> float | None:
+def signal_turnover(
+    prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
+) -> float | None:
     """Mean absolute bar-to-bar change of the prediction."""
     values = pd.Series(np.asarray(prediction, dtype=float))
     values = values.replace([np.inf, -np.inf], np.nan).dropna()
@@ -208,7 +213,9 @@ def signal_turnover(prediction: pd.Series | Sequence[float]) -> float | None:
     return float(values.diff().abs().mean())
 
 
-def forward_returns(price: pd.Series | Sequence[float], horizon: int) -> pd.Series:
+def forward_returns(
+    price: pd.Series[float] | pd.Series[int] | Sequence[float], horizon: int
+) -> pd.Series[float]:
     """Realised simple return ``horizon`` bars ahead."""
     if horizon < 1:
         raise ValueError("horizon must be at least 1")
@@ -217,8 +224,8 @@ def forward_returns(price: pd.Series | Sequence[float], horizon: int) -> pd.Seri
 
 
 def ic_decay(
-    prediction: pd.Series | Sequence[float],
-    price: pd.Series | Sequence[float],
+    prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
+    price: pd.Series[float] | pd.Series[int] | Sequence[float],
     horizons: Sequence[int] = (1, 3, 5, 10),
     *,
     method: str = "spearman",
@@ -245,11 +252,11 @@ def ic_decay(
 
 
 def signal_metrics(
-    prediction: pd.Series | Sequence[float],
-    forward_return: pd.Series | Sequence[float],
+    prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
+    forward_return: pd.Series[float] | pd.Series[int] | Sequence[float],
     *,
     window: int = 60,
-    price: pd.Series | Sequence[float] | None = None,
+    price: pd.Series[float] | pd.Series[int] | Sequence[float] | None = None,
     horizons: Sequence[int] = (1, 3, 5, 10),
 ) -> dict[str, MetricScalar]:
     """Compute Pearson IC, Spearman Rank IC and the remaining signal metrics."""

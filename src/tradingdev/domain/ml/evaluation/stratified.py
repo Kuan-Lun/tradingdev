@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 logger = setup_logger(__name__)
 
 
-def quantile_bins(prediction: pd.Series, n_bins: int) -> pd.Series:
+def quantile_bins(
+    prediction: pd.Series[float] | pd.Series[int], n_bins: int
+) -> pd.Series[int]:
     """Assign ascending, zero-based strata while preserving the input index.
 
     ``n_bins`` is an upper bound. With no more distinct values than bins,
@@ -31,8 +33,8 @@ def quantile_bins(prediction: pd.Series, n_bins: int) -> pd.Series:
 
 
 def quantile_strata(
-    prediction: pd.Series | Sequence[float],
-    forward_return: pd.Series | Sequence[float],
+    prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
+    forward_return: pd.Series[float] | pd.Series[int] | Sequence[float],
     *,
     n_bins: int = 5,
 ) -> pd.DataFrame:

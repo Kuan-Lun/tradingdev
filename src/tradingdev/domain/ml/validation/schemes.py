@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Protocol
 
 from tradingdev.domain.ml.validation.splits import (
     leakage_audit,
@@ -12,25 +12,49 @@ from tradingdev.domain.ml.validation.splits import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
     from tradingdev.domain.ml.validation.splits import Split
 
 
+class SplitBuilder(Protocol):
+    """Uniform fold-count and purging contract for a registered builder."""
+
+    def __call__(
+        self,
+        n_bars: int,
+        *,
+        horizon: int,
+        n_folds: int = 5,
+        embargo: int = 0,
+        min_train_bars: int = 1,
+    ) -> list[Split]: ...
+
+
 @dataclass(frozen=True)
 class ValidationScheme:
-    """One named way to cut bars into training and test windows."""
+    """Named folds whose builder always accepts the ``n_folds`` keyword."""
 
     name: str
     description: str
-    fold_parameter: str
-    """Name of the fold-count keyword the builder expects.
+    build: SplitBuilder
 
-    The two builders disagree on what to call it (``n_splits`` versus
-    ``n_folds``); recording it here means callers say "how many folds"
-    once, whichever scheme they picked.
-    """
-    build: Callable[..., list[Split]]
+
+def _walk_forward_splits(
+    n_bars: int,
+    *,
+    horizon: int,
+    n_folds: int = 5,
+    embargo: int = 0,
+    min_train_bars: int = 1,
+) -> list[Split]:
+    return purged_walk_forward_splits(
+        n_bars,
+        horizon=horizon,
+        n_splits=n_folds,
+        embargo=embargo,
+        min_train_bars=min_train_bars,
+    )
 
 
 _SCHEMES = (
@@ -40,8 +64,7 @@ _SCHEMES = (
             "Anchored walk-forward with purged/embargoed training bars; "
             "block 0 always trains, each later block is tested once."
         ),
-        fold_parameter="n_splits",
-        build=purged_walk_forward_splits,
+        build=_walk_forward_splits,
     ),
     ValidationScheme(
         name="purged_kfold",
@@ -50,7 +73,6 @@ _SCHEMES = (
             "sides with the label horizon purged and an embargo gap. "
             "Retrospective cross-validation, not a past-only deployment simulation."
         ),
-        fold_parameter="n_folds",
         build=purged_kfold_splits,
     ),
 )
@@ -91,13 +113,12 @@ def build_validation_splits(
     size. Unknown schemes and unusable fold geometry raise ValueError.
     """
     scheme = get_validation_scheme(name)
-    keywords: dict[str, Any] = {scheme.fold_parameter: n_folds}
     return scheme.build(
         n_bars,
         horizon=horizon,
         embargo=embargo,
         min_train_bars=min_train_bars,
-        **keywords,
+        n_folds=n_folds,
     )
 
 

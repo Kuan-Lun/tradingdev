@@ -16,12 +16,14 @@ from tradingdev.domain.ml.features.technical_features import (
 )
 
 
-def _expected_indicators(close: pd.Series) -> tuple[pd.Series, pd.Series]:
+def _expected_indicators(
+    close: pd.Series[float],
+) -> tuple[pd.Series[float], pd.Series[float]]:
     """Independent oracle: %B with population std and the MACD histogram."""
     middle = close.rolling(20).mean()
     std = close.rolling(20).std(ddof=0)
     pctb = (close - (middle - 2 * std)) / (4 * std).replace(0, np.nan)
-    _, _, histogram = talib.MACD(close.to_numpy(dtype=np.float64))
+    _, _, histogram = talib.MACD(np.asarray(close, dtype=np.float64))
     return pctb, pd.Series(histogram, index=close.index)
 
 

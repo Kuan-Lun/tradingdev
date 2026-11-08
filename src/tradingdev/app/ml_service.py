@@ -67,7 +67,7 @@ from tradingdev.domain.ml.leaderboard import (
     surface_caveats,
 )
 from tradingdev.domain.ml.models.registry import (
-    ModelKind,
+    RegisteredModelKind,
     get_model_kind,
     list_model_kinds,
 )
@@ -1598,7 +1598,7 @@ class MLService:
         }
 
     @staticmethod
-    def _model_kind_summary(entry: ModelKind) -> dict[str, Any]:
+    def _model_kind_summary(entry: RegisteredModelKind) -> dict[str, Any]:
         defaults = entry.config_cls().model_dump()
         return {
             "name": entry.name,

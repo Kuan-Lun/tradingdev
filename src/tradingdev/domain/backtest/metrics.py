@@ -13,7 +13,7 @@ import quantstats as qs
 import vectorbt as vbt
 from vectorbt.portfolio.enums import trade_dt
 
-from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.performance.catalog import METRIC_CATALOG, MetricScalar
 from tradingdev.domain.performance.sampling import (
     DAILY_EQUITY_METRICS,
     daily_observation_unavailable_reason,
@@ -24,7 +24,7 @@ from tradingdev.domain.performance.sampling import (
 class PerformanceAnalysis:
     """Calculated values and the settings required to interpret them."""
 
-    metrics: dict[str, Any]
+    metrics: dict[str, MetricScalar]
     metadata: dict[str, Any]
     returns: npt.NDArray[np.float64] | None
 
@@ -201,7 +201,7 @@ def _analyze(
         raise ValueError("Timestamp and equity lengths must match")
     daily_sampling_reason = daily_observation_unavailable_reason(frequency)
     mode = "volume" if init_cash is None else "signal"
-    metrics: dict[str, Any] = dict.fromkeys(METRIC_CATALOG)
+    metrics: dict[str, MetricScalar] = dict.fromkeys(METRIC_CATALOG)
     unavailable: dict[str, str] = {}
     fallbacks: dict[str, dict[str, str]] = {}
     for metric_id, definition in METRIC_CATALOG.items():
@@ -331,7 +331,7 @@ def _period_rate(annual_rate: float, periods_per_year: float | None) -> float | 
 
 
 def _return_metrics(
-    metrics: dict[str, Any],
+    metrics: dict[str, MetricScalar],
     unavailable: dict[str, str],
     returns: npt.NDArray[np.float64],
     timestamps: pd.DatetimeIndex | None,
@@ -432,14 +432,14 @@ def _return_metrics(
         )
 
 
-def _scalar(value: float | pd.Series) -> float:
+def _scalar(value: float | pd.Series[float]) -> float:
     """QuantStats' union annotation also covers DataFrame inputs we never pass."""
     if isinstance(value, pd.Series):
         raise TypeError("Single-series performance statistics must return a scalar")
     return float(value)
 
 
-def _prepared_as_prices(returns: pd.Series) -> bool:
+def _prepared_as_prices(returns: pd.Series[float]) -> bool:
     """Detect valid returns misread as prices by QuantStats' public API."""
     return bool(returns.min() >= 0 and returns.max() > 1)
 
@@ -451,7 +451,7 @@ def _fallback(
 
 
 def _maximum_drawdown(
-    returns: pd.Series,
+    returns: pd.Series[float],
     metric_id: str,
     fallbacks: dict[str, dict[str, str]],
 ) -> float:
@@ -472,7 +472,7 @@ def _maximum_drawdown(
 
 
 def _period_metrics(
-    metrics: dict[str, Any],
+    metrics: dict[str, MetricScalar],
     unavailable: dict[str, str],
     pnl: npt.NDArray[np.float64],
     timestamps: pd.DatetimeIndex | None,
@@ -512,5 +512,7 @@ def _period_metrics(
                 unavailable[metric_id] = daily_sampling_reason
             else:
                 metrics[metric_id] = float(func(values))
-    metrics["monthly_trades_mean"] = metrics["total_trades"] / metrics["n_months"]
-    metrics["monthly_volume_mean"] = metrics["total_volume"] / metrics["n_months"]
+    # _analyze initializes these finite totals before period aggregation.
+    months = cast("int", metrics["n_months"])
+    metrics["monthly_trades_mean"] = cast("int", metrics["total_trades"]) / months
+    metrics["monthly_volume_mean"] = cast("float", metrics["total_volume"]) / months

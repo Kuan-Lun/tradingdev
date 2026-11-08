@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
     from tradingdev.domain.performance.artifacts import (
         MetricDefinitionSnapshot,
-        MetricScalar,
     )
+    from tradingdev.domain.performance.catalog import MetricScalar
 
 type DisplayValue = str | None | dict[str, str | int | None]
 

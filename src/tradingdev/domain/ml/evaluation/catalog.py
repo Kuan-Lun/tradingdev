@@ -282,7 +282,7 @@ def signal_metric_catalog() -> list[dict[str, Any]]:
     return [asdict(definition) for definition in SIGNAL_METRIC_CATALOG.values()]
 
 
-def summarize_signal_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+def summarize_signal_metrics[T](metrics: dict[str, T]) -> dict[str, T]:
     """Select a compact view without changing stored or calculated metrics."""
     return {
         key: value

@@ -10,7 +10,7 @@ from tradingdev.domain.ml.evaluation import simulate_strategy_returns
 from tradingdev.domain.ml.validation import purged_walk_forward_splits
 
 
-def _seeded_returns(count: int) -> tuple[pd.Series, pd.Series]:
+def _seeded_returns(count: int) -> tuple[pd.Series[float], pd.Series[float]]:
     rng = np.random.default_rng(0)
     values = rng.normal(size=count)
     return pd.Series(values, name="signal"), pd.Series(values, name="fwd")

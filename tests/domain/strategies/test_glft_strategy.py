@@ -16,7 +16,7 @@ from tradingdev.domain.strategies.bundled.glft_strategy.config import (
 from tradingdev.domain.strategies.bundled.glft_strategy.strategy import GLFTStrategy
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from tests.domain.strategies.conftest import LookAheadAssertion
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -278,7 +278,7 @@ class TestGLFTSignalGeneration:
     def test_no_look_ahead_bias(
         self,
         sample_ohlcv_df: pd.DataFrame,
-        assert_no_look_ahead: Callable[..., None],
+        assert_no_look_ahead: LookAheadAssertion,
     ) -> None:
         """Signals must be identical when future bars are truncated away."""
         strategy = GLFTStrategy(config=_make_config())
@@ -413,6 +413,7 @@ class TestGLFTIntegration:
         )
         result = engine.run(signals)
 
+        assert result.metrics["total_trades"] is not None
         assert result.metrics["total_trades"] >= 0
         assert "total_return" in result.metrics
 
@@ -777,7 +778,7 @@ class TestIndicatorWarmup:
     def test_no_look_ahead_with_aggregated_ema(
         self,
         sample_ohlcv_df: pd.DataFrame,
-        assert_no_look_ahead: Callable[..., None],
+        assert_no_look_ahead: LookAheadAssertion,
     ) -> None:
         strategy = GLFTStrategy(
             config=_make_config(ema_window=2, signal_agg_bars=5),

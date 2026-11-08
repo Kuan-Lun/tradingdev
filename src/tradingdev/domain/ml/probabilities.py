@@ -35,10 +35,12 @@ def validate_probabilities(
     return probabilities.astype(np.float64)
 
 
-def class_probability(probabilities: pd.DataFrame, label: int) -> pd.Series:
+def class_probability(
+    probabilities: pd.DataFrame, label: int
+) -> pd.Series[float] | pd.Series[int]:
     """Read a class; a scored distribution assigns zero to an absent class."""
     if label in probabilities.columns:
         return probabilities[label]
-    return pd.Series(0.0, index=probabilities.index, dtype=np.float64).where(
+    return pd.Series(0.0, index=probabilities.index, dtype=float).where(
         probabilities.notna().any(axis=1)
     )

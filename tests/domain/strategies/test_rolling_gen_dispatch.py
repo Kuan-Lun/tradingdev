@@ -26,7 +26,7 @@ from tradingdev.domain.strategies.bundled.xgboost_strategy.strategy import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from tests.domain.strategies.conftest import LookAheadAssertion
 
 _FIT_BARS = 800
 
@@ -84,7 +84,7 @@ def test_enabled_run_keeps_the_input_frame_and_emits_valid_signals(
 
 def test_enabled_run_has_no_look_ahead(
     large_ohlcv_df: pd.DataFrame,
-    assert_no_look_ahead: Callable[..., None],
+    assert_no_look_ahead: LookAheadAssertion,
 ) -> None:
     """Truncating the future must not change an earlier bar's signal."""
     strategy = _fitted_xgboost(large_ohlcv_df, enabled=True)

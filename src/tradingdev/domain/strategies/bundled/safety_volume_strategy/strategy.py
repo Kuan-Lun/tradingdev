@@ -241,7 +241,7 @@ class SafetyVolumeStrategy(BaseStrategy):
             # Use AUC-ROC (handles class imbalance better)
             proba = validate_probabilities(model.predict_proba(feat_val), feat_val)
             y_true = np.asarray(feat_val["target"].values)
-            p_safe = class_probability(proba, 1).to_numpy()
+            p_safe = np.asarray(class_probability(proba, 1), dtype=np.float64)
 
             unique_classes = np.unique(y_true)
             if len(unique_classes) < 2:
@@ -343,7 +343,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         )
         feat_val = fe.transform(val_df, include_target=False)
         proba = validate_probabilities(model.predict_proba(feat_val), feat_val)
-        p_safe = class_probability(proba, 1).to_numpy()
+        p_safe = np.asarray(class_probability(proba, 1), dtype=np.float64)
 
         directions = self._validation_directions(
             feat_val,
@@ -425,7 +425,7 @@ class SafetyVolumeStrategy(BaseStrategy):
             label_horizon=self._config.target_holding_bars,
         )
         self._rolling_trace = trace_payload(outcome)
-        return class_probability(outcome.probabilities, 1).to_numpy(dtype=np.float64)
+        return np.asarray(class_probability(outcome.probabilities, 1), dtype=np.float64)
 
     def rolling_trace(self) -> dict[str, Any] | None:
         """Return the resolved geometry and provenance of the last successful run."""

@@ -60,22 +60,22 @@ an approximation to a full history, with no uniform output-error guarantee.
 
 
 def compute_sma_ratios(
-    close: pd.Series,
+    close: pd.Series[float] | pd.Series[int],
     windows: list[int],
-) -> dict[str, pd.Series]:
+) -> dict[str, pd.Series[float]]:
     """Compute close/SMA(N) ratios."""
     return {f"close_sma_ratio_{w}": close / indicators.sma(close, w) for w in windows}
 
 
 def compute_volume_features(
-    volume: pd.Series,
+    volume: pd.Series[float] | pd.Series[int],
     windows: list[int],
-) -> dict[str, pd.Series]:
+) -> dict[str, pd.Series[float]]:
     """Compute volume change rate and volume/SMA ratios.
 
     Volume change remains unknown when either comparison endpoint is missing.
     """
-    features: dict[str, pd.Series] = {
+    features: dict[str, pd.Series[float]] = {
         "volume_change": volume.pct_change(fill_method=None)
     }
     for w in windows:
@@ -84,8 +84,8 @@ def compute_volume_features(
 
 
 def compute_ta_indicators(
-    close: pd.Series,
-) -> dict[str, pd.Series]:
+    close: pd.Series[float] | pd.Series[int],
+) -> dict[str, pd.Series[float]]:
     """Compute RSI(14), the MACD histogram, and Bollinger %B(20).
 
     Every key is always present; values are NaN while an indicator warms up

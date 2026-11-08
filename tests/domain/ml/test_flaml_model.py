@@ -73,7 +73,7 @@ class _FakeAutoML:
     def fit(
         self,
         X_train: pd.DataFrame,  # noqa: N803
-        y_train: pd.Series,  # noqa: N803
+        y_train: pd.Series[int],  # noqa: N803
         **kwargs: Any,
     ) -> None:
         self.fit_calls.append({"X_train": X_train, "y_train": y_train, **kwargs})
@@ -265,7 +265,7 @@ class TestTrainContract:
             def fit(
                 self,
                 X_train: pd.DataFrame,  # noqa: N803
-                y_train: pd.Series,  # noqa: N803
+                y_train: pd.Series[int],  # noqa: N803
                 **kwargs: Any,
             ) -> None:
                 assert Path.cwd() == isolated_search_directory
@@ -343,7 +343,7 @@ class TestTrainContract:
             def fit(
                 self,
                 X_train: pd.DataFrame,  # noqa: N803
-                y_train: pd.Series,  # noqa: N803
+                y_train: pd.Series[int],  # noqa: N803
                 **kwargs: Any,
             ) -> None:
                 entered_fit.wait()

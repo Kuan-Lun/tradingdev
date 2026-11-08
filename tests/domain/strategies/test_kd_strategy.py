@@ -18,7 +18,7 @@ from tradingdev.domain.strategies.bundled.kd_strategy.config import (
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from tests.domain.strategies.conftest import LookAheadAssertion
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 
@@ -93,7 +93,7 @@ class TestKDStrategy:
     def test_no_look_ahead_bias(
         self,
         sample_ohlcv_with_kd: pd.DataFrame,
-        assert_no_look_ahead: Callable[..., None],
+        assert_no_look_ahead: LookAheadAssertion,
     ) -> None:
         assert_no_look_ahead(
             self.strategy,

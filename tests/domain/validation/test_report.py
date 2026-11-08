@@ -1,7 +1,9 @@
 """Fold reports retain unavailable values and identify descriptive aggregation."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,8 +13,11 @@ from tradingdev.domain.validation.report import (
 )
 from tradingdev.domain.validation.walk_forward import WalkForwardResult
 
+if TYPE_CHECKING:
+    from tradingdev.domain.performance.catalog import MetricScalar
 
-def _fold(index: int, metrics: dict[str, Any]) -> WalkForwardResult:
+
+def _fold(index: int, metrics: dict[str, MetricScalar]) -> WalkForwardResult:
     moment = datetime(2024, 1, 1, tzinfo=UTC)
     return WalkForwardResult(
         fold_index=index,

@@ -51,6 +51,8 @@ from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
+    from types import FrameType
+
     import pandas as pd
 
     from tradingdev.domain.backtest.result import BacktestResult
@@ -100,7 +102,7 @@ class _TrialTimeoutError(BaseException):
     """
 
 
-def _trial_timeout_handler(signum: int, frame: Any) -> None:
+def _trial_timeout_handler(signum: int, frame: FrameType | None) -> None:
     raise _TrialTimeoutError("Trial run exceeded the manifest timeout")
 
 

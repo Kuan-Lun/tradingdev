@@ -11,8 +11,15 @@ import talib
 
 from tradingdev.domain import indicators
 
-OHLC = tuple[pd.Series, pd.Series, pd.Series]
-Compute = Callable[[pd.Series, pd.Series, pd.Series], list[pd.Series]]
+type OHLC = tuple[pd.Series[float], pd.Series[float], pd.Series[float]]
+type Compute = Callable[
+    [
+        pd.Series[float] | pd.Series[int],
+        pd.Series[float] | pd.Series[int],
+        pd.Series[float] | pd.Series[int],
+    ],
+    list[pd.Series[float]],
+]
 
 
 @pytest.fixture
@@ -21,7 +28,7 @@ def ohlc(sample_ohlcv_with_kd: pd.DataFrame) -> OHLC:
     return df["high"], df["low"], df["close"]
 
 
-def _assert_close(actual: pd.Series, expected: pd.Series) -> None:
+def _assert_close(actual: pd.Series[float], expected: pd.Series[float]) -> None:
     assert actual.index.equals(expected.index)
     np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-10, equal_nan=True)
 
@@ -76,7 +83,9 @@ _IDS = [name for name, *_ in _INDICATORS]
 _COMPUTATIONS = [(name, compute) for name, compute, *_ in _INDICATORS]
 
 
-def _ema_reference(close: pd.Series, length: int, start: int = 0) -> pd.Series:
+def _ema_reference(
+    close: pd.Series[float], length: int, start: int = 0
+) -> pd.Series[float]:
     """Direct recurrence with an explicit seed window, independent of TA-Lib."""
     expected = pd.Series(np.nan, index=close.index, dtype="float64")
     first = start + length - 1
@@ -165,7 +174,7 @@ class TestNumericalDefinitions:
         high, low, close = ohlc
         result = indicators.adx(high, low, close, length=7)
         high_values, low_values, close_values = (
-            series.to_numpy(dtype=np.float64) for series in ohlc
+            np.asarray(series, dtype=np.float64) for series in ohlc
         )
         expected = (
             talib.ADX(high_values, low_values, close_values, timeperiod=7),
@@ -261,7 +270,7 @@ class TestMissingValues:
         high, low, close = (series.copy() for series in ohlc)
         close.iloc[50] = np.nan
         high_values, low_values, close_values = (
-            series.to_numpy(dtype=np.float64) for series in (high, low, close)
+            np.asarray(series, dtype=np.float64) for series in (high, low, close)
         )
         line, signal, histogram = talib.MACD(close_values)
         upper, middle, lower = talib.BBANDS(close_values, timeperiod=20)
@@ -314,7 +323,9 @@ class TestValidation:
         ],
     )
     def test_indicator_specific_period_ranges(
-        self, call: Callable[[pd.Series, pd.Series, pd.Series], object], ohlc: OHLC
+        self,
+        call: Callable[[pd.Series[float], pd.Series[float], pd.Series[float]], object],
+        ohlc: OHLC,
     ) -> None:
         with pytest.raises(ValueError, match="integer between"):
             call(*ohlc)
@@ -339,7 +350,7 @@ class TestValidation:
     @pytest.mark.parametrize("mismatch", ["order", "length", "labels"])
     def test_ohlc_indexes_must_match(
         self,
-        call: Callable[[pd.Series, pd.Series, pd.Series], object],
+        call: Callable[[pd.Series[float], pd.Series[float], pd.Series[float]], object],
         mismatch: str,
         ohlc: OHLC,
     ) -> None:

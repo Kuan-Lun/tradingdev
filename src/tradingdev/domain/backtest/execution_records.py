@@ -189,7 +189,8 @@ def _snapshot(log: dict[str, Any], prefix: str, price: float) -> AccountSnapshot
     )
 
 
-def _optional_price(bar: pd.Series, name: str) -> float | None:
+def _optional_price(bar: pd.Series[Any], name: str) -> float | None:
+    # A DataFrame row mixes its timestamp and numeric market columns.
     value = bar.get(name)
     return None if value is None or pd.isna(value) else float(value)
 

@@ -235,10 +235,13 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     run_parameters = scenario.overrides if scenario.experiment else scenario.parameters
     selected["signal"] = expected_signals(selected, scenario, run_parameters)
     reference = BacktestService().create_engine(bt).run(selected).metrics
+    assert reference["total_trades"] is not None
     assert reference["total_trades"] > 0
     for metric in ("total_return", "annual_return", "total_trades", "max_drawdown"):
+        reference_value = reference[metric]
+        assert reference_value is not None
         assert math.isclose(
-            run["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
+            run["metrics"][metric], reference_value, rel_tol=1e-9, abs_tol=1e-9
         ), (metric, run["metrics"][metric], reference[metric])
     detailed = run_service.get_run_metrics(run["run_id"])
     assert detailed["success"] and detailed["scope"] == "full", detailed
@@ -248,8 +251,10 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
         assert stored["metrics"][metric] == value, (metric, "SQLite/artifact mismatch")
     for metric in ("daily_pnl_mean", "total_volume", "n_days"):
         assert metric not in run["metrics"]
+        reference_value = reference[metric]
+        assert reference_value is not None
         assert math.isclose(
-            detailed["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
+            detailed["metrics"][metric], reference_value, rel_tol=1e-9, abs_tol=1e-9
         ), (metric, detailed["metrics"][metric], reference[metric])
     artifacts = ArtifactService(workspace=workspace).list_artifacts(run["run_id"])
     by_type = {artifact["artifact_type"]: artifact for artifact in artifacts}
@@ -321,10 +326,13 @@ def verify_novice_intake(root: Path) -> None:
         .run(selected)
         .metrics
     )
+    assert reference["total_trades"] is not None
     assert reference["total_trades"] > 0
     for metric in ("total_return", "annual_return", "total_trades", "max_drawdown"):
+        reference_value = reference[metric]
+        assert reference_value is not None
         assert math.isclose(
-            run["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
+            run["metrics"][metric], reference_value, rel_tol=1e-9, abs_tol=1e-9
         ), (metric, run["metrics"][metric], reference[metric])
 
 

@@ -48,7 +48,7 @@ def _undefined_walk_forward_fold() -> WalkForwardResult:
 
 
 def _undefined_walk_forward_summary() -> dict[str, object]:
-    return summarize_results([_undefined_walk_forward_fold()])
+    return dict(summarize_results([_undefined_walk_forward_fold()]))
 
 
 def _reject_nonfinite(constant: str) -> object:
