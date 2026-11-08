@@ -139,6 +139,43 @@ def test_main_passes_explicit_proxy_allowlists(
     assert options["host"] == "127.0.0.1"
 
 
+def test_public_url_cli_validates_before_creating_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tradingdev.mcp import server as module
+
+    workspace = tmp_path / "unused"
+    for options in (
+        ["--public-base-url", "https://public.example"],
+        ["--web", "--public-base-url", "https://user:secret@public.example"],
+    ):
+        with pytest.raises(SystemExit) as error:
+            main(["--workspace", str(workspace), *options])
+        assert error.value.code == 2 and not workspace.exists()
+
+    urls = []
+    original = module.create_server
+
+    def create(
+        paths: WorkspacePaths, *, public_base_url: str | None = None
+    ) -> StrictMCPServer:
+        urls.append(public_base_url)
+        return original(paths, public_base_url=public_base_url)
+
+    monkeypatch.setattr(module, "create_server", create)
+    monkeypatch.setattr(StrictMCPServer, "run", lambda *args, **kwargs: None)
+    main(
+        [
+            "--workspace",
+            str(workspace),
+            "--web",
+            "--public-base-url",
+            "https://public.example/prefix/",
+        ]
+    )
+    assert urls == ["https://public.example/prefix"]
+
+
 def test_server_instances_keep_generated_strategies_in_their_workspace(
     runtime_root: Path,
 ) -> None:
@@ -245,15 +282,16 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     assert "quote confirmation_summary verbatim" in instructions
     assert "Preserve every label, value, unit and train/test role" in instructions
     assert "answer or clarify and wait" in instructions
-    assert "Deliver confirmation_artifact" in instructions
+    assert "get_artifact_download with confirmation_artifact's ID/hash" in instructions
     assert "Link server_path only" in instructions
     assert "transport alone does not prove access" in instructions
     assert 'section="research") before explaining date boundaries' in instructions
     assert "No code block, file:// or invented URI" in instructions
-    assert "omit the server path" in instructions
+    assert "append an inaccessible original link" in instructions
     assert "do not claim the user can read the HTML" in instructions
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     assert "get_artifact" in tools
+    assert "get_artifact_download" in tools
     for name in (
         "prepare_backtest",
         "prepare_comparison",

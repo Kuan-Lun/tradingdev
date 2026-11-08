@@ -23,32 +23,34 @@ from tradingdev.domain.research_notes import (  # noqa: TC001 -- MCP runtime sch
     NoteVersion,
     ResearchNoteDraft,
 )
-from tradingdev.mcp.archive_downloads import ArchiveDownloads
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer
 
     from tradingdev.app.research_note_service import ResearchNoteService
+    from tradingdev.mcp.artifact_downloads import ArtifactDownloads
 
 
-def register(mcp: MCPServer, service: ResearchNoteService) -> None:
-    downloads = ArchiveDownloads(service.archives)
+def register(
+    mcp: MCPServer, service: ResearchNoteService, downloads: ArtifactDownloads
+) -> None:
 
     def deliver(
         result: NoteExport | ErrorResponse, ctx: Context[Any, Any]
     ) -> NoteExport | ErrorResponse:
         if isinstance(result, NoteExport):
-            try:
-                request = ctx.request_context.request
-            except ValueError:
-                request = None
-            if request is not None:
-                result = downloads.attach(result, str(request.base_url))
+            delivery = downloads.for_context(result.artifact_id, result.sha256, ctx)
+            if isinstance(delivery, ErrorResponse):
+                if delivery.code != "artifact_delivery_unavailable":
+                    return delivery
+            else:
+                result = result.model_copy(
+                    update={
+                        "download_url": delivery.download_url,
+                        "download_expires_at": delivery.download_expires_at,
+                    }
+                )
         return result
-
-    mcp.custom_route("/research-download/{archive_id}", methods=["GET"])(
-        downloads.serve
-    )
 
     @mcp.tool(
         annotations=ToolAnnotations(

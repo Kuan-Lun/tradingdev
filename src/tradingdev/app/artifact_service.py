@@ -9,6 +9,10 @@ from uuid import uuid4
 
 import yaml
 
+from tradingdev.adapters.storage.artifact_delivery import (
+    ArtifactBytes,
+    read_delivery_artifact,
+)
 from tradingdev.adapters.storage.artifact_text import (
     DEFAULT_TEXT_LIMIT,
     ArtifactTextChangedError,
@@ -51,6 +55,12 @@ class ArtifactService:
     def list_artifacts(self, run_id: str | None = None) -> list[dict[str, Any]]:
         """List artifact metadata."""
         return self._store.list_artifacts(run_id)
+
+    def read_download(self, artifact_id: str, expected_sha256: str) -> ArtifactBytes:
+        """Read immutable delivery bytes without generating or executing anything."""
+        return read_delivery_artifact(
+            self._workspace, self._store, artifact_id, expected_sha256
+        )
 
     def list_artifacts_page(
         self,

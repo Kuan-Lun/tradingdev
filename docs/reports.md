@@ -347,7 +347,10 @@ the complete selected ML block. `scope_count` includes both run scopes and ML
 candidates, while `available_scopes` remains the mapping of run scopes.
 The response gives path, artifact IDs
 and HTML SHA-256 without placing an unbounded document into the MCP response.
-`get_artifact` can retrieve the files; local paths are not public URLs.
+For HTTP, use `get_artifact_download` with the report artifact ID and SHA-256;
+[reading artifact delivery](run_artifacts.md#reading-artifact-delivery) defines the
+short-lived link, verification and refresh contract. `get_artifact` supports text
+retrieval for verified client copies; local paths require actual file access.
 
 Publication prevents overwriting different content. Identical requests reuse an
 intact registered report; missing/modified files for a registered report are errors.
@@ -479,16 +482,15 @@ Lock files remain for concurrency coordination. No saved notes or archives expir
 automatically. Downloads verify registered identity and the exact returned bytes;
 they remain readable if original reports later disappear.
 
-HTTP exports return a 15-minute capability URL from the request's base URL. Custom
-routes do not inherit MCP authentication, so the URL signature binds archive ID,
-ZIP hash and expiry to a per-process secret. Anyone holding the URL can download
-that ZIP until expiry; a restart invalidates URLs, not stored artifacts. Deployment
-must provide the correct public base URL/proxy configuration and transport security.
+HTTP exports return a capability URL using the common
+[reading artifact delivery contract](run_artifacts.md#reading-artifact-delivery).
+The former archive-only `/research-download/` route is replaced by
+`/artifact-download/`; deployments must expose that route and obtain fresh links.
 Use `get_research_archive(archive_id)` to refresh a saved ZIP without reading its
 original note or reports. Discover IDs through
 `list_artifacts(artifact_type="research_archive_zip")`. CLI uses
-`archive ARCHIVE_ID`. Responses use attachment/no-store headers; missing or
-changed files fail rather than regenerate. Stdio and CLI return server-local
+`archive ARCHIVE_ID`. Missing or changed files fail rather than regenerate.
+Stdio and CLI return server-local
 `path`/`html_path`, with no fabricated remote URL; reading a saved archive returns
 null `html_path` if any separately extracted reading file is missing, changed or
 symlinked. The verified ZIP remains independently usable. Clients need file access or their

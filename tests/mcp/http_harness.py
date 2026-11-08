@@ -72,6 +72,7 @@ async def http_plan_server(
     transport: Literal["sse", "streamable-http"] = "streamable-http",
     allowed_hosts: tuple[str, ...] = (),
     allowed_origins: tuple[str, ...] = (),
+    public_base_url: str | None = None,
 ) -> AsyncIterator[HTTPPlanServer]:
     root = Path(mkdtemp(prefix="tradingdev-http-test-")).resolve()
     task: asyncio.Task[None] | None = None
@@ -95,7 +96,9 @@ async def http_plan_server(
                 "ExecutionPlanService",
                 lambda *args, **kwargs: context.service,
             )
-            mcp = server_module.create_server(WorkspacePaths(root / "workspace"))
+            mcp = server_module.create_server(
+                WorkspacePaths(root / "workspace"), public_base_url=public_base_url
+            )
         # sse-starlette keeps process-wide shutdown state and starts a detached
         # watcher. Scope both to this in-process server, including teardown, so
         # a previous server cannot immediately terminate the next SSE response.

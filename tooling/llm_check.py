@@ -24,6 +24,7 @@ _SCENARIOS = (
     "research_proposal",
     "strategy_execution_guidance",
     "research_delivery",
+    "http_delivery",
 )
 
 

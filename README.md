@@ -122,7 +122,7 @@ uv run --locked tradingdev-mcp \
 將 `--workspace` 換成執行 server 的主機上用來保存策略、行情與回測結果的資料夾絕對路徑。
 將同一台電腦上的客戶端 MCP URL 設為 `http://127.0.0.1:8000/mcp`，
 並保持此終端機執行；停止 server 時按 `Ctrl+C`。
-這是 MCP 工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
+這是 MCP 工具端點，不是瀏覽器操作介面；策略的網頁操作請使用 Dashboard。
 
 `127.0.0.1` 指向發起連線的設備本身，另一台設備不能直接用這個網址連到你的主機。
 服務預設只監聽 `127.0.0.1`；`--host` 可指定監聽 IP，例如 `--host 0.0.0.0`
@@ -138,13 +138,18 @@ MCP HTTP 端點預設僅接受本機 `127.0.0.1`、`localhost`、`[::1]` 的 Hos
 uv run --locked tradingdev-mcp \
   --workspace /absolute/path/to/tradingdev-workspace --web --port 8000 \
   --allow-host research.example.com \
-  --allow-origin https://research.example.com
+  --allow-origin https://research.example.com \
+  --public-base-url https://research.example.com
 ```
 
 兩個允許選項可重複指定；值須精確符合請求（含非預設連接埠），不接受萬用字元。
-允許清單檢查適用於 Streamable HTTP 與 SSE 的 MCP 端點；研究封存下載端點仍依簽章網址
+允許清單檢查適用於 Streamable HTTP 與 SSE 的 MCP 端點；產物下載端點仍依簽章網址
 驗證，不使用此允許清單。允許清單不是登入驗證，也不授予跨來源瀏覽器讀取權限。
 代理須另行處理使用者驗證、TLS 及所需的瀏覽器跨來源政策。
+`--public-base-url` 指定使用者可達的公開網址；代理有路徑前綴時一併填入，
+例如 `https://research.example.com/trading`。代理須將該前綴下的 `/mcp` 與
+`/artifact-download/` 轉送到後端相應路徑。未設定時使用請求的 base URL，
+需確保代理轉送的協定、Host 與路徑正確；這個設定不會建立代理或放寬允許清單。
 stdio 不使用這些 HTTP 設定。
 只支援雲端 URL 的客戶端也無法透過這個本機位址連接。
 
@@ -217,14 +222,17 @@ MCP_ALLOWED_ORIGIN=https://research.example.com
 ```
 
 將既有反向代理的目的地設為 `http://127.0.0.1:8000`，保留原始 Host、路徑與
-SSE 串流；公開 `/mcp` 及研究封存下載所需的 `/research-download/` 路徑。
+SSE 串流；公開 `/mcp` 及確認單、報告與研究封存所需的 `/artifact-download/` 路徑。
+舊版的 `/research-download/` 已由此共用路徑取代，升級後請向助手重新取得連結。
 若代理與 Docker 主機不同，或代理本身在另一個容器中，`127.0.0.1` 指向代理自身；
 請將 `MCP_BIND_IP` 改為 Docker 主機可達的內網 IP，代理也改連該 IP，並限制只有代理能存取。
 
 使用 HTTPS 代理時，另將 `MCP_TRUSTED_PROXIES` 設為**容器實際看到的代理來源 IP**
 （常是 Docker 網路閘道，可由請求後的 `docker compose logs mcp` 存取紀錄確認），
-並讓代理傳送 `X-Forwarded-Proto: https`。這樣匯出的下載網址才會使用 HTTPS；
+並讓代理傳送 `X-Forwarded-Proto: https`，讓後端辨識公開的協定；
 未信任的轉送標頭會被忽略。多個可信 IP 可用逗號分隔，勿將不受信任的來源納入。
+若代理改寫 Host 或使用路徑前綴，可在 `docker-compose.yml` 的 `command` 追加
+`--public-base-url` 及公開網址，明確指定產物連結的目的地。
 
 若要在受控網路直接以 IP 連線，例如伺服器為 `192.168.1.20`，改為：
 
@@ -316,11 +324,11 @@ docker compose up -d --build
 3. **等待正式結果**：助手提交工作、追蹤進度，完成後讀取結果並說明績效。
 
 助手會在提供確認單後等待你的回覆。最初請它回測、對計畫提問或未回覆，都不算同意。
-跨電腦使用時，須先將完整確認單保存成你能開啟的本機檔案或附件，核對完整性後，
-助手才提供該副本的閱讀連結；伺服器上的檔案路徑不能直接當成你電腦上的連結。
-目前確認單沒有直接的 HTTP 閱讀網址。若客戶端無法保存並核對可讀副本，
-助手會說明交付限制，待你能閱讀確認單後
-才請你確認；重新取得檔案不延長計畫有效期。
+跨電腦以 HTTP 連線時，助手可提供確認單與報告的短效閱讀網址，不必存取伺服器檔案路徑。
+連結有效十五分鐘，持有者皆可讀取該份文件；請只分享給預期的讀者。
+連結過期或伺服器重啟後，可請助手重新取得，無須重跑研究，也不延長計畫有效期。
+stdio 或無法使用 HTTP 交付時，須透過客戶端保存並核對完整的本機檔案或附件，
+助手才提供該副本的閱讀連結。無法交付可讀文件時，助手會說明限制，待你能閱讀後才請你確認。
 這個流程依賴助手如實轉交你的決定，系統無法獨立驗證回覆是否來自你本人；
 詳細限制見[執行確認契約](docs/execution_plans.md#execution-plans-and-confirmation-documents)。
 確認單有效期為一小時，過期後需重新準備。通過檢查不代表行情可取得或正式執行一定成功；

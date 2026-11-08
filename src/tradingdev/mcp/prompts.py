@@ -64,10 +64,10 @@ Strategy development workflow
      availability or successful full execution.
 
 5. Present the prepared plan for review (all prepare_* tools).
-   - Deliver confirmation_artifact through the host's file/attachment mechanism;
-     get_artifact describes complete, hash-bound retrieval. Link server_path only
-     when that exact path is accessible to the user; transport alone does not prove
-     access. Otherwise deliver a verified client copy and omit the server path.
+   - Use get_artifact_download with confirmation_artifact's ID/hash for HTTP
+     delivery. If unavailable, get_artifact describes complete, hash-bound copying
+     through the host's file/attachment mechanism. Link server_path only when that
+     exact path is accessible to the user; transport alone does not prove access.
      Present one readable HTML link on a normal Markdown line, preserving its exact
      destination (encode special path characters). No code block, file:// or invented
      URI. Do not paste the entire plan data or append an inaccessible original link.
@@ -129,6 +129,9 @@ Strategy development workflow
      intermediate link or delegated answer alone is not delivery: the orchestrator
      must include the link and guide in its own final answer. Do not claim omitted
      sections are included.
+     Use get_artifact_download with the report's artifact_id/sha256 for HTTP;
+     otherwise deliver a verified host copy or a user-accessible local path.
+     Explain link expiry; refresh links without rerunning research.
 
 9. Preserve research summaries and deliverables.
    - When saving/sharing research is requested, use save_research_note at meaningful

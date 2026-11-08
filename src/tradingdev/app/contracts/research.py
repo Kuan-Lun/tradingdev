@@ -193,6 +193,17 @@ class ArtifactResponse(ContractModel):
     content_page: ArtifactContentPage | None = None
 
 
+class ArtifactDownload(ContractModel):
+    """A temporary bearer URL bound to verified saved bytes, not a filesystem path."""
+
+    success: Literal[True] = True
+    artifact_id: str
+    sha256: str
+    mime_type: Literal["text/html", "application/zip"]
+    download_url: str
+    download_expires_at: int
+
+
 class FeatureRequestMetadata(ContractModel):
     """The feature request recorded in an artifact's metadata."""
 

@@ -649,6 +649,50 @@ Metadata remains available for binary artifacts and does not read their contents
 Exact diagnostics are maintained in [ArtifactService.get_artifact](../src/tradingdev/app/artifact_service.py).
 A server-local path is not a public download URL.
 
+### Reading Artifact Delivery
+
+`get_artifact_download(artifact_id, expected_sha256)` provides a short-lived HTTP
+URL for registered execution confirmation HTML, research report HTML and research
+archive ZIP. Obtain the identity/hash from the producer response or `get_artifact`
+metadata. The [response schema](../src/tradingdev/app/contracts/research.py)
+defines `ArtifactDownload`; [the tool](../src/tradingdev/mcp/tools/artifacts.py)
+provides the client-visible contract. Other artifacts, including conversation
+exports, arbitrary files and manifests, are not served by this endpoint.
+
+`ArtifactService.read_download` delegates to
+[read_delivery_artifact](../src/tradingdev/adapters/storage/artifact_delivery.py),
+which restricts IDs/types to their canonical workspace paths, rejects symlinks and
+non-regular or oversized files, and verifies the registration and exact bytes read
+against the requested hash. The same reader validates research archive attachments
+and saved ZIP downloads. Issuance and every HTTP GET repeat this verification;
+changed, missing or unsupported files fail without regeneration. The byte limit is
+defined by `MAX_DELIVERY_BYTES`; it is not a limit on metadata or paged text reads.
+
+[ArtifactDownloads](../src/tradingdev/mcp/artifact_downloads.py) owns the common
+`/artifact-download/{artifact_id}` route, URL lifetime and headers. It signs the
+artifact ID, SHA-256 and expiry with a per-server secret. URLs are bearer
+capabilities: anyone holding one can read those bytes until expiry. Custom routes
+do not inherit MCP authentication or Host/Origin checks. Restarting invalidates
+links, not saved files. Refresh by calling the tool again; this neither executes
+research nor extends a plan's approval deadline. Invalid/expired capabilities
+return 403; valid capabilities whose artifact is no longer available return 404.
+
+HTML opens inline with an opaque sandbox origin; its CSP permits embedded scripts
+and downloads but blocks network connections, forms and embedding by other pages.
+ZIP uses attachment disposition. Responses use no-store, no-referrer and nosniff
+headers. These browser restrictions are not a sandbox for generated Python.
+No file bytes enter the URL response or model context.
+
+Only an HTTP request context can issue URLs. `--public-base-url` supplies an explicit
+public HTTP origin with an optional proxy prefix; otherwise the request base URL
+is used. The option does not create a proxy or bypass its access controls. Deployment
+must expose the common route and configure public addressing as described in the
+[MCP setup](../README.md#2-啟動-mcp-server-並連接助手). Stdio returns
+`artifact_delivery_unavailable`; use a verified host copy or an accessible local
+file. Do not infer file access from the transport, invent a URL or append an
+inaccessible server path. A successful issuance verifies server bytes, not human
+access or approval; clients must report delivery failures.
+
 ### Completed Run Files
 
 A revision's base YAML remains unchanged; a run's config projection contains its
