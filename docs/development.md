@@ -14,10 +14,11 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上及已初始化的鎖定工具鏈，
-含 Mermaid 時另需 Chrome／Chromium。本機 npm 用於初始化依賴，Python 簡報命令的
-build／watch／check／package 預設及離線測試不呼叫 npm；VS Code 的 build／watch 工作
-會在啟動時按需安裝鎖定依賴，Cloudflare 發布入口會先執行 `npm ci`。
+一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上；
+含 Mermaid 時另需 Chrome／Chromium。VS Code 的 build／watch 工作需 uv 與 npm，
+啟動時先同步鎖定的 Python 依賴，再按需初始化本機 Marp 工具鏈。
+Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check／package 與離線測試，
+均要求工具鏈已初始化，執行時不呼叫 npm。Cloudflare 發布入口會先執行 `npm ci`。
 完整離線 pytest 與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器；
 離線表示執行時不呼叫模型或下載依賴。
 初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
