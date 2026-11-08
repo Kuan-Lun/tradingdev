@@ -624,20 +624,7 @@ Application services 負責跨領域流程；MCP、CLI 與 Dashboard 以不同�
 
 <!-- _class: compact -->
 
-```text
-使用者                  AI 代理                   TradingDev
-   │                       │                          │
-   ├─策略想法────────────▶│                          │
-   │◀─追問必要條件────────┤                          │
-   ├─補齊研究設定────────▶│                          │
-   │                       ├─準備回測計畫───────────▶│
-   │                       │◀─確認單與檢查摘要───────┤
-   │◀─顯示計畫、等待決定───┤                          │
-   ├─明確決定────────────▶│                          │
-   │                       ├─同意後提交─────────────▶│
-   │                       │◀─工作狀態與結果─────────┤
-   │◀─AI 解讀結果───────────┤                          │
-```
+![w:1000 使用者、AI 代理與 TradingDev 的外部訊號流程](assets/architecture-external-flow.png)
 
 準備前會補齊標的、期間、K 棒頻率等必要條件；計畫經同意後才執行。
 
@@ -653,22 +640,7 @@ Application services 負責跨領域流程；MCP、CLI 與 Dashboard 以不同�
 
 <!-- _class: compact -->
 
-```text
- MCP      App      Plan     Worker   Store   Result
-  │        │        │        │        │        │
-  ├prepare▶│        │        │        │        │
-  │        ├check──▶│        │        │        │
-  │        │◀receipt┤        │        │        │
-  ◀plan───┤        │        │        │        │
-  ├approve▶│        │        │        │        │
-  │        ├submit job─────▶│        │        │
-  │        │        │        ├save run▶│        │
-  ├query─▶│        │        │        │        │
-  │        ├get / compare / rank────────────────▶│
-  │        │        │        │        ├read───▶│
-  │        ◀metrics / rank─────────────────────┤        │
-  ◀reply──┤        │        │        │        │
-```
+![w:1000 TradingDev 內部模組的訊號流程](assets/architecture-internal-flow.png)
 
 Plan 代表 ExecutionPlan／Preflight；Worker 使用資料與回測模組；Result 代表 Run、Ranking 與 Report services。
 
