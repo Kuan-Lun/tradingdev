@@ -272,7 +272,7 @@ def test_plan_cli_rejects_index_movement_without_discarding_it(
     [
         ("docs/talks/tradingdev-introduction/slides.md", "# Slides\n", "presentations"),
         ("docs/talks/tradingdev-introduction/theme.css", "body {}\n", "presentations"),
-        ("docs/talks/tradingdev-introduction/index.html", "<html>\n", "presentations"),
+        ("docs/talks/tradingdev-introduction/index.html", "<html>\n", "code"),
         ("docs/.nojekyll", "", "presentations"),
         ("docs/.nojekyll", "unexpected config\n", "code"),
         ("docs/unknown/index.html", "<html>\n", "code"),
@@ -593,6 +593,9 @@ def test_srs_review_tracks_both_git_sides_and_keeps_stronger_checks(
         "tooling/marp/package.json",
         "tooling/marp/package-lock.json",
         "tooling/marp/render-diagrams.mjs",
+        "tooling/marp/build.mjs",
+        "tooling/marp/install-browser.mjs",
+        "scripts/build-presentations-site.sh",
         "wrangler.jsonc",
     ],
 )
@@ -630,4 +633,35 @@ def test_presentation_toolchain_does_not_allow_unregistered_or_product_changes(
     assert (
         classify_changes(root, base, _git(root, "write-tree")).delivery_profile
         == "full"
+    )
+
+
+@pytest.mark.parametrize("extra", ["", "\nsrc/\n", "\n #pattern\n", "\n \n"])
+def test_only_generated_preview_ignore_rule_uses_presentation_scope(
+    repository: tuple[Path, str],
+    extra: str,
+) -> None:
+    root, base = repository
+    (root / ".gitignore").write_text(
+        "/docs/talks/tradingdev-introduction/index.html\n" + extra
+    )
+    _git(root, "add", ".gitignore")
+    assert classify_changes(root, base, _git(root, "write-tree")).kind == (
+        "code" if extra else "presentations"
+    )
+
+
+def test_removing_generated_preview_retains_presentation_validation(
+    repository: tuple[Path, str],
+) -> None:
+    root, _ = repository
+    name = "docs/talks/tradingdev-introduction/index.html"
+    path = root / name
+    path.parent.mkdir(parents=True)
+    path.write_text("<html>saved output</html>")
+    _git(root, "add", name)
+    base = _git(root, "write-tree")
+    _git(root, "rm", "--cached", name)
+    assert classify_changes(root, base, _git(root, "write-tree")).candidate_checks == (
+        "presentations",
     )

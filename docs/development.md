@@ -248,7 +248,7 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 ```
 
 瀏覽 `http://127.0.0.1:8765/` 確認版面、頁碼、導覽與講者模式；結束伺服器按
-`Ctrl+C`。修改來源或樣式後同步提交重建的 HTML。
+`Ctrl+C`。Git 保存來源與資源；本機產生的 `index.html` 由 `.gitignore` 忽略。
 
 簡報採整包離線交付，`assets/` 圖片及 `evidence/` 報告沿用相對路徑。
 `scripts/check-presentations.sh` 另核對交付 HTML 的 `href`、`src`、`poster`、`xlink:href`
@@ -261,19 +261,24 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 不符格式、可執行檔、符號連結或混合產品修改仍走原有保守分流。
 格式辨識不證明報告數值、ZIP 內容或策略正確，案例語意、來源與完整性仍須另行審閱。
 `scripts/presentations.sh package --output <新資料夾>` 檢查後建立資料夾及同名 ZIP，
-不覆寫既存輸出。`scripts/stage-presentations.sh` 只複製既有成品至固定的
-`site-dist/tradingdev/` 並替換舊發布內容，不編譯或安裝工具；供 Wrangler 部署時呼叫。
+不覆寫既存輸出。打包與檢查都從來源建置，無須先保存預覽 HTML。
+`scripts/stage-presentations.sh` 使用已安裝的簡報工具編譯來源，以 Python 3.14 標準函式庫
+驗證成品後，將 HTML、圖片與案例證據放入 `site-dist/tradingdev/`；成功後才替換舊發布內容。
+Cloudflare 使用 `scripts/build-presentations-site.sh` 先安裝鎖定的 npm 工具與 Chrome，
+再呼叫上述編譯及發布準備步驟，不安裝 TradingDev 的 Python 產品依賴。
 打包、解壓與發布的使用方式見[簡報編輯指南](talks/tradingdev-introduction/README.md)。
-專項檢查以臨時目錄重建並比對，不覆寫工作樹；缺少工具鏈或輸出不同步會失敗。
+專項檢查在臨時目錄產生與驗證完整交付，不依賴本機預覽檔，也不覆寫工作樹；缺少工具鏈會失敗。
 可用 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定另一套已初始化且 lock 相符的工具鏈。
 
 含 Mermaid 圖表時，build／check 及相關工具測試另需本機 Chrome，或以
 `TRADINGDEV_PRESENTATION_BROWSER` 指定 Chromium 執行檔；`setup` 不安裝瀏覽器。
 [render-diagrams.mjs](../tooling/marp/render-diagrams.mjs) 使用鎖定的 Mermaid 與 Noto Sans TC
 在獨立 headless 瀏覽器產生 SVG，圖表頁面不載入網路資源；完成或失敗後關閉瀏覽器，
-外層程序監督器負責逾時清理。SVG 與所需字型嵌入 HTML，觀看端不需要建置工具。
+外層程序監督器負責逾時清理。[build.mjs](../tooling/marp/build.mjs) 是本機與雲端共用的
+編譯入口。SVG 與所需字型嵌入 HTML，觀看端不需要建置工具。
 替代工具鏈的套件宣告、lock 及渲染腳本都須與受查 snapshot 相符。
-瀏覽器版本仍可能影響 SVG 輸出；重建核對失敗時須確認差異與版面，再提交重建結果。
+瀏覽器版本仍可能影響 SVG 版面；須以瀏覽器確認本機與分支預覽的圖表。雲端 Chrome
+版本由鎖定的 Puppeteer 決定，本機可沿用已安裝的 Chrome 或明示執行檔。
 圖表編輯方式與支援範圍見[簡報編輯指南](talks/tradingdev-introduction/README.md#頁面版型與撰寫方式)。
 
 ### 簡報網站發布設定
@@ -284,9 +289,10 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 
 #### Cloudflare 自動發布
 
-Cloudflare Workers Builds 可連接本 repository，在 `main` 更新時發布已提交的
-`index.html`、`assets/` 與 `evidence/`。本機仍須先編譯、檢查並提交 HTML；雲端只複製與部署成品，
-不執行 Marp、Python 檢查或安裝 TradingDev 產品依賴。
+Cloudflare Workers Builds 可連接本 repository，在 `main` 更新時從 `slides.md`、`theme.css`
+與 Mermaid 建置 `index.html`，再將 HTML、`assets/` 與 `evidence/` 一起發布。
+Git 不保存產生的簡報 HTML；雲端只安裝簡報專用的 npm 工具與瀏覽器，
+成品驗證使用 Python 3.14 標準函式庫，不安裝 TradingDev 產品依賴或執行產品測試。
 
 在 Cloudflare 的 **Workers & Pages → Create application → GitHub** 選擇本
 repository；GitHub 授權範圍只選需要發布的 repository。設定如下：
@@ -296,24 +302,26 @@ repository；GitHub 授權範圍只選需要發布的 repository。設定如下�
 | Worker name | 與根目錄 [wrangler.jsonc](../wrangler.jsonc) 的 `name` 相同。 |
 | Production branch | `main`。 |
 | Root directory | repository 根目錄。 |
-| Build command | 下方的複製指令。 |
+| Build command | 下方的安裝與編譯指令。 |
 | Deploy command | `npx wrangler deploy`。 |
 | Preview command（非正式分支） | 啟用分支預覽時使用 `npx wrangler preview`。 |
 
 Build command：
 
 ```bash
-bash scripts/stage-presentations.sh
+bash scripts/build-presentations-site.sh
 ```
 
 在 **Settings → Build → Build Variables and Secrets** 加入
-`SKIP_DEPENDENCY_INSTALL=1`，停用自動安裝專案依賴。部署仍會使用 Wrangler；
+`SKIP_DEPENDENCY_INSTALL=1`、`NODE_VERSION=24.22.1` 與 `PYTHON_VERSION=3.14.8`。
+停用自動安裝後，由建置腳本只安裝簡報依賴。部署仍會使用 Wrangler；
 Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
 `site-dist/tradingdev/` 是忽略的發布產物，每次重新建立，只包含簡報 HTML、圖片與明列的
 案例證據；不會將整個 `docs/` 或一般使用者 workspace 發布。
-`wrangler.jsonc` 的 `build.command` 同樣指向這份複製腳本。
+`wrangler.jsonc` 的 `build.command` 呼叫 `scripts/stage-presentations.sh`，
+使用已安裝的工具重新編譯及驗證成品；直接執行 Wrangler 前須先準備簡報工具與瀏覽器。
 Workers Builds 的 Build command 由 Cloudflare 獨立保存；請將 **Production** 與
-**Preview base** 同步設定為上述腳本，使雲端與本機的成品準備步驟一致。
+**Preview base** 同步設定為上述安裝與編譯腳本。
 
 分支預覽使用 `wrangler.jsonc` 的 `previews` 區塊；即使沒有獨立設定，也須保留空物件。
 靜態資源仍使用頂層 `assets`，正式網域的 `routes` 不放入 `previews`。
@@ -324,14 +332,20 @@ Workers Builds 的 Build command 由 Cloudflare 獨立保存；請將 **Producti
 **Build watch paths**：從 **Include paths** 移除預設的 `*`，加入以下路徑，
 並讓 **Exclude paths** 保持空白。
 
-- `docs/talks/tradingdev-introduction/index.html`
+- `docs/talks/tradingdev-introduction/slides.md`
+- `docs/talks/tradingdev-introduction/theme.css`
+- `tooling/marp/**`
+- `tooling/presentation_bundle.py`
+- `tooling/presentation_html.py`
+- `tooling/presentation_errors.py`
+- `scripts/build-presentations-site.sh`
 - `docs/talks/tradingdev-introduction/assets/**`
 - `docs/talks/tradingdev-introduction/evidence/**`
 - `scripts/stage-presentations.sh`
 - `wrangler.jsonc`
 
 這項設定由 Cloudflare 保存，用來略過一般程式、測試與文件更新，不寫在 `wrangler.jsonc`。
-`slides.md` 或 `theme.css` 修改後，須重建並提交 HTML，由 HTML 變更觸發發布。
+`slides.md`、`theme.css` 或編譯工具的提交會觸發發布；產生的 HTML 不作為監看輸入。
 Cloudflare 對零檔案變更、至少 3,000 個檔案變更或至少 20 個 commits 的推送會略過
 路徑篩選，因此這些事件仍可能觸發建置。核對略過行為時，使用一般的小型文件提交，
 不要用空提交作為不應建置的測試。
@@ -372,24 +386,6 @@ HTTP 302，轉址目標（`Location`）為 `https://www.klwang.tw/talks/`；該�
 
 簡報位址為 [https://slides.klwang.tw/tradingdev/](https://slides.klwang.tw/tradingdev/)。只有部署成功才會更新網站；
 repository 中的設定檔不代表已連接 Cloudflare 或發布。
-
-#### GitHub Pages 發布
-
-GitHub 的一般檔案頁只會顯示 HTML 原始碼。若要直接播放，可使用同一 repository
-的 GitHub Pages。
-
-取得發布授權並透過 PR 合併至主線後，由管理者在
-**Settings → Pages → Deploy from a branch** 選擇主線與 `/docs`。
-這會發布 `/docs` 下的內容，`.nojekyll` 讓 GitHub 直接提供靜態檔案；
-已有 Pages 網站時，先確認原有發布設定。
-
-沒有自訂網域且使用目前 repository 名稱時，預期位址為：
-
-```text
-https://kuan-lun.github.io/tradingdev/talks/tradingdev-introduction/
-```
-
-此位址不代表已發布；設定後須確認部署狀態並實際開啟簡報。
 
 ## MAE 研究原型
 

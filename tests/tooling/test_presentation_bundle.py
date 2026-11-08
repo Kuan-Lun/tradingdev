@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
+import sys
 import zipfile
 from io import BytesIO
 from pathlib import Path
 
+import psutil
 import pytest
 from tests.tooling.test_presentations import _html
 from tooling.presentation_bundle import (
@@ -18,6 +22,12 @@ from tooling.presentation_bundle import (
 from tooling.presentation_errors import PresentationError
 from tooling.presentation_html import check_html
 from tooling.presentations import DECK, presentation_change_allowed
+from tooling.process_guard import (
+    process_identity,
+    process_workspace,
+    run_captured,
+    terminate_tree,
+)
 
 PNG = b"\x89PNG\r\n\x1a\nfixture"
 
@@ -206,26 +216,121 @@ def test_cloudflare_stages_all_entries_and_removes_only_stale_output(
     (tmp_path / "scripts").mkdir()
     shutil.copyfile(script, tmp_path / "scripts/stage-presentations.sh")
     source = _delivery(tmp_path / DECK)
+    (source / "index.html").unlink()
+    (source / "slides.md").write_text(
+        "---\nmarp: true\npaginate: true\n---\n# Slides\n\n"
+        "![Chart](assets/chart.png)\n\n"
+        "[Report](evidence/report.html#result)\n\n---\n# End\n"
+    )
+    repository = Path(__file__).resolve().parents[2]
+    shutil.copyfile(repository / DECK / "theme.css", source / "theme.css")
+    tooling = tmp_path / "tooling"
+    shutil.copytree(
+        repository / "tooling/marp",
+        tooling / "marp",
+        ignore=shutil.ignore_patterns("node_modules"),
+    )
+    (tooling / "marp/node_modules").symlink_to(
+        repository / "tooling/marp/node_modules", target_is_directory=True
+    )
+    for name in (
+        "__init__.py",
+        "presentation_bundle.py",
+        "presentation_html.py",
+        "presentation_errors.py",
+    ):
+        shutil.copyfile(repository / "tooling" / name, tooling / name)
+    environment = {**os.environ, "TRADINGDEV_CHECK_PYTHON": sys.executable}
     target = tmp_path / "site-dist/tradingdev"
     target.mkdir(parents=True)
     (target / "stale.txt").write_text("old publication")
     sibling = tmp_path / "site-dist/other-site.txt"
     sibling.write_text("keep me")
-    subprocess.run(
+    result = run_captured(
         ["bash", str(tmp_path / "scripts/stage-presentations.sh")],
-        check=True,
-        timeout=10,
+        cwd=tmp_path,
+        timeout=30,
+        env=environment,
     )
+    assert result.returncode == 0, result.stderr
     assert check_bundle(target) == 4
+    assert not (source / "index.html").exists()
     assert not (target / "stale.txt").exists()
     assert sibling.read_text() == "keep me"
     assert (target / "assets/chart.png").read_bytes() == PNG
     assert not list((tmp_path / "site-dist").glob(".tradingdev.*"))
     shutil.rmtree(source / "assets")
-    failed = subprocess.run(
+    failed = run_captured(
         ["bash", str(tmp_path / "scripts/stage-presentations.sh")],
-        check=False,
-        timeout=10,
+        cwd=tmp_path,
+        timeout=30,
+        env=environment,
     )
     assert failed.returncode != 0
     assert check_bundle(target) == 4
+
+
+@pytest.mark.parametrize("mode", ["failure", "timeout"])
+def test_stage_check_stops_compiler_descendants_before_removing_workspace(
+    mode: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    with process_workspace(prefix="tradingdev-stage-test-", label="stage test") as root:
+        (root / "scripts").mkdir()
+        script = root / "scripts/stage-presentations.sh"
+        shutil.copyfile(repository / "scripts/stage-presentations.sh", script)
+        source = _delivery(root / DECK)
+        for name in ("slides.md", "theme.css"):
+            (source / name).write_text("source")
+        target = root / "site-dist/tradingdev"
+        target.mkdir(parents=True)
+        (target / "previous.html").write_text("previous publication")
+        binary = root / "bin"
+        binary.mkdir()
+        marker = root / "processes.json"
+        compiler = binary / "node"
+        compiler.write_text(
+            f"#!{sys.executable}\n"
+            "import json, os, subprocess, sys, time\n"
+            "from pathlib import Path\n"
+            "import psutil\n"
+            "child = subprocess.Popen([sys.executable, '-c', "
+            "'import time; time.sleep(60)'])\n"
+            "identities = [(pid, psutil.Process(pid).create_time()) "
+            "for pid in (os.getpid(), child.pid)]\n"
+            f"Path({str(marker)!r}).write_text(json.dumps(identities))\n"
+            f"time.sleep({60 if mode == 'timeout' else 0.15})\n"
+            "sys.exit(3)\n"
+        )
+        compiler.chmod(0o755)
+        environment = {
+            **os.environ,
+            "PATH": f"{binary}{os.pathsep}{os.environ['PATH']}",
+        }
+        command = ["bash", str(script)]
+        if mode == "timeout":
+            with pytest.raises(subprocess.TimeoutExpired):
+                run_captured(command, cwd=root, env=environment, timeout=0.8)
+        else:
+            result = run_captured(command, cwd=root, env=environment, timeout=10)
+            assert result.returncode == 3
+            assert not list((root / "site-dist").glob(".tradingdev.*"))
+        assert (target / "previous.html").read_text() == "previous publication"
+        identities = {
+            process
+            for pid, created in json.loads(marker.read_text())
+            if (process := process_identity(pid)) is not None
+            and process.create_time() == created
+        }
+        try:
+            for process in identities:
+                assert (
+                    not process.is_running() or process.status() == psutil.STATUS_ZOMBIE
+                )
+        finally:
+            # Preserve the assertion failure while still stopping any survivor.
+            # A typed cleanup failure retains this workspace for diagnosis.
+            terminate_tree(None, identities)
+        # SIGKILL cannot run Bash's EXIT trap. Remove the isolated workspace
+        # only after the supervisor has stopped every compiler descendant.
+    assert not root.exists()

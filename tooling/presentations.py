@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from tooling.presentation_bundle import (
     IMAGE_SUFFIXES,
+    bundle_files,
     check_bundle,
     evidence_content_allowed,
     is_image,
@@ -36,9 +35,19 @@ if TYPE_CHECKING:
 
 DECK = "docs/talks/tradingdev-introduction"
 PRESENTATION_PATHS = frozenset(
-    f"{DECK}/{name}" for name in ("README.md", "slides.md", "theme.css", "index.html")
+    f"{DECK}/{name}" for name in ("README.md", "slides.md", "theme.css")
 )
-_SPECIAL_PATHS = frozenset({"docs/.nojekyll", ".vscode/tasks.json"})
+GENERATED_HTML = f"{DECK}/index.html"
+_SPECIAL_PATHS = frozenset(
+    {"docs/.nojekyll", ".vscode/tasks.json", ".gitignore", GENERATED_HTML}
+)
+TOOLCHAIN_FILES = (
+    "package.json",
+    "package-lock.json",
+    "build.mjs",
+    "render-diagrams.mjs",
+    "install-browser.mjs",
+)
 _TOOL_PATHS = frozenset(
     {
         "tooling/presentations.py",
@@ -48,13 +57,9 @@ _TOOL_PATHS = frozenset(
         "scripts/check-presentations.sh",
         "scripts/presentations.sh",
         "scripts/stage-presentations.sh",
+        "scripts/build-presentations-site.sh",
         "wrangler.jsonc",
     }
-)
-_TITLE = "TradingDev｜能學習策略開發經驗、自我演進的研究後端"
-_DESCRIPTION = "產品介紹、使用場景、分類比較與後續開發方向"
-_MERMAID_FENCE = re.compile(
-    r'<pre\b[^>]*><code class="language-mermaid">(.*?)</code></pre>', re.DOTALL
 )
 _SETUP_HELP = "Run scripts/presentations.sh setup to install the locked toolchain."
 _NODE_HELP = (
@@ -179,6 +184,22 @@ def presentation_change_allowed(
     """
     if path in PRESENTATION_PATHS:
         return True
+    if path == GENERATED_HTML:
+        return after is None
+    if path == ".gitignore":
+        entry = f"/{GENERATED_HTML}"
+
+        def other_rules(value: bytes | None) -> list[str]:
+            return [
+                line
+                for line in (value or b"").decode("utf-8").splitlines()
+                if line and not line.startswith("#") and line != entry
+            ]
+
+        try:
+            return other_rules(before) == other_rules(after)
+        except UnicodeError:
+            return False
     if path.startswith(f"{DECK}/assets/"):
         suffix = Path(path).suffix.lower()
         return suffix in IMAGE_SUFFIXES and all(
@@ -313,7 +334,7 @@ def _toolchain(root: Path) -> Path:
         os.environ.get("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(expected))
     ).resolve()
     try:
-        for name in ("package.json", "package-lock.json", "render-diagrams.mjs"):
+        for name in TOOLCHAIN_FILES:
             if (expected / name).read_bytes() != (installed / name).read_bytes():
                 raise PresentationError(
                     f"Toolchain {name} differs from the checked snapshot."
@@ -379,29 +400,10 @@ def _command(toolchain: Path, source: Path, theme: Path, output: Path) -> list[s
     node = shutil.which("node")
     if node is None:
         raise PresentationError(f"Node.js is unavailable. {_install_help()}")
-    return [
-        node,
-        str(toolchain / "node_modules/@marp-team/marp-cli/marp-cli.js"),
-        "--no-config",
-        "--no-html",
-        "--engine",
-        str(toolchain / "node_modules/@marp-team/marp-core/lib/marp.js"),
-        str(source),
-        "--theme-set",
-        str(theme),
-        "--theme",
-        "tradingdev",
-        "--title",
-        _TITLE,
-        "--description",
-        _DESCRIPTION,
-        "--output",
-        str(output),
-    ]
+    return [node, str(toolchain / "build.mjs"), str(source), str(theme), str(output)]
 
 
 def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> None:
-    deadline = time.monotonic() + timeout
     toolchain = _toolchain(root)
     with _workspace() as temporary:
         generated = temporary / "index.html"
@@ -416,50 +418,21 @@ def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> No
             temporary=temporary,
             timeout=timeout,
         )
-        _render_diagrams(
-            toolchain,
-            generated,
-            deck=root / DECK,
-            temporary=temporary,
-            timeout=max(0.001, deadline - time.monotonic()),
-        )
-        (output or root / DECK / "index.html").write_bytes(generated.read_bytes())
+        check_html(generated.read_text(encoding="utf-8"), root=root / DECK)
+        (output or root / GENERATED_HTML).write_bytes(generated.read_bytes())
 
 
-def _render_diagrams(
-    toolchain: Path, generated: Path, *, deck: Path, temporary: Path, timeout: float
-) -> None:
-    content = generated.read_text(encoding="utf-8")
-    diagrams = _MERMAID_FENCE.findall(content)
-    if not diagrams:
-        return
-    request = temporary / "diagrams.json"
-    response = temporary / "diagrams-rendered.json"
-    request.write_text(json.dumps([html.unescape(source) for source in diagrams]))
-    node = shutil.which("node")
-    if node is None:
-        raise PresentationError(_NODE_HELP)
-    _execute(
-        [node, str(toolchain / "render-diagrams.mjs"), str(request), str(response)],
-        cwd=temporary,
-        temporary=temporary,
-        timeout=timeout,
-    )
-    rendered = json.loads(response.read_text(encoding="utf-8"))
-    if (
-        not isinstance(rendered, list)
-        or len(rendered) != len(diagrams)
-        or any(
-            not isinstance(svg, str) or not svg.startswith("<svg") for svg in rendered
-        )
-    ):
-        raise PresentationError("Mermaid renderer returned incomplete SVG output.")
-    replacements = iter(rendered)
-    content = _MERMAID_FENCE.sub(
-        lambda _: f'<div class="mermaid-diagram">{next(replacements)}</div>', content
-    )
-    check_html(content, root=deck)
-    generated.write_text(content, encoding="utf-8")
+def _build_delivery(root: Path, destination: Path, *, timeout: float = 120) -> int:
+    """Build and validate a disposable delivery without relying on a local preview."""
+    for source in bundle_files(root / DECK, include_html=False):
+        target = destination / source.relative_to(root / DECK)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    output = destination / "index.html"
+    build(root, output=output, timeout=timeout)
+    count = check_html(output.read_text(encoding="utf-8"), root=destination)
+    check_bundle(destination)
+    return count
 
 
 def check_presentations(root: Path, *, timeout: float = 120) -> None:
@@ -469,16 +442,7 @@ def check_presentations(root: Path, *, timeout: float = 120) -> None:
     root = root.resolve()
     check_documents(root)
     with _workspace() as temporary:
-        output = temporary / "index.html"
-        build(root, output=output, timeout=timeout)
-        committed = root / DECK / "index.html"
-        if output.read_bytes() != committed.read_bytes():
-            raise PresentationError(
-                "Committed index.html is out of date; "
-                "run scripts/presentations.sh build."
-            )
-        count = check_html(output.read_text(encoding="utf-8"), root=root / DECK)
-        check_bundle(root / DECK)
+        count = _build_delivery(root, temporary, timeout=timeout)
     print(
         f"Presentation checks passed ({count} slides; "
         "locked build, links, pages and resources)."
@@ -502,7 +466,7 @@ def setup(root: Path, *, timeout: float = 300) -> None:
 
 def watch(root: Path) -> None:
     # Rebuild static HTML on changes; Marp's native --watch injects a reload
-    # WebSocket into the artifact, which must never enter the committed output.
+    # WebSocket into the artifact, which must never enter the delivered output.
     inputs = [root / DECK / name for name in ("slides.md", "theme.css")]
     previous: list[bytes] | None = None
     try:
@@ -544,8 +508,16 @@ def main() -> int:
         if args.action == "package":
             if args.output is None:
                 parser.error("package requires --output <new-folder>")
-            check_presentations(root)
-            archive = write_bundle(root / DECK, args.output.resolve())
+            if args.output.resolve().is_relative_to((root / DECK).resolve()):
+                raise PresentationError(
+                    "Bundle output must be outside its source directory"
+                )
+            from tooling.documentation import check_documents
+
+            check_documents(root)
+            with _workspace() as temporary:
+                _build_delivery(root, temporary)
+                archive = write_bundle(temporary, args.output.resolve())
             print(f"Offline presentation: {archive}")
             return 0
         if args.output is not None:

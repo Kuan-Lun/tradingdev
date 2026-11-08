@@ -371,14 +371,14 @@ def test_incomplete_registered_presentation_fails_before_model_call(
 ) -> None:
     repo, base, _ = repository
     files = _write_presentation(repo)
-    html_path = next(path for path in files if path.endswith(".html"))
-    html = repo / html_path
+    theme_path = next(path for path in files if path.endswith(".css"))
+    theme = repo / theme_path
     if invalid == "executable":
-        html.chmod(0o755)
+        theme.chmod(0o755)
     else:
-        html.unlink()
+        theme.unlink()
         if invalid == "symlink":
-            html.symlink_to("slides.md")
+            theme.symlink_to("slides.md")
     _git(repo, "add", ".")
     tree = _git(repo, "write-tree")
 
@@ -1006,8 +1006,8 @@ def test_batches_keep_complete_registered_presentation_context_together(
     )
     _assert_original_assignment_evidence(prompts, evidence)
 
-    html_path = next(path for path in context if path.endswith(".html"))
-    evidence["candidate_files"][html_path] = "x" * 30_000
+    theme_path = next(path for path in context if path.endswith(".css"))
+    evidence["candidate_files"][theme_path] = "x" * 30_000
     _candidate_metadata(evidence)
     with pytest.raises(
         review_docs.ReviewError, match="Scope 'presentation'.*required file group"

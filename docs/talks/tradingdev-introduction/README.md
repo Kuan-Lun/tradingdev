@@ -1,7 +1,7 @@
 # TradingDev 簡報編輯指南
 
 簡報內容維護在 [slides.md](slides.md)，版型維護在 [theme.css](theme.css)；
-[index.html](index.html) 是產生後提交與發布的瀏覽器版本。
+`index.html` 是本機預覽或發布時產生的瀏覽器版本，不納入 Git。
 本文件面向簡報編輯者，說明內容與版型維護、預覽、打包及日常發布。
 
 ## 編輯與預覽
@@ -17,7 +17,7 @@
 編譯訊息可在 `slides: watch` 的專用終端機查看。只需單次輸出時，執行
 **Tasks: Run Task → slides: build**。自動啟動監看、命令列操作與本機 HTTP
 預覽方式見[開發指南](../../development.md#簡報的編輯與輸出)。
-提交簡報內容或版型修改時，一併提交重新產生的 `index.html`。
+提交 `slides.md`、`theme.css` 與必要資源；本機產生的 `index.html` 由 Git 忽略。
 
 瀏覽器版內含樣式與播放程式，與圖片及案例檔案一起保存即可離線開啟。使用左右方向鍵換頁，`F` 切換全螢幕，
 `P` 開啟講者模式；講者模式須允許新視窗，本機檔案模式有通訊限制時改用 HTTP 預覽。
@@ -81,15 +81,15 @@ SVG 連同使用到的中文字型內嵌在 HTML，觀看端不需要安裝 Merm
 
 ## 檢查與發布
 
-1. 完成編輯後執行 `scripts/presentations.sh build`，同步更新 `index.html`。
-2. 執行 `scripts/check-presentations.sh`，核對來源與 HTML、頁碼、連結及離線資源。
+1. 完成編輯後執行 `scripts/presentations.sh build`，產生本機預覽 `index.html`。
+2. 執行 `scripts/check-presentations.sh`，在臨時目錄建置並檢查 HTML、頁碼、連結及離線資源。
 3. 用瀏覽器確認標題位置、文字是否溢出、圖片、章節跳轉與完整內容連結；自動檢查不取代視覺確認。
-4. 依[Git／PR 流程](../../development.md#從開發到合併)提交來源、HTML 及必要資源，取得發布授權後合併。
+4. 依[Git／PR 流程](../../development.md#從開發到合併)提交來源及必要資源，取得發布授權後合併。
 5. 網站已連接 Cloudflare 時，確認建置記錄的分支與 commit，再開啟
    [正式簡報](https://slides.klwang.tw/tradingdev/)核對內容。分支預覽網址須加上 `/tradingdev/`。
 
-Cloudflare 只部署已提交的 HTML、圖片與證據，不會重新編譯簡報。
-來源或版型更新後必須重建並提交 HTML，才能觸發對應的發布。
+Cloudflare 以鎖定的工具鏈編譯已提交的 Markdown、主題及 Mermaid，
+再將產生的 HTML、圖片與案例證據一起發布。原始碼更新會觸發建置，無須提交 HTML。
 分支預覽與主線正式部署分別確認；本機檢查通過不代表網站已更新。
 
 ## 相關文件

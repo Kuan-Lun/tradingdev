@@ -215,7 +215,8 @@ def _fake_toolchain(root: Path) -> Path:
     identity = {"name": "tradingdev-presentations", "version": "1.0.0"}
     manifest = {**identity, "dependencies": {"@marp-team/marp-cli": "4.5.1"}}
     (toolchain / "package.json").write_text(json.dumps(manifest))
-    (toolchain / "render-diagrams.mjs").write_text("// test renderer\n")
+    for name in ("build.mjs", "render-diagrams.mjs", "install-browser.mjs"):
+        (toolchain / name).write_text("// test compiler\n")
     (toolchain / "package-lock.json").write_text(
         json.dumps(
             {**identity, "lockfileVersion": 3, "packages": {"": manifest, cli: package}}
@@ -410,12 +411,13 @@ def test_build_command_cannot_load_candidate_config_or_local_engine(
         tmp_path / "theme.css",
         tmp_path / "index.html",
     )
-    assert "--no-config" in command
-    assert "--no-html" in command
-    assert command[command.index("--engine") + 1] == str(
-        tmp_path / "tools/node_modules/@marp-team/marp-core/lib/marp.js"
-    )
-    assert "--watch" not in command
+    assert command == [
+        "/usr/bin/node",
+        str(tmp_path / "tools/build.mjs"),
+        str(tmp_path / "slides.md"),
+        str(tmp_path / "theme.css"),
+        str(tmp_path / "index.html"),
+    ]
     monkeypatch.setenv("NODE_OPTIONS", "--require bad.js")
     monkeypatch.setenv("MARP_ENGINE", "bad.js")
     monkeypatch.setenv("NPM_CONFIG_IGNORE_SCRIPTS", "false")
@@ -437,7 +439,7 @@ def mermaid_deck(tmp_path: Path, monkeypatch: MonkeyPatch) -> Iterator[Path]:
     )
     toolchain = tmp_path / "tooling/marp"
     toolchain.mkdir(parents=True)
-    for name in ("package.json", "package-lock.json", "render-diagrams.mjs"):
+    for name in presentations.TOOLCHAIN_FILES:
         shutil.copyfile(repository / "tooling/marp" / name, toolchain / name)
     monkeypatch.setenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(installed))
     deck = _deck(tmp_path)
@@ -542,7 +544,7 @@ def test_mermaid_renderer_timeout_preserves_html_and_cleans_workspace(
     def stall_after_browser_launch(
         command: list[str], *, cwd: Path, temporary: Path, timeout: float
     ) -> None:
-        if command[1].endswith("render-diagrams.mjs"):
+        if command[1].endswith("build.mjs"):
             renderer = Path(command[1])
             package = renderer.parent / "node_modules/puppeteer-core"
             manifest = json.loads((package / "package.json").read_text())
@@ -613,7 +615,7 @@ def test_mermaid_renderer_timeout_preserves_html_and_cleans_workspace(
         ("success", 0),
         ("failure", 0),
         ("timeout", 0),
-        ("stale", 0),
+        ("invalid", 0),
         pytest.param("success", 0.35, id="delayed-observation"),
     ],
 )
@@ -662,7 +664,7 @@ def test_check_cleans_temporary_files_and_child_processes(
             "pending.replace(sys.argv[1])\n"
             "while not Path(sys.argv[6]).exists(): time.sleep(0.01)\n"
             "if sys.argv[3]=='timeout': time.sleep(60)\n"
-            "text=sys.argv[5] + ('stale' if sys.argv[3]=='stale' else '')\n"
+            "text='<html></html>' if sys.argv[3]=='invalid' else sys.argv[5]\n"
             "Path(sys.argv[2]).write_text(text)\n"
             "raise SystemExit(9 if sys.argv[3]=='failure' else 0)\n"
         )
@@ -856,3 +858,66 @@ def test_watch_recovers_from_build_failure_when_input_is_fixed(
     monkeypatch.setattr(time, "sleep", change)
     presentations.watch(tmp_path)
     assert calls == 2
+
+
+def test_source_only_check_builds_without_touching_preview(
+    tmp_path: Path,
+    mermaid_deck: Path,
+) -> None:
+    (mermaid_deck / "slides.md").write_text(
+        "# Source\n\n<!-- paginate: true -->\n\n"
+        "[Next](index.html#2)\n\n---\n\n## Next\n"
+    )
+    preview = mermaid_deck / "index.html"
+    preview.unlink()
+    presentations.check_presentations(tmp_path)
+    assert not preview.exists()
+    preview.write_text("outdated local preview")
+    presentations.check_presentations(tmp_path)
+    assert preview.read_text() == "outdated local preview"
+    slides = mermaid_deck / "slides.md"
+    slides.write_text(slides.read_text().replace("index.html#2", "index.html#999"))
+    with pytest.raises(PresentationError, match="fragment"):
+        presentations.check_presentations(tmp_path)
+
+
+def test_shared_compiler_disables_candidate_config_and_raw_html(
+    tmp_path: Path,
+    mermaid_deck: Path,
+) -> None:
+    (tmp_path / "marp.config.js").write_text("throw new Error('candidate config ran');")
+    (mermaid_deck / "slides.md").write_text(
+        "---\nmarp: true\npaginate: true\n---\n# Source\n\n"
+        '<iframe src="https://invalid.example/"></iframe>\n'
+    )
+    presentations.build(tmp_path)
+    output = (mermaid_deck / "index.html").read_text()
+    assert "<iframe" not in output
+    assert "&lt;iframe" in output
+
+
+@pytest.mark.parametrize("inside_source", [True, False])
+def test_package_cli_keeps_output_outside_authoring_sources(
+    tmp_path: Path, monkeypatch: MonkeyPatch, inside_source: bool
+) -> None:
+    deck = _deck(tmp_path)
+    (deck / "assets").mkdir()
+    (deck / "evidence").mkdir()
+    output = (deck / "assets" if inside_source else tmp_path) / "delivery"
+    built: list[Path] = []
+
+    def compile_deck(root: Path, *, output: Path, timeout: float) -> None:
+        built.append(root)
+        output.write_text(_html())
+
+    monkeypatch.setattr(presentations, "build", compile_deck)
+    monkeypatch.setattr(
+        presentations, "__file__", str(tmp_path / "tooling/presentations.py")
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["presentations", "package", "--output", str(output)]
+    )
+    assert presentations.main() == (1 if inside_source else 0)
+    assert bool(built) is not inside_source
+    assert output.exists() is not inside_source
+    assert output.with_suffix(".zip").exists() is not inside_source

@@ -54,5 +54,8 @@ catboost_info/
 # Locked presentation compiler (install with scripts/presentations.sh setup)
 tooling/marp/node_modules/
 
+# Generated local presentation preview
+/docs/talks/tradingdev-introduction/index.html
+
 # Cloudflare static presentation deployment output
 /site-dist/
