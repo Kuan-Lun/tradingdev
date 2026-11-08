@@ -201,26 +201,28 @@ def sharpe_interval_outcome(
 ) -> SharpeInterval | IntervalUnavailable:
     """Stationary-bootstrap percentile interval of the annualised Sharpe.
 
-    Strategy returns are autocorrelated, and an iid bootstrap that shuffles
-    single periods destroys that dependence and understates the sampling
-    variability. The stationary bootstrap of Politis and Romano (1994)
-    resamples blocks with geometrically distributed lengths, keeping the
-    short-range dependence while producing a stationary resample.
+    Strategy returns can exhibit serial dependence. An iid bootstrap that
+    shuffles single periods removes that dependence and may misstate the
+    sampling variability. The stationary bootstrap of Politis and Romano
+    (1994) resamples blocks with geometrically distributed lengths,
+    preserving local order within each block. This does not make inference
+    valid for an arbitrary non-stationary return process.
 
     Block size: the blocks must keep the dependence the Sharpe ratio
     depends on, which is that of the mean and of the variance. Returns can
     be nearly uncorrelated while their volatility persists for long
-    stretches, and blocks fitted to the returns alone then cut those
+    stretches, and blocks fitted to the returns alone can cut those
     stretches apart and understate the variability. The mean block length
     is therefore the larger of two Politis and White (2004) automatic
     estimates, with the correction of Patton, Politis and White (2009), as
     computed by :func:`arch.bootstrap.optimal_block_length`: one for the
     returns and one for the squared returns, rounded up to a whole number
-    of periods and at least one. Nearly independent returns with stable
-    volatility still get a block length near one. The estimate needs a
-    reasonable sample, so fewer than ``MIN_BOOTSTRAP_OBSERVATIONS`` returns
-    give no interval. That is 20 periods at any frequency: 20 days of daily
-    returns, but 20 months of monthly ones.
+    of periods and at least one. Finite-sample block estimates can vary even
+    for independent returns. This API requires at least
+    ``MIN_BOOTSTRAP_OBSERVATIONS`` returns: 20 periods at any frequency,
+    such as 20 days of daily returns or 20 months of monthly ones. Meeting
+    that threshold does not establish that the sample is adequate for
+    reliable inference.
 
     Automatic block selection does not guarantee nominal coverage. When
     regimes persist for much of the sample, too few transitions may be
@@ -234,8 +236,9 @@ def sharpe_interval_outcome(
     the sample), or a sample long enough to bootstrap but too short for a
     reliable estimate. A given ``block_size`` does not lift the minimum:
     fewer than ``MIN_BOOTSTRAP_OBSERVATIONS`` returns still give no
-    interval. A block length that is too short narrows the interval; one
-    that is too long costs only precision.
+    interval. Blocks that are too short can omit dependence; excessive
+    block lengths can leave too few block restarts and produce unreliable
+    or nearly degenerate intervals. Either choice can impair coverage.
 
     Returns an :class:`IntervalUnavailable` when the sample is too short,
     the Sharpe ratio itself is undefined, or no resample has a defined
@@ -316,9 +319,9 @@ def probabilistic_sharpe_ratio(
     ``benchmark_sr`` is per period as well; divide an annual benchmark by
     ``sqrt(periods_per_year)``.
 
-    Assumption: the returns are independent. The standard error in the
-    denominator is the variance of the Sharpe estimator for iid returns; it
-    accounts for skew and fat tails but has no term for serial correlation.
+    Assumption: the returns are independent. The standard error uses an
+    asymptotic variance expression for iid returns; it accounts for skew
+    and fat tails but has no term for serial correlation.
     Serial correlation can invalidate the reported probability; this
     function does not estimate an effective sample size or adjust for
     serial correlation.
@@ -335,7 +338,7 @@ def probabilistic_sharpe_ratio(
     if sharpe is None:
         return None
     # Skewness and kurtosis are scale-free too; the fourth moment overflows
-    # above about 1e77 without this exact rescaling.
+    # above about 1e77 without rescaling.
     values = rescaled(values)[0]
     deviations = values - values.mean()
     variance = float(np.mean(deviations**2))
@@ -549,10 +552,10 @@ def _period_sharpe(values: npt.NDArray[np.float64]) -> float | None:
     # Equal values can still yield a rounding-error std, so test spread exactly.
     if values.size < 2 or float(values.max()) == float(values.min()):
         return None
-    # The ratio is unchanged by a positive scale, so an exact power-of-two
-    # rescaling keeps extreme magnitudes or tiny spreads from overflowing or
-    # underflowing the variance. Each bootstrap resample is rescaled on its
-    # own: a resample without an outlier must not inherit the outlier's scale.
+    # The ratio is scale-invariant in exact arithmetic. Power-of-two
+    # rescaling reduces overflow/underflow risk, within _scaling's floating
+    # point limits. Each resample gets its own scale: a resample without an
+    # outlier must not inherit that outlier's scale.
     values = rescaled(values)[0]
     std = float(values.std(ddof=1))
     return float(values.mean()) / std
