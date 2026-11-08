@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from urllib.parse import quote
 
 from tradingdev.adapters.presentation.html import escape, render_html_document
 
@@ -37,11 +36,6 @@ def render_confirmation_text(document: ConfirmationDocument) -> str:
         lines.extend(section.paragraphs)
         lines.extend(_field_text(field) for field in section.fields)
     return "\n".join(lines) + "\n"
-
-
-def render_confirmation_link(html_path: str) -> str:
-    """Provide a directly reusable Markdown link to the exact local HTML path."""
-    return f"[閱讀確認單](<{quote(html_path, safe='/')}>)"
 
 
 def render_confirmation_summary(

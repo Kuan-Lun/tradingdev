@@ -5,13 +5,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 
-from tests.e2e.conversation import links_to_file
 from tests.integration.execution_fixtures import (
     execution_evidence_draft,
     research_input,
@@ -81,9 +79,8 @@ async def test_omitted_finances_and_inherited_choices_survive_worker_round_trip(
                 ),
             )
             assert prepared["success"], prepared
-            assert links_to_file(
-                prepared["confirmation_link"], Path(prepared["html_path"])
-            )
+            assert prepared["confirmation_artifact"]["artifact_id"]
+            assert "confirmation_link" not in prepared
             assert prepared["preflight"]["signal_check"] == "synthetic_contract_passed"
             with closing(
                 sqlite3.connect(mcp_workspace.workspace / "tradingdev.sqlite")

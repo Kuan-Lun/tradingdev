@@ -608,7 +608,9 @@ async def test_walk_forward_runs_through_real_worker(
         assert prepared["success"], prepared
         if fold_count == 1:
             confirmation = (
-                Path(prepared["html_path"]).with_name("confirmation.txt").read_text()
+                Path(prepared["confirmation_artifact"]["server_path"])
+                .with_name("confirmation.txt")
+                .read_text()
             )
             assert "訓練開始：2024-01-01 00:00:00 UTC（含）" in confirmation
             assert "測試結束：2024-01-05 00:00:00 UTC（不含）" in confirmation

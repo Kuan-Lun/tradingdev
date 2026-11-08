@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import socket
 from pathlib import Path
@@ -23,7 +24,7 @@ from tests.mcp.http_harness import http_plan_server
     ],
 )
 def test_http_plan_waits_for_decision_after_reading_summary_and_html(
-    monkeypatch: pytest.MonkeyPatch, decision: str, code: str | None
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, decision: str, code: str | None
 ) -> None:
     async def check() -> None:
         async with (
@@ -35,27 +36,36 @@ def test_http_plan_waits_for_decision_after_reading_summary_and_html(
             assert prepared["success"] and prepared["status"] == "ready"
             assert prepared["confirmation_summary"]
             assert "confirmation_text" not in prepared
+            assert "confirmation_link" not in prepared
+            document = prepared["confirmation_artifact"]
             artifact = await client.call(
                 "get_artifact",
-                artifact_id=prepared["artifact_id"],
+                artifact_id=document["artifact_id"],
                 include_content=True,
+                expected_sha256=document["sha256"],
             )
-            html = Path(prepared["html_path"]).read_text(encoding="utf-8")
             assert artifact["success"]
             content = artifact["content"]
-            content_sha256 = artifact["content_page"]["content_sha256"]
+            assert artifact["content_page"]["next_offset"] is not None
             while artifact["content_page"]["next_offset"] is not None:
                 artifact = await client.call(
                     "get_artifact",
-                    artifact_id=prepared["artifact_id"],
+                    artifact_id=prepared["confirmation_artifact"]["artifact_id"],
                     include_content=True,
                     offset=artifact["content_page"]["next_offset"],
-                    expected_sha256=content_sha256,
+                    expected_sha256=document["sha256"],
                 )
                 assert artifact["success"]
                 content += artifact["content"]
-            assert content == html
-            assert "<html" in html
+            # The client obtains bytes exclusively through MCP, never by opening
+            # the server_path. Its own reading location is independent of the server.
+            delivered = tmp_path / "client confirmation.html"
+            delivered.write_bytes(content.encode("utf-8"))
+            assert not delivered.is_relative_to(runtime.root)
+            assert (
+                hashlib.sha256(delivered.read_bytes()).hexdigest() == document["sha256"]
+            )
+            assert "<html" in content and content.endswith("</html>")
             retained = await client.call(
                 "get_execution_plan", plan_id=prepared["plan_id"]
             )
@@ -86,6 +96,41 @@ def test_http_plan_waits_for_decision_after_reading_summary_and_html(
                 assert retained["status"] == "cancelled"
                 assert plan.runner.calls == []
                 assert plan.service.jobs.list_all_jobs() == []
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("changed_after_first_page", [False, True])
+def test_http_confirmation_transfer_rejects_changed_bytes(
+    monkeypatch: pytest.MonkeyPatch, changed_after_first_page: bool
+) -> None:
+    async def check() -> None:
+        async with (
+            http_plan_server(monkeypatch) as runtime,
+            runtime.connect() as client,
+        ):
+            prepared = await client.call(
+                "prepare_backtest", **runtime.context.arguments
+            )
+            document = prepared["confirmation_artifact"]
+            arguments = {
+                "artifact_id": document["artifact_id"],
+                "include_content": True,
+                "expected_sha256": document["sha256"],
+            }
+            offset = 0
+            if changed_after_first_page:
+                first = await client.call("get_artifact", **arguments)
+                offset = first["content_page"]["next_offset"]
+                assert offset is not None
+            # A server-side fault, not a client file operation.
+            path = Path(document["server_path"])
+            path.write_bytes(path.read_bytes() + b"changed")
+            rejected = await client.call("get_artifact", **arguments, offset=offset)
+            assert rejected["code"] == "artifact_content_changed"
+            assert "content" not in rejected
+            assert runtime.context.runner.calls == []
+            assert runtime.context.service.jobs.list_all_jobs() == []
 
     asyncio.run(check())
 

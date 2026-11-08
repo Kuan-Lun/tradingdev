@@ -69,7 +69,7 @@ def context(
     assert not runner.calls
     assert service.jobs.get_job(result.plan_id) is None
     assert "2 組獨立回測" in result.confirmation_summary
-    html = Path(result.html_path).read_text()
+    html = Path(result.confirmation_artifact.server_path).read_text()
     assert "Threshold 0" in html and "Threshold 1" in html
     return service, runner, result
 

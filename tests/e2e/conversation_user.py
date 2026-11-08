@@ -9,6 +9,9 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import quote, unquote
+
+from markdown_it import MarkdownIt
 
 from tests.e2e.conversation import links_to_file, visible_text
 from tradingdev.domain.comparison import ComparisonManifest
@@ -34,6 +37,35 @@ def _assert_summary(summary: str, text: str) -> None:
         "The completed turn must preserve the backend summary wording.\n"
         f"Expected backend summary (complete):\n{summary}"
     )
+
+
+def assert_undelivered_confirmation(text: str, summary: str) -> None:
+    """Reject known false-delivery/approval claims; prose still needs human review."""
+    visible = visible_text(text)
+    assert visible_text(summary) not in visible, (
+        "Do not present the ready-to-approve summary before document delivery"
+    )
+    assert visible_text(summary.splitlines()[-1]) not in visible, (
+        "Do not request approval of an undelivered confirmation"
+    )
+    assert not any(
+        token.type in {"link_open", "image", "html_inline", "html_block"}
+        for block in MarkdownIt("commonmark").parse(text)
+        for token in (block.children or [block])
+    ), "No readable document link exists in this client fixture"
+    # These bounded examples detect direct invitations in the test's languages,
+    # not arbitrary consent semantics. Inspect the real reply as well.
+    invitation = re.compile(
+        r"請(?:你|您)?(?:明確)?(?:回覆|回答|表示|確認是否)?\s*[「『\"]?"
+        r"(?:同意|核准|批准)|(?:是否|要不要)(?:同意|核准)|"
+        r"(?:若|如果)你?(?:同意|核准)|"
+        r"(?:please\s+|if you\s+)(?:approve|consent)",
+        re.IGNORECASE,
+    )
+    assert not any(
+        invitation.match(clause.strip())
+        for clause in re.split(r"[。！？!?；;，,\n]", visible)
+    ), "Do not request approval of an undelivered confirmation"
 
 
 def _assert_short_review(text: str, html_path: Path, plan: ExecutionPlan) -> None:
@@ -75,7 +107,9 @@ def reviewed_config(plan: ExecutionPlan) -> dict[str, Any]:
     )
 
 
-def read_presented_plan(workspace: MCPWorkspace, turn: ModelTurn) -> ExecutionPlan:
+def read_presented_plan(
+    workspace: MCPWorkspace, turn: ModelTurn, *, delivered_path: Path | None = None
+) -> ExecutionPlan:
     """Verify the plan the user can read, without making a consent decision."""
     preparations = [
         call
@@ -92,11 +126,20 @@ def read_presented_plan(workspace: MCPWorkspace, turn: ModelTurn) -> ExecutionPl
     assert isinstance(summary, str) and summary.strip()
 
     _assert_summary(summary, turn.text)
-    html_path = Path(prepared["html_path"])
-    assert links_to_file(turn.text, html_path), (
+    html_path = Path(prepared["confirmation_artifact"]["server_path"])
+    readable_path = delivered_path if delivered_path is not None else html_path
+    assert links_to_file(turn.text, readable_path), (
         "The user must receive a clickable Markdown link to this plan HTML.\n"
-        f"Expected plan HTML path: {html_path}"
+        f"Expected plan HTML path: {readable_path}"
     )
+    if readable_path != html_path:
+        assert str(html_path) not in unquote(turn.text), (
+            "Do not append the inaccessible server path to a delivered client copy"
+        )
+    artifact = prepared["confirmation_artifact"]
+    assert (
+        hashlib.sha256(readable_path.read_bytes()).hexdigest() == artifact["sha256"]
+    ), "Delivered HTML must match the complete prepared confirmation artifact"
     with closing(_database(workspace)) as conn:
         rows = conn.execute(
             "SELECT payload, html_hash FROM execution_plans WHERE state='ready'"
@@ -126,6 +169,7 @@ def read_presented_plan(workspace: MCPWorkspace, turn: ModelTurn) -> ExecutionPl
     assert html_path == expected_path, f"Expected saved plan HTML path: {expected_path}"
     html = html_path.read_bytes()
     assert hashlib.sha256(html).hexdigest() == rows[0][1]
+    assert artifact["sha256"] == rows[0][1]
     assert (
         plan.plan_id in html.decode() and plan.manifest.manifest_hash in html.decode()
     )
@@ -251,4 +295,5 @@ class ObservedPlanUser:
 
 def review_text(prepared: dict[str, Any]) -> str:
     """Supply a deterministic presentation only for offline fixture verification."""
-    return f"{prepared['confirmation_summary']}\n{prepared['confirmation_link']}"
+    path = quote(prepared["confirmation_artifact"]["server_path"], safe="/")
+    return f"{prepared['confirmation_summary']}\n[閱讀確認單](<{path}>)"

@@ -242,16 +242,16 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     server = create_server(WorkspacePaths(runtime_root / "workspace"))
     assert server.instructions is not None
     instructions = " ".join(server.instructions.split())
-    assert "Quote confirmation_summary verbatim" in instructions
+    assert "quote confirmation_summary verbatim" in instructions
     assert "Preserve every label, value, unit and train/test role" in instructions
     assert "answer or clarify and wait" in instructions
-    assert "Copy confirmation_link verbatim" in instructions
-    assert "its destination against html_path" in instructions
-    assert "do not assemble or edit IDs or paths" in instructions
+    assert "Deliver confirmation_artifact" in instructions
+    assert "Link server_path only" in instructions
+    assert "transport alone does not prove access" in instructions
     assert 'section="research") before explaining date boundaries' in instructions
     assert "No code block, file:// or invented URI" in instructions
-    assert "not a public URL" in instructions
-    assert "End the turn after the user can read the HTML" in instructions
+    assert "omit the server path" in instructions
+    assert "do not claim the user can read the HTML" in instructions
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     assert "get_artifact" in tools
     for name in (
@@ -262,16 +262,21 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     ):
         description = " ".join((tools[name].description or "").split())
         assert "confirmation_summary" in description and "verbatim" in description, name
-        assert "confirmation_link" in description, name
+        assert "confirmation_artifact" in description, name
         assert "HTML" in description and "end the turn" in description, name
         schema = tools[name].output_schema
         assert schema is not None
         assert {
             "plan_id",
             "confirmation_summary",
-            "confirmation_link",
-            "html_path",
+            "confirmation_artifact",
         } <= set(schema["$defs"]["PlanResponse"]["required"])
+        assert not {"confirmation_link", "html_path", "artifact_id"} & set(
+            schema["$defs"]["PlanResponse"]["properties"]
+        )
+        artifact = schema["$defs"]["ConfirmationArtifact"]
+        assert {"artifact_id", "sha256", "server_path"} <= set(artifact["required"])
+        assert artifact["properties"]["sha256"]["pattern"] == "^[0-9a-f]{64}$"
     decision = " ".join((tools["submit_execution_decision"].description or "").split())
     assert "explicit later decision" in decision
     assert "questions and ambiguous replies are not consent" in instructions
