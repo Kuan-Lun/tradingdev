@@ -758,9 +758,10 @@ TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 或無法辨識的簡報行為時，才一併附上完整投影片與主題，並維持同批審查。
 混合責任模組 `tooling/presentations.py` 會比對固定 base／candidate 的定義；
 只有已登錄的操作定義及其型別／安裝鎖匯入變動時，才採操作範圍。
-未修改的投影片是產物來源，不自動當作所有責任範圍的一般文件。只有操作變更時可按檔案分批，
-各操作批次及該次跨範圍審查都附完整編輯指南，仍保留每個變更檔案全文與 diff；
-涉及渲染或產物時，完整指南與簡報來源仍集中於同一簡報批次。正式選取規則見
+未修改的投影片是產物來源，不自動當作所有責任範圍的一般文件。簡報變更僅涉及操作時，
+`presentation` 範圍可按變更檔案分批；完整編輯指南附於每個 `presentation` 批次及該次
+跨範圍審查，仍保留每個變更檔案全文與 diff。其他責任範圍仍依各自文件選取規則取證。
+涉及渲染或產物時，完整指南與簡報來源集中於同一簡報批次。正式選取規則見
 [review_evidence.py](../tooling/review_evidence.py) 的 `_presentation_context`、
 `_operation_definitions_only` 與 `automatic_document_paths`；批次規則見
 [review_plan.py](../tooling/review_plan.py) 的 `build_review_plan`。
