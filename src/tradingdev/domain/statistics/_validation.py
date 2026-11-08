@@ -2,10 +2,12 @@
 
 Annotations describe what a public function expects, but nothing enforces
 them at runtime: a ``pd.Series`` or ``npt.ArrayLike`` argument may hold
-booleans, numeric strings or plain integers. Every check here narrows such
-input to the declared type or raises ``ValueError`` naming the argument; none
-converts a value of the wrong kind, because a silent conversion is how a
-wrong input becomes a plausible but wrong answer.
+booleans, numeric strings or plain integers. Unsupported kinds are rejected
+with ``ValueError`` instead of deliberately coercing booleans or text into
+numbers. NumPy array construction and float64 conversion failures propagate
+and need not name the argument; for example, an unrepresentable integer can
+raise ``OverflowError``. Accepted numeric kinds do not guarantee finite
+float64 values, so callers must also check shape and finiteness.
 """
 
 from __future__ import annotations
