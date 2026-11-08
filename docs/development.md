@@ -320,6 +320,8 @@ bash scripts/build-presentations-site.sh
 
 在 **Settings → Build → Build Variables and Secrets** 加入
 `SKIP_DEPENDENCY_INSTALL=1`、`NODE_VERSION=24.22.1` 與 `PYTHON_VERSION=3.14.8`。
+Workers Builds 自動提供 `WORKERS_CI=1`，供渲染器選擇雲端瀏覽器；
+此變數由平台注入，建置腳本與 `wrangler.jsonc` 不設定它。
 停用自動安裝後，由建置腳本只安裝簡報依賴。部署仍會使用 Wrangler；
 Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
 `site-dist/tradingdev/` 是忽略的發布產物，每次重新建立，只包含簡報 HTML、圖片與明列的
