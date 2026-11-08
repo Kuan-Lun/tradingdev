@@ -12,6 +12,7 @@ from threading import Event, Thread
 from typing import TYPE_CHECKING
 
 import pytest
+from tooling.process_guard import run_captured
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -192,6 +193,45 @@ def script_workspace(tmp_path: Path) -> Iterator[Path]:
     assert not workspace.exists()
 
 
+@pytest.mark.parametrize("source", ["arguments", "environment"])
+@pytest.mark.parametrize("mode", ["parallel", "looponfail"])
+def test_live_launcher_rejects_parallelism_before_setup(
+    script_workspace: Path, source: str, mode: str
+) -> None:
+    environment = _script_environment(script_workspace)
+    environment["TRADINGDEV_TEST_ENV_FAILURE"] = "runtime"
+    options = (
+        ["-p", "xdist.plugin", "-n", "2"]
+        if mode == "parallel"
+        else ["-p", "xdist.looponfail", "--looponfail"]
+    )
+    if source == "environment":
+        environment["PYTEST_ADDOPTS"] = " ".join(options)
+        options = []
+    result = run_captured(
+        [
+            "bash",
+            "scripts/check-llm.sh",
+            "local",
+            "--llm-model",
+            "offline-fixture",
+            "-k",
+            "cleanup_only",
+            *options,
+        ],
+        cwd=script_workspace,
+        env=environment,
+        timeout=20,
+    )
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR, (
+        result.stdout + result.stderr
+    )
+    assert "requires serial execution" in result.stderr
+    assert not (script_workspace / "cleanup.ran").exists()
+    assert not (script_workspace / "setup.ran").exists()
+    assert not (script_workspace / "environment.ran").exists()
+
+
 def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
     script_workspace: Path,
 ) -> None:
@@ -309,6 +349,7 @@ def test_script_selects_scenario_without_running_authoring_suite(
         ("local", "local", []),
         ("codex", "codex", []),
         ("local", "runtime", ["--setup-only"]),
+        ("local", "runtime", ["-p", "xdist.plugin", "-n", "0"]),
     ],
 )
 def test_missing_prerequisite_stops_live_suite_before_test_setup(

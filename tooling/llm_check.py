@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from tooling import environment
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     import pytest
 
 _SCENARIOS = (
@@ -84,6 +86,22 @@ def main() -> int:
         return 1
     import pytest
 
+    class SerialExecution:
+        @pytest.hookimpl(wrapper=True, tryfirst=True)
+        def pytest_cmdline_main(
+            self, config: pytest.Config
+        ) -> Generator[None, int, int]:
+            if any(
+                config.getoption(option, default=False)
+                for option in ("numprocesses", "tx", "looponfail")
+            ):
+                raise pytest.UsageError(
+                    "scripts/check-llm.sh requires serial execution; remove parallel "
+                    "and loop-on-failure options. "
+                    "Live-test prerequisites run in this process."
+                )
+            return (yield)
+
     return int(
         pytest.main(
             [
@@ -99,7 +117,7 @@ def main() -> int:
                 "--durations=3",
                 *arguments[1:],
             ],
-            plugins=[_Prerequisites()],
+            plugins=[_Prerequisites(), SerialExecution()],
         )
     )
 

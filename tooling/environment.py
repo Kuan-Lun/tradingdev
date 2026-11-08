@@ -195,7 +195,7 @@ def check_environment(profile: str) -> None:
     if profile in {"fast", "tooling", "full"}:
         packages.extend(["mypy", "streamlit", "plotly", "jsonschema"])
     if profile in {"tooling", "full"}:
-        packages.extend(["pytest", "psutil"])
+        packages.extend(["pytest", "pytest-xdist", "psutil"])
     require_packages(*packages)
     if profile in {"tooling", "full"}:
         require_command("git", help_text="Install Git before running repository tests.")

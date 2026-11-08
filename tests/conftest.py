@@ -16,7 +16,7 @@ from tests.runtime_cleanup import recover_test_strategy_units
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
-pytest_plugins = ["tests.llm_plugin"]
+pytest_plugins = ["tests.llm_plugin", "tests.parallel_plugin"]
 
 
 def pytest_configure(config: pytest.Config) -> None:

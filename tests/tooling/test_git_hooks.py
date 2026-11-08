@@ -164,6 +164,7 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
             "git/gate.py",
             "git/candidates.py",
             "git/change_scope.py",
+            "git/receipts.py",
         ):
             destination = root / "tooling" / name
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +173,11 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
             module.write(
                 "\n# The fixture uses fake snapshot checkers.\n"
                 "def check_environment(profile): pass\n"
+            )
+        with (root / "tooling/git/receipts.py").open("a") as module:
+            module.write(
+                "\n# Snapshot checkers are substituted in this fixture.\n"
+                "def environment_fingerprint(*args): return None\n"
             )
         repo.write("scripts/test_checker.py", _CHECKER)
         for profile, mode in (

@@ -136,7 +136,13 @@ def test_invalid_strategy_identifiers_are_rejected_before_writing(
 
 @pytest.mark.parametrize(
     "revision_id",
-    ["../escape", "bad", str(uuid4()), uuid4().hex.upper(), "0" * 32],
+    [
+        "../escape",
+        "bad",
+        "11111111-2222-4333-8444-555555555555",
+        "AAAAAAAA222243338444555555555555",
+        "0" * 32,
+    ],
 )
 def test_invalid_revision_ids_cannot_resolve_paths(
     tmp_path: Path, revision_id: str

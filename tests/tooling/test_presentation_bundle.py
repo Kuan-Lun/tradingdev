@@ -10,6 +10,7 @@ import sys
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psutil
 import pytest
@@ -28,6 +29,9 @@ from tooling.process_guard import (
     run_captured,
     terminate_tree,
 )
+
+if TYPE_CHECKING:
+    from pytest import MonkeyPatch
 
 PNG = b"\x89PNG\r\n\x1a\nfixture"
 
@@ -274,6 +278,7 @@ def test_cloudflare_stages_all_entries_and_removes_only_stale_output(
 @pytest.mark.parametrize("mode", ["failure", "timeout"])
 def test_stage_check_stops_compiler_descendants_before_removing_workspace(
     mode: str,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     repository = Path(__file__).resolve().parents[2]
     with process_workspace(prefix="tradingdev-stage-test-", label="stage test") as root:
@@ -289,6 +294,22 @@ def test_stage_check_stops_compiler_descendants_before_removing_workspace(
         binary = root / "bin"
         binary.mkdir()
         marker = root / "processes.json"
+        observed = root / "observed"
+        original_children = psutil.Process.children
+
+        def observe_children(
+            process: psutil.Process, recursive: bool = False
+        ) -> list[psutil.Process]:
+            children: list[psutil.Process] = original_children(
+                process, recursive=recursive
+            )
+            if marker.exists() and {
+                pid for pid, _ in json.loads(marker.read_text())
+            } <= {child.pid for child in children}:
+                observed.touch()
+            return children
+
+        monkeypatch.setattr(psutil.Process, "children", observe_children)
         compiler = binary / "node"
         compiler.write_text(
             f"#!{sys.executable}\n"
@@ -299,8 +320,13 @@ def test_stage_check_stops_compiler_descendants_before_removing_workspace(
             "'import time; time.sleep(60)'])\n"
             "identities = [(pid, psutil.Process(pid).create_time()) "
             "for pid in (os.getpid(), child.pid)]\n"
-            f"Path({str(marker)!r}).write_text(json.dumps(identities))\n"
-            f"time.sleep({60 if mode == 'timeout' else 0.15})\n"
+            f"marker = Path({str(marker)!r})\n"
+            "pending = marker.with_suffix('.tmp')\n"
+            "pending.write_text(json.dumps(identities))\n"
+            "pending.replace(marker)\n"
+            # Observation must precede exit; a fixed sleep races under xdist.
+            f"while not Path({str(observed)!r}).exists(): time.sleep(0.01)\n"
+            f"time.sleep({60 if mode == 'timeout' else 0})\n"
             "sys.exit(3)\n"
         )
         compiler.chmod(0o755)
