@@ -9,11 +9,13 @@ stops paying.
 Conventions:
 
 * A trade wins when its ``net_pnl`` is above zero and loses when it is below
-  zero, as in :mod:`tradingdev.domain.statistics.performance`.
+  zero.
 * Break-even trades contribute nothing to the expectancy, so the realized
   win rate compared with ``p*`` is measured over decisive trades only
-  (``wins / (wins + losses)``). With this denominator the win-rate edge is
-  positive exactly when the trades' total ``net_pnl`` is positive.
+  (``wins / (wins + losses)``). When both wins and losses are present, this
+  denominator makes a positive win-rate edge equivalent to positive total
+  ``net_pnl`` in exact arithmetic. Without either group the edge is ``None``.
+  Floating-point rounding or overflow can break the equivalence.
 * Traded notional counts both legs of a round trip: the entry notional
   ``size_quote`` plus the exit notional ``size_quote * exit_price /
   entry_price``.
@@ -32,8 +34,11 @@ Conventions:
 * Costs are the sum of the trades' ``fee`` fields. Figures are only as
   complete as those records: an engine that folds costs into ``net_pnl``
   without reporting them in ``fee`` understates the cost here.
-* Undefined figures (no wins, no losses, no notional, no capital basis) are
-  ``None`` rather than infinities or zeros.
+* Structurally undefined figures (no wins, no losses, no notional, no capital
+  basis) are ``None`` rather than invented zeros. Finite inputs do not ensure
+  finite aggregates or ratios: intermediate sums can overflow, and subsequent
+  arithmetic can produce infinities or NaN. Formulas and reconciliation
+  statements describe exact arithmetic and are subject to these limitations.
 """
 
 from __future__ import annotations
