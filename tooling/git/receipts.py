@@ -187,14 +187,19 @@ def receipt_path(root: Path, profile: str) -> Path:
     return Path(common) / "tradingdev-checks" / f"{profile}.json"
 
 
-def read_receipt(
-    path: Path, *, profile: str, inputs: str, environment: str
-) -> dict[str, object] | None:
+def read_receipt(path: Path) -> dict[str, object] | None:
+    """Load untrusted prior data; matching_receipt must verify applicability."""
     try:
         value = json.loads(path.read_text())
     except OSError, ValueError:
         return None
-    if not isinstance(value, dict) or any(
+    return dict(value) if isinstance(value, dict) else None
+
+
+def matching_receipt(
+    value: dict[str, object] | None, *, profile: str, inputs: str, environment: str
+) -> dict[str, object] | None:
+    if value is None or any(
         value.get(key) != expected
         for key, expected in {
             "version": _VERSION,

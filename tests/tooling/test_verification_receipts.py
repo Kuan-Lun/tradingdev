@@ -282,17 +282,125 @@ def test_failed_docs_refresh_is_not_reported_as_a_pass(
     capsys: CaptureFixture[str],
 ) -> None:
     _check(repository)
+    tested_tree = _git(repository, "rev-parse", "HEAD^{tree}")
+    normal_check = candidates.check_snapshot
     capsys.readouterr()
     _commit(repository, "README.md", "# Broken link\n")
 
     def fail(tree: str, profile: str, **kwargs: object) -> None:
         assert profile == "docs"
-        raise subprocess.CalledProcessError(1, ["docs"])
+        raise subprocess.CalledProcessError(1, ["bash", "scripts/check-docs.sh"])
 
     monkeypatch.setattr(candidates, "check_snapshot", fail)
     with pytest.raises(subprocess.CalledProcessError):
         _check(repository)
     assert "test_evidence_reused" not in capsys.readouterr().out
+    record = json.loads(receipts.receipt_path(repository, "full").read_text())
+    assert record["state"] == "passed" and record["tree"] == tested_tree
+    _commit(repository, "README.md", "# Repaired documentation\n")
+    monkeypatch.setattr(candidates, "check_snapshot", normal_check)
+    _check(repository)
+    assert checks == ["full", "docs"]
+
+
+@pytest.mark.parametrize("entry", ["probe", "docs"])
+def test_cleanup_and_recording_failure_cannot_leave_prior_success(
+    repository: Path,
+    checks: list[str],
+    monkeypatch: MonkeyPatch,
+    entry: str,
+) -> None:
+    _check(repository)
+    tested_tree = _git(repository, "rev-parse", "HEAD^{tree}")
+    _commit(repository, "README.md", "# Updated documentation\n")
+    write = receipts.write_receipt
+    original_probe = receipts.environment_fingerprint
+    original_check = candidates.check_snapshot
+    failure = ProcessCleanupError(
+        "cleanup unverified", retained_workspaces=[repository]
+    )
+
+    def record(path: Path, **kwargs: object) -> None:
+        if kwargs["state"] == "failed":
+            raise OSError("disk full")
+        write(path, **kwargs)  # type: ignore[arg-type]
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(receipts, "write_receipt", record)
+    if entry == "probe":
+        monkeypatch.setattr(receipts, "environment_fingerprint", fail)
+    else:
+        monkeypatch.setattr(candidates, "check_snapshot", fail)
+    with pytest.raises(ProcessCleanupError) as error:
+        _check(repository)
+    assert error.value is failure
+    assert error.value.retained_workspaces == (repository.resolve(),)
+    assert (
+        json.loads(receipts.receipt_path(repository, "full").read_text())["state"]
+        == "running"
+    )
+    monkeypatch.setattr(receipts, "write_receipt", write)
+    monkeypatch.setattr(receipts, "environment_fingerprint", original_probe)
+    monkeypatch.setattr(candidates, "check_snapshot", original_check)
+    candidates.check_test_snapshot(tested_tree, "full")
+    assert checks == ["full", "full"]
+
+
+def test_running_record_must_be_durable_before_any_probe(
+    repository: Path,
+    checks: list[str],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    _check(repository)
+    path = receipts.receipt_path(repository, "full")
+    previous = path.read_bytes()
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("cannot persist running state")
+
+    monkeypatch.setattr(receipts, "write_receipt", fail)
+    monkeypatch.setattr(
+        receipts, "environment_fingerprint", lambda *_: pytest.fail("probe started")
+    )
+    with pytest.raises(OSError, match="running state"):
+        _check(repository)
+    assert path.read_bytes() == previous
+    assert checks == ["full"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        subprocess.TimeoutExpired(["docs"], 1),
+        KeyboardInterrupt(),
+        subprocess.CalledProcessError(-15, ["bash", "scripts/check-docs.sh"]),
+        subprocess.CalledProcessError(130, ["bash", "scripts/check-docs.sh"]),
+        subprocess.CalledProcessError(143, ["bash", "scripts/check-docs.sh"]),
+        subprocess.CalledProcessError(2, ["bash", "scripts/check-docs.sh"]),
+        subprocess.CalledProcessError(1, ["git", "archive"]),
+    ],
+)
+def test_interrupted_docs_refresh_does_not_restore_prior_evidence(
+    repository: Path,
+    checks: list[str],
+    monkeypatch: MonkeyPatch,
+    error: BaseException,
+) -> None:
+    _check(repository)
+    _commit(repository, "README.md", "# Updated documentation\n")
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(candidates, "check_snapshot", fail)
+    with pytest.raises(type(error)):
+        _check(repository)
+    assert (
+        json.loads(receipts.receipt_path(repository, "full").read_text())["state"]
+        == "failed"
+    )
 
 
 def test_receipt_write_failure_removes_partial_file(
