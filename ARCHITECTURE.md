@@ -296,7 +296,7 @@ HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源
 | 元件 | 責任 |
 | ---- | ---- |
 | `domain/backtest/metrics.py` | 對齊引擎觀察值、整合統計套件、記錄不可用原因 |
-| `domain/statistics/breakeven.py` | `summarize_breakeven` 從呼叫端提供的交易、評估起訖及可選本金計算損益兩平勝率與周轉成本；欄位、未平倉處理及不可用條件見函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
+| `domain/statistics/breakeven.py` | `summarize_breakeven` 從呼叫端提供的交易、評估起訖及可選本金計算損益兩平勝率與周轉成本；欄位、未平倉處理及不可用條件見模組與函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
 | `domain/performance/catalog.py`、`sampling.py` | 指標定義、單位、最佳化方向與取樣適用性 |
 | `domain/performance/artifacts.py`、`adapters/storage/performance.py` | 具型別的結果範圍、定義快照與觀察值保存／核驗 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 資產類別對應的固定基準、買進持有計算與基準行情取得；報告只讀已保存基準 |
