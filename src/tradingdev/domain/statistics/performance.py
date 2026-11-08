@@ -170,13 +170,13 @@ def _trade_net_pnls(trades: Sequence[Mapping[str, object]]) -> list[float]:
     return pnls
 
 
-def _sample_std(values: pd.Series) -> float | None:
+def _sample_std(values: pd.Series[float]) -> float | None:
     if len(values) < 2:
         return None
     return float(values.std(ddof=1))
 
 
-def _sharpe(daily_returns: pd.Series, annualisation: float) -> float | None:
+def _sharpe(daily_returns: pd.Series[float], annualisation: float) -> float | None:
     std = _sample_std(daily_returns)
     if std is None or std == 0.0:
         return None
