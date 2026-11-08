@@ -163,19 +163,38 @@ its manifest matches and it has a complete worker-control identity; it records
 queued records lacking that identity remain inspectable through the returned job
 ID but are not reported as successfully started work.
 
-Preparation and lookup return `confirmation_summary`, `confirmation_link` and the
-complete HTML's `html_path`/`artifact_id`. The service derives the ready-to-copy
-Markdown `confirmation_link` from the same actual `html_path`, URL-encoding special
-path characters without adding a URI scheme. Clients should copy it verbatim and
-verify its destination instead of assembling plan IDs or paths. The raw `html_path`
-remains available to machine clients. Full confirmation text remains in the saved
-plan; it is not copied into ordinary tool responses. The short summary starts with the model's
+Preparation and lookup return `confirmation_summary` and `confirmation_artifact`
+as defined by `app/contracts/plans.py:ConfirmationArtifact`. The artifact descriptor
+binds the registered HTML to its saved SHA-256 and server-local storage path; it is
+not a user-facing link. The former `confirmation_link`, `html_path` and top-level
+`artifact_id` response fields are removed. Clients must refresh tool schemas and
+consume the descriptor; stored plans and confirmation files are unchanged.
+
+Clients may link `server_path` only when that exact path is accessible to the user;
+stdio or HTTP transport alone does not establish file access. Otherwise use the
+host's file/attachment mechanism to deliver a complete verified copy. For MCP text
+retrieval, call `get_artifact` with the descriptor's artifact ID, `include_content=true`
+and its `sha256` as `expected_sha256` on every page, starting at zero. Follow
+`content_page.next_offset` until null, preserve the concatenated UTF-8 text exactly,
+and verify the saved file's bytes against the descriptor's hash. A partial page or
+model-reconstructed HTML is not delivery. The artifact tool documents paging bounds
+and failures; a changed/missing file requires inspecting the saved plan, not silently
+accepting new content or submitting a job.
+
+Present one readable HTML link, preserving the exact destination and encoding
+special path characters. Once a client copy is delivered, omit the inaccessible
+server path. Without host file delivery/verification, explain the limitation and
+stop without claiming the document is readable or requesting approval. Neither
+MCP text retrieval nor a valid Markdown path proves a human can open the file.
+This interface does not yet provide a direct HTTP URL for confirmation HTML.
+
+Full confirmation text remains in the saved plan; it is not copied into ordinary
+tool responses. The short summary starts with the model's
 strategy explanation, omits the title and saved name, and includes capital/cost
 origins plus annualization settings, sampling basis and the inclusive bar-timestamp
 boundaries of the research interval. The assistant presents the
-short summary and HTML link, ends the turn and waits for the user to review it. Reading the
-artifact does not submit a job. A local path must be made available through the
-client's file/artifact interface when the user is not on the server's machine.
+short summary and delivered HTML link, ends the turn and waits for the user to review
+it. Reading or transferring the artifact does not submit a job or extend plan expiry.
 
 `submit_execution_decision(plan_id, decision)` relays an explicit later user reply.
 `approve` submits the fixed manifest; `decline` cancels without running;

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,6 @@ from typing import Any
 import pytest
 from jsonschema import ValidationError, validate
 from mcp import Client
-from tests.e2e.conversation import links_to_file
 from tests.mcp.execution_fixtures import plan_context
 
 from tradingdev.app.contracts.plans import PlanResponse
@@ -48,20 +48,23 @@ def test_prepare_and_read_wait_for_a_separate_explicit_decision(
             assert prepared["success"] and prepared["status"] == "ready", prepared
             assert prepared["preflight"]["manifest_hash"] == prepared["manifest_hash"]
             assert prepared["confirmation_summary"]
-            assert links_to_file(
-                prepared["confirmation_link"], Path(prepared["html_path"])
+            assert "confirmation_link" not in prepared
+            artifact = prepared["confirmation_artifact"]
+            assert artifact["mime_type"] == "text/html"
+            assert (
+                artifact["sha256"]
+                == hashlib.sha256(
+                    Path(artifact["server_path"]).read_bytes()
+                ).hexdigest()
             )
-            assert not any(
-                character in prepared["confirmation_link"].split("<", 1)[1][:-2]
-                for character in (" ", "研", "(", ")", "?", "#")
-            )
-            assert "%25" in prepared["confirmation_link"]
             response = PlanResponse.model_validate(prepared)
             assert PlanResponse.model_validate_json(response.model_dump_json()) == (
                 response
             )
             assert "confirmation_text" not in prepared
-            assert "<html" in Path(prepared["html_path"]).read_text(encoding="utf-8")
+            assert "<html" in Path(
+                prepared["confirmation_artifact"]["server_path"]
+            ).read_text(encoding="utf-8")
             retained = await _call(
                 client, "get_execution_plan", plan_id=prepared["plan_id"]
             )

@@ -105,7 +105,9 @@ def _mcp_config(root: Path, tool_names: list[str]) -> dict[str, Any]:
         "env": runtime_environment(root),
         "enabled": True,
         "required": True,
-        "startup_timeout_sec": 30,
+        # Cold imports on a loaded host can exceed 30s. The enclosing run timeout
+        # still bounds startup plus every model turn and always reaps the tree.
+        "startup_timeout_sec": 120,
         "tool_timeout_sec": 60,
         "enabled_tools": tool_names,
         "default_tools_approval_mode": "approve",

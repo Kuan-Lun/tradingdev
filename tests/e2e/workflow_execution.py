@@ -72,7 +72,7 @@ def assert_plan(trace: WorkflowTrace, revision: RevisionEvidence) -> PlanEvidenc
     assert isinstance(manifest_hash, str) and len(manifest_hash) == 64
     plan_id = prepared.result["plan_id"]
     assert prepared.result.get("confirmation_summary")
-    assert prepared.result.get("html_path") and prepared.result.get("artifact_id")
+    assert prepared.result.get("confirmation_artifact")
     assert prepared.result.get("preflight"), (
         "Preparation must retain preflight evidence"
     )

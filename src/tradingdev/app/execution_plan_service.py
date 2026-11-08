@@ -12,13 +12,13 @@ from uuid import uuid4
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_html,
-    render_confirmation_link,
     render_confirmation_summary,
     render_confirmation_text,
 )
 from tradingdev.adapters.storage.execution_plans import ExecutionPlanStore
 from tradingdev.adapters.storage.submitted_research import SubmittedResearchStore
 from tradingdev.app.contracts.plans import (
+    ConfirmationArtifact,
     ExecutionDecision,
     PlanRejected,
     PlanResponse,
@@ -149,7 +149,7 @@ class ExecutionPlanService:
             )
             text = render_confirmation_text(document)
             self.plans.publish(plan, text, render_confirmation_html(document))
-            return self._response(plan, {"state": "ready", "job_id": None})
+            return self.get(plan.plan_id)
         except ResearchEvidenceBindingError as exc:
             return PlanRejected(
                 success=False,
@@ -383,9 +383,11 @@ class ExecutionPlanService:
             confirmation_summary=render_confirmation_summary(
                 plan.document, mode=config["backtest"]["mode"]
             ),
-            confirmation_link=render_confirmation_link(html_path),
-            html_path=html_path,
-            artifact_id=f"{plan.plan_id}:confirmation_html",
+            confirmation_artifact=ConfirmationArtifact(
+                artifact_id=f"{plan.plan_id}:confirmation_html",
+                sha256=record["html_hash"],
+                server_path=html_path,
+            ),
             preflight=plan.preflight,
             job_id=job_id,
             error=record.get("error"),

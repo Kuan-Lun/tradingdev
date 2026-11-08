@@ -15,6 +15,17 @@ from tradingdev.domain.strategies.capabilities import (
 type ExecutionDecision = Literal["approve", "decline", "revise"]
 
 
+class ConfirmationArtifact(ContractModel):
+    """Immutable document identity; storage location is not a delivery link."""
+
+    artifact_id: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    server_path: str = Field(
+        description="Server-local HTML path; requires confirmed client file access."
+    )
+    mime_type: Literal["text/html"] = "text/html"
+
+
 class PlanResponse(ContractModel):
     success: Literal[True] = True
     plan_id: str
@@ -22,9 +33,7 @@ class PlanResponse(ContractModel):
     manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     expires_at: str
     confirmation_summary: str
-    confirmation_link: str
-    html_path: str
-    artifact_id: str
+    confirmation_artifact: ConfirmationArtifact
     preflight: ProgramReceipt
     job_id: str | None = None
     error: str | None = None
