@@ -429,14 +429,22 @@ def deflated_sharpe_ratio(
     They answer different questions: the DSR asks how likely the selected
     strategy's Sharpe beats what luck alone would produce in ``N`` trials;
     Bonferroni asks whether any of ``N`` IC tests would reject at
-    family-wise ``alpha``. They are not interchangeable, and never both
-    apply to the same number: each already accounts for the whole
-    selection, so stacking them corrects one selection twice. When reports
-    show both side by side, label each figure with the correction it
-    carries. They also differ in what they assume about independence, in
-    two dimensions. Across trials or tests: Bonferroni rests on the union
-    bound, which holds whatever the dependence between the ``N`` tests, so
-    correlated candidates only make it conservative; this function's hurdle
+    family-wise ``alpha``. Their candidate populations also differ: this
+    function requires all attempted trials in ``n_trials``, while
+    ``rank_entries`` in the ML leaderboard passes only ``ranked_total``
+    to its Bonferroni caveat. That count includes rankable candidates
+    before ``top_k`` truncation, but excludes skipped entries and any
+    candidates filtered out before ranking. The caveat alone does not
+    establish coverage of the complete research search history.
+
+    The corrections are not interchangeable. When reporting them side by
+    side, label the metric, correction and candidate population; do not
+    apply a second correction to the same selection without defining the
+    statistical procedure. They also differ in what they assume about
+    independence, in two dimensions. Across trials or tests: Bonferroni
+    rests on the union bound, which holds whatever the dependence between
+    the ``N`` tests, so correlated candidates only make it conservative;
+    this function's hurdle
     is the expected maximum of ``N`` independent trials, as the limitation
     above describes. Within one series: each IC t-statistic Bonferroni
     compares (``ic_statistics`` in ``tradingdev.domain.ml.evaluation.metrics``)
