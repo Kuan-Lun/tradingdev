@@ -14,12 +14,10 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務。簡報建置與檢查（`scripts/presentations.sh`、
-`scripts/check-presentations.sh`）另需 Node.js 18 以上與 npm，且執行
-`scripts/presentations.sh setup` 前必須先裝好 Node.js 與 npm——
-`setup` 只安裝鎖定的 npm 工具鏈（Marp CLI），不會安裝 Node.js 或 npm 本身。
-離線 pytest 的簡報單元測試使用替代物隔離 Node.js 查找與編譯程序，
-不以安裝 Node.js 為測試前提；實際簡報建置與一致性檢查仍需要 Node.js。
+一般文件檢查不需要模型服務。簡報建置與檢查另需 Node.js 20 以上、npm 與鎖定工具鏈，
+含 Mermaid 時另需 Chrome／Chromium。完整離線 pytest 與 `tests/tooling` 包含真實圖表
+渲染測試，也需要這些工具；離線表示執行時不呼叫模型或下載依賴。
+初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
 安裝器調整的 Git 設定及
 執行環境限制見[注意事項](#注意事項)。
 
@@ -220,7 +218,7 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 ### 簡報的編輯與輸出
 
 [簡報入口](talks/tradingdev-introduction/README.md)提供編輯、預覽與發布操作。
-編輯環境須有 Node.js 18 以上及 npm，再初始化鎖定的 Marp 工具鏈：
+編輯環境須有 Node.js 20 以上及 npm，再初始化鎖定的 Marp 工具鏈：
 
 ```bash
 ./scripts/presentations.sh setup
@@ -228,7 +226,7 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 
 `setup` 會下載 npm 套件；一般 build／check 使用已安裝工具鏈，不自動安裝。
 執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝鎖定的 npm 工具鏈
-（Marp CLI），不會安裝 Node.js 或 npm 本身。若報錯提示
+（Marp CLI、Mermaid 與圖表字型），不會安裝 Node.js 或 npm 本身。若報錯提示
 `Node.js is unavailable` 或 `Node.js and npm are required`，
 請先安裝 Node.js 與 npm，而不是執行 `setup`。
 依賴更新須同步 `tooling/marp/package-lock.json` 並重新初始化。
@@ -268,6 +266,15 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 打包、解壓與發布的使用方式見[簡報編輯指南](talks/tradingdev-introduction/README.md)。
 專項檢查以臨時目錄重建並比對，不覆寫工作樹；缺少工具鏈或輸出不同步會失敗。
 可用 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定另一套已初始化且 lock 相符的工具鏈。
+
+含 Mermaid 圖表時，build／check 及相關工具測試另需本機 Chrome，或以
+`TRADINGDEV_PRESENTATION_BROWSER` 指定 Chromium 執行檔；`setup` 不安裝瀏覽器。
+[render-diagrams.mjs](../tooling/marp/render-diagrams.mjs) 使用鎖定的 Mermaid 與 Noto Sans TC
+在獨立 headless 瀏覽器產生 SVG，圖表頁面不載入網路資源；完成或失敗後關閉瀏覽器，
+外層程序監督器負責逾時清理。SVG 與所需字型嵌入 HTML，觀看端不需要建置工具。
+替代工具鏈的套件宣告、lock 及渲染腳本都須與受查 snapshot 相符。
+瀏覽器版本仍可能影響 SVG 輸出；重建核對失敗時須確認差異與版面，再提交重建結果。
+圖表編輯方式與支援範圍見[簡報編輯指南](talks/tradingdev-introduction/README.md#頁面版型與撰寫方式)。
 
 ### 簡報網站發布設定
 

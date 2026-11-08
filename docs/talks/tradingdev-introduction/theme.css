@@ -96,6 +96,10 @@ section.compact table th, section.compact table td { padding: 13px 16px; }
 section.references { font-size: 25px; }
 section.references li { margin: 13px 0; }
 
+/* Mermaid SVG is embedded during the build and keeps its intrinsic proportions. */
+section .mermaid-diagram { display: flex; justify-content: center; margin: 0; }
+section .mermaid-diagram > svg { width: 100%; height: 400px; max-width: 1120px; }
+
 /* Visible conversation text remains selectable and readable at presentation scale. */
 section.case-dialogue { font-size: 24px; }
 section.case-dialogue h2 { font-size: 38px; margin: 0 0 16px; }

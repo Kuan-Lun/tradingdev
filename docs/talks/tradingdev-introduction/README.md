@@ -40,6 +40,25 @@ scripts/presentations.sh package --output /absolute/path/to/tradingdev-talk
 
 ## 頁面版型與撰寫方式
 
+循序圖可直接寫在 `mermaid` 程式碼區塊中，由建置流程轉成內嵌 SVG，無須另外維護圖片檔：
+
+````markdown
+```mermaid
+sequenceDiagram
+    accTitle: 研究請求與回覆
+    participant U as 使用者
+    participant A as AI 代理
+    U->>A: 策略想法
+    A-->>U: 追問必要條件
+```
+````
+
+目前支援 `sequenceDiagram`；圖表的設定與配色由建置工具統一管理，不接受圖內設定指令或
+YAML frontmatter。語法錯誤會使建置失敗，保留上一次成功的 HTML。圖表過長時請拆頁，
+並用瀏覽器確認文字大小與內容是否完整；原始碼預覽不等於建置後的投影片。
+建置端的 Chrome 需求見[開發指南](../../development.md#簡報的編輯與輸出)。
+SVG 連同使用到的中文字型內嵌在 HTML，觀看端不需要安裝 Mermaid 或連線下載圖表資源。
+
 `slides.md` 只保存頁面內容、Marp 設定與對話核對標記，不撰寫講稿。
 
 - **章首頁**使用 `chapter`：深色底、章節編號與主題說明。

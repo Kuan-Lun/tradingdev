@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -51,9 +53,12 @@ _TOOL_PATHS = frozenset(
 )
 _TITLE = "TradingDev｜能學習策略開發經驗、自我演進的研究後端"
 _DESCRIPTION = "產品介紹、使用場景、分類比較與後續開發方向"
+_MERMAID_FENCE = re.compile(
+    r'<pre\b[^>]*><code class="language-mermaid">(.*?)</code></pre>', re.DOTALL
+)
 _SETUP_HELP = "Run scripts/presentations.sh setup to install the locked toolchain."
 _NODE_HELP = (
-    "Install Node.js 18+ and npm, confirm `node` is on PATH, then run "
+    "Install Node.js 20+ and npm, confirm `node` is on PATH, then run "
     "scripts/presentations.sh setup to install the locked toolchain."
 )
 
@@ -308,7 +313,7 @@ def _toolchain(root: Path) -> Path:
         os.environ.get("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(expected))
     ).resolve()
     try:
-        for name in ("package.json", "package-lock.json"):
+        for name in ("package.json", "package-lock.json", "render-diagrams.mjs"):
             if (expected / name).read_bytes() != (installed / name).read_bytes():
                 raise PresentationError(
                     f"Toolchain {name} differs from the checked snapshot."
@@ -396,6 +401,7 @@ def _command(toolchain: Path, source: Path, theme: Path, output: Path) -> list[s
 
 
 def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> None:
+    deadline = time.monotonic() + timeout
     toolchain = _toolchain(root)
     with _workspace() as temporary:
         generated = temporary / "index.html"
@@ -410,7 +416,50 @@ def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> No
             temporary=temporary,
             timeout=timeout,
         )
+        _render_diagrams(
+            toolchain,
+            generated,
+            deck=root / DECK,
+            temporary=temporary,
+            timeout=max(0.001, deadline - time.monotonic()),
+        )
         (output or root / DECK / "index.html").write_bytes(generated.read_bytes())
+
+
+def _render_diagrams(
+    toolchain: Path, generated: Path, *, deck: Path, temporary: Path, timeout: float
+) -> None:
+    content = generated.read_text(encoding="utf-8")
+    diagrams = _MERMAID_FENCE.findall(content)
+    if not diagrams:
+        return
+    request = temporary / "diagrams.json"
+    response = temporary / "diagrams-rendered.json"
+    request.write_text(json.dumps([html.unescape(source) for source in diagrams]))
+    node = shutil.which("node")
+    if node is None:
+        raise PresentationError(_NODE_HELP)
+    _execute(
+        [node, str(toolchain / "render-diagrams.mjs"), str(request), str(response)],
+        cwd=temporary,
+        temporary=temporary,
+        timeout=timeout,
+    )
+    rendered = json.loads(response.read_text(encoding="utf-8"))
+    if (
+        not isinstance(rendered, list)
+        or len(rendered) != len(diagrams)
+        or any(
+            not isinstance(svg, str) or not svg.startswith("<svg") for svg in rendered
+        )
+    ):
+        raise PresentationError("Mermaid renderer returned incomplete SVG output.")
+    replacements = iter(rendered)
+    content = _MERMAID_FENCE.sub(
+        lambda _: f'<div class="mermaid-diagram">{next(replacements)}</div>', content
+    )
+    check_html(content, root=deck)
+    generated.write_text(content, encoding="utf-8")
 
 
 def check_presentations(root: Path, *, timeout: float = 120) -> None:
