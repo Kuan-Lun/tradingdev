@@ -262,8 +262,10 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 格式辨識不證明報告數值、ZIP 內容或策略正確，案例語意、來源與完整性仍須另行審閱。
 `scripts/presentations.sh package --output <新資料夾>` 檢查後建立資料夾及同名 ZIP，
 不覆寫既存輸出。打包與檢查都從來源建置，無須先保存預覽 HTML。
-`scripts/stage-presentations.sh` 使用已安裝的簡報工具編譯來源，以 Python 3.14 標準函式庫
+`scripts/stage-presentations.sh` 使用已安裝的簡報工具編譯來源，以 Python 標準函式庫
 驗證成品後，將 HTML、圖片與案例證據放入 `site-dist/tradingdev/`；成功後才替換舊發布內容。
+直接執行時預設使用 `python3`，可用 `TRADINGDEV_CHECK_PYTHON` 指定 interpreter；
+腳本不選擇 Python 版本，Cloudflare 的 Python 3.14 由下方建置變數固定。
 Cloudflare 使用 `scripts/build-presentations-site.sh` 先安裝鎖定的 npm 工具與 Chromium，
 再呼叫上述編譯及發布準備步驟，不安裝 TradingDev 的 Python 產品依賴。
 打包、解壓與發布的使用方式見[簡報編輯指南](talks/tradingdev-introduction/README.md)。
@@ -279,7 +281,7 @@ Cloudflare 使用 `scripts/build-presentations-site.sh` 先安裝鎖定的 npm �
 編譯入口。SVG 與所需字型嵌入 HTML，觀看端不需要建置工具。
 替代工具鏈的套件宣告、lock 及渲染腳本都須與受查 snapshot 相符。
 瀏覽器版本仍可能影響 SVG 版面；須以瀏覽器確認本機與分支預覽的圖表。本機使用已安裝
-的 Chrome 或明示執行檔；Workers Builds 依 `WORKERS_CI=1` 選用鎖定的 Linux x64
+的 Chrome 或明示執行檔；渲染器在 `WORKERS_CI=1` 的建置環境選用鎖定的 Linux x64
 Chromium 套件與內附函式庫，在獨立臨時目錄解壓並於關閉後清理。雲端使用該套件的
 serverless 啟動參數，包含停用瀏覽器 sandbox；僅在隔離的建置環境渲染 repository 來源，
 渲染時封鎖外部網路請求，不將此流程宣稱為執行任意來源的安全隔離。
