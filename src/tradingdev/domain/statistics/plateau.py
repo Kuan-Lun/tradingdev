@@ -77,9 +77,15 @@ Integration contract:
   direction is never inferred. Results are in that higher-is-better scale,
   so a minimised metric is reported negated.
 * All trials come from the same evaluation window, dataset, and cost model.
-* Upstream currently persists only ``trial/{index}/train``, so the
-  resulting plateau is in-sample. Label it as in-sample; it is not
-  out-of-sample evidence.
+* Successfully published optimization results retain per-trial scopes as
+  ``trial/{index}/train``, including completed evaluations with an undefined
+  objective. They also contain the selected candidate's out-of-sample
+  test scope, not a test scope for every grid point. A plateau built from
+  the per-trial training scopes is in-sample and must be labelled as such.
+  Execution errors, timeouts, or failure to select a valid objective can
+  stop the job before trial scopes are published. Those failed searches
+  cannot be reconstructed from persisted training scopes alone; this
+  module still requires the caller's complete grid rows.
 * Plateau scores depend on the radius and on the grid density, so they are
   comparable only within one run, never across runs or radii.
 """
