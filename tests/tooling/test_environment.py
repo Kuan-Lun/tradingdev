@@ -75,6 +75,11 @@ def test_suite_launcher_checks_environment_before_quality_and_pytest(
             "-m",
             "pytest",
             *(["tests/tooling"] if profile == "tooling" else []),
+            "-n",
+            "auto",
+            "--dist",
+            "worksteal",
+            "--max-worker-restart=0",
         ]
     else:
         assert not (tmp_path / "pytest.json").exists()
@@ -93,6 +98,7 @@ def test_missing_packages_are_reported_together_without_runtime_checks(
     with pytest.raises(environment.EnvironmentCheckError) as failure:
         environment.check_environment("full")
     assert "pytest" in str(failure.value)
+    assert "pytest-xdist" in str(failure.value)
     assert "mypy" in str(failure.value)
     assert "uv sync --locked --all-extras" in str(failure.value)
 

@@ -68,6 +68,36 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 `check-tooling.sh`。產品、依賴、共用測試設施及無法確認的變更仍跑完整套件。
 提交與 PR 的檢查分流見下方流程。
 
+### 平行執行離線測試
+
+`check-full.sh` 與 `check-tooling.sh` 使用 pytest-xdist 的 `worksteal` 排程，
+將測試分配給多個程序；worker 異常退出時不自動重啟。完整檢查仍執行全部離線測試。
+直接執行 pytest 預設循序執行，加 `-n auto --dist worksteal` 才啟用平行模式。
+
+`-n auto` 的程序數由 [tests/parallel_plugin.py](../tests/parallel_plugin.py) 決定：
+Apple Silicon macOS 使用 `hw.perflevel0.physicalcpu` 的最高效能層級核心數，
+不計入節能核心；查詢失敗時顯示警告並使用一個 worker。
+Linux／Windows 使用目前程序可用的邏輯核心數減二，最少一個 worker；
+Intel Mac 與其他作業系統沿用 xdist 的實體核心偵測及其後備方式。
+此設定只控制程序數，不綁定 CPU 核心，也不限制測試內啟動的子程序或容器。
+
+可透過標準環境變數覆寫自動程序數，`0` 表示循序執行；負數或無效值會失敗。
+直接使用 pytest 時，明示的 `-n 數字` 優先於此環境變數：
+
+```bash
+PYTEST_XDIST_AUTO_NUM_WORKERS=10 scripts/check-full.sh
+PYTEST_XDIST_AUTO_NUM_WORKERS=0 scripts/check-tooling.sh
+uv run --no-sync python -m pytest -n 4 --dist worksteal --durations=30
+```
+
+以 `--durations=30` 檢視最慢的測試階段；檢查腳本可透過
+`PYTEST_ADDOPTS='--durations=30'` 加入耗時統計。程序數增加不保證等比例加速，
+須確認記憶體、Docker 資源與測試內部平行工作量。平行測試應隔離檔案、資料庫與
+port，清理只處理自己擁有的程序；session fixture 會在各個使用它的 worker 分別建立。
+未指定 `--basetemp` 時，每次平行執行會建立專屬 pytest 暫存根並於結束後清除，
+不清掃其他 pytest 執行的目錄；既有自訂測試工作區仍逐案例清理。
+偵錯時使用 `-n 0`，或將上述環境變數設為 `0`。
+
 ### 依賴相容性限制
 
 本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；可安裝不代表所有上游
@@ -487,6 +517,8 @@ Codex 需要已登入的 CLI 與所選模型存取權；Local 需要已啟動且
 工具不下載模型、不自動切換 provider；所選能力不可用會失敗。
 
 入口由 [tooling/llm_check.py](../tooling/llm_check.py) 保留情境選擇與 pytest 選項，
+維持循序執行及即時進度輸出；拒絕透過命令列或 `PYTEST_ADDOPTS` 啟用 xdist 平行或監看重跑，
+避免 worker 略過主程序的環境確認。離線套件的平行設定不套用到此入口。
 在選出實際要執行的情境後、建立測試工作區前共用環境確認：檢查策略容器前置條件，
 再確認 Codex CLI 登入狀態或 Local 服務連線。help、列出情境／fixtures、
 `--setup-plan` 等純資訊模式與沒有選到情境時不檢查服務；`--setup-only` 會執行

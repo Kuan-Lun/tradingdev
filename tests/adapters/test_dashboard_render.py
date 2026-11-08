@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from contextlib import contextmanager
+from importlib import import_module
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any
@@ -147,6 +148,10 @@ def _pipeline(mode: str) -> PipelineResult:
 
 def _app(tmp_path: Path, pipeline: PipelineResult) -> AppTest:
     from streamlit.testing.v1 import AppTest
+
+    # Cold imports belong to the isolated scenario's 90-second setup budget.
+    # Keep the 15-second AppTest budget focused on rendering and interaction.
+    import_module("tradingdev.adapters.dashboard.app")
 
     # from_file keeps the script inside the immediately removed test directory;
     # the renderer uses in-memory results and never opens a user workspace.
