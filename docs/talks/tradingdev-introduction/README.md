@@ -97,4 +97,4 @@ Cloudflare 以鎖定的工具鏈編譯已提交的 Markdown、主題及 Mermaid�
 ## 相關文件
 
 - [編輯環境與命令列預覽](../../development.md#簡報的編輯與輸出)：初始化 Marp、執行監看與本機 HTTP 預覽。
-- [網站發布設定](../../development.md#簡報網站發布設定)：供管理者設定 Cloudflare、共用網域或 GitHub Pages，以及排查發布連線。
+- [網站發布設定](../../development.md#簡報網站發布設定)：供管理者設定 Cloudflare 與共用網域，以及排查發布連線。
