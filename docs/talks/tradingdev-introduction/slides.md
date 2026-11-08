@@ -1019,13 +1019,7 @@ CLI 的直接回測是同步入口，不使用 MCP 計畫確認或背景 supervi
 
 ## 04　現況與邊界
 
-目前主線已有完整回測績效與排行榜；PR #38 的統計擴充仍是未合併項目。
-
-<!--
-main 於 2026-11-07 為 9e502ce。GitHub PR API 回報 PR #38 state=open、merged=false；其 head 為 005854fdb59a4affd528c18a745fd572dc07a5dd。
-來源：https://github.com/Kuan-Lun/tradingdev/pull/38
-來源：https://github.com/Kuan-Lun/tradingdev/tree/9e502ce
--->
+回測績效與排行榜使用已保存的結果；統計 API 提供獨立計算，尚未接入結果查詢。
 
 ---
 
@@ -1087,7 +1081,7 @@ main 於 2026-11-07 為 9e502ce。GitHub PR API 回報 PR #38 state=open、merge
 - [策略契約與驗證](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md)
 - [執行計畫](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/execution_plans.md)
 - [執行產物與績效指標](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md) · [Performance artifacts](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md)
-- [ML research](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md) · [PR #38](https://github.com/Kuan-Lun/tradingdev/pull/38)
+- [ML research](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md) · [統計研究背景：PR #38](https://github.com/Kuan-Lun/tradingdev/pull/38)
 
 <!--
 投影片版型參考 docs/talks/tradingdev-introduction/theme.css。本檔使用同一 Marp theme 名稱及 cover、chapter、compact、statement、closing、references class。
