@@ -36,6 +36,9 @@ _MANAGED_ENV = frozenset(
         "TRADINGDEV_CHECK_SNAPSHOT_TIMEOUT",
     }
 )
+# Host tracing identities change between invocations without changing offline
+# test behavior. Keep permission/sandbox flags and all unknown settings.
+_TRACE_ENV = frozenset({"CODEX_TOOL_CALL_ID", "CODEX_SESSION_ID", "CODEX_THREAD_ID"})
 
 
 def _digest(value: object) -> str:
@@ -159,7 +162,9 @@ def environment_fingerprint(root: Path, profile: str, env: dict[str, str]) -> st
             "browser": (_file_identity(Path(browser)), command([browser, "--version"])),
             "runtime": runtime,
             "settings": {
-                key: value for key, value in env.items() if key not in _MANAGED_ENV
+                key: value
+                for key, value in env.items()
+                if key not in _MANAGED_ENV | _TRACE_ENV
             },
         }
     )

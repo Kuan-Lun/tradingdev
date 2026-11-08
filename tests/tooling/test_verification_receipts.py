@@ -447,6 +447,7 @@ def test_candidate_reuses_development_snapshot_but_reviews_new_docs(
         "daemon",
         "node_file",
         "python_file",
+        "permissions",
     ],
 )
 def test_environment_fingerprint_tracks_actual_external_inputs(
@@ -515,9 +516,13 @@ def test_environment_fingerprint_tracks_actual_external_inputs(
     # Managed snapshot paths may differ; actual test options may not.
     env["TMPDIR"] = "/different/snapshot/runtime"
     env["PWD"] = "/different/snapshot"
+    for key in ("CODEX_TOOL_CALL_ID", "CODEX_SESSION_ID", "CODEX_THREAD_ID"):
+        env[key] = "different-invocation"
     assert receipts.environment_fingerprint(tmp_path, "full", env) == before
     if change == "settings":
         env["PYTEST_XDIST_AUTO_NUM_WORKERS"] = "10"
+    elif change == "permissions":
+        env["CODEX_PERMISSION_PROFILE"] = "different-permissions"
     elif change == "package":
         version = "2"
     elif change == "binary":
