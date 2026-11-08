@@ -16,7 +16,8 @@ uv sync --locked --all-extras --python 3.14
 
 一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上及已初始化的鎖定工具鏈，
 含 Mermaid 時另需 Chrome／Chromium。本機 npm 用於初始化依賴，Python 簡報命令的
-build／watch／check／package 及離線測試不呼叫 npm；Cloudflare 發布入口會先執行 `npm ci`。
+build／watch／check／package 預設及離線測試不呼叫 npm；VS Code 的 build／watch 工作
+會在啟動時按需安裝鎖定依賴，Cloudflare 發布入口會先執行 `npm ci`。
 完整離線 pytest 與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器；
 離線表示執行時不呼叫模型或下載依賴。
 初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
@@ -247,7 +248,7 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 ./scripts/presentations.sh setup
 ```
 
-`setup` 會下載 npm 套件；一般 build／check 使用已安裝工具鏈，不自動安裝。
+`setup` 會下載 npm 套件；命令列 build／watch 預設及 check 使用已安裝工具鏈。
 執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝鎖定的 npm 工具鏈
 （Marp CLI、Mermaid 與圖表字型），不會安裝 Node.js 或 npm 本身。若報錯提示
 `Node.js is unavailable` 或 `Node.js and npm are required`，
@@ -257,8 +258,19 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 #### 在 VS Code 儲存時自動編譯
 
 [VS Code Tasks](../.vscode/tasks.json) 提供 `slides: watch` 與 `slides: build`。
-完成初始化後，在可信任的工作區允許自動工作，或以 **Tasks: Run Task** 啟動。
-監看時儲存來源會重建 HTML；結束使用 **Tasks: Terminate Task**。
+安裝 uv、Node.js 與 npm 後，在可信任的工作區允許自動工作，或以 **Tasks: Run Task** 啟動。
+兩個工作會先依 `uv.lock` 同步專案 Python 環境及全部 extras，再檢查 Marp 工具鏈；
+缺少套件或安裝版本與 npm lock 不符時才執行安裝，已齊備時直接開始建置或監看。
+首次使用或鎖定依賴更新後可能需要網路；不會自行更新 lock。Node.js、npm 及圖表所需的
+Chrome／Chromium 仍須先安裝，安裝失敗時不會開始編譯。
+
+兩個工作共用安裝鎖，避免同時初始化 Marp。監看開始後，儲存來源只會重建 HTML；
+變更依賴後須重新啟動工作。結束使用 **Tasks: Terminate Task**。
+命令列需要相同行為時，執行
+`uv run --locked --all-extras python -m tooling.presentations build --ensure-toolchain`，
+或將 `build` 改為 `watch`。此選項只適用於 build／watch，
+不修改 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定的外部工具鏈；外部安裝須由其維護者修復。
+品質檢查與打包入口維持不下載依賴。
 詳細操作見[簡報入口](talks/tradingdev-introduction/README.md#編輯與預覽)。
 
 #### 手動輸出與預覽
