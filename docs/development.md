@@ -14,8 +14,9 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務。簡報建置與檢查另需 Node.js 22.17 以上及已初始化的鎖定工具鏈，
-含 Mermaid 時另需 Chrome／Chromium。npm 用於初始化依賴，建置與測試執行時不呼叫 npm。
+一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上及已初始化的鎖定工具鏈，
+含 Mermaid 時另需 Chrome／Chromium。本機 npm 用於初始化依賴，Python 簡報命令的
+build／watch／check／package 及離線測試不呼叫 npm；Cloudflare 發布入口會先執行 `npm ci`。
 完整離線 pytest 與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器；
 離線表示執行時不呼叫模型或下載依賴。
 初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
@@ -41,8 +42,10 @@ uv sync --locked --all-extras --python 3.14
 格式化會在第一次修改檔案前完成工具確認。完整測試另共用產品的
 `DockerRuntime.resolve()`，確認本機 Docker 端點、daemon 資源能力、策略映像及
 有效資源設定；失敗時不啟動品質檢查或 pytest，也不自動下載或建置映像。
-快速、文件與開發工具檢查不要求 Docker 或模型服務。簡報入口在安裝或編譯前
-確認 Node.js 版本，檢查入口亦先核對已安裝的鎖定工具鏈。
+快速、文件與開發工具檢查不要求 Docker 或模型服務。本機 Python 簡報入口在安裝或編譯前
+確認 Node.js 版本，檢查入口亦先核對已安裝的鎖定工具鏈。Cloudflare 發布腳本直接執行
+npm／Node，使用平台的 `NODE_VERSION` 設定，未經此 Python 前置檢查；設定方式見
+[簡報網站發布設定](#簡報網站發布設定)。
 
 可只確認完整測試的前置環境：
 
