@@ -49,7 +49,7 @@ class _FitRecorder(KDStrategy):
 
     def __init__(self) -> None:
         super().__init__(config=KDStrategyConfig())
-        self.fitted: pd.Series | None = None
+        self.fitted: pd.Series[pd.Timestamp] | None = None
 
     def fit(self, df: pd.DataFrame) -> None:
         self.fitted = df["timestamp"].copy()

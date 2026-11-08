@@ -107,7 +107,7 @@ class RiskFeatureEngineer:
         volume = df["volume"].astype(float)
         log_ret = close.apply(np.log).diff()
 
-        features: dict[str, pd.Series] = {}
+        features: dict[str, pd.Series[float]] = {}
 
         # --- Realized volatility at multiple horizons ---
         for w in _VOL_WINDOWS:
@@ -177,7 +177,7 @@ class RiskFeatureEngineer:
     def _compute_safe_target(
         self,
         df: pd.DataFrame,
-    ) -> pd.Series:
+    ) -> pd.Series[float]:
         """Compute safe/unsafe binary target.
 
         safe=1: at least one direction yields net P&L above

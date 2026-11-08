@@ -135,7 +135,7 @@ def plot_mae_histogram(
     return fig
 
 
-def plot_sl_trigger_curve(mae_worst: pd.Series, current_sl: float) -> go.Figure:
+def plot_sl_trigger_curve(mae_worst: pd.Series[float], current_sl: float) -> go.Figure:
     """Trigger rate vs SL level sweep."""
     sl_levels = np.arange(0.002, 0.031, 0.001)
     trigger_rates = [(mae_worst >= sl).mean() * 100 for sl in sl_levels]

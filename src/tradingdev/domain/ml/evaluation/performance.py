@@ -81,8 +81,8 @@ def _finite(value: float) -> float | None:
 
 
 def return_metrics(
-    returns: pd.Series | Sequence[float],
-    benchmark: pd.Series | Sequence[float],
+    returns: pd.Series[float] | pd.Series[int] | Sequence[float],
+    benchmark: pd.Series[float] | pd.Series[int] | Sequence[float],
     *,
     periods_per_year: float | None = None,
 ) -> ReturnMetrics:

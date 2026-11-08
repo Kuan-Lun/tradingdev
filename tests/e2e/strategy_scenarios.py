@@ -238,7 +238,7 @@ def market_frame() -> pd.DataFrame:
 
 def expected_signals(
     frame: pd.DataFrame, scenario: Scenario, parameters: dict[str, int]
-) -> pd.Series:
+) -> pd.Series[int]:
     close = frame["close"]
     if scenario.name == "momentum":
         left, right = close, close.shift(parameters["lookback"])

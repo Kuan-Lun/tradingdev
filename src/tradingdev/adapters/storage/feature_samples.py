@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 def read_feature_sample(
     path: Path,
     *,
-    timestamps: pd.Series,
+    timestamps: pd.Series[pd.Timestamp],
     column: str,
     max_rows: int,
     fallback_column: str | None = None,

@@ -30,7 +30,7 @@ _PERIODS = 252.0
 _PERIODS_CASES = [252.0, 8760.0, 4380.0]
 
 
-def _series(values: np.ndarray) -> pd.Series:
+def _series(values: np.ndarray) -> pd.Series[float]:
     """QuantStats needs a DatetimeIndex; the metrics themselves do not.
 
     Both implementations reduce positionally, so handing the same object to
@@ -40,14 +40,14 @@ def _series(values: np.ndarray) -> pd.Series:
     return pd.Series(values, index=index)
 
 
-def _scalar(value: float | pd.Series) -> float:
+def _scalar(value: float | pd.Series[float]) -> float:
     """QuantStats' union annotation also covers frame inputs we never pass."""
     assert not isinstance(value, pd.Series), "expected a scalar statistic"
     return float(value)
 
 
 @pytest.fixture(scope="module")
-def book() -> pd.Series:
+def book() -> pd.Series[float]:
     """A deterministic book with one real drawdown in the middle."""
     rng = np.random.default_rng(7)
     values = rng.normal(0.0006, 0.011, 500)
@@ -56,14 +56,14 @@ def book() -> pd.Series:
 
 
 @pytest.fixture(scope="module")
-def market() -> pd.Series:
+def market() -> pd.Series[float]:
     return _series(np.random.default_rng(11).normal(0.0003, 0.009, 500))
 
 
 class TestAgreement:
     @pytest.mark.parametrize("periods", _PERIODS_CASES)
     def test_sharpe_matches_quantstats(
-        self, book: pd.Series, market: pd.Series, periods: float
+        self, book: pd.Series[float], market: pd.Series[float], periods: float
     ) -> None:
         ours = return_metrics(book, market, periods_per_year=periods)
 
@@ -72,7 +72,7 @@ class TestAgreement:
         assert ours.sharpe == pytest.approx(theirs, rel=1e-12)
 
     def test_max_drawdown_matches_quantstats(
-        self, book: pd.Series, market: pd.Series
+        self, book: pd.Series[float], market: pd.Series[float]
     ) -> None:
         ours = return_metrics(book, market, periods_per_year=_PERIODS)
 
@@ -82,7 +82,7 @@ class TestAgreement:
         assert ours.max_drawdown == pytest.approx(theirs, rel=1e-12)
 
     def test_annual_return_matches_quantstats_cagr(
-        self, book: pd.Series, market: pd.Series
+        self, book: pd.Series[float], market: pd.Series[float]
     ) -> None:
         ours = return_metrics(book, market, periods_per_year=_PERIODS)
 
@@ -101,7 +101,7 @@ class TestAgreement:
 
 class TestAssumptions:
     def test_the_risk_free_rate_is_assumed_zero(
-        self, book: pd.Series, market: pd.Series
+        self, book: pd.Series[float], market: pd.Series[float]
     ) -> None:
         """The equality above is only meaningful at rf=0; pin the assumption."""
         ours = return_metrics(book, market, periods_per_year=_PERIODS)

@@ -432,14 +432,14 @@ def _return_metrics(
         )
 
 
-def _scalar(value: float | pd.Series) -> float:
+def _scalar(value: float | pd.Series[float]) -> float:
     """QuantStats' union annotation also covers DataFrame inputs we never pass."""
     if isinstance(value, pd.Series):
         raise TypeError("Single-series performance statistics must return a scalar")
     return float(value)
 
 
-def _prepared_as_prices(returns: pd.Series) -> bool:
+def _prepared_as_prices(returns: pd.Series[float]) -> bool:
     """Detect valid returns misread as prices by QuantStats' public API."""
     return bool(returns.min() >= 0 and returns.max() > 1)
 
@@ -451,7 +451,7 @@ def _fallback(
 
 
 def _maximum_drawdown(
-    returns: pd.Series,
+    returns: pd.Series[float],
     metric_id: str,
     fallbacks: dict[str, dict[str, str]],
 ) -> float:

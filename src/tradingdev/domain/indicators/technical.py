@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from numbers import Integral
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
@@ -25,38 +25,38 @@ if TYPE_CHECKING:
 class MACDResult:
     """MACD line, signal line, and histogram (``macd - signal``)."""
 
-    macd: pd.Series
-    signal: pd.Series
-    histogram: pd.Series
+    macd: pd.Series[float]
+    signal: pd.Series[float]
+    histogram: pd.Series[float]
 
 
 @dataclass(frozen=True)
 class BollingerBands:
     """Lower, middle (SMA), and upper Bollinger Bands."""
 
-    lower: pd.Series
-    middle: pd.Series
-    upper: pd.Series
+    lower: pd.Series[float]
+    middle: pd.Series[float]
+    upper: pd.Series[float]
 
 
 @dataclass(frozen=True)
 class ADXResult:
     """Average Directional Index with its directional indicators."""
 
-    adx: pd.Series
-    plus_di: pd.Series
-    minus_di: pd.Series
+    adx: pd.Series[float]
+    plus_di: pd.Series[float]
+    minus_di: pd.Series[float]
 
 
 @dataclass(frozen=True)
 class StochasticResult:
     """Stochastic oscillator slow ``%K`` and ``%D`` lines."""
 
-    k: pd.Series
-    d: pd.Series
+    k: pd.Series[float]
+    d: pd.Series[float]
 
 
-def sma(close: pd.Series, length: int) -> pd.Series:
+def sma(close: pd.Series[float] | pd.Series[int], length: int) -> pd.Series[float]:
     """Simple moving average; the first ``length - 1`` values are NaN."""
     _validate_period("length", length)
     values = _as_float(close)
@@ -65,7 +65,7 @@ def sma(close: pd.Series, length: int) -> pd.Series:
     return _series(talib.SMA(values, timeperiod=length), close)
 
 
-def ema(close: pd.Series, length: int) -> pd.Series:
+def ema(close: pd.Series[float] | pd.Series[int], length: int) -> pd.Series[float]:
     """EMA seeded with the first ``length`` observations' simple average."""
     _validate_period("length", length)
     values = _as_float(close)
@@ -74,7 +74,7 @@ def ema(close: pd.Series, length: int) -> pd.Series:
     return _series(talib.EMA(values, timeperiod=length), close)
 
 
-def rsi(close: pd.Series, length: int = 14) -> pd.Series:
+def rsi(close: pd.Series[float] | pd.Series[int], length: int = 14) -> pd.Series[float]:
     """Wilder RSI, first defined after ``length`` price changes."""
     _validate_period("length", length)
     values = _as_float(close)
@@ -84,7 +84,7 @@ def rsi(close: pd.Series, length: int = 14) -> pd.Series:
 
 
 def macd(
-    close: pd.Series,
+    close: pd.Series[float] | pd.Series[int],
     fast: int = 12,
     slow: int = 26,
     signal: int = 9,
@@ -114,7 +114,7 @@ def macd(
 
 
 def bollinger_bands(
-    close: pd.Series,
+    close: pd.Series[float] | pd.Series[int],
     length: int = 20,
     std: float = 2.0,
 ) -> BollingerBands:
@@ -140,11 +140,11 @@ def bollinger_bands(
 
 
 def atr(
-    high: pd.Series,
-    low: pd.Series,
-    close: pd.Series,
+    high: pd.Series[float] | pd.Series[int],
+    low: pd.Series[float] | pd.Series[int],
+    close: pd.Series[float] | pd.Series[int],
     length: int = 14,
-) -> pd.Series:
+) -> pd.Series[float]:
     """Wilder ATR; the first ``length`` values are NaN, including the first bar."""
     _validate_period("length", length, minimum=1)
     high_values, low_values, close_values = _as_float_ohlc(high, low, close)
@@ -156,9 +156,9 @@ def atr(
 
 
 def adx(
-    high: pd.Series,
-    low: pd.Series,
-    close: pd.Series,
+    high: pd.Series[float] | pd.Series[int],
+    low: pd.Series[float] | pd.Series[int],
+    close: pd.Series[float] | pd.Series[int],
     length: int = 14,
 ) -> ADXResult:
     """Wilder ADX and ``+DI``/``-DI`` with their respective TA-Lib warm-ups.
@@ -186,9 +186,9 @@ def adx(
 
 
 def stochastic(
-    high: pd.Series,
-    low: pd.Series,
-    close: pd.Series,
+    high: pd.Series[float] | pd.Series[int],
+    low: pd.Series[float] | pd.Series[int],
+    close: pd.Series[float] | pd.Series[int],
     k: int = 14,
     d: int = 3,
     smooth_k: int = 3,
@@ -225,8 +225,9 @@ def _validate_period(name: str, value: int, *, minimum: int = 2) -> None:
         raise ValueError(msg)
 
 
-def _as_float(series: pd.Series) -> NDArray[np.float64]:
-    values = series.to_numpy(dtype=np.float64, copy=True)
+def _as_float(series: pd.Series[float] | pd.Series[int]) -> NDArray[np.float64]:
+    # pandas-stubs preserves floating kind but loses the requested precision.
+    values = cast("NDArray[np.float64]", series.to_numpy(dtype=np.float64, copy=True))
     if np.isinf(values).any():
         msg = "indicator inputs must not contain infinity"
         raise ValueError(msg)
@@ -234,9 +235,9 @@ def _as_float(series: pd.Series) -> NDArray[np.float64]:
 
 
 def _as_float_ohlc(
-    high: pd.Series,
-    low: pd.Series,
-    close: pd.Series,
+    high: pd.Series[float] | pd.Series[int],
+    low: pd.Series[float] | pd.Series[int],
+    close: pd.Series[float] | pd.Series[int],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     if not high.index.equals(close.index) or not low.index.equals(close.index):
         msg = "high, low and close must have identical indexes"
@@ -244,9 +245,11 @@ def _as_float_ohlc(
     return _as_float(high), _as_float(low), _as_float(close)
 
 
-def _series(values: NDArray[np.float64], reference: pd.Series) -> pd.Series:
+def _series(
+    values: NDArray[np.float64], reference: pd.Series[float] | pd.Series[int]
+) -> pd.Series[float]:
     return pd.Series(values, index=reference.index, dtype="float64")
 
 
-def _empty_like(series: pd.Series) -> pd.Series:
+def _empty_like(series: pd.Series[float] | pd.Series[int]) -> pd.Series[float]:
     return pd.Series(index=series.index, dtype="float64")

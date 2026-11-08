@@ -63,6 +63,10 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 開發工具放在 [tests/](../tests/)；新增能力時依責任擴充相應測試，避免只依檔名選取。
 測試案例、測資與斷言以測試程式為準，不在本指南逐項重述。
 
+`tests/typing/` 的靜態案例由快速檢查中的 Mypy 驗證，不由 pytest 執行。
+以 `assert_type` 驗證跨模組型別保留；預期錯誤使用具錯誤代碼的局部忽略，
+若型別退化成 `Any` 而不再報錯，strict Mypy 的 unused-ignore 檢查會使案例失敗。
+
 離線測試可直接使用 `uv run --all-extras pytest`，加檔案路徑或 `-k` 執行相關範圍。
 `check-full.sh` 一律跑完整離線套件；純開發政策／已登錄開發工具使用
 `check-tooling.sh`。產品、依賴、共用測試設施及無法確認的變更仍跑完整套件。

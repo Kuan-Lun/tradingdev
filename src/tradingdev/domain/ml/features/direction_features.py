@@ -97,7 +97,7 @@ class DirectionFeatureEngineer:
         volume = df["volume"].astype(float)
         log_ret = close.apply(np.log).diff()
 
-        features: dict[str, pd.Series] = {}
+        features: dict[str, pd.Series[float]] = {}
 
         # --- Return features ---
         features["log_return"] = log_ret

@@ -124,11 +124,13 @@ class _StatsProcessor(Processor, ABC):
         return learned
 
     @abstractmethod
-    def _learn(self, series: pd.Series) -> tuple[float, float]:
+    def _learn(self, series: pd.Series[float]) -> tuple[float, float]:
         """Return the two scalars that describe ``series``."""
 
     @abstractmethod
-    def _apply(self, series: pd.Series, first: float, second: float) -> pd.Series:
+    def _apply(
+        self, series: pd.Series[float], first: float, second: float
+    ) -> pd.Series[float]:
         """Return ``series`` transformed by the scalars from :meth:`_learn`."""
 
 
@@ -138,10 +140,12 @@ class ZScoreNorm(_StatsProcessor):
     name = "zscore_norm"
     _stat_names = ("mean", "std")
 
-    def _learn(self, series: pd.Series) -> tuple[float, float]:
+    def _learn(self, series: pd.Series[float]) -> tuple[float, float]:
         return float(series.mean()), float(series.std(ddof=0))
 
-    def _apply(self, series: pd.Series, first: float, second: float) -> pd.Series:
+    def _apply(
+        self, series: pd.Series[float], first: float, second: float
+    ) -> pd.Series[float]:
         return (series - first) / _safe_scale(second, self._eps)
 
 
@@ -151,11 +155,13 @@ class RobustZScoreNorm(_StatsProcessor):
     name = "robust_zscore_norm"
     _stat_names = ("median", "iqr")
 
-    def _learn(self, series: pd.Series) -> tuple[float, float]:
+    def _learn(self, series: pd.Series[float]) -> tuple[float, float]:
         interquartile = series.quantile(0.75) - series.quantile(0.25)
         return float(series.median()), float(interquartile)
 
-    def _apply(self, series: pd.Series, first: float, second: float) -> pd.Series:
+    def _apply(
+        self, series: pd.Series[float], first: float, second: float
+    ) -> pd.Series[float]:
         return (series - first) / _safe_scale(second, self._eps)
 
 
@@ -175,10 +181,12 @@ class MinMaxNorm(_StatsProcessor):
         super().__init__(fields, eps=eps)
         self._low, self._high = feature_range
 
-    def _learn(self, series: pd.Series) -> tuple[float, float]:
+    def _learn(self, series: pd.Series[float]) -> tuple[float, float]:
         return float(series.min()), float(series.max())
 
-    def _apply(self, series: pd.Series, first: float, second: float) -> pd.Series:
+    def _apply(
+        self, series: pd.Series[float], first: float, second: float
+    ) -> pd.Series[float]:
         scaled = (series - first) / _safe_scale(second - first, self._eps)
         return scaled * (self._high - self._low) + self._low
 
@@ -199,10 +207,12 @@ class ClipOutliers(_StatsProcessor):
         super().__init__(fields, eps=eps)
         self._n_sigmas = n_sigmas
 
-    def _learn(self, series: pd.Series) -> tuple[float, float]:
+    def _learn(self, series: pd.Series[float]) -> tuple[float, float]:
         return float(series.mean()), float(series.std(ddof=0))
 
-    def _apply(self, series: pd.Series, first: float, second: float) -> pd.Series:
+    def _apply(
+        self, series: pd.Series[float], first: float, second: float
+    ) -> pd.Series[float]:
         scale = _safe_scale(second, self._eps)
         margin = self._n_sigmas * scale
         return series.clip(first - margin, first + margin)
