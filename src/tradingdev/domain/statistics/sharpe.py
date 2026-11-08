@@ -307,8 +307,11 @@ def probabilistic_sharpe_ratio(
 
     where ``SR`` is the per-period (not annualised) Sharpe ratio, ``g3`` the
     skewness and ``g4`` the (non-excess) kurtosis of the returns, both
-    computed from population moments. Negative skew and fat tails widen
-    the Sharpe estimator's standard error and lower the probability.
+    computed from population moments. For a positive ``SR``, more negative
+    skew and greater kurtosis increase the standard error, holding the
+    other terms fixed. A larger standard error moves the probability
+    towards 0.5: down when ``SR > SR*`` and up when ``SR < SR*``. The skew
+    term reverses direction for negative ``SR``.
 
     ``benchmark_sr`` is per period as well; divide an annual benchmark by
     ``sqrt(periods_per_year)``.
