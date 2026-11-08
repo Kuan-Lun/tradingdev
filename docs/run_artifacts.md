@@ -671,8 +671,9 @@ defined by `MAX_DELIVERY_BYTES`; it is not a limit on metadata or paged text rea
 [ArtifactDownloads](../src/tradingdev/mcp/artifact_downloads.py) owns the common
 `/artifact-download/{artifact_id}` route, URL lifetime and headers. It signs the
 artifact ID, SHA-256 and expiry with a per-server secret. URLs are bearer
-capabilities: anyone holding one can read those bytes until expiry. Custom routes
-do not inherit MCP authentication or Host/Origin checks. Restarting invalidates
+capabilities: anyone holding one can read those bytes until expiry. The download
+handler authorizes requests using the signed capability; configure any additional
+authentication or request filtering at the reverse proxy. Restarting invalidates
 links, not saved files. Refresh by calling the tool again; this neither executes
 research nor extends a plan's approval deadline. Invalid/expired capabilities
 return 403; valid capabilities whose artifact is no longer available return 404.
@@ -681,7 +682,8 @@ HTML opens inline with an opaque sandbox origin; its CSP permits embedded script
 and downloads but blocks network connections, forms and embedding by other pages.
 ZIP uses attachment disposition. Responses use no-store, no-referrer and nosniff
 headers. These browser restrictions are not a sandbox for generated Python.
-No file bytes enter the URL response or model context.
+URL issuance returns metadata only to the MCP client, without file bytes in the
+tool response or model context. The subsequent HTTP GET returns the file bytes.
 
 Only an HTTP request context can issue URLs. `--public-base-url` supplies an explicit
 public HTTP origin with an optional proxy prefix; otherwise the request base URL

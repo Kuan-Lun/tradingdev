@@ -556,6 +556,7 @@ Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順�
 | 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
+| HTTP 確認單可讀／不可讀、使用者拒絕執行、既有報告與封存網址交付 | [test_llm_http_delivery.py](../tests/e2e/test_llm_http_delivery.py)（`-k http_delivery`） |
 | 授權後的草稿清理 | [test_llm_cleanup.py](../tests/e2e/test_llm_cleanup.py) |
 
 測試使用隔離工作區、固定合成行情與模擬使用者，不下載市場資料；完成驗證後清理。
