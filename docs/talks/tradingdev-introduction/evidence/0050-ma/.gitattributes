@@ -1,0 +1,4 @@
+# Preserve these native reports byte-for-byte, including bundled library whitespace.
+cases/01-ma-discussion/report.html whitespace=-blank-at-eol
+cases/01-ma-discussion/earlier-reports/b30ffde260f68a88419b7d69260379f9110d5ea01ecefad9bccf0aa0ff53baeb.html whitespace=-blank-at-eol
+cases/01-ma-discussion/notebook/reports/1.html whitespace=-blank-at-eol

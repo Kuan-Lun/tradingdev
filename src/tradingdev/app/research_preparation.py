@@ -31,10 +31,10 @@ from tradingdev.domain.strategies.schemas import StrategyMetadata
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
+    from tradingdev.adapters.execution.strategy_factory import StrategyFactory
     from tradingdev.app.data_service import DataService
     from tradingdev.app.strategy_service import StrategyService
     from tradingdev.domain.execution import ExecutionKind, OptimizationSpec
-    from tradingdev.domain.strategies.loader import StrategyLoader
 
 
 class ResearchPreparationService:
@@ -44,7 +44,7 @@ class ResearchPreparationService:
         self,
         *,
         strategy_service: StrategyService,
-        strategy_loader: StrategyLoader,
+        strategy_loader: StrategyFactory,
         data_service: DataService,
     ) -> None:
         self._strategies = strategy_service

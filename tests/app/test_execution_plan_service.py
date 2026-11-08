@@ -19,6 +19,7 @@ from tests.mcp.execution_fixtures import (
 from tests.preflight_fixtures import make_preflight_fixture
 from tests.research_evidence_fixtures import save_research_evidence
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.app.contracts.execution_requests import BacktestInput
 from tradingdev.app.contracts.plans import PlanRejected, PlanResponse, PlanStarted
 from tradingdev.app.data_service import DataService
@@ -35,7 +36,6 @@ from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.execution_plan import ExecutionPlan
 from tradingdev.domain.preflight import PreflightRequest
-from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from tradingdev.app.contracts.plans import ExecutionDecision
@@ -350,7 +350,7 @@ def test_changed_generated_revision_after_question_cannot_start(
     arguments: dict[str, Any] = dict(request.arguments)
     captured = ResearchPreparationService(
         strategy_service=StrategyService(workspace),
-        strategy_loader=StrategyLoader(workspace_root=workspace.root),
+        strategy_loader=StrategyFactory(workspace_root=workspace.root),
         data_service=DataService(workspace),
     ).prepare("backtest", BacktestInput.model_validate(arguments))
     assert isinstance(captured, PreparedExecution)

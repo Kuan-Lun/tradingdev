@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 if [[ $# -lt 1 || ( "$1" != codex && "$1" != local ) ]]; then
     echo 'Usage: scripts/check-llm.sh codex|local [pytest options]' >&2
     echo 'Codex example:' >&2
-    echo '  scripts/check-llm.sh codex --llm-model gpt-5.6-luna \' >&2
+    echo '  scripts/check-llm.sh codex --llm-model gpt-6-luna \' >&2
     echo '    --llm-timeout 1800' >&2
     echo 'Local example (verified with Ollama):' >&2
     echo '  scripts/check-llm.sh local --llm-model qwen3.8:27b \' >&2
@@ -13,15 +13,4 @@ if [[ $# -lt 1 || ( "$1" != codex && "$1" != local ) ]]; then
 fi
 provider=$1
 shift
-exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" -u -m pytest \
-    tests/e2e/test_llm_workflows.py tests/e2e/test_llm_cleanup.py \
-    tests/e2e/test_llm_execution_plans.py tests/e2e/test_llm_ml.py \
-    tests/e2e/test_llm_automatic_walk_forward.py \
-    tests/e2e/test_llm_discovery.py \
-    tests/e2e/test_llm_novice_intake.py \
-    tests/e2e/test_llm_comparison.py \
-    tests/e2e/test_llm_research_proposal.py \
-    tests/e2e/test_llm_strategy_execution_guidance.py \
-    tests/e2e/test_llm_research_delivery.py \
-    --llm-provider "$provider" -m live_llm \
-    -x -vv --capture=tee-sys --tb=short --durations=3 "$@"
+exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" -u -m tooling.llm_check "$provider" "$@"

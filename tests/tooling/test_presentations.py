@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING
+from xml.etree import ElementTree
 
 import psutil
 import pytest
-from tooling import presentations
+from tooling import presentation_html, presentations
+from tooling.presentation_errors import PresentationError
 from tooling.process_guard import CLEANUP_UNVERIFIED_EXIT_CODE, ProcessCleanupError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pytest import MonkeyPatch
 
 
@@ -105,6 +112,9 @@ def test_registered_paths_do_not_allow_arbitrary_decks_or_compiler_changes() -> 
     for path in (
         "tooling/marp/package-lock.json",
         "tooling/presentations.py",
+        "tooling/presentation_html.py",
+        "tooling/presentation_bundle.py",
+        "tooling/presentation_errors.py",
         "scripts/check-presentations.sh",
         "scripts/presentations.sh",
     ):
@@ -130,7 +140,7 @@ _ENTRY = "# Editing the deck\n\nUse Tasks: Run Task → slides: watch.\n"
 
 def test_static_html_accepts_embedded_resources_and_external_citations() -> None:
     assert (
-        presentations.check_html(
+        presentation_html.check_html(
             _html(
                 '<img src="data:image/png;base64,AA==">'
                 "<style>a {background:url(#a)}</style>"
@@ -165,8 +175,8 @@ def test_static_html_accepts_embedded_resources_and_external_citations() -> None
     ],
 )
 def test_loaded_resources_and_watch_injections_are_rejected(extra: str) -> None:
-    with pytest.raises(presentations.PresentationError):
-        presentations.check_html(_html(extra))
+    with pytest.raises(PresentationError):
+        presentation_html.check_html(_html(extra))
 
 
 @pytest.mark.parametrize(
@@ -179,8 +189,8 @@ def test_loaded_resources_and_watch_injections_are_rejected(extra: str) -> None:
     ],
 )
 def test_html_page_counts_and_section_identity_must_agree(content: str) -> None:
-    with pytest.raises(presentations.PresentationError):
-        presentations.check_html(content)
+    with pytest.raises(PresentationError):
+        presentation_html.check_html(content)
 
 
 def _deck(root: Path) -> Path:
@@ -205,6 +215,8 @@ def _fake_toolchain(root: Path) -> Path:
     identity = {"name": "tradingdev-presentations", "version": "1.0.0"}
     manifest = {**identity, "dependencies": {"@marp-team/marp-cli": "4.5.1"}}
     (toolchain / "package.json").write_text(json.dumps(manifest))
+    for name in ("build.mjs", "render-diagrams.mjs"):
+        (toolchain / name).write_text("// test compiler\n")
     (toolchain / "package-lock.json").write_text(
         json.dumps(
             {**identity, "lockfileVersion": 3, "packages": {"": manifest, cli: package}}
@@ -242,7 +254,7 @@ def test_changed_root_manifest_cannot_reuse_stale_lock_and_installation(
     monkeypatch.delenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", raising=False)
     manifest = json.loads((installed / "package.json").read_text())
     (installed / "package.json").write_text(json.dumps({**manifest, **update}))
-    with pytest.raises(presentations.PresentationError, match="[Rr]oot manifest"):
+    with pytest.raises(PresentationError, match="[Rr]oot manifest"):
         presentations._toolchain(tmp_path)
 
 
@@ -257,7 +269,7 @@ def test_lock_identity_must_match_root_manifest(
     target = lock["packages"][""] if record == "root" else lock
     target[field] = "different"
     (installed / "package-lock.json").write_text(json.dumps(lock))
-    with pytest.raises(presentations.PresentationError, match=f"manifest {field}"):
+    with pytest.raises(PresentationError, match=f"manifest {field}"):
         presentations._toolchain(tmp_path)
 
 
@@ -272,7 +284,7 @@ def test_unverified_root_resolution_modes_are_rejected(
     manifest = json.loads((installed / "package.json").read_text())
     manifest[field] = {}
     (installed / "package.json").write_text(json.dumps(manifest))
-    with pytest.raises(presentations.PresentationError, match="Unsupported root npm"):
+    with pytest.raises(PresentationError, match="Unsupported root npm"):
         presentations._toolchain(tmp_path)
 
 
@@ -304,7 +316,7 @@ def test_root_must_declare_exact_cli_version_even_with_matching_root_lock(
     lock["packages"][""] = manifest
     (installed / "package.json").write_text(json.dumps(manifest))
     (installed / "package-lock.json").write_text(json.dumps(lock))
-    with pytest.raises(presentations.PresentationError, match="root manifest must"):
+    with pytest.raises(PresentationError, match="root manifest must"):
         presentations._toolchain(tmp_path)
 
 
@@ -319,16 +331,18 @@ def test_toolchain_requires_lock_matching_snapshot_and_installed_versions(
     shutil.copytree(installed, copy)
     monkeypatch.setenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(copy))
     assert presentations._toolchain(root) == copy
+    (copy / "render-diagrams.mjs").write_text("// changed renderer\n")
+    with pytest.raises(PresentationError, match="render-diagrams.mjs differs"):
+        presentations._toolchain(root)
+    shutil.copyfile(installed / "render-diagrams.mjs", copy / "render-diagrams.mjs")
     (copy / "package-lock.json").write_text("{}")
-    with pytest.raises(
-        presentations.PresentationError, match="differs from the checked snapshot"
-    ):
+    with pytest.raises(PresentationError, match="differs from the checked snapshot"):
         presentations._toolchain(root)
     monkeypatch.delenv("TRADINGDEV_PRESENTATION_TOOLCHAIN")
     (installed / "node_modules/@marp-team/marp-cli/package.json").write_text(
         '{"version":"4.6.0"}'
     )
-    with pytest.raises(presentations.PresentationError, match="version differs"):
+    with pytest.raises(PresentationError, match="version differs"):
         presentations._toolchain(root)
 
 
@@ -342,9 +356,7 @@ def test_missing_dependency_fails_without_implicit_install(
         pytest.fail("Missing dependencies must not trigger npm or network installation")
 
     monkeypatch.setattr(presentations, "run_captured", no_launch)
-    with pytest.raises(
-        presentations.PresentationError, match="scripts/presentations.sh setup"
-    ):
+    with pytest.raises(PresentationError, match="scripts/presentations.sh setup"):
         presentations.check_presentations(tmp_path)
 
 
@@ -355,14 +367,14 @@ def test_missing_node_directs_to_installing_node_before_setup(
     monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
     monkeypatch.setattr(shutil, "which", lambda name: None)
 
-    with pytest.raises(presentations.PresentationError) as error:
+    with pytest.raises(PresentationError) as error:
         presentations.build(tmp_path)
 
     message = str(error.value)
-    assert "Node.js 18" in message
+    assert "Node.js 22.17" in message
     assert "npm" in message
     assert "scripts/presentations.sh setup" in message
-    assert message.index("Node.js 18") < message.index("scripts/presentations.sh")
+    assert message.index("Node.js 22.17") < message.index("scripts/presentations.sh")
 
 
 @pytest.mark.parametrize(
@@ -381,30 +393,31 @@ def test_missing_toolchain_reports_the_install_step_that_can_succeed(
         shutil, "which", lambda name: f"/usr/bin/{name}" if name in present else None
     )
 
-    with pytest.raises(presentations.PresentationError) as error:
+    with pytest.raises(PresentationError) as error:
         presentations.build(tmp_path)
 
     message = str(error.value)
     assert "Locked presentation dependencies are unavailable" in message
-    assert ("Node.js 18" in message) is node_step_required
+    assert ("Node.js 22.17" in message) is node_step_required
 
 
 def test_build_command_cannot_load_candidate_config_or_local_engine(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/usr/bin/node")
     command = presentations._command(
         tmp_path / "tools",
         tmp_path / "slides.md",
         tmp_path / "theme.css",
         tmp_path / "index.html",
     )
-    assert "--no-config" in command
-    assert "--no-html" in command
-    assert command[command.index("--engine") + 1] == str(
-        tmp_path / "tools/node_modules/@marp-team/marp-core/lib/marp.js"
-    )
-    assert "--watch" not in command
+    assert command == [
+        "/usr/bin/node",
+        str(tmp_path / "tools/build.mjs"),
+        str(tmp_path / "slides.md"),
+        str(tmp_path / "theme.css"),
+        str(tmp_path / "index.html"),
+    ]
     monkeypatch.setenv("NODE_OPTIONS", "--require bad.js")
     monkeypatch.setenv("MARP_ENGINE", "bad.js")
     monkeypatch.setenv("NPM_CONFIG_IGNORE_SCRIPTS", "false")
@@ -415,9 +428,202 @@ def test_build_command_cannot_load_candidate_config_or_local_engine(
     )
 
 
-@pytest.mark.parametrize("mode", ["success", "failure", "timeout", "stale"])
+@pytest.fixture
+def mermaid_deck(tmp_path: Path, monkeypatch: MonkeyPatch) -> Iterator[Path]:
+    """Exercise the real locked compiler and Chromium in a disposable deck."""
+    repository = Path(__file__).resolve().parents[2]
+    installed = Path(
+        os.environ.get(
+            "TRADINGDEV_PRESENTATION_TOOLCHAIN", str(repository / "tooling/marp")
+        )
+    )
+    toolchain = tmp_path / "tooling/marp"
+    toolchain.mkdir(parents=True)
+    for name in presentations.TOOLCHAIN_FILES:
+        shutil.copyfile(repository / "tooling/marp" / name, toolchain / name)
+    monkeypatch.setenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(installed))
+    deck = _deck(tmp_path)
+    shutil.copyfile(repository / presentations.DECK / "theme.css", deck / "theme.css")
+    spaces: list[Path] = []
+
+    def make_space(*, prefix: str) -> str:
+        directory = mkdtemp(prefix=prefix, dir=tmp_path)
+        spaces.append(Path(directory))
+        return directory
+
+    monkeypatch.setattr(presentations, "mkdtemp", make_space)
+    yield deck
+    assert spaces and all(not path.exists() for path in spaces)
+
+
+def test_mermaid_build_embeds_repeatable_svg_fonts_and_distinct_diagram_ids(
+    tmp_path: Path, mermaid_deck: Path
+) -> None:
+    diagram = (
+        "```mermaid\nsequenceDiagram\n"
+        "    accTitle: 使用者與 AI\n"
+        "    participant U as 使用者\n    participant A as AI 代理\n"
+        "    U->>A: 策略 & 設定\n    A-->>U: 確認單\n```\n"
+    )
+    (mermaid_deck / "slides.md").write_text(
+        f"---\nmarp: true\npaginate: true\n---\n# First\n\n{diagram}"
+        f"\n---\n\n# Second\n\n{diagram}\n```python\nx = 1\n```\n"
+    )
+    presentations.build(tmp_path)
+    output = mermaid_deck / "index.html"
+    original = output.read_bytes()
+    content = original.decode()
+    assert 'class="language-mermaid"' not in content
+    assert 'class="language-python"' in content
+    assert "data:font/woff2;base64," in content
+    assert "SIL OPEN FONT LICENSE" in content
+    assert presentation_html.check_html(content, root=mermaid_deck) == 2
+    # Inspect the actual SVG text and references, not the Markdown or a mock renderer.
+    diagrams = content.split('<div class="mermaid-diagram">')[1:]
+    assert len(diagrams) == 2
+    all_ids: set[str] = set()
+    for diagram_html in diagrams:
+        svg = ElementTree.fromstring(diagram_html.split("</div>", 1)[0])
+        labels = " ".join(svg.itertext())
+        assert all(
+            label in labels for label in ("使用者", "AI 代理", "策略 & 設定", "確認單")
+        )
+        ids = [node.attrib["id"] for node in svg.iter() if "id" in node.attrib]
+        assert len(ids) == len(set(ids))
+        assert not all_ids.intersection(ids)
+        all_ids.update(ids)
+        for node in svg.iter():
+            for value in node.attrib.values():
+                assert all(
+                    target in ids for target in re.findall(r"url\(#([^)]+)\)", value)
+                )
+    presentations.build(tmp_path)
+    assert output.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "sequenceDiagram\nU->>A missing colon\n",
+        "flowchart LR\nA-->B\n",
+        'sequenceDiagram\n%%{init: {"securityLevel": "loose"}}%%\nU->>A: Hello\n',
+    ],
+)
+def test_mermaid_failure_preserves_last_successful_html(
+    tmp_path: Path, mermaid_deck: Path, source: str
+) -> None:
+    original = (mermaid_deck / "index.html").read_bytes()
+    (mermaid_deck / "slides.md").write_text(f"# Diagram\n\n```mermaid\n{source}```\n")
+    with pytest.raises(PresentationError, match="Mermaid diagram 1"):
+        presentations.build(tmp_path)
+    assert (mermaid_deck / "index.html").read_bytes() == original
+
+
+def test_mermaid_missing_browser_has_actionable_error(
+    tmp_path: Path, mermaid_deck: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRADINGDEV_PRESENTATION_BROWSER", str(tmp_path / "missing"))
+    (mermaid_deck / "slides.md").write_text(
+        "# Diagram\n\n```mermaid\nsequenceDiagram\nU->>A: Hello\n```\n"
+    )
+    with pytest.raises(PresentationError, match="TRADINGDEV_PRESENTATION_BROWSER"):
+        presentations.build(tmp_path)
+
+
+def test_mermaid_renderer_timeout_preserves_html_and_cleans_workspace(
+    tmp_path: Path, mermaid_deck: Path, monkeypatch: MonkeyPatch
+) -> None:
+    original = (mermaid_deck / "index.html").read_bytes()
+    (mermaid_deck / "slides.md").write_text(
+        "# Diagram\n\n```mermaid\nsequenceDiagram\nU->>A: Hello\n```\n"
+    )
+    execute = presentations._execute
+    browser_marker = tmp_path / "browser.pid"
+    wrapper = tmp_path / "stalled-renderer.mjs"
+
+    def stall_after_browser_launch(
+        command: list[str], *, cwd: Path, temporary: Path, timeout: float
+    ) -> None:
+        if command[1].endswith("build.mjs"):
+            renderer = Path(command[1])
+            package = renderer.parent / "node_modules/puppeteer-core"
+            manifest = json.loads((package / "package.json").read_text())
+            module = (package / manifest["exports"]["."]["import"]).as_uri()
+            wrapper.write_text(
+                "import { writeFileSync } from 'node:fs';\n"
+                f"import puppeteer from {json.dumps(module)};\n"
+                "const launch = puppeteer.launch.bind(puppeteer);\n"
+                "puppeteer.launch = async (...args) => {\n"
+                "  const browser = await launch(...args);\n"
+                f"  writeFileSync({json.dumps(str(browser_marker))}, "
+                "String(browser.process().pid));\n"
+                "  await new Promise(() => {});\n"
+                "};\n"
+                f"await import({json.dumps(renderer.as_uri())});\n"
+            )
+            command = [command[0], str(wrapper), *command[2:]]
+            timeout = 5
+        execute(command, cwd=cwd, temporary=temporary, timeout=timeout)
+
+    observed: dict[int, float] = {}
+    children = psutil.Process.children
+
+    def record_children(
+        process: psutil.Process, recursive: bool = False
+    ) -> list[psutil.Process]:
+        descendants: list[psutil.Process] = children(process, recursive=recursive)
+        if browser_marker.exists():
+            for child in descendants:
+                with suppress(psutil.NoSuchProcess):
+                    observed[child.pid] = child.create_time()
+        return descendants
+
+    monkeypatch.setattr(psutil.Process, "children", record_children)
+    monkeypatch.setattr(presentations, "_execute", stall_after_browser_launch)
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            presentations.build(tmp_path)
+        assert browser_marker.exists()
+        assert int(browser_marker.read_text()) in observed
+        for pid, created_at in observed.items():
+            try:
+                process = psutil.Process(pid)
+                assert (
+                    process.create_time() != created_at
+                    or process.status() == psutil.STATUS_ZOMBIE
+                )
+            except psutil.NoSuchProcess:
+                pass
+        assert (mermaid_deck / "index.html").read_bytes() == original
+    finally:
+        # A detected cleanup regression must fail before this test-only fallback.
+        remaining: list[psutil.Process] = []
+        for pid, created_at in observed.items():
+            with suppress(psutil.NoSuchProcess, psutil.ZombieProcess):
+                process = psutil.Process(pid)
+                if process.create_time() == created_at:
+                    process.kill()
+                    remaining.append(process)
+        _, alive = psutil.wait_procs(remaining, timeout=5)
+        if alive:
+            raise ProcessCleanupError("Test browser cleanup could not be verified")
+
+
+@pytest.mark.parametrize(
+    "mode, observation_delay",
+    [
+        ("success", 0),
+        ("failure", 0),
+        ("timeout", 0),
+        ("invalid", 0),
+        pytest.param("success", 0.35, id="delayed-observation"),
+    ],
+)
 def test_check_cleans_temporary_files_and_child_processes(
-    tmp_path: Path, monkeypatch: MonkeyPatch, mode: str
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    mode: str,
+    observation_delay: float,
 ) -> None:
     deck = _deck(tmp_path)
     original = (deck / "index.html").read_bytes()
@@ -431,16 +637,35 @@ def test_check_cleans_temporary_files_and_child_processes(
 
     monkeypatch.setattr(presentations, "mkdtemp", make_space)
     monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     marker = tmp_path / "child.pid"
+    observed = tmp_path / "child.observed"
     child_code = "import time; time.sleep(60)"
+    original_children = psutil.Process.children
+
+    # Test cleanup of a discovered child; a fixed delay races process inspection.
+    def observe_children(
+        process: psutil.Process, recursive: bool = False
+    ) -> list[psutil.Process]:
+        if observation_delay and marker.exists() and not observed.exists():
+            time.sleep(observation_delay)
+        children: list[psutil.Process] = original_children(process, recursive=recursive)
+        if marker.exists() and int(marker.read_text()) in {p.pid for p in children}:
+            observed.touch()
+        return children
+
+    monkeypatch.setattr(psutil.Process, "children", observe_children)
 
     def command(toolchain: Path, source: Path, theme: Path, output: Path) -> list[str]:
         code = (
             "import os,subprocess,sys,time\nfrom pathlib import Path\n"
             "child=subprocess.Popen([sys.executable,'-c',sys.argv[4]],start_new_session=True)\n"
-            "Path(sys.argv[1]).write_text(str(child.pid))\n"
-            "time.sleep(60 if sys.argv[3]=='timeout' else 0.2)\n"
-            "text=sys.argv[5] + ('stale' if sys.argv[3]=='stale' else '')\n"
+            "pending=Path(sys.argv[1]+'.pending')\n"
+            "pending.write_text(str(child.pid))\n"
+            "pending.replace(sys.argv[1])\n"
+            "while not Path(sys.argv[6]).exists(): time.sleep(0.01)\n"
+            "if sys.argv[3]=='timeout': time.sleep(60)\n"
+            "text='<html></html>' if sys.argv[3]=='invalid' else sys.argv[5]\n"
             "Path(sys.argv[2]).write_text(text)\n"
             "raise SystemExit(9 if sys.argv[3]=='failure' else 0)\n"
         )
@@ -453,6 +678,7 @@ def test_check_cleans_temporary_files_and_child_processes(
             mode,
             child_code,
             _html(),
+            str(observed),
         ]
 
     monkeypatch.setattr(presentations, "_command", command)
@@ -461,14 +687,13 @@ def test_check_cleans_temporary_files_and_child_processes(
             presentations.check_presentations(tmp_path, timeout=5)
         else:
             expected = (
-                subprocess.TimeoutExpired
-                if mode == "timeout"
-                else presentations.PresentationError
+                subprocess.TimeoutExpired if mode == "timeout" else PresentationError
             )
             with pytest.raises(expected):
                 presentations.check_presentations(
                     tmp_path, timeout=0.6 if mode == "timeout" else 5
                 )
+        assert observed.exists()
         assert spaces and all(not path.exists() for path in spaces)
         assert (deck / "index.html").read_bytes() == original
         process = psutil.Process(int(marker.read_text()))
@@ -500,7 +725,7 @@ def test_unverified_process_cleanup_preserves_workspace(
 
     monkeypatch.setattr(presentations, "mkdtemp", make_space)
     monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
 
     def fail(*args: object, **kwargs: object) -> None:
         raise ProcessCleanupError("Could not terminate subprocesses")
@@ -518,7 +743,7 @@ def test_cli_propagates_only_typed_cleanup_failure_and_retains_its_workspace(
     errors: dict[str, Exception] = {
         "cleanup": ProcessCleanupError("opaque failure"),
         "runtime": RuntimeError("Could not terminate subprocesses"),
-        "build": presentations.PresentationError("compiler failed"),
+        "build": PresentationError("compiler failed"),
         "timeout": subprocess.TimeoutExpired(["compiler"], 1),
     }
     spaces: list[Path] = []
@@ -544,6 +769,8 @@ def test_cli_propagates_only_typed_cleanup_failure_and_retains_its_workspace(
 def test_check_reuses_markdown_local_link_validation(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     deck = _deck(tmp_path)
     (deck / "slides.md").write_text("# Slides\n\n[broken](missing.md)\n")
 
@@ -560,6 +787,8 @@ def test_check_reuses_markdown_local_link_validation(
 def test_watch_rebuilds_static_output_for_source_and_theme_changes(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     deck = _deck(tmp_path)
     built: list[tuple[str, str]] = []
 
@@ -591,6 +820,8 @@ def test_watch_rebuilds_static_output_for_source_and_theme_changes(
 def test_check_reuses_markdown_formatting_validation(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     deck = _deck(tmp_path)
     (deck / "slides.md").write_text("# Slides\nMissing heading spacing\n")
 
@@ -606,6 +837,8 @@ def test_check_reuses_markdown_formatting_validation(
 def test_watch_recovers_from_build_failure_when_input_is_fixed(
     tmp_path: Path, monkeypatch: MonkeyPatch, timed_out: bool
 ) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
     deck = _deck(tmp_path)
     calls = 0
 
@@ -615,7 +848,7 @@ def test_watch_recovers_from_build_failure_when_input_is_fixed(
         if calls == 1:
             if timed_out:
                 raise subprocess.TimeoutExpired(["compiler"], 120)
-            raise presentations.PresentationError("invalid source")
+            raise PresentationError("invalid source")
 
     monkeypatch.setattr(presentations, "build", compile_deck)
     pauses = 0
@@ -634,3 +867,135 @@ def test_watch_recovers_from_build_failure_when_input_is_fixed(
     monkeypatch.setattr(time, "sleep", change)
     presentations.watch(tmp_path)
     assert calls == 2
+
+
+def test_source_only_check_builds_without_touching_preview(
+    tmp_path: Path,
+    mermaid_deck: Path,
+) -> None:
+    (mermaid_deck / "slides.md").write_text(
+        "# Source\n\n<!-- paginate: true -->\n\n"
+        "[Next](index.html#2)\n\n---\n\n## Next\n"
+    )
+    preview = mermaid_deck / "index.html"
+    preview.unlink()
+    presentations.check_presentations(tmp_path)
+    assert not preview.exists()
+    preview.write_text("outdated local preview")
+    presentations.check_presentations(tmp_path)
+    assert preview.read_text() == "outdated local preview"
+    slides = mermaid_deck / "slides.md"
+    slides.write_text(slides.read_text().replace("index.html#2", "index.html#999"))
+    with pytest.raises(PresentationError, match="fragment"):
+        presentations.check_presentations(tmp_path)
+
+
+def test_shared_compiler_disables_candidate_config_and_raw_html(
+    tmp_path: Path,
+    mermaid_deck: Path,
+) -> None:
+    (tmp_path / "marp.config.js").write_text("throw new Error('candidate config ran');")
+    (mermaid_deck / "slides.md").write_text(
+        "---\nmarp: true\npaginate: true\n---\n# Source\n\n"
+        '<iframe src="https://invalid.example/"></iframe>\n'
+    )
+    presentations.build(tmp_path)
+    output = (mermaid_deck / "index.html").read_text()
+    assert "<iframe" not in output
+    assert "&lt;iframe" in output
+
+
+@pytest.mark.parametrize("inside_source", [True, False])
+def test_package_cli_keeps_output_outside_authoring_sources(
+    tmp_path: Path, monkeypatch: MonkeyPatch, inside_source: bool
+) -> None:
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
+    deck = _deck(tmp_path)
+    (deck / "assets").mkdir()
+    (deck / "evidence").mkdir()
+    output = (deck / "assets" if inside_source else tmp_path) / "delivery"
+    built: list[Path] = []
+
+    def compile_deck(root: Path, *, output: Path, timeout: float) -> None:
+        built.append(root)
+        output.write_text(_html())
+
+    monkeypatch.setattr(presentations, "build", compile_deck)
+    monkeypatch.setattr(
+        presentations, "__file__", str(tmp_path / "tooling/presentations.py")
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["presentations", "package", "--output", str(output)]
+    )
+    assert presentations.main() == (1 if inside_source else 0)
+    assert bool(built) is not inside_source
+    assert output.exists() is not inside_source
+    assert output.with_suffix(".zip").exists() is not inside_source
+
+
+@pytest.mark.parametrize("failure", ["launch", "close"])
+def test_workers_browser_prepares_libraries_and_handles_cleanup_failures(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    toolchain = presentations._toolchain(repository)
+    renderer = toolchain / "render-diagrams.mjs"
+    package = toolchain / "node_modules/puppeteer-core"
+    manifest = json.loads((package / "package.json").read_text())
+    module = (package / manifest["exports"]["."]["import"]).as_uri()
+    wrapper = tmp_path / "cloud-browser.mjs"
+    wrapper.write_text(
+        "import assert from 'node:assert/strict';\n"
+        "import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';\n"
+        "import { join, resolve } from 'node:path';\n"
+        f"import puppeteer from {json.dumps(module)};\n"
+        "Object.defineProperty(process, 'platform', { value: 'linux' });\n"
+        "Object.defineProperty(process, 'arch', { value: 'x64' });\n"
+        "process.env.WORKERS_CI = '1';\n"
+        f"const failure = {json.dumps(failure)};\n"
+        "const previous = process.env.TMPDIR;\n"
+        "let temporary;\n"
+        "puppeteer.launch = async (options) => {\n"
+        "  temporary = options.env.TMPDIR;\n"
+        "  assert.notEqual(temporary, previous);\n"
+        "  assert.equal(options.headless, 'shell');\n"
+        "  assert.ok(options.args.includes('--no-sandbox'));\n"
+        "  const library = join(temporary, 'al2023/lib');\n"
+        "  assert.ok(existsSync(join(library, 'libnss3.so')));\n"
+        "  assert.ok(options.env.LD_LIBRARY_PATH.startsWith(library));\n"
+        "  const fontRoot = options.env.FONTCONFIG_PATH;\n"
+        "  assert.equal(options.env.FONTCONFIG_FILE, join(fontRoot, 'fonts.conf'));\n"
+        "  assert.ok(options.env.XDG_CACHE_HOME.startsWith(temporary + '/'));\n"
+        "  const config = readFileSync(join(fontRoot, 'fonts.conf'), 'utf8');\n"
+        "  const fontDirectories = [...config.matchAll("
+        '/<dir(?: prefix="(relative)")?>([^<]+)<\\/dir>/g)]\n'
+        "    .map(([, prefix, path]) => prefix ? resolve(fontRoot, path) : path);\n"
+        "  assert.ok(fontDirectories.some((path) => existsSync(path) && "
+        "readdirSync(path, { recursive: true }).some((file) => "
+        "file.endsWith('.ttf'))), 'Fontconfig must find bundled fallback fonts');\n"
+        "  assert.equal(readFileSync(options.executablePath).subarray(0, 4)"
+        ".toString('hex'), '7f454c46');\n"
+        "  if (failure === 'launch') throw new Error('expected launch failure');\n"
+        "  return {\n"
+        "    newPage: async () => { throw new Error('expected page failure'); },\n"
+        "    close: async () => { throw new Error('expected close failure'); },\n"
+        "  };\n"
+        "};\n"
+        f"const {{ renderDiagrams }} = await import({json.dumps(renderer.as_uri())});\n"
+        "await assert.rejects(renderDiagrams(['sequenceDiagram']), "
+        "(error) => error.cause?.message === `expected ${failure} failure` "
+        "&& (failure !== 'close' || "
+        "error.message.includes(`retained ${temporary}`)));\n"
+        "assert.ok(temporary);\n"
+        "assert.equal(existsSync(temporary), failure === 'close');\n"
+        "assert.equal(process.env.TMPDIR, previous);\n"
+        "// No process was launched; retained test files are safe to remove.\n"
+        "rmSync(temporary, { recursive: true, force: true });\n"
+    )
+    node = shutil.which("node")
+    assert node is not None
+    presentations._execute(
+        [node, str(wrapper)], cwd=tmp_path, temporary=tmp_path, timeout=30
+    )

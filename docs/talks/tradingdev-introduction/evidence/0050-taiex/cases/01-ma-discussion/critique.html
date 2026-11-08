@@ -1,0 +1,17 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>原始模型評析</title><style>*{box-sizing:border-box}body{margin:0;background:#f3f6fb;color:#1c2940;font:17px/1.7 -apple-system,BlinkMacSystemFont,"PingFang TC",sans-serif}main{max-width:1120px;margin:auto;padding:40px 26px}h1{font-size:32px;line-height:1.35}h2{margin-top:32px}a{color:#245b97;text-underline-offset:3px}.links{display:flex;flex-wrap:wrap;gap:12px}.links a,.card{background:white;border:1px solid #cad7e5;border-radius:8px;padding:12px 18px}.notice{border-left:4px solid #47719e;background:#e6eef8;padding:16px 20px}.muted{color:#53657c;font-size:14px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}img{max-width:100%;border:1px solid #cad7e5;border-radius:8px}table{border-collapse:collapse;background:#fff}td,th{padding:12px;border:1px solid #d8e0eb}</style></head><body><main><a href="../../index.html">← 案例總覽</a><h1>模型對策略的改善建議</h1><p class="notice">以下直接取自改善建議該輪的正式回覆，未改寫原文。建議尚未執行。</p><p><a href="conversation/index.html#turn-5">閱讀本輪完整對話</a></p><section class="card"><pre>我會優先改善「驗證方式與風險控制」，目前還不急著調出另一組均線。這次只有半年資料、各組僅 0～1 筆已平倉交易，證據還太少。
+
+建議依序做：
+
+1. **先比較 0050 買入持有**&#32;&#32;
+   目前比較的是加權指數。加入 0050 本身的基準，才能看出均線進出的貢獻。
+
+2. **統一暖機，再拉長測試期間**&#32;&#32;
+   在評估開始前提供足夠資料計算均線，讓三組從同一天開始比較；再涵蓋上漲、下跌與盤整期間，保留一段資料做樣本外驗證。
+
+3. **一次只測一種規則改善**&#32;&#32;
+   我會先測「短均線連續兩天低於長均線才賣出」，觀察能否減少短暫跌破造成的反覆交易。代價是出場較慢，可能承受更大跌幅，效果仍待驗證。
+
+4. **補齊實際交易成本**&#32;&#32;
+   納入證交稅、券商最低手續費與整股限制，確認改善後的收益是否留得住。
+
+**我會先保留 5／20 日作為研究起點，再與加入兩天出場確認的版本比較。** 它只是本次最接近大盤的組合，尚未證明長期較好；評估時應同時看報酬、回撤與交易次數。以上尚未執行新回測。</pre></section></main></body></html>

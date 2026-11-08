@@ -10,6 +10,7 @@ from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.domain.indicators.reference import indicator_reference
 from tradingdev.domain.research import ResearchSpec
 from tradingdev.domain.research_policy import research_policy_payload
+from tradingdev.domain.runtime import RuntimeLimits
 from tradingdev.domain.strategies.research_contract import research_evidence_contract
 from tradingdev.domain.strategies.validator import static_policy_payload
 
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 
 
 type StrategyContractTopic = Literal[
-    "core", "research", "evidence", "example", "configuration", "indicators"
+    "core", "research", "evidence", "example", "configuration", "indicators", "runtime"
 ]
 
 _CONTRACT_SECTIONS = (
@@ -42,6 +43,10 @@ _CONTRACT_SECTIONS = (
     {
         "id": "configuration",
         "description": "Full execution YAML schema and metric settings.",
+    },
+    {
+        "id": "runtime",
+        "description": "Generated isolation, resource policy and failure recovery.",
     },
 )
 
@@ -73,8 +78,9 @@ def strategy_contract_payload(
                 "until required values are finite.",
                 "Expose configurable values as constructor keyword parameters and "
                 "get_parameters(). YAML strategy.parameters supplies them. Defaults "
-                "must be finite JSON values. backtest_engine and parallel_config "
-                "are reserved application injections, not YAML overrides.",
+                "must be finite JSON values. Generated constructors cannot accept "
+                "backtest_engine or parallel_config; application services stay "
+                "outside the isolated strategy process.",
                 "Read section=research for the required research input and maintained "
                 "simulation policy, section=configuration for the YAML schema and "
                 "section=example when a complete starting example is needed. "
@@ -82,8 +88,10 @@ def strategy_contract_payload(
                 "Generated Python must pass the repository Ruff and strict Mypy "
                 "policy. static_policy lists the enforced import/call restrictions. "
                 "No network, subprocess, destructive filesystem access, dynamic "
-                "imports, eval or exec. These checks and workspace paths are not "
-                "a security sandbox.",
+                "imports, eval or exec. Generated imports and methods run in "
+                "bounded Linux containers with no host mounts or external network. "
+                "Read section=runtime for resource limits, data boundaries and "
+                "failure recovery. Static checks alone do not provide isolation.",
                 "Prefer tradingdev.domain.indicators for technical indicators. "
                 "Read section=indicators for the installed function catalog, then "
                 "select indicator by name for its signature, named result fields, "
@@ -109,13 +117,11 @@ def strategy_contract_payload(
                 "and repeats the contract on a longer fixture. Inspect diagnostics, "
                 "signal_analysis and effective_config against the user's request; "
                 "passing checks is not proof of every natural-language requirement.",
-                "Runtime import, construction and signal checks use a supervised "
-                "worker with a 60-second budget. Abnormal exit, timeout or cleanup "
-                "failure produces diagnostics and cannot grant passing evidence. "
-                "Repair in a new revision; unverified process cleanup retains its "
-                "temporary directory for inspection. Cleanup covers the owned "
-                "process group, excluding descendants that leave its session. "
-                "This is not a security sandbox.",
+                "Import, construction and signal checks use a supervised worker "
+                "with a 60-second budget and isolated generated execution. Abnormal "
+                "exit, timeout or cleanup failure cannot grant passing evidence. "
+                "Inspect diagnostics and section=runtime to distinguish strategy "
+                "repairs from missing infrastructure or unverified cleanup.",
                 "Execution requires runnable or promoted status. Each execution "
                 "fixes effective constructor parameters and checks them again; "
                 "parameter experiments reuse the runnable revision rather than "
@@ -137,6 +143,76 @@ def strategy_contract_payload(
                 "fresh run-local random stream. A backtest or walk-forward run "
                 "shares one stream across constructor and folds. Contexts do not "
                 "seed arbitrary global or third-party RNGs.",
+            ],
+        }
+    elif section == "runtime":
+        content = {
+            "limits_schema": RuntimeLimits.model_json_schema(),
+            "boundary": [
+                "All generated imports, constructors, fit, generate_signals, "
+                "get_parameters and rolling_trace execute in a Linux container. "
+                "MCP, CLI and high-level Python APIs use the same boundary. "
+                "Each unit has a read-only image, private PID namespace, no host "
+                "mounts, no inherited host secrets and no external network. "
+                "The generated worker has no effective capabilities and runs "
+                "under an unprivileged UID. The controller, image, Docker daemon "
+                "and Linux kernel remain trusted; this is not protection against "
+                "kernel vulnerabilities or side channels.",
+                "The runtime bounds total wall time (including waits between "
+                "calls), memory, CPU rate, process count, temporary storage, "
+                "messages and diagnostics. Child sessions remain inside the "
+                "unit. Its independent deadline kills the namespace even if "
+                "the host controller disappears. An execution fixes source hash, "
+                "class, immutable image ID and effective limits; later settings "
+                "cannot change that execution.",
+                "Only finite JSON and explicitly encoded DataFrames cross the "
+                "boundary, never pickle or executable objects. Frames support "
+                "unique string columns, Range/Datetime/ordinary indexes, primitive "
+                "numeric, nullable numeric/boolean, datetime/timezone, string and "
+                "finite JSON object values. MultiIndex, categories and custom "
+                "extension dtypes are rejected. Timezones require installed IANA "
+                "names or explicit UTC offsets, never filesystem paths. "
+                "Training state stays within one "
+                "instance; application services and backtest engines remain on "
+                "the host and cannot be constructor parameters.",
+            ],
+            "operation": [
+                "An operator must provide a local Unix Docker endpoint with "
+                "Linux cgroup v2 memory/CPU/process enforcement and a built "
+                "strategy-runtime image. macOS runs the controller natively and "
+                "the strategy in Docker's Linux VM. Remote SSH/TCP endpoints "
+                "are rejected. TRADINGDEV_STRATEGY_IMAGE selects the image; "
+                "TRADINGDEV_RUNTIME_LIMITS accepts a JSON object using "
+                "limits_schema. These are operator settings, not execution YAML.",
+                "Missing Docker/image/capabilities, invalid limits, timeouts, "
+                "oversized messages and invalid protocol replies reject the "
+                "operation without native fallback. Report the actual diagnostic. "
+                "For unavailable infrastructure or an exhausted budget, ask the "
+                "operator to restore it or review the policy; do not repeatedly "
+                "rewrite a correct strategy to bypass the boundary. Source "
+                "errors require a new revision and fresh validation evidence.",
+                "Normal completion, failure, cancellation and timeout remove the "
+                "owned unit and verify absence. If cleanup cannot be verified, "
+                "ownership records and temporary files are retained, and cleanup "
+                "must not be reported as successful. Give the operator the "
+                "retained path; never delete control records as a substitute "
+                "for stopping the unit.",
+                "Operator recovery: stop the originating host work and restore "
+                "the original Docker daemon first. In the installed TradingDev "
+                "Python environment, import Path from pathlib and DockerRuntime "
+                "from tradingdev.adapters.execution.container_runtime, then call "
+                "DockerRuntime(Path(control_root)).recover_abandoned(). "
+                "control_root is the directory containing the runtime ownership "
+                "JSON named by the diagnostic. For a supervised launch control "
+                "directory, use its runtime/ child, not start.json or finished.json. "
+                "Direct sessions normally use workspace/.strategy-runtime; use "
+                "the diagnostic path if explicitly overridden. Recovery verifies "
+                "daemon/owner/container identity and skips active leases. A return "
+                "without exception does not prove active units stopped: if JSON "
+                "records remain or recovery fails, retain them and report cleanup "
+                "unconfirmed. This recovers generated containers only; it neither "
+                "proves trusted host workers stopped nor rewrites job outcomes or "
+                "their saved cleanup acknowledgement.",
             ],
         }
     elif section == "indicators":
@@ -240,19 +316,15 @@ from tradingdev.domain.strategies.base import BaseStrategy
 if TYPE_CHECKING:
     import pandas as pd
 
-    from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
-
 
 class SmaCrossoverStrategy(BaseStrategy):
     """Hold long while finite fast SMA is above slow SMA; otherwise stay flat."""
 
     def __init__(
         self,
-        backtest_engine: BaseBacktestEngine | None = None,
         fast_period: int = 10,
         slow_period: int = 30,
     ) -> None:
-        self._engine = backtest_engine
         self._fast_period = fast_period
         self._slow_period = slow_period
 

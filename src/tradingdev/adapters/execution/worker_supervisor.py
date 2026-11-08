@@ -193,6 +193,7 @@ def supervise(control: Path, module: str, args: list[str]) -> None:
             raise RuntimeError("Worker startup cancelled")
         environment = os.environ.copy()
         environment["TRADINGDEV_WORKER_IDENTITY"] = json.dumps(identity)
+        environment["TRADINGDEV_RUNTIME_CONTROL_ROOT"] = str(control / "runtime")
         child = subprocess.Popen(  # noqa: S603
             [sys.executable, "-m", module, *args],
             env=environment,
@@ -210,6 +211,24 @@ def supervise(control: Path, module: str, args: list[str]) -> None:
         if child is not None:
             try:
                 returncode = terminate_owned_group(child)
+            except BaseException as error:
+                cleaned = False
+                prefix = f"{failure}; " if failure else ""
+                failure = f"{prefix}{type(error).__name__}: {error}"
+        runtime_root = control / "runtime"
+        if any(runtime_root.glob("*.json")):
+            try:
+                # The host worker and attach clients are stopped before leases
+                # are recovered. Container IDs remain valid across MCP sessions.
+                from tradingdev.adapters.execution.container_runtime import (
+                    DockerRuntime,
+                )
+
+                DockerRuntime(runtime_root).recover_abandoned()
+                if any(runtime_root.glob("*.json")):
+                    raise RuntimeError(
+                        "Execution-unit cleanup has active ownership leases"
+                    )
             except BaseException as error:
                 cleaned = False
                 prefix = f"{failure}; " if failure else ""

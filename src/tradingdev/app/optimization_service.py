@@ -9,6 +9,7 @@ import yaml
 from pydantic import ValidationError
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_submission import (
@@ -31,7 +32,6 @@ from tradingdev.domain.strategies.capabilities import (
     StrategyExecutionModeError,
     ensure_execution_mode,
 )
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ class OptimizationService:
         strategy_service: StrategyService | None = None,
         job_store: JobStore | None = None,
         process_runner: ProcessRunner | None = None,
-        strategy_loader: StrategyLoader | None = None,
+        strategy_loader: StrategyFactory | None = None,
         data_service: DataService | None = None,
         project_root: Path | None = None,
     ) -> None:
@@ -58,7 +58,7 @@ class OptimizationService:
         self._process_runner = process_runner or ProcessRunner(
             project_root, workspace=self._job_store.workspace
         )
-        self._strategy_loader = strategy_loader or StrategyLoader(
+        self._strategy_loader = strategy_loader or StrategyFactory(
             workspace_root=self._job_store.workspace.root
         )
         self._data_service = data_service or DataService(self._job_store.workspace)

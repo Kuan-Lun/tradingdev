@@ -1,0 +1,325 @@
+{
+  "schema_version": 1,
+  "kind": "comparison",
+  "candidates": [
+    {
+      "candidate_id": "candidate_1",
+      "label": "5／20日均線",
+      "rationale": "較短觀察窗，用於比較較快反應與可能較高換手；未經歷史績效挑選。",
+      "manifest": {
+        "schema_version": 5,
+        "kind": "backtest",
+        "config": {
+          "strategy": {
+            "id": "strategy_0c2b7a1276834dbf909a4ad0942e269d",
+            "revision_id": "64ea6241e59e42cda0d19ec3383cc325",
+            "class_name": "MovingAverageStrategy",
+            "display_name": "0050 雙均線固定組合比較",
+            "source_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/research/generated_strategies/strategy_0c2b7a1276834dbf909a4ad0942e269d/revisions/64ea6241e59e42cda0d19ec3383cc325/strategy.py",
+            "source_hash": "900d23535096dbd93179d0fed20bef796e5718b3f576c79d0951c9af180e15b8",
+            "parameters": {
+              "fast_period": 5,
+              "slow_period": 20
+            }
+          },
+          "backtest": {
+            "symbol": "0050.TW",
+            "timeframe": "1d",
+            "start_date": "2023-12-31T16:00:00+00:00",
+            "end_date": "2024-07-01T15:59:59+00:00",
+            "init_cash": 10000.0,
+            "fees": 0.0006,
+            "slippage": 0.0005,
+            "position_size": null,
+            "stop_loss": null,
+            "take_profit": null,
+            "signal_as_position": false,
+            "re_entry_after_sl": true,
+            "mode": "signal",
+            "monthly_max_loss": 1500.0,
+            "periods_per_year": 252.0,
+            "risk_free_rate": 0.0,
+            "required_return": 0.0
+          },
+          "data": {
+            "source": "yahoo_finance",
+            "market_type": "futures/um",
+            "raw_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/market-data/raw",
+            "processed_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/market-data/processed",
+            "requirements": {
+              "market": {
+                "source": "yahoo_finance",
+                "symbol": "0050.TW",
+                "timeframe": "1d"
+              },
+              "features": []
+            }
+          },
+          "research": {
+            "schema_version": 1,
+            "policy_version": "research-v1",
+            "strategy_outline": "0050 日K雙簡單均線，只做多；短均線高於長均線時持有，否則空手；比較5/20、10/40、20/60日固定組合。",
+            "field_sources": {
+              "/research/strategy_outline": "request",
+              "/backtest/symbol": "request",
+              "/backtest/timeframe": "request",
+              "/backtest/start_date": "request",
+              "/backtest/end_date": "request",
+              "/backtest/init_cash": "project_default",
+              "/backtest/fees": "project_default",
+              "/backtest/slippage": "project_default",
+              "/backtest/periods_per_year": "request"
+            },
+            "selected_revision": null,
+            "annualization_reason": "explicit_daily_factor"
+          },
+          "validation": null,
+          "parallel": {
+            "reserve_cores": 2,
+            "safety_factor": 0.6,
+            "overhead_multiplier": 3.0
+          },
+          "random_seed": null
+        },
+        "strategy_execution": {
+          "kind": "generated",
+          "constructor_kwargs": {
+            "fast_period": 5,
+            "slow_period": 20
+          },
+          "program": {
+            "source_hash": "900d23535096dbd93179d0fed20bef796e5718b3f576c79d0951c9af180e15b8",
+            "class_name": "MovingAverageStrategy",
+            "runtime": {
+              "image_id": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
+              "limits": {
+                "max_seconds": 300.0,
+                "memory_bytes": 2147483648,
+                "cpus": 2.0,
+                "processes": 128,
+                "temporary_bytes": 268435456,
+                "message_bytes": 67108864,
+                "diagnostic_bytes": 65536
+              }
+            }
+          }
+        },
+        "optimization": null,
+        "manifest_hash": "8401e4af02346835664493bed4bb6a277c9ae5ba8cbf11fa3eeb5a75ca1ac550"
+      }
+    },
+    {
+      "candidate_id": "candidate_2",
+      "label": "10／40日均線",
+      "rationale": "居中的觀察窗，用於比較反應速度放慢後的持有與交易差異。",
+      "manifest": {
+        "schema_version": 5,
+        "kind": "backtest",
+        "config": {
+          "strategy": {
+            "id": "strategy_0c2b7a1276834dbf909a4ad0942e269d",
+            "revision_id": "64ea6241e59e42cda0d19ec3383cc325",
+            "class_name": "MovingAverageStrategy",
+            "display_name": "0050 雙均線固定組合比較",
+            "source_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/research/generated_strategies/strategy_0c2b7a1276834dbf909a4ad0942e269d/revisions/64ea6241e59e42cda0d19ec3383cc325/strategy.py",
+            "source_hash": "900d23535096dbd93179d0fed20bef796e5718b3f576c79d0951c9af180e15b8",
+            "parameters": {
+              "fast_period": 10,
+              "slow_period": 40
+            }
+          },
+          "backtest": {
+            "symbol": "0050.TW",
+            "timeframe": "1d",
+            "start_date": "2023-12-31T16:00:00+00:00",
+            "end_date": "2024-07-01T15:59:59+00:00",
+            "init_cash": 10000.0,
+            "fees": 0.0006,
+            "slippage": 0.0005,
+            "position_size": null,
+            "stop_loss": null,
+            "take_profit": null,
+            "signal_as_position": false,
+            "re_entry_after_sl": true,
+            "mode": "signal",
+            "monthly_max_loss": 1500.0,
+            "periods_per_year": 252.0,
+            "risk_free_rate": 0.0,
+            "required_return": 0.0
+          },
+          "data": {
+            "source": "yahoo_finance",
+            "market_type": "futures/um",
+            "raw_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/market-data/raw",
+            "processed_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/market-data/processed",
+            "requirements": {
+              "market": {
+                "source": "yahoo_finance",
+                "symbol": "0050.TW",
+                "timeframe": "1d"
+              },
+              "features": []
+            }
+          },
+          "research": {
+            "schema_version": 1,
+            "policy_version": "research-v1",
+            "strategy_outline": "0050 日K雙簡單均線，只做多；短均線高於長均線時持有，否則空手；比較5/20、10/40、20/60日固定組合。",
+            "field_sources": {
+              "/research/strategy_outline": "request",
+              "/backtest/symbol": "request",
+              "/backtest/timeframe": "request",
+              "/backtest/start_date": "request",
+              "/backtest/end_date": "request",
+              "/backtest/init_cash": "project_default",
+              "/backtest/fees": "project_default",
+              "/backtest/slippage": "project_default",
+              "/backtest/periods_per_year": "request"
+            },
+            "selected_revision": null,
+            "annualization_reason": "explicit_daily_factor"
+          },
+          "validation": null,
+          "parallel": {
+            "reserve_cores": 2,
+            "safety_factor": 0.6,
+            "overhead_multiplier": 3.0
+          },
+          "random_seed": null
+        },
+        "strategy_execution": {
+          "kind": "generated",
+          "constructor_kwargs": {
+            "fast_period": 10,
+            "slow_period": 40
+          },
+          "program": {
+            "source_hash": "900d23535096dbd93179d0fed20bef796e5718b3f576c79d0951c9af180e15b8",
+            "class_name": "MovingAverageStrategy",
+            "runtime": {
+              "image_id": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
+              "limits": {
+                "max_seconds": 300.0,
+                "memory_bytes": 2147483648,
+                "cpus": 2.0,
+                "processes": 128,
+                "temporary_bytes": 268435456,
+                "message_bytes": 67108864,
+                "diagnostic_bytes": 65536
+              }
+            }
+          }
+        },
+        "optimization": null,
+        "manifest_hash": "230114234f3a1bccb00f49ac6527d91802b13c346b9b37b04e4c0a585afa836b"
+      }
+    },
+    {
+      "candidate_id": "candidate_3",
+      "label": "20／60日均線",
+      "rationale": "較長觀察窗，檢視較慢反應；指定短區間內暖機較長，解讀時須納入。",
+      "manifest": {
+        "schema_version": 5,
+        "kind": "backtest",
+        "config": {
+          "strategy": {
+            "id": "strategy_0c2b7a1276834dbf909a4ad0942e269d",
+            "revision_id": "64ea6241e59e42cda0d19ec3383cc325",
+            "class_name": "MovingAverageStrategy",
+            "display_name": "0050 雙均線固定組合比較",
+            "source_path": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/research/generated_strategies/strategy_0c2b7a1276834dbf909a4ad0942e269d/revisions/64ea6241e59e42cda0d19ec3383cc325/strategy.py",
+            "source_hash": "900d23535096dbd93179d0fed20bef796e5718b3f576c79d0951c9af180e15b8",
+            "parameters": {
+              "fast_period": 20,
+              "slow_period": 60
+            }
+          },
+          "backtest": {
+            "symbol": "0050.TW",
+            "timeframe": "1d",
+            "start_date": "2023-12-31T16:00:00+00:00",
+            "end_date": "2024-07-01T15:59:59+00:00",
+            "init_cash": 10000.0,
+            "fees": 0.0006,
+            "slippage": 0.0005,
+            "position_size": null,
+            "stop_loss": null,
+            "take_profit": null,
+            "signal_as_position": false,
+            "re_entry_after_sl": true,
+            "mode": "signal",
+            "monthly_max_loss": 1500.0,
+            "periods_per_year": 252.0,
+            "risk_free_rate": 0.0,
+            "required_return": 0.0
+          },
+          "data": {
+            "source": "yahoo_finance",
+            "market_type": "futures/um",
+            "raw_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/market-data/raw",
+            "processed_dir": "/Users/klwang/Desktop/git-repo/tradingdev-slide.clone/workspace/slide-demos/0050-accept-proposal-20261108/market-data/processed",
+            "requirements": {
+              "market": {
+                "source": "yahoo_finance",
+                "symbol": "0050.TW",
+                "timeframe": "1d"
+              },
+              "features": []
+            }
+          },
+          "research": {
+            "schema_version": 1,
+            "policy_version": "research-v1",
+            "strategy_outline": "0050 日K雙簡單均線，只做多；短均線高於長均線時持有，否則空手；比較5/20、10/40、20/60日固定組合。",
+            "field_sources": {
+              "/research/strategy_outline": "request",
+              "/backtest/symbol": "request",
+              "/backtest/timeframe": "request",
+              "/backtest/start_date": "request",
+              "/backtest/end_date": "request",
+              "/backtest/init_cash": "project_default",
+              "/backtest/fees": "project_default",
+              "/backtest/slippage": "project_default",
+              "/backtest/periods_per_year": "request"
+            },
+            "selected_revision": null,
+            "annualization_reason": "explicit_daily_factor"
+          },
+          "validation": null,
+          "parallel": {
+            "reserve_cores": 2,
+            "safety_factor": 0.6,
+            "overhead_multiplier": 3.0
+          },
+          "random_seed": null
+        },
+        "strategy_execution": {
+          "kind": "generated",
+          "constructor_kwargs": {
+            "fast_period": 20,
+            "slow_period": 60
+          },
+          "program": {
+            "source_hash": "900d23535096dbd93179d0fed20bef796e5718b3f576c79d0951c9af180e15b8",
+            "class_name": "MovingAverageStrategy",
+            "runtime": {
+              "image_id": "sha256:5093cef0dfd5a2313fb297013841177f9e944f06acc90a6c937dae94e1563717",
+              "limits": {
+                "max_seconds": 300.0,
+                "memory_bytes": 2147483648,
+                "cpus": 2.0,
+                "processes": 128,
+                "temporary_bytes": 268435456,
+                "message_bytes": 67108864,
+                "diagnostic_bytes": 65536
+              }
+            }
+          }
+        },
+        "optimization": null,
+        "manifest_hash": "a16e4c57dfcafda512bb4c90a29a3495c0213a5b9d38bf8e108baa46bf73ff02"
+      }
+    }
+  ],
+  "manifest_hash": "27503cd12c1d596953663787b08e714f05f8b856250da29aca8c95cfd35e5615"
+}

@@ -6,6 +6,7 @@ import json
 import pickle
 import signal
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -14,8 +15,10 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pandas as pd
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.execution.process_runner import WorkerHandle
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService, LoadedDataset
@@ -26,12 +29,13 @@ from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 from tradingdev.domain.strategies.execution import StrategyExecution
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 from tradingdev.mcp.workers import optimization
 from tradingdev.mcp.workers.optimization import ComboEvaluation, _run_optimization
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
     from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 
@@ -122,7 +126,9 @@ def _queued_job(
     manifest = ExecutionManifest.create(
         kind="optimization",
         strategy_execution=StrategyExecution(
-            kind="generated", constructor_kwargs={"direction": -1}
+            kind="generated",
+            program=GENERATED_PROGRAM,
+            constructor_kwargs={"direction": -1},
         ),
         config=config,
         optimization=OptimizationSpec.model_validate(
@@ -260,7 +266,7 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
     from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 
     strategy_config = {"id": "kd_crossover", "parameters": {"oversold": 15.0}}
-    loader = StrategyLoader()
+    loader = StrategyFactory()
     execution = loader.resolve_execution(strategy_config)
     captured: list[dict[str, Any]] = []
 
@@ -268,7 +274,7 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
         k_period: int = 21
 
     monkeypatch.setattr(
-        StrategyLoader,
+        StrategyFactory,
         "_bundled_config_model",
         lambda *args, **kwargs: ChangedDefaultConfig,
     )
@@ -583,7 +589,7 @@ def test_optimization_failure_restores_alarm_without_partial_performance_files(
 def test_real_trial_alarm_during_contract_execution_retains_timeout_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
 ) -> None:
-    """Use the real trial/contract/constructor path and a real one-second alarm."""
+    """Exercise the host trial alarm with a substituted strategy boundary."""
     entered: list[str] = []
 
     class SlowStrategy(BaseStrategy):
@@ -629,11 +635,32 @@ def test_real_trial_alarm_during_contract_execution_retains_timeout_status(
                 dataset_id="fixture-data",
             )
 
-        # The fake class and data replace external inputs. The worker trial,
-        # captured constructor inputs, contract fixture, alarm and SQLite are real.
+        @contextmanager
+        def open_strategy(
+            self: StrategyFactory,
+            config: dict[str, Any],
+            execution: StrategyExecution,
+            backtest_engine: BaseBacktestEngine | None,
+            parallel_config: ParallelConfig | None = None,
+        ) -> Iterator[BaseStrategy]:
+            direction = execution.constructor_kwargs["direction"]
+            assert isinstance(direction, int)
+            yield SlowStrategy(direction)
+
+        # The fake context and data replace strategy/container and data inputs.
+        # The host trial, contract fixture, alarm and SQLite are real.
         monkeypatch.setattr(BacktestService, "prepare_strategy", _prepared_strategy)
         monkeypatch.setattr(DataService, "load", load)
-        monkeypatch.setattr(StrategyLoader, "load_class", lambda *args: SlowStrategy)
+        monkeypatch.setattr(StrategyFactory, "open_from_execution", open_strategy)
+        monkeypatch.setattr(
+            StrategyFactory,
+            "override_execution",
+            lambda self, config, execution, overrides: StrategyExecution(
+                kind=execution.kind,
+                program=execution.program,
+                constructor_kwargs={**execution.constructor_kwargs, **overrides},
+            ),
+        )
         try:
             _run_optimization("fixture")
             assert entered == [phase]

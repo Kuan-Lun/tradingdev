@@ -48,6 +48,8 @@ def register(mcp: MCPServer, service: JobService) -> None:
         run or combined metrics; use generate_report(comparison_job_id=job_id)
         after completion.
         Comparison done means every candidate was processed, even if all failed.
+        cleanup_error independently reports unverified worker/container cleanup,
+        including after a terminal result. Preserve its reported control paths.
         Human confirmation is collected
         before creating a job. failed is a job state, not a
         lookup error; not_found means the job ID does not exist.

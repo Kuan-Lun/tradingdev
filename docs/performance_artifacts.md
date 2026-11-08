@@ -79,8 +79,8 @@ window, labelled rows, whether a model was fitted, and how many bars it scored.
 The optional trace hook is saved beside `strategy_parameters` for a full backtest,
 each walk-forward fold frame, each fixed-comparison candidate, each optimization
 training trial and the optimization's selected `test` evaluation. For bundled
-ML strategies it is absent when the switch is off; other strategies that do not
-implement the hook retain their existing metadata. These
+ML strategies it is recorded for both automatic and named geometry; other
+strategies that do not implement the hook retain their existing metadata. These
 bundled strategies require training and support walk-forward execution only;
 the hook on the other paths does not expand their supported modes. A supported
 comparison candidate is a backtest in its own right, so its `full` scope can
@@ -88,10 +88,13 @@ carry the trace.
 A fold captures an independent deep snapshot of the trace of each
 frame separately, because the training replay and the evaluation frame call
 `generate_signals` in turn and each produces its own schedule.
+SafetyVolume's top-level trace describes its risk model. When ML direction is
+enabled, `direction` contains another complete trace for that model; it remains
+available in the saved artifact rather than in the compact query projection.
 
 | Field | Meaning |
 | --- | --- |
-| `scheme` | The declared scheme name. |
+| `scheme` | `automatic` or the declared scheme name. |
 | `rtype` | Effective window shape: `ROLL_SD` slides, `ROLL_EX` expands. |
 | `step` | Effective bars between retrains, after defaults were resolved. |
 | `window_size` | Effective sliding length, or null for an expanding window. |
@@ -102,6 +105,7 @@ frame separately, because the training replay and the evaluation frame call
 | `bars` | All bars in the scored frame, including unscored bars; overlap is removed from training history, not this frame. |
 | `bars_scored` | Bars it actually scored; missing features or no available model leave the remainder. |
 | `unscored_bars` | Positions that could not be scored; empty when every bar was. |
+| `unavailable_counts` | Counts by unavailable reason; definitions are maintained in [UnavailableReason](../src/tradingdev/domain/ml/rolling_gen/engine.py). |
 | `rolls` | One entry per roll, in order. |
 
 Each `rolls` entry carries `index`; `retrain_bar`, its position in the scored
@@ -109,7 +113,8 @@ frame of the scheduled retrain attempt (fitting can be skipped); `train_start` a
 positions in the concatenated history-plus-scored frame, ending at the bar being
 scored; `test_start` and `test_end`, the scored-frame interval that model was
 assigned to score; `n_train_rows`, the labelled rows the window offered — zero
-when the raw window was shorter than two bars, because nothing was transformed;
+when the raw window could not contain one mature feature row and transformation
+was not attempted;
 `trained`, false when the window was too small and the previous model was kept;
 and `bars_scored`, the subset of its interval that was actually scored.
 
@@ -206,6 +211,17 @@ Comparisons retain the requested values and report comparability and reasons;
 differences in mode, definitions, provider versions, sampling, annualization,
 capital or execution context cannot silently become equivalent rankings.
 
+`compare_runs` keys each row by a `(run_id, scope)` pair, so two scopes of one run
+can be compared side by side; omit `scope` to use that run's default. Selections
+that resolve to the same measurement are refused as duplicates, including an
+omitted scope paired with the explicit name of that run's default. Each row reports
+`metric_source`: `bundle` when the values came from the performance bundle,
+`legacy_summary` when they came from a run row that has no bundle. Comparability
+reasons and `context_differences` identify a selection as `run_id` when its default
+scope was used and as `run_id#scope` when a scope was named, so two scopes of one
+run stay distinct instead of collapsing into one entry. Comparison reads stored
+values only; nothing is recomputed.
+
 Detailed reads verify supported schema, run/manifest identity and recorded
 artifact digest. Missing or corrupted artifacts are errors rather than a request
 to rerun a strategy. Publication validates and encodes data before writing;
@@ -237,8 +253,13 @@ those results. Historical values are not asserted to follow the new definitions.
 New backtest and walk-forward artifacts add a `benchmarks` mapping keyed by the
 same scalar scope IDs. The baseline is chosen from the saved market requirement,
 never from a request parameter: `binance_vision` and `binance_api` USDT-quoted markets use
-`BTC/USDT`, and `yahoo_finance` US listings use `^GSPC`. A market with no
-defined asset class, another venue suffix, a Yahoo future or an FX pair is recorded as
+`BTC/USDT`, and `yahoo_finance` US listings use `^GSPC`. Yahoo Taiwan listings
+(`.TW` and `.TWO`, including ETFs) and `^TWII` use the Taiwan market baseline
+`^TWII` under `tw_equity`. This is a listing-market policy, not an inference
+about an ETF's underlying assets: overseas and bond ETFs listed in Taiwan also
+use this same baseline. Both `^GSPC` and `^TWII` are price indices excluding
+cash dividends, not total-return indices or directly tradable instruments.
+A market with no defined asset class, an unsupported venue suffix, a Yahoo future or an FX pair is recorded as
 `undefined` instead of borrowing a foreign index. Yahoo crypto pairs are not US
 equities; Binance pairs quoted in another currency have no baseline until a
 same-currency comparison is defined.

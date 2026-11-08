@@ -41,7 +41,7 @@ def _failure(code: str, message: str) -> dict[str, Any]:
 
 
 class StrategyContractService:
-    """Return evidence only after the supervisor's owned process group stops."""
+    """Return evidence after verified host-worker and generated-unit cleanup."""
 
     def __init__(
         self,

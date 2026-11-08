@@ -44,14 +44,8 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
     ]
     code = contract["example_strategy_code"]
     # Required YAML parameters catch workers silently using constructor defaults.
-    code = code.replace(
-        "        backtest_engine: BaseBacktestEngine | None = None,\n", ""
-    )
     code = code.replace("fast_period: int = 10", "fast_period: int")
-    code = code.replace(
-        "slow_period: int = 30,",
-        "slow_period: int,\n        backtest_engine: BaseBacktestEngine | None = None,",
-    )
+    code = code.replace("slow_period: int = 30", "slow_period: int")
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"]["parameters"] = {"fast_period": 3, "slow_period": 8}
     config["backtest"]["symbol"] = "ETH/USDT"

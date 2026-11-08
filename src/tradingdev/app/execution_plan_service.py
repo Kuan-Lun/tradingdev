@@ -41,8 +41,10 @@ from tradingdev.domain.presentation.comparison_confirmation import (
     build_comparison_confirmation,
 )
 from tradingdev.domain.presentation.confirmation import (
-    ConfirmationPresentationError,
     build_confirmation_document,
+)
+from tradingdev.domain.presentation.confirmation_contract import (
+    ConfirmationPresentationError,
 )
 from tradingdev.domain.presentation.research_confirmation import (
     enrich_research_confirmation,

@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
 
+from tooling.documentation import markdown_heading_locations
+from tooling.requirements import DOCUMENT_SCOPES
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -78,15 +81,35 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         ),
         **_headings({"ml", "strategy", "interfaces"}, "研究機器學習訊號"),
         **_headings(
+            {"tooling", "execution", "interfaces"},
+            "使用 Docker 部署",
+            "準備檔案與資料夾",
+            "設定連線入口",
+            "啟動、更新與保存資料",
+        ),
+        **_headings(
             {"results", "interfaces"},
             "查看結果與圖表",
             "在對話中查詢",
             "交易紀錄與 HTML 報告",
             "開啟 Dashboard",
             "從已保存的結果產生報告",
+            "保存研究筆記與打包分享",
+            "自動保存 Codex CLI 對話",
+            "閱讀保存的對話",
+            "從終端機操作研究筆記",
         ),
-        **_headings(_PRODUCT, "資料與工作區"),
+        **_headings(
+            _PRODUCT,
+            "資料與工作區",
+            "行情來源與下載",
+            "選擇與保存工作區",
+            "升級舊工作區",
+        ),
         **_headings({"execution", "interfaces"}, "終端機用法", "直接執行設定檔"),
+        **_headings(
+            {"tooling", "interfaces", "ml"}, "沒有 Homebrew 時設定 OpenMP（macOS）"
+        ),
     },
     "ARCHITECTURE.md": {
         **_headings(
@@ -111,11 +134,18 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "保存與查詢結果",
             "績效計算與對話摘要",
             "歷史查詢與報告組裝",
+            "診斷擴充與替換",
+            "研究筆記與可攜封存",
+            "可見對話紀錄",
         ),
         **_headings({"data", "interfaces"}, "獨立行情取樣"),
+        **_headings({"data", "execution", "ml", "interfaces"}, "行情快取"),
         **_headings({"ml", "strategy", "interfaces"}, "ML 訊號研究"),
         **_headings(_PRODUCT, "設定與儲存一致性", "MCP 回覆契約"),
         **_headings({"execution", "tooling", "interfaces"}, "程序控制與清理"),
+        **_headings(
+            {"strategy", "execution", "interfaces", "tooling"}, "容器執行 adapter"
+        ),
     },
     "AGENTS.md": {
         **_headings(_ALL, "AGENTS.md", "政策與溝通", "設計原則", "完成回報"),
@@ -136,8 +166,12 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     "docs/development.md": {
         **_headings(_ALL, "開發指南", "更新文件"),
         **_headings(
+            {"strategy", "execution", "interfaces", "tooling"}, "容器建置與驗證"
+        ),
+        **_headings(
             {"tooling", "presentation"},
             "環境與常用命令",
+            "平行執行離線測試",
             "依賴相容性限制",
             "測試設計與精簡",
             "開發階段的程式碼審查",
@@ -149,18 +183,29 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "4. 合併後更新 main、清理本機分支",
             "尚未建立 PR 的本機檢查",
             "注意事項",
+            "SRS 維護與檢核",
+            "測試證據與文件修正",
+            "檢查期間的主線更新",
         ),
         **_headings(
             {"presentation"},
             "簡報的編輯與輸出",
             "在 VS Code 儲存時自動編譯",
             "手動輸出與預覽",
+            "簡報網站發布設定",
+            "Cloudflare 自動發布",
+            "共用網域與專案路徑",
         ),
+        **_headings({"tooling"}, "研究成果工程回饋"),
         **_headings({"tooling", "results"}, "MAE 研究原型"),
         **_headings({"tooling", "interfaces"}, "選擇性 LLM 測試", "量測模型上下文"),
     },
     "docs/strategy_contract.md": {
         **_headings(_ALL, "Strategy Contract"),
+        **_headings(
+            {"strategy", "execution", "interfaces", "tooling"},
+            "Security Model",
+        ),
         **_headings(
             _PRODUCT, "Contract References", "Research Inputs and Simulation Policy"
         ),
@@ -173,7 +218,6 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Revision Identity and Eligibility",
             "Execution and Parameter Experiments",
             "Legacy Recovery",
-            "Security Model",
         ),
         **_headings(
             {"strategy", "execution", "results", "interfaces"},
@@ -235,6 +279,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Completed Run Files",
             "Performance Scopes and Provenance",
             "Historical Observation Queries",
+            "Ranking Saved Run Scopes",
             "Research Notes and Archives",
             "Composable Offline Reports",
         ),
@@ -269,6 +314,10 @@ _DOC_HEADINGS.update(
             "Method families": _DOC_HEADINGS["docs/run_artifacts.md"][
                 "Recorded Signal Evaluations"
             ],
+            **_headings(
+                {"ml", "strategy", "execution", "interfaces"},
+                "Rolling Retraining Schemes",
+            ),
         },
         **{
             path: {
@@ -290,6 +339,16 @@ _DOC_HEADINGS.update(
             )
         },
     }
+)
+
+_DOC_HEADINGS["docs/reports.md"].update(
+    _headings(
+        {"results", "interfaces"},
+        "Research interpretation and diagnostic providers",
+        "Research notebooks and archives",
+        "Recorded conversations",
+        "Codex CLI recording adapter",
+    )
 )
 
 # The baseline contract sits in its own section of the same results-owned
@@ -316,6 +375,10 @@ _DOC_HEADINGS["docs/execution_plans.md"].update(
 # are deliberately not matched by a wildcard: an unfamiliar document widens
 # context until its responsibility has been reviewed and registered.
 _WHOLE_DOC_SCOPES: dict[str, frozenset[str]] = {
+    **{path: frozenset(scopes) for path, scopes in DOCUMENT_SCOPES.items()},
+    "docs/talks/tradingdev-introduction/README.md": frozenset(
+        {"presentation", "tooling"}
+    ),
     **dict.fromkeys(
         (
             "docs/strategies/README.md",
@@ -354,7 +417,10 @@ _PREFIX_SCOPES: tuple[tuple[str, str], ...] = (
     ("configs/strategies/", "strategy"),
 )
 _EXACT_SCOPES = {
+    **{path: scopes[0] for path, scopes in DOCUMENT_SCOPES.items()},
     "tooling/presentations.py": "presentation",
+    "tooling/presentation_errors.py": "presentation",
+    "tooling/presentation_html.py": "presentation",
     "scripts/presentations.sh": "presentation",
     "scripts/check-presentations.sh": "presentation",
     "tests/tooling/test_presentations.py": "presentation",
@@ -365,12 +431,23 @@ _EXACT_SCOPES = {
     "pyproject.toml": "tooling",
     "uv.lock": "tooling",
     "docs/development.md": "tooling",
+    # Explicit model-test options only; shared fixtures remain conservative.
+    "tests/llm_plugin.py": "tooling",
+    "research/mae_analysis.py": "tooling",
+    "tests/test_mae_analysis.py": "tooling",
     "docs/strategy_contract.md": "strategy",
     "docs/run_artifacts.md": "results",
     "docs/ml_research.md": "ml",
     "docs/execution_plans.md": "execution",
     "docs/performance_artifacts.md": "results",
     "docs/reports.md": "results",
+    ".agents/skills/research-feedback/SKILL.md": "tooling",
+    ".agents/skills/wait-for-check/SKILL.md": "tooling",
+    "scripts/build-presentations-site.sh": "presentation",
+    "scripts/stage-presentations.sh": "presentation",
+    "tests/tooling/test_presentation_bundle.py": "presentation",
+    "tooling/presentation_bundle.py": "presentation",
+    "wrangler.jsonc": "presentation",
 }
 # A directory describes a layer, not necessarily the behavior of every module
 # inside it. These exceptions keep calculated results and execution consent
@@ -379,7 +456,100 @@ _MODULE_EXACT_SCOPES = {
     "domain/backtest/metrics.py": "results",
     "domain/backtest/test_performance_metrics.py": "results",
     "domain/presentation/confirmation.py": "execution",
+    "domain/presentation/confirmation_contract.py": "execution",
     "adapters/presentation/confirmation.py": "execution",
+    **dict.fromkeys(
+        (
+            "__main__.py",
+            "adapters/test_cli.py",
+            "adapters/test_cli_execution_guidance.py",
+            "adapters/test_cli_report.py",
+            "adapters/test_codex_recording.py",
+            "main.py",
+        ),
+        "interfaces",
+    ),
+    **dict.fromkeys(
+        (
+            "app/dataset_inspection.py",
+            "app/dvol_data.py",
+            "app/feature_data.py",
+            "app/test_dvol_cache.py",
+        ),
+        "data",
+    ),
+    **dict.fromkeys(
+        (
+            "adapters/test_container_runtime.py",
+            "adapters/test_frame_codec.py",
+            "app/comparison_service.py",
+            "app/prepared_execution.py",
+            "app/research_preparation.py",
+            "app/test_comparison_lifecycle.py",
+            "app/test_comparison_plans.py",
+            "app/test_comparison_preflight.py",
+            "app/test_research_preparation.py",
+            "app/test_rolling_preflight.py",
+            "app/test_signal_boundaries.py",
+            "domain/comparison.py",
+            "domain/presentation/comparison_confirmation.py",
+            "domain/presentation/research_confirmation.py",
+            "domain/randomness.py",
+            "domain/runtime.py",
+            "domain/test_comparison.py",
+            "domain/test_comparison_confirmation.py",
+            "domain/test_randomness.py",
+            "domain/test_research_confirmation.py",
+        ),
+        "execution",
+    ),
+    **dict.fromkeys(
+        (
+            "adapters/storage/comparisons.py",
+            "adapters/storage/conversation_exports.py",
+            "adapters/storage/conversations.py",
+            "adapters/storage/research_archives.py",
+            "adapters/storage/research_notes.py",
+            "adapters/test_bokeh_tables.py",
+            "adapters/test_comparisons.py",
+            "adapters/test_dashboard_analysis.py",
+            "adapters/test_dashboard_render.py",
+            "adapters/test_dashboard_report.py",
+            "adapters/test_presentation_html.py",
+            "adapters/test_quantstats_report.py",
+            "adapters/test_research_report.py",
+            "app/benchmark_service.py",
+            "app/contracts/conversations.py",
+            "app/contracts/research.py",
+            "app/contracts/research_notes.py",
+            "app/conversation_service.py",
+            "app/diagnostic_service.py",
+            "app/ranking_service.py",
+            "app/research_note_service.py",
+            "app/rolling_trace_summary.py",
+            "app/test_benchmark_service.py",
+            "app/test_comparison_report.py",
+            "app/test_conversations.py",
+            "app/test_diagnostics.py",
+            "app/test_metric_json_contract.py",
+            "app/test_research_notes.py",
+            "app/test_research_report_service.py",
+            "app/test_saved_walk_forward.py",
+            "app/test_volume_monthly_loss_artifacts.py",
+            "domain/benchmark.py",
+            "domain/comparison_results.py",
+            "domain/conversations.py",
+            "domain/diagnostics.py",
+            "domain/ranking.py",
+            "domain/research_notes.py",
+            "domain/research_scope.py",
+            "domain/test_benchmark.py",
+            "domain/test_ledger_presentation.py",
+            "domain/test_ranking.py",
+            "domain/test_research_walk_forward.py",
+        ),
+        "results",
+    ),
 }
 _MODULE_PREFIX_SCOPES = (
     ("domain/strategies/", "strategy"),
@@ -390,12 +560,14 @@ _MODULE_PREFIX_SCOPES = (
     ("domain/optimization/", "execution"),
     ("domain/validation/", "execution"),
     ("domain/performance/", "results"),
+    ("domain/statistics/", "results"),
     ("domain/presentation/", "results"),
     ("adapters/execution/", "execution"),
     ("adapters/reporting/", "results"),
     ("adapters/dashboard/", "results"),
     ("adapters/presentation/", "results"),
     ("adapters/cli/", "interfaces"),
+    ("adapters/clients/", "interfaces"),
     ("mcp/workers/", "execution"),
     ("mcp/", "interfaces"),
     ("e2e/", "interfaces"),
@@ -611,4 +783,41 @@ def sections_for_scope(scope: str, path: str, text: str) -> tuple[MarkdownSectio
                 if sections[previous].headings == headings[:length]:
                     selected.add(previous)
                     break
+    return tuple(section for index, section in enumerate(sections) if index in selected)
+
+
+def sections_for_reference(
+    path: str, text: str, fragment: str
+) -> tuple[MarkdownSection, ...]:
+    """Keep the cited original subtree, its ancestors and reference definitions."""
+    sections, references = _parse_sections(path, text)
+    if not fragment:
+        return sections
+    line = markdown_heading_locations(text).get(fragment)
+    if line is None:
+        raise ValueError(f"Missing SRS contract heading: {path}#{fragment}")
+    target = next(
+        index
+        for index, section in enumerate(sections)
+        if section.start_line <= line <= section.end_line
+    )
+    headings = sections[target].headings
+    selected = {target}
+    # Container headings belong to their enclosing section, not its later siblings.
+    if headings and line == sections[target].start_line:
+        for index in range(target + 1, len(sections)):
+            if len(sections[index].headings) <= len(headings):
+                break
+            selected.add(index)
+    for length in range(1, len(headings)):
+        for index in range(target - 1, -1, -1):
+            if sections[index].headings == headings[:length]:
+                selected.add(index)
+                break
+    selected.update(
+        index
+        for index, section in enumerate(sections)
+        if not section.headings
+        or any(section.start_line <= line <= section.end_line for line in references)
+    )
     return tuple(section for index, section in enumerate(sections) if index in selected)

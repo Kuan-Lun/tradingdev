@@ -211,7 +211,7 @@ def build_evidence(
             "configuration, Markdown, HTML and CSS text files; docs/.nojekyll; "
             "all candidate README, ARCHITECTURE, agent policies and docs/**/*.md. "
             "Registered presentation changes and related build/deployment changes "
-            "include the complete candidate presentation source, theme, HTML and "
+            "include the complete candidate presentation source, theme and "
             "README as context. Selected content must be UTF-8 without NUL bytes. "
             "Other paths, including binary assets and unsupported lockfiles, and "
             "runtime workspace contents are excluded as individually listed. "

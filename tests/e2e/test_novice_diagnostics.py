@@ -26,6 +26,7 @@ from tests.e2e.novice_intake import ObservedIntakeUser
 from tests.integration.execution_fixtures import synthetic_preflight_receipt
 from tests.integration.mcp_harness import MCPWorkspace, temporary_mcp_workspace
 from tests.research_evidence_fixtures import research_evidence_draft
+from tests.strategy_fixtures import GENERATED_PROGRAM
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.performance import PerformanceStore
@@ -43,8 +44,10 @@ from tradingdev.domain.performance.artifacts import (
 )
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.presentation.confirmation import (
-    ConfirmationPresentation,
     build_confirmation_document,
+)
+from tradingdev.domain.presentation.confirmation_contract import (
+    ConfirmationPresentation,
 )
 from tradingdev.domain.presentation.research_confirmation import (
     enrich_research_confirmation,
@@ -158,7 +161,9 @@ def _fixture(root: Path) -> EvidenceFixture:
     manifest = ExecutionManifest.create(
         kind="backtest",
         config=config,
-        strategy_execution=StrategyExecution(kind="generated", constructor_kwargs={}),
+        strategy_execution=StrategyExecution(
+            kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
+        ),
     )
     receipt = PreflightReceipt.model_validate(
         synthetic_preflight_receipt(manifest.manifest_hash)

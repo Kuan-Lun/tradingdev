@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from tooling import review_docs
+from tooling.presentations import DECK, PRESENTATION_PATHS
+from tooling.requirements import check_requirements
 from tooling.review_evidence import ReviewError, build_evidence
 from tooling.review_plan import build_review_plan
 
@@ -52,6 +54,94 @@ def _payload(prompt: str) -> dict[str, Any]:
     return dict(json.loads(prompt.rsplit("\n\n", 1)[-1]))
 
 
+def test_model_options_review_preserves_source_and_development_guidance(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    path = "tests/llm_plugin.py"
+    _write(tmp_path, path, "MODEL = 'old'\n")
+    _write(
+        tmp_path,
+        "docs/development.md",
+        "# 開發指南\n\n## 選擇性 LLM 測試\nModel selection contract.\n",
+    )
+    _write(
+        tmp_path,
+        "README.md",
+        "# TradingDev\n\n## 查看結果與圖表\nReport-only instructions.\n",
+    )
+    base = _tree(tmp_path)
+    _write(tmp_path, path, "MODEL = 'new'\n")
+    plan = review_docs.prepare_review(base, _tree(tmp_path), repo=tmp_path)
+    assert plan.manifest["selected_scopes"] == ["tooling"]
+    batch = _payload(plan.prompts[0])
+    assert batch["assigned_paths"] == [path]
+    assert batch["candidate_files"][path] == "MODEL = 'new'\n"
+    assert "+MODEL = 'new'" in batch["path_diffs"][path]
+    assert "Model selection contract." in plan.prompts[0]
+    assert "Report-only instructions." not in plan.prompts[0]
+
+
+@pytest.mark.parametrize(
+    ("path", "scope", "required", "excluded"),
+    [
+        (
+            "src/tradingdev/domain/statistics/periods.py",
+            "results",
+            "Saved numeric semantics.",
+            "Developer model setup.",
+        ),
+        (
+            "tests/domain/statistics/test_statistics_periods.py",
+            "results",
+            "Saved numeric semantics.",
+            "Developer model setup.",
+        ),
+        (
+            "research/mae_analysis.py",
+            "tooling",
+            "MAE date and complete-window semantics.",
+            "Saved numeric semantics.",
+        ),
+        (
+            "tests/test_mae_analysis.py",
+            "tooling",
+            "MAE date and complete-window semantics.",
+            "Saved numeric semantics.",
+        ),
+    ],
+)
+def test_numeric_analysis_review_preserves_its_source_and_contract(
+    tmp_path: Path, path: str, scope: str, required: str, excluded: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, path, "VALUE = 'old'\n")
+    _write(
+        tmp_path,
+        "docs/performance_artifacts.md",
+        "# Performance Artifacts\n\n## Metric Interpretation\n"
+        "Saved numeric semantics.\n",
+    )
+    _write(
+        tmp_path,
+        "docs/development.md",
+        "# 開發指南\n\n## MAE 研究原型\n"
+        "MAE date and complete-window semantics.\n\n"
+        "## 選擇性 LLM 測試\nDeveloper model setup.\n",
+    )
+    base = _tree(tmp_path)
+    source = "VALUE = 'new'\n"
+    _write(tmp_path, path, source)
+    plan = review_docs.prepare_review(base, _tree(tmp_path), repo=tmp_path)
+    assert plan.manifest["selected_scopes"] == [scope]
+    batch = _payload(plan.prompts[0])
+    assert batch["assigned_paths"] == [path]
+    assert batch["candidate_files"][path] == source
+    assert "+VALUE = 'new'" in batch["path_diffs"][path]
+    assert required in plan.prompts[0]
+    assert excluded not in plan.prompts[0]
+
+
 def test_each_changed_file_has_one_complete_owner_and_one_cross_scope_audit(
     change: tuple[Path, str, str],
 ) -> None:
@@ -82,6 +172,48 @@ def test_each_changed_file_has_one_complete_owner_and_one_cross_scope_audit(
     assert "README.md" in audit[0]["document_inventory"]
     assert all(b["candidate_tree"] == tree for b in payloads)
     assert plan.manifest["status"] == "planned_not_reviewed"
+
+
+@pytest.mark.parametrize("change_deck", [False, True])
+def test_required_deck_context_is_distinguished_from_actual_changes(
+    tmp_path: Path, change_deck: bool
+) -> None:
+    _git(tmp_path, "init", "-q")
+    for path in PRESENTATION_PATHS:
+        _write(tmp_path, path, "Existing presentation content.\n")
+    compiler = "tooling/presentations.py"
+    bundle = "tooling/presentation_bundle.py"
+    quality = "tooling/quality.py"
+    for path in (compiler, bundle, quality):
+        _write(tmp_path, path, "VALUE = 'old'\n")
+    base = _tree(tmp_path)
+    for path in (compiler, bundle, quality):
+        _write(tmp_path, path, "VALUE = 'new'\n")
+    changed = {compiler, bundle, quality}
+    if change_deck:
+        _write(tmp_path, f"{DECK}/slides.md", "Changed slide.\n")
+        changed.add(f"{DECK}/slides.md")
+    tree = _tree(tmp_path)
+    _write(tmp_path, f"{DECK}/theme.css", "UNSTAGED_STYLE\n")
+    plan = review_docs.prepare_review(base, tree, repo=tmp_path)
+    for prompt in plan.prompts:
+        payload = _payload(prompt)
+        assert set(payload["changed_paths"]) == changed
+        assert set(payload["unchanged_presentation_context_paths"]) == (
+            PRESENTATION_PATHS - changed
+        )
+        assert "UNSTAGED_STYLE" not in prompt
+        if payload["scope"] == "presentation":
+            assert set(payload["assigned_paths"]) == PRESENTATION_PATHS | {
+                compiler,
+                bundle,
+            }
+            assert set(payload["path_diffs"]) == changed - {quality}
+            for path in PRESENTATION_PATHS:
+                assert (
+                    payload["candidate_files"][path]
+                    == _git(tmp_path, "show", f"{tree}:{path}") + "\n"
+                )
 
 
 def test_explicit_scope_cannot_hide_a_changed_responsibility(
@@ -149,6 +281,29 @@ def test_deleted_and_renamed_paths_keep_exact_old_and_new_evidence(
     assert owners["scripts/new.sh"]["candidate_files"]["scripts/new.sh"] == (
         "echo old-source\n"
     )
+
+
+def test_every_scope_can_identify_deletions_from_the_candidate_tree(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, "web/index.html", "<p>Generated preview</p>\n")
+    _write(tmp_path, "README.md", "# Preview\nGenerated HTML is tracked.\n")
+    base = _tree(tmp_path)
+    (tmp_path / "web/index.html").unlink()
+    _write(tmp_path, ".gitignore", "/web/index.html\n")
+    _write(tmp_path, "README.md", "# Preview\nGenerated HTML is not tracked.\n")
+    _write(tmp_path, STRATEGY, "VALUE = 'separate review scope'\n")
+    tree = _tree(tmp_path)
+    plan = review_docs.prepare_review(base, tree, repo=tmp_path)
+    payloads = [_payload(prompt) for prompt in plan.prompts]
+    assert len({batch["scope"] for batch in payloads}) > 1
+    expected = _git(tmp_path, "ls-tree", "-r", "--name-only", tree).splitlines()
+    for batch in payloads:
+        assert batch["candidate_tree_inventory"] == expected
+        assert "web/index.html" in batch["changed_paths"]
+        assert "web/index.html" not in batch["candidate_tree_inventory"]
+        assert ".gitignore" in batch["candidate_tree_inventory"]
 
 
 def test_path_diffs_treat_git_pathspec_characters_literally(tmp_path: Path) -> None:
@@ -574,3 +729,117 @@ def test_automatic_document_provenance_fails_closed(
         raw["automatic_document_paths"].append("README.md")
     with pytest.raises(ReviewError, match="document provenance"):
         build_review_plan(json.dumps(raw))
+
+
+@pytest.mark.parametrize("scope", ["strategy", "cross_scope"])
+def test_srs_explicit_contract_sections_come_from_candidate_git(
+    change: tuple[Path, str, str],
+    scope: str,
+) -> None:
+    repo, base, _ = change
+    contract = "docs/run_artifacts.md"
+    original = "# Run Artifacts\n\n## Market Data Cache\nOriginal data contract.\n"
+    _write(
+        repo, contract, original + "\n## Discovery Pages\nUnrelated contract text.\n"
+    )
+    base = _tree(repo)
+    _write(repo, REPORT, "VALUE = 'cross-scope report change'\n")
+    _write(
+        repo,
+        "docs/requirements/strategy.md",
+        "# Strategy\n\n## FR-STR-001 Inputs\n\n"
+        "- **契約**：[cache](../run_artifacts.md#market-data-cache)\n",
+    )
+    tree = _tree(repo)
+    # Working tree changes must not replace immutable contract evidence.
+    _write(repo, contract, "# Locally changed\n")
+    raw = build_evidence(repo, base, tree)
+    plan = build_review_plan(raw)
+    batch = next(
+        _payload(prompt)
+        for prompt in plan.prompts
+        if _payload(prompt).get("scope") == scope
+    )
+    sections = [
+        section for section in batch["document_sections"] if section["path"] == contract
+    ]
+    assert "".join(section["text"] for section in sections) == original + "\n"
+    assert all(
+        section["blob_oid"] == _git(repo, "rev-parse", f"{tree}:{contract}")
+        for section in sections
+    )
+    assert contract in batch["requirement_context_paths"][scope]
+    assert len({section["start_line"] for section in sections}) == len(sections)
+    evidence = json.loads(raw)
+    del evidence["candidate_files"][contract]
+    with pytest.raises(ReviewError, match="context is missing"):
+        build_review_plan(json.dumps(evidence))
+
+
+@pytest.mark.parametrize("mode", ["missing", "symlink"])
+def test_missing_or_nonregular_srs_contract_fails_before_review(
+    change: tuple[Path, str, str], mode: str
+) -> None:
+    repo, base, _ = change
+    _write(
+        repo,
+        "docs/requirements/strategy.md",
+        "# Strategy\n\n## FR-STR-001 Inputs\n\n- **契約**：[missing](../missing.md)\n",
+    )
+    if mode == "symlink":
+        (repo / "docs/missing.md").symlink_to("../README.md")
+    tree = _tree(repo)
+    with pytest.raises(ReviewError, match="Missing regular SRS contract evidence"):
+        build_review_plan(build_evidence(repo, base, tree))
+
+
+@pytest.mark.parametrize("explicit_context", [False, True])
+def test_cross_scope_keeps_srs_contract_when_presentation_owns_its_file(
+    change: tuple[Path, str, str], explicit_context: bool
+) -> None:
+    repo, _, _ = change
+    for path in PRESENTATION_PATHS:
+        _write(repo, path, "# Deck\n" if path.endswith(".md") else "asset\n")
+    contract = f"{DECK}/README.md"
+    original = "# Deck\n\n## Contract\nORIGINAL_CONTRACT_EVIDENCE\n"
+    _write(repo, contract, original)
+    _write(repo, "tests/test_example.py", "# Evidence target, never executed.\n")
+    base = _tree(repo)
+    _write(repo, f"{DECK}/theme.css", "/* changed asset */\n")
+    _write(
+        repo,
+        "docs/requirements.md",
+        "# SRS\n\n[Interface](requirements/interfaces.md)\n",
+    )
+    _write(
+        repo,
+        "docs/requirements/interfaces.md",
+        "# Interface\n\n## NFR-API-001 Contract\n\n"
+        "- **需求**：Keep the contract.\n- **驗收**：Deliver its original evidence.\n"
+        "- **契約**：[contract](../talks/tradingdev-introduction/README.md#contract)\n"
+        "- **驗證**：[test](../../tests/test_example.py)\n",
+    )
+    assert check_requirements(repo) == 1
+    tree = _tree(repo)
+    raw = build_evidence(
+        repo,
+        base,
+        tree,
+        review_context_for=(("cross_scope", contract),) if explicit_context else (),
+    )
+    plan = build_review_plan(raw)
+    batch = next(
+        _payload(p) for p in plan.prompts if _payload(p)["scope"] == "cross_scope"
+    )
+    sections = [s for s in batch["document_sections"] if s["path"] == contract]
+    assert contract in batch["requirement_context_paths"]["cross_scope"]
+    if explicit_context:
+        assert not sections
+        assert batch["candidate_files"][contract] == original
+    else:
+        assert contract not in batch["candidate_files"]
+        assert "".join(s["text"] for s in sections) == original
+        assert all(
+            s["blob_oid"] == _git(repo, "rev-parse", f"{tree}:{contract}")
+            for s in sections
+        )

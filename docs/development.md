@@ -14,12 +14,12 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務。簡報建置與檢查（`scripts/presentations.sh`、
-`scripts/check-presentations.sh`）另需 Node.js 18 以上與 npm，且執行
-`scripts/presentations.sh setup` 前必須先裝好 Node.js 與 npm——
-`setup` 只安裝鎖定的 npm 工具鏈（Marp CLI），不會安裝 Node.js 或 npm 本身。
-離線 pytest 的簡報單元測試使用替代物隔離 Node.js 查找與編譯程序，
-不以安裝 Node.js 為測試前提；實際簡報建置與一致性檢查仍需要 Node.js。
+一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上及已初始化的鎖定工具鏈，
+含 Mermaid 時另需 Chrome／Chromium。本機 npm 用於初始化依賴，Python 簡報命令的
+build／watch／check／package 及離線測試不呼叫 npm；Cloudflare 發布入口會先執行 `npm ci`。
+完整離線 pytest 與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器；
+離線表示執行時不呼叫模型或下載依賴。
+初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
 安裝器調整的 Git 設定及
 執行環境限制見[注意事項](#注意事項)。
 
@@ -27,8 +27,8 @@ uv sync --locked --all-extras --python 3.14
 | --- | --- | --- |
 | `scripts/rebuild-env.sh` | 依 lock 重建本專案 `.venv`。 | 依賴變更同步設定、lock 及受影響套件測試。 |
 | `scripts/format.sh` | 修改程式碼的 lint／格式修正。 | 品質政策維護於 `pyproject.toml`，流程實作見 `tooling/quality.py`。 |
-| `scripts/check-docs.sh` | Markdown 格式與本機檔案／標題連結。 | 改檢查器時維護 `tests/tooling/test_documentation.py`；文件語意由差異審閱確認。 |
-| `scripts/check-presentations.sh` | 文件品質、簡報重建一致性、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；視覺與瀏覽器操作另行確認。 |
+| `scripts/check-docs.sh` | Markdown、連結及 SRS 結構與追溯引用。 | 改檢查器時維護 `tests/tooling/test_documentation.py`、`test_srs_requirements.py`；不執行引用的測試。 |
+| `scripts/check-presentations.sh` | 文件品質、簡報來源建置、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；打包與發布 staging 維護 `tests/tooling/test_presentation_bundle.py`；視覺與瀏覽器操作另行確認。 |
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
 | `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 開發政策與已登錄開發工具；分類來源為 `tooling/git/change_scope.py`。 |
@@ -36,6 +36,27 @@ uv sync --locked --all-extras --python 3.14
 | `scripts/check-pr.sh PR編號` | 固定合併候選的文件／程式檢查與遠端版本核對。 | 改 Git 流程、範圍規則或審查證據時維護 `tests/tooling/` 對應測試。 |
 | `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
 | `scripts/cleanup-pr.sh PR編號 --branch 分支` | 核對已合併 PR 後刪除符合條件的本地分支。 | 改清理條件時維護 `tests/tooling/test_pr_cleanup.py`。 |
+
+檢查與格式化入口在開始工作前，以 [tooling/environment.py](../tooling/environment.py)
+確認所需的 Python 工具；缺少時回報套件名稱與 `uv sync --locked --all-extras`。
+格式化會在第一次修改檔案前完成工具確認。完整測試另共用產品的
+`DockerRuntime.resolve()`，確認本機 Docker 端點、daemon 資源能力、策略映像及
+有效資源設定；失敗時不啟動品質檢查或 pytest，也不自動下載或建置映像。
+快速、文件與開發工具檢查不要求 Docker 或模型服務。本機 Python 簡報入口在安裝或編譯前
+確認 Node.js 版本，檢查入口亦先核對已安裝的鎖定工具鏈。Cloudflare 發布腳本直接執行
+npm／Node，使用平台的 `NODE_VERSION` 設定，未經此 Python 前置檢查；設定方式見
+[簡報網站發布設定](#簡報網站發布設定)。
+
+可只確認完整測試的前置環境：
+
+```bash
+uv run --no-sync python -m tooling.environment full
+```
+
+此命令回報解析到的策略映像 ID，不啟動策略容器；它確認的是當下的前置條件，
+不保證映像與來源同步，也不取代實際容器、程序清理或策略行為測試。
+依下方容器建置流程準備映像後，再執行完整檢查。直接執行 pytest 選測個別案例時，
+仍須自行備妥該案例需要的環境。
 
 Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.githooks/)，
 實作集中於 [tooling/](../tooling/)。測試按 domain、app、adapters、MCP、整合流程及
@@ -47,11 +68,41 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 `check-tooling.sh`。產品、依賴、共用測試設施及無法確認的變更仍跑完整套件。
 提交與 PR 的檢查分流見下方流程。
 
+### 平行執行離線測試
+
+`check-full.sh` 與 `check-tooling.sh` 使用 pytest-xdist 的 `worksteal` 排程，
+將測試分配給多個程序；worker 異常退出時不自動重啟。完整檢查仍執行全部離線測試。
+直接執行 pytest 預設循序執行，加 `-n auto --dist worksteal` 才啟用平行模式。
+
+`-n auto` 的程序數由 [tests/parallel_plugin.py](../tests/parallel_plugin.py) 決定：
+Apple Silicon macOS 使用 `hw.perflevel0.physicalcpu` 的最高效能層級核心數，
+不計入節能核心；查詢失敗時顯示警告並使用一個 worker。
+Linux／Windows 使用目前程序可用的邏輯核心數減二，最少一個 worker；
+Intel Mac 與其他作業系統沿用 xdist 的實體核心偵測及其後備方式。
+此設定只控制程序數，不綁定 CPU 核心，也不限制測試內啟動的子程序或容器。
+
+可透過標準環境變數覆寫自動程序數，`0` 表示循序執行；負數或無效值會失敗。
+此環境變數也覆寫 `-n logical`；未設定時，該選項沿用 xdist 的邏輯核心數。
+直接使用 pytest 時，明示的 `-n 數字` 優先於此環境變數：
+
+```bash
+PYTEST_XDIST_AUTO_NUM_WORKERS=10 scripts/check-full.sh
+PYTEST_XDIST_AUTO_NUM_WORKERS=0 scripts/check-tooling.sh
+uv run --no-sync python -m pytest -n 4 --dist worksteal --durations=30
+```
+
+直接執行 pytest 時，以 `--durations=30` 檢視最慢的測試階段。完整與 tooling 檢查
+腳本不讀取 `PYTEST_ADDOPTS`，以固定命令確保測試範圍。程序數增加不保證等比例加速，
+須確認記憶體、Docker 資源與測試內部平行工作量。平行測試應隔離檔案、資料庫與
+port，清理只處理自己擁有的程序；session fixture 會在各個使用它的 worker 分別建立。
+未指定 `--basetemp` 時，每次平行執行會建立專屬 pytest 暫存根並於結束後清除，
+不清掃其他 pytest 執行的目錄；既有自訂測試工作區仍逐案例清理。
+偵錯時使用 `-n 0`，或將上述環境變數設為 `0`。
+
 ### 依賴相容性限制
 
-本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；FLAML 2.7 的
-[上游宣告](https://github.com/microsoft/FLAML/blob/v2.7.0/README.md)仍有限制，
-可安裝不代表所有上游功能均支援。修改 ML 依賴時須保留各 learner 的實際訓練與
+本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；可安裝不代表所有上游
+功能均已驗證。修改 ML 依賴時須保留各 learner 的實際訓練與
 評估驗證，入口見 [tests/domain/ml/](../tests/domain/ml/) 及
 [整合測試](../tests/integration/)。安裝問題亦見 [README](../README.md)。
 
@@ -60,8 +111,61 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 [Dockerfile](../Dockerfile) 使用與專案相同的 Python 次版本，透過
 `uv sync --locked --no-dev --no-editable` 安裝執行環境；Ruff、Mypy 與內建策略的
 ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定隨 wheel 收錄。
-映像建置採 [uv 的多階段安裝方式](https://docs.astral.sh/uv/guides/integration/docker/#non-editable-installs)，
-執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
+映像採多階段建置，執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
+
+獨立策略 worker 使用 `strategy-runtime` target。完整離線測試包含真實 Linux 容器邊界
+檢查，需先準備可透過本機 Unix socket 連線、支援 cgroup v2 資源限制的 Docker Engine
+與此映像；所有支援平台都不接受 SSH 或 TCP 遠端端點。建置另需 Docker CLI 的
+Buildx 元件，不能只以 Engine 可用判定工具已齊備。先執行 `docker buildx version`，
+再以 `docker buildx create --help` 確認包含 `docker-container` driver、
+`docker buildx build --help` 確認支援 `--load`；缺少命令或能力時須先安裝或更新
+Docker 安裝來源提供的 Buildx 元件，不能繼續下列建置。
+
+在 repository 根目錄為本次檢查建立專用 builder 與標籤，明確選用 builder 而不切換預設 builder：
+
+```bash
+tradingdev_check_id="$(uv run --no-sync python -c 'import uuid; print(uuid.uuid4().hex)')"
+tradingdev_check_builder="tradingdev-check-${tradingdev_check_id}"
+tradingdev_check_image="tradingdev-strategy-runtime:check-${tradingdev_check_id}"
+docker buildx create --name "$tradingdev_check_builder" --driver docker-container
+docker buildx build --builder "$tradingdev_check_builder" --load \
+  --target strategy-runtime -t "$tradingdev_check_image" .
+export TRADINGDEV_STRATEGY_IMAGE="$tradingdev_check_image"
+```
+
+macOS 可使用 Docker Desktop 提供的 Linux Engine。
+測試本身不下載映像；缺少 daemon、
+必要能力或預建映像會失敗。`TRADINGDEV_STRATEGY_IMAGE` 可指定專用測試標籤，執行前
+會解析為固定 image ID。建立 adapter 前，以 `TRADINGDEV_RUNTIME_LIMITS` 的 JSON 物件設定測試資源政策；
+未設定時使用預設政策，直接呼叫明示的 `limits` 優先。可設定欄位、預設值及
+欄位間限制以 [`RuntimeLimits`](../src/tradingdev/domain/runtime.py) 為準。
+
+直接整合或診斷 adapter 時，查閱[容器執行 adapter](../ARCHITECTURE.md#容器執行-adapter)，
+取得 `DockerRuntime.resolve/open`、`ContainerSession.exchange`、生成策略呼叫與身分綁定、
+清理失敗判定及 `recover_abandoned` 的契約。傳輸、程序身分與故障清理的驗證入口為
+[替代 daemon 的 adapter 測試](../tests/adapters/test_container_runtime.py)及
+[真實容器測試](../tests/integration/test_strategy_isolation.py)。
+生成策略資料協定另由 [codec 測試](../tests/adapters/test_frame_codec.py)及
+[直接 worker／proxy 測試](../tests/integration/test_generated_protocol.py)驗證。
+
+變更 worker、資料協定或其依賴後，須從待驗證內容重建策略映像，再執行相關測試。
+固定 image ID 不會隨標籤重建而改變。保留上述變數值；確認本次 host 工作已停止、
+所有關聯執行容器均已停止並移除，且映像沒有其他執行引用後，才在同一個 shell 清理：
+
+```bash
+docker image rm "$tradingdev_check_image" &&
+  docker buildx rm "$tradingdev_check_builder"
+```
+
+移除專用 builder 時不加 `--keep-state`，會一併移除其建置快取。
+只清理本次資源，不使用 force 或全域 prune。任一步驟失敗或無法確認清理時，
+停止後續清理並保留剩餘資源、控制目錄及紀錄，依上述 adapter 復原契約處理。
+
+MCP runtime target 含 Docker CLI，Compose 只把本機 socket 掛給可信控制端；操作權限與
+安裝設定由 [README 的 Docker 部署](../README.md#使用-docker-部署) 說明。
+
+若開發檢查回報未確認清理，保留所列控制目錄；停止相應 host 工作並恢復原 Docker daemon
+後，依[容器執行 adapter 的復原契約](../ARCHITECTURE.md#容器執行-adapter)選定控制目錄並重試。
 
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
@@ -110,12 +214,14 @@ ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定�
 
 | 文件 | 維護責任 |
 | --- | --- |
+| [軟體需求規格](requirements.md) | 產品需求、驗收條件與契約／驗證入口；按責任分冊。 |
 | [README](../README.md) | 使用者安裝、操作與結果解讀。 |
 | [架構](../ARCHITECTURE.md) | 模組責任與跨層流程。 |
 | [策略契約](strategy_contract.md) | 策略作者的 Python／YAML、訊號、訓練與 revision 要求。 |
 | [執行產物](run_artifacts.md) | Workspace、身分、保存格式及歷史查詢入口。 |
 | [ML 研究](ml_research.md)、[執行計畫](execution_plans.md) | 各自的輸入、驗證、保存及執行邊界。 |
 | [績效產物](performance_artifacts.md)、[報告](reports.md) | 保存數值及觀察值的語意、報告呈現與交付。 |
+| [簡報編輯指南](talks/tradingdev-introduction/README.md) | 編輯者的內容與版型維護、預覽、打包及日常發布。 |
 | 本指南 | 工具入口、負責範圍、操作方式與測試維護位置。 |
 | [AGENTS.md](../AGENTS.md) | 唯一代理開發政策來源。 |
 
@@ -144,10 +250,29 @@ PR 文件 reviewer 無法自行開啟參照。審查需要的正式定義若未�
 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
 文件檢查不執行文件中的命令或驗證外部網址，也不代替語意與操作審閱。
 
+### SRS 維護與檢核
+
+`scripts/check-docs.sh` 自動檢查 `docs/requirements.md` 與 `docs/requirements/`
+中的需求。規則及審查責任唯一來源是 [requirements.py](../tooling/requirements.py)：
+`check_requirements` 拒絕重複／格式錯誤的編號、缺少需求／驗收／契約／驗證欄位、
+未從入口連到的章節，以及未登錄於 `DOCUMENT_SCOPES` 的需求文件。
+同一份責任登錄直接供 reviewer 選取文件，不另維護第二份章節清單。
+
+需求使用二級標題 `FR-EXEC-001 名稱` 或 `NFR-UI-001 名稱`，四個頂層清單欄位以
+`**需求**：`、`**驗收**：`、`**契約**：`、`**驗證**：` 開始。
+契約欄連到本機 Markdown 詳細契約，驗證欄連到 `tests/` 中的 `test_*.py`；
+沒有自動化證據時，可用 `人工驗收：` 說明操作、預期結果與限制。
+檢查器核對這些格式與引用存在性，失敗會指出檔案、需求及原因；不匯入或執行測試，
+不驗證測試函式、驗收文字的語意或覆蓋充分性。引用是查核入口，不是通過收據。
+SRS 入口與章節都不存在時允許尚未引入 SRS 的版本；部分缺失或導航斷裂則失敗。
+
+SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入既有候選審查，
+操作及限制見[PR 檢查](#2-在-github-建立-pr交由審閱者檢查)。
+
 ### 簡報的編輯與輸出
 
 [簡報入口](talks/tradingdev-introduction/README.md)提供編輯、預覽與發布操作。
-編輯環境須有 Node.js 18 以上及 npm，再初始化鎖定的 Marp 工具鏈：
+編輯環境須有 Node.js 22.17 以上及 npm，再初始化鎖定的 Marp 工具鏈：
 
 ```bash
 ./scripts/presentations.sh setup
@@ -155,7 +280,7 @@ PR 文件 reviewer 無法自行開啟參照。審查需要的正式定義若未�
 
 `setup` 會下載 npm 套件；一般 build／check 使用已安裝工具鏈，不自動安裝。
 執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝鎖定的 npm 工具鏈
-（Marp CLI），不會安裝 Node.js 或 npm 本身。若報錯提示
+（Marp CLI、Mermaid 與圖表字型），不會安裝 Node.js 或 npm 本身。若報錯提示
 `Node.js is unavailable` 或 `Node.js and npm are required`，
 請先安裝 Node.js 與 npm，而不是執行 `setup`。
 依賴更新須同步 `tooling/marp/package-lock.json` 並重新初始化。
@@ -177,9 +302,156 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 ```
 
 瀏覽 `http://127.0.0.1:8765/` 確認版面、頁碼、導覽與講者模式；結束伺服器按
-`Ctrl+C`。修改來源或樣式後同步提交重建的 HTML。
-專項檢查以臨時目錄重建並比對，不覆寫工作樹；缺少工具鏈或輸出不同步會失敗。
+`Ctrl+C`。Git 保存來源與資源；本機產生的 `index.html` 由 `.gitignore` 忽略。
+
+簡報採整包離線交付，`assets/` 圖片及 `evidence/` 報告沿用相對路徑。
+`scripts/check-presentations.sh` 另核對交付 HTML 的 `href`、`src`、`poster`、`xlink:href`
+靜態引用與 HTML 片段；這些本機引用須指向交付範圍內的檔案，整包不接受符號連結。
+報告內的 CSS、`srcset` 與 JavaScript 動態資源不在此連結檢查範圍，須另用瀏覽器驗證。
+案例證據依 [presentation_bundle.py](../tooling/presentation_bundle.py) 的
+`evidence_content_allowed` 登錄相對路徑角色與格式，新增、更新或刪除已登錄的報告、
+資料、截圖、下載包及保存的 `strategy.py` 走簡報專項；保存的策略只供閱讀／下載，
+檢查不匯入或執行它。分類同時檢查變更前後的 Git 內容與檔案模式，未知角色、
+不符格式、可執行檔、符號連結或混合產品修改仍走原有保守分流。
+格式辨識不證明報告數值、ZIP 內容或策略正確，案例語意、來源與完整性仍須另行審閱。
+`scripts/presentations.sh package --output <新資料夾>` 檢查後建立資料夾及同名 ZIP，
+不覆寫既存輸出。打包與檢查都從來源建置，無須先保存預覽 HTML。
+`scripts/stage-presentations.sh` 使用已安裝的簡報工具編譯來源，以 Python 標準函式庫
+驗證成品後，將 HTML、圖片與案例證據放入 `site-dist/tradingdev/`；成功後才替換舊發布內容。
+直接執行時預設使用 `python3`，可用 `TRADINGDEV_CHECK_PYTHON` 指定 interpreter；
+腳本不選擇 Python 版本，Cloudflare 的 Python 3.14 由下方建置變數固定。
+Cloudflare 使用 `scripts/build-presentations-site.sh` 先安裝鎖定的 npm 工具與 Chromium，
+再呼叫上述編譯及發布準備步驟，不安裝 TradingDev 的 Python 產品依賴。
+打包、解壓與發布的使用方式見[簡報編輯指南](talks/tradingdev-introduction/README.md)。
+專項檢查在臨時目錄產生與驗證完整交付，不依賴本機預覽檔，也不覆寫工作樹；缺少工具鏈會失敗。
 可用 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定另一套已初始化且 lock 相符的工具鏈。
+
+含 Mermaid 圖表時，build／check 及相關工具測試另需本機 Chrome，或以
+`TRADINGDEV_PRESENTATION_BROWSER` 指定 Chromium 執行檔；`setup` 安裝雲端 Chromium
+套件，不安裝本機 Chrome。
+[render-diagrams.mjs](../tooling/marp/render-diagrams.mjs) 使用鎖定的 Mermaid 與 Noto Sans TC
+在獨立 headless 瀏覽器產生 SVG，圖表頁面不載入網路資源；完成或失敗後關閉瀏覽器，
+本機 Python 入口的程序監督器負責逾時清理。Cloudflare staging 直接呼叫 Node，
+沒有這層 Python 逾時監督。[build.mjs](../tooling/marp/build.mjs) 是本機與雲端共用的
+編譯入口。SVG 與所需字型嵌入 HTML，觀看端不需要建置工具。
+替代工具鏈的套件宣告、lock 及渲染腳本都須與受查 snapshot 相符。
+瀏覽器版本仍可能影響 SVG 版面；須以瀏覽器確認本機與分支預覽的圖表。本機使用已安裝
+的 Chrome 或明示執行檔；渲染器在 `WORKERS_CI=1` 的建置環境選用鎖定的 Linux x64
+Chromium 套件與內附函式庫，在獨立臨時目錄解壓並於正常關閉後清理；
+若無法確認瀏覽器關閉，會回報錯誤並保留該目錄。雲端使用該套件的
+serverless 啟動參數，包含停用瀏覽器 sandbox；僅在隔離的建置環境渲染 repository 來源，
+渲染時封鎖外部網路請求，不將此流程宣稱為執行任意來源的安全隔離。
+圖表編輯方式與支援範圍見[簡報編輯指南](talks/tradingdev-introduction/README.md#頁面版型與撰寫方式)。
+
+### 簡報網站發布設定
+
+本節供維護簡報發布環境的管理者使用。日常編輯、檢查與發布確認見
+[簡報編輯指南](talks/tradingdev-introduction/README.md#檢查與發布)。
+變更網站設定前先確認使用的發布服務與網域責任；一般內容修改不需要重新設定網站。
+
+#### Cloudflare 自動發布
+
+Cloudflare Workers Builds 可連接本 repository，在 `main` 更新時從 `slides.md`、`theme.css`
+與 Mermaid 建置 `index.html`，再將 HTML、`assets/` 與 `evidence/` 一起發布。
+Git 不保存產生的簡報 HTML；雲端只安裝簡報專用的 npm 工具與瀏覽器，
+成品驗證使用 Python 3.14 標準函式庫，不安裝 TradingDev 產品依賴或執行產品測試。
+
+在 Cloudflare 的 **Workers & Pages → Create application → GitHub** 選擇本
+repository；GitHub 授權範圍只選需要發布的 repository。設定如下：
+
+| 欄位 | 設定 |
+| --- | --- |
+| Worker name | 與根目錄 [wrangler.jsonc](../wrangler.jsonc) 的 `name` 相同。 |
+| Production branch | `main`。 |
+| Root directory | repository 根目錄。 |
+| Build command | 下方的安裝與編譯指令。 |
+| Deploy command | `npx wrangler deploy`。 |
+| Preview command（非正式分支） | 啟用分支預覽時使用 `npx wrangler preview`。 |
+
+Build command：
+
+```bash
+bash scripts/build-presentations-site.sh
+```
+
+在 **Settings → Build → Build Variables and Secrets** 加入
+`SKIP_DEPENDENCY_INSTALL=1`、`NODE_VERSION=24.22.1` 與 `PYTHON_VERSION=3.14.8`。
+Workers Builds 自動提供 `WORKERS_CI=1`，供渲染器選擇雲端瀏覽器；
+此變數由平台注入，建置腳本與 `wrangler.jsonc` 不設定它。
+停用自動安裝後，由建置腳本只安裝簡報依賴。部署仍會使用 Wrangler；
+Workers Builds 可自動建立部署 token，不需將 token 放進 repository。
+`site-dist/tradingdev/` 是忽略的發布產物，每次重新建立，只包含簡報 HTML、圖片與明列的
+案例證據；不會將整個 `docs/` 或一般使用者 workspace 發布。
+`wrangler.jsonc` 的 `build.command` 呼叫 `scripts/stage-presentations.sh`，
+使用已安裝的工具重新編譯及驗證成品；直接執行 Wrangler 前須先準備簡報工具與瀏覽器。
+Workers Builds 的 Build command 由 Cloudflare 獨立保存；請將 **Production** 與
+**Preview base** 同步設定為上述安裝與編譯腳本。
+既有分支預覽保留各自的設定，不會因修改 Preview base 自動同步；亦須進入該預覽的
+**Settings** 更新建置命令、建置變數與監看路徑，再重試建置。
+
+分支預覽使用 `wrangler.jsonc` 的 `previews` 區塊；即使沒有獨立設定，也須保留空物件。
+靜態資源仍使用頂層 `assets`，正式網域的 `routes` 不放入 `previews`。
+在建置記錄確認分支與 commit，成功後開啟產生的預覽網址並加上 `/tradingdev/` 查看簡報。
+分支預覽與 `main` 正式部署是兩次獨立建置，須分別核對結果；本機簡報檢查不代表雲端部署成功。
+
+在 **Settings → Builds** 的 **Production** 與 **Preview base** 分頁，分別設定
+**Build watch paths**：從 **Include paths** 移除預設的 `*`，加入以下路徑，
+並讓 **Exclude paths** 保持空白。
+
+- `docs/talks/tradingdev-introduction/slides.md`
+- `docs/talks/tradingdev-introduction/theme.css`
+- `tooling/marp/**`
+- `tooling/presentation_bundle.py`
+- `tooling/presentation_html.py`
+- `tooling/presentation_errors.py`
+- `scripts/build-presentations-site.sh`
+- `docs/talks/tradingdev-introduction/assets/**`
+- `docs/talks/tradingdev-introduction/evidence/**`
+- `scripts/stage-presentations.sh`
+- `wrangler.jsonc`
+
+這項設定由 Cloudflare 保存，用來略過一般程式、測試與文件更新，不寫在 `wrangler.jsonc`。
+`slides.md`、`theme.css` 或編譯工具的提交會觸發發布；產生的 HTML 不作為監看輸入。
+Cloudflare 對零檔案變更、至少 3,000 個檔案變更或至少 20 個 commits 的推送會略過
+路徑篩選，因此這些事件仍可能觸發建置。核對略過行為時，使用一般的小型文件提交，
+不要用空提交作為不應建置的測試。
+
+若建置設定顯示 Git 帳戶中斷連線，按 Git repository 旁的 **Manage**，在 GitHub
+完成必要的重新驗證，確認 Cloudflare 應用程式仍可存取本 repository，再回到
+Cloudflare 重新整理設定頁。確認連線警告消失、Production branch 為 `main`，
+且 **Disable builds** 關閉。下一次主線更新後，核對建置記錄的 commit 與部署結果；
+手動重試建置成功不代表 GitHub 自動觸發已驗證。
+
+##### 共用網域與專案路徑
+
+`slides.klwang.tw` 是多個專案共用的簡報網域。Custom Domain 綁定獨立的
+`klwang-slides` 入口 Worker，由管理者在 Cloudflare 維護；本 repository
+只部署 `klwang-slides-tradingdev`，不接管整個網域。
+
+根目錄的 `wrangler.jsonc` 宣告本專案的兩條 Route：
+
+- `slides.klwang.tw/tradingdev`：不帶尾端斜線的入口。
+- `slides.klwang.tw/tradingdev/*`：簡報及其子路徑。
+
+Route 優先於共用入口的 Custom Domain；路由保留原始路徑，因此發布檔案仍放在
+`site-dist/tradingdev/index.html`。不要改成 `slides.klwang.tw/*` 或將整個
+Custom Domain 綁回本專案，也不要使用會涵蓋 `/tradingdev-other` 的
+`/tradingdev*`。不帶尾端斜線且附有 query 的網址由共用入口補上斜線後轉址。
+
+首次設定時，管理者先在 **Workers & Pages → klwang-slides → Domains →
+Add domain** 選擇 `klwang.tw`，在 Subdomain 填入 `slides`，啟用於 Production。
+網域須屬於同一 Cloudflare 帳號的有效 zone，Cloudflare 負責 DNS 與 HTTPS。
+TradingDev 的部署權限須包含該 zone 的
+Workers Routes 編輯權限；部署後在本專案 Worker 的 **Domains** 核對兩條 Route。
+沿用舊設定時，先建立上述 Route，再將 Custom Domain 移到共用入口，以保留簡報入口。
+
+新增其他專案時，使用獨立 Worker 與不同的路徑前綴，各自連接自己的 repository；
+不覆寫本專案 Worker，也不移動共用 Custom Domain。共用入口的根路徑 `/` 回應
+HTTP 302，轉址目標（`Location`）為 `https://www.klwang.tw/talks/`；該入口由管理者
+另外維護，不隨 TradingDev 發布更新。
+
+簡報位址為 [https://slides.klwang.tw/tradingdev/](https://slides.klwang.tw/tradingdev/)。只有部署成功才會更新網站；
+repository 中的設定檔不代表已連接 Cloudflare 或發布。
 
 ## MAE 研究原型
 
@@ -193,6 +465,40 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 ```
 
 開啟終端機顯示的網址；結束按 `Ctrl+C`。此入口不下載行情。
+日期範圍包含起訖日的 UTC 全日，以結束日次日 00:00 為排他上界。
+分析只保留所選期間內具完整未來持倉視窗的進場點；資料不足時顯示警告，
+不產生分位數或停損觸發率。可擴大日期範圍或縮短持倉視窗後重新分析。
+
+## 研究成果工程回饋
+
+需要把策略案例中的共通邏輯、檢查或方法整合回專案時，使用
+[research-feedback skill](../.agents/skills/research-feedback/SKILL.md)。它提供來源固定、
+共用價值判斷、元件整合、使用端探索與驗證的工作流程；Git、審查及授權政策仍由
+[AGENTS.md](../AGENTS.md) 管理。單純建立策略或查看回測不需要此 skill。
+
+在能存取 repository 與來源 workspace 的開發助手中呼叫 `$research-feedback`；
+若客戶端未發現 repository skills，明確要求讀取上述 `SKILL.md` 再執行。
+只有 MCP 工具存取權的客戶端無法藉此修改 server 程式，也不假設客戶端能讀 server
+本機路徑。提供實際可讀取的來源，例如：
+
+> 使用 $research-feedback，讀取 `/absolute/workspace-a` 的策略與指定版本，及
+> `/absolute/workspace-b` 的另一個策略與指定版本。這些來源允許用於共用元件開發；
+> 僅分享抽取後的邏輯與去識別化合成測資，保留私人策略、行情與原始報告。
+> 請判斷是否有值得重用的機制，若有則在本專案完成整合、使用入口與驗證。
+
+先提供策略 ID、選定 revision（或明示採目前版本）、實際授權範圍，以及相關 run／
+筆記（若有）；不必為了使用 skill 重跑研究。只有評估需求時可以明示「唯讀分析，
+不修改」。已有授權不重複確認，
+缺少來源或可共用範圍時補齊後才處理相依工作。若沒有合適的抽取候選，回報理由與
+證據即可，不為交付而新增元件。
+
+原 workspace 的 revision、設定、驗證證據、結果與筆記保持唯讀。要驗證新的使用方式，
+在隔離工作區建立新策略版本；匯入的共用程式不受舊 revision 雜湊完整凍結，須記錄
+實作版本並驗證受影響使用端。需要使用者續查的驗收成果須保留，不能當測試暫存清理。
+
+這是由人啟動、開發助手執行的流程，不會在每次策略保存時自動運行，也不會自行
+掃描其他 workspace、分享私人研究或發布更新。效果以實際抽取、使用端採用及驗證
+證據判斷；合成案例只能驗證流程，不能證明真實多人研究的改善成效。
 
 ## 選擇性 LLM 測試
 
@@ -203,7 +509,7 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 [tests/e2e/](../tests/e2e/)，provider 選項定義於 [tests/llm_plugin.py](../tests/llm_plugin.py)。
 
 ```bash
-./scripts/check-llm.sh codex --llm-model gpt-6.1-sol --llm-timeout 1800
+./scripts/check-llm.sh codex --llm-timeout 1800
 ./scripts/check-llm.sh local --llm-model qwen3.8:27b --llm-timeout 1800
 ```
 
@@ -211,16 +517,32 @@ Codex 需要已登入的 CLI 與所選模型存取權；Local 需要已啟動且
 服務，預設 `http://localhost:11434/v1`，以 `--llm-base-url` 指定其他 loopback 位址。
 工具不下載模型、不自動切換 provider；所選能力不可用會失敗。
 
-Codex 測試固定使用 `xhigh` 推理強度，並在啟動模型回合前核對及記錄實際值；
-所選模型須支援此強度。這些情境驗證單一客戶端透過 MCP 操作，不繼承宿主的
-Ultra 自動委派模式，也不允許子代理或其他原生工具代做。設定僅適用於測試程序，
-不修改使用者的全域 Codex 設定。
+入口由 [tooling/llm_check.py](../tooling/llm_check.py) 保留情境選擇與 pytest 選項，
+維持循序執行及即時進度輸出；拒絕透過命令列或 `PYTEST_ADDOPTS` 啟用 xdist 平行或監看重跑，
+避免 worker 略過主程序的環境確認。離線套件的平行設定不套用到此入口。
+在選出實際要執行的情境後、建立測試工作區前共用環境確認：檢查策略容器前置條件，
+再確認 Codex CLI 登入狀態或 Local 服務連線。help、列出情境／fixtures、
+`--setup-plan` 等純資訊模式與沒有選到情境時不檢查服務；`--setup-only` 會執行
+fixtures，仍須確認環境。Local 前置確認只建立有期限的連線，不呼叫模型；它不證明 API、
+所選模型、工具呼叫或上下文容量可用，這些能力仍由真實情境驗證。
+
+Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順序為 `--llm-model`／
+`--llm-reasoning-effort`、專用環境變數 `TRADINGDEV_LLM_MODEL`／
+`TRADINGDEV_LLM_REASONING_EFFORT`、固定基準；不沿用宿主或文件審查的模型設定。
+啟動模型回合前核對及記錄實際模型與推理強度，所選能力不可用或不符即失敗。
+推理強度的可接受值由 [provider 選項](../tests/llm_plugin.py) 的
+`CODEX_REASONING_EFFORTS` 定義；不支援會自動委派的 Ultra。
+這些情境驗證單一客戶端透過 MCP 操作，不允許子代理或其他原生工具代做，
+也不修改使用者的全域 Codex 設定。
+
+此處指定的是受測模型。驗證某個模型的相容性時，明確指定該模型與推理強度；
+其他模型的結果不能代替。此測試不執行程式碼審查或 PR 文件一致性審查。
 
 以 `-k` 選取相關情境，省略時執行全部。可先列出目前可用情境，不呼叫模型：
 
 ```bash
 ./scripts/check-llm.sh codex --collect-only -q
-./scripts/check-llm.sh codex --llm-model gpt-6.1-sol -k novice --llm-timeout 1800
+./scripts/check-llm.sh codex -k novice --llm-timeout 1800
 ```
 
 依變更責任選擇與維護測試：
@@ -229,9 +551,9 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 | --- | --- |
 | 策略生成、修復與既有結果查詢 | [test_llm_workflows.py](../tests/e2e/test_llm_workflows.py) |
 | 自然需求、必要資訊追問與工具探索 | [test_llm_novice_intake.py](../tests/e2e/test_llm_novice_intake.py)、[test_llm_discovery.py](../tests/e2e/test_llm_discovery.py) |
-| 執行計畫、使用者決策與訓練指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
+| 執行計畫、使用者決策、訓練與生成策略隔離／資源限制／清理復原指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
 | 自動 walk-forward 設定、尾端覆蓋與結果交付 | [test_llm_automatic_walk_forward.py](../tests/e2e/test_llm_automatic_walk_forward.py)（`-k automatic_walk_forward`） |
-| 固定參數比較與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
+| 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
 | 授權後的草稿清理 | [test_llm_cleanup.py](../tests/e2e/test_llm_cleanup.py) |
@@ -243,9 +565,9 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 
 `--llm-timeout` 是每個情境的期限。長流程需要足夠上下文；已驗證的本地 Qwen 配置
 為 64K，但不代表所有模型的最低需求。容量不足須調整服務配置後重跑完整情境。
-Ollama 設定方式見[官方說明](https://docs.ollama.com/api/openai-compatibility#setting-the-local-context-size)。
 Local 可用 `--llm-temperature`、`--llm-reasoning-effort` 覆寫支援的採樣設定；
-這些選項不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
+未指定時使用本地服務預設，不讀取 Codex 測試的專用環境變數。
+`--llm-temperature` 不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
 
 ### 量測模型上下文
 
@@ -269,6 +591,12 @@ Local 真實模型測試另記錄 request 增量與峰值；Codex 完整上下�
 
 依 [AGENTS.md](../AGENTS.md#開發階段的程式碼審查) 安排獨立唯讀 reviewer，提供任務目的、
 基準／受查版本、差異範圍與相關契約。保持受查內容穩定，核實 findings、修正後複查。
+使用 CLI 時明確指定 review 模型及推理強度；以下範例使用 `gpt-6.1-sol` 與 `high`：
+
+```bash
+codex -c 'review_model="gpt-6.1-sol"' -c 'model_reasoning_effort="high"' \
+  review --base origin/main
+```
 
 | 命令 | 適用範圍 |
 | --- | --- |
@@ -316,37 +644,108 @@ git push -u origin feature/my-task
 已有開發分支時沿用。Commit hook 依暫存內容執行文件、簡報或快速檢查；一般 push
 不執行完整 pytest 或呼叫模型。本機 hook 的主線推送保護限於 GitHub remote。
 
+交付前對整個任務差異取得機械可讀的檢查計畫；以下 `origin/main` 應替換成實際任務基準：
+
+```bash
+uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HEAD
+```
+
+有尚未提交的最後階段時，先暫存相關檔案並以 `--staged` 取代 `--tree HEAD`，base 仍涵蓋
+先前所有階段，不能只比較 `HEAD` 與最後的暫存內容。`--repo <path>` 可指定 checkout。
+`verification_planned` 回覆固定 tree 身分與 `ChangeScope.payload` 產生的計畫，並非通過證明。
+`delivery_profile` 指定任務交付要跑的 `scripts/check-<profile>.sh`；`commit_profile`
+供 hook 使用，`candidate_checks` 是 PR／本機合併候選的檢查順序。
+每階段仍只要求受影響的相關測試，當次 PR 候選另外核對必要證據；計畫不新增逐階段完整檢查。
+暫存模式不包含未暫存或未追蹤內容；這時提交使用 `git-flow-commit.sh "type: message"`，
+不再傳檔名。工具失敗時不能假設可走較輕的分流。
+
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
 
 ```bash
 ./scripts/check-pr.sh 27
 ```
 
+程式與開發工具候選會先確認所選測試分流的前置環境，再啟動耗時檢查及模型審查；
+文件審查亦先確認 Codex CLI 登入，缺少時不啟動審查批次。一般文件與簡報候選
+仍只要求其分流需要的工具。環境確認不取代候選內容、版本與執行結果驗證。
+
 須有乾淨且已提交的工作樹、可存取 repository 的 `gh`，以及開啟且指向主線的 PR。
 工具在隔離 repository 檢查合併候選，不切換開發分支：
 
 | 候選變更 | 執行檢查 |
 | --- | --- |
-| 一般文件 | 文件格式與連結。 |
-| 已登錄簡報 | 文件與簡報專項；視覺操作仍須人工確認。 |
+| 一般文件 | 文件格式、連結與 SRS 結構；涉及 SRS 時再執行 Codex 一致性審查。 |
+| 已登錄簡報 | 文件與簡報專項；混合 SRS 時再執行 Codex 審查；視覺操作仍須人工確認。 |
 | 開發政策／已登錄開發工具 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
 | 產品／依賴／共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
 PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分類器，
 依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode；未知內容保留完整檢查。
-開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更即跑全套。
+開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更需要完整分流的有效證據。
 
-真實模型策略測試另依變更選取。開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
-這一步不要求使用 Astra，建議使用 Sol 或其他具足夠上下文容量的模型，透過
-`TRADINGDEV_CODEX_MODEL` 指定，例如：
+### 測試證據與文件修正
+
+乾淨 checkout 執行 `scripts/check-full.sh` 或 `scripts/check-tooling.sh` 時，會以 Git
+snapshot 執行完整檢查；成功後由工具保存紀錄。手動要求完整檢查仍會實際執行，不讀取
+舊紀錄略過測試。未提交的修改會在目前工作樹檢查，並使該分流的舊紀錄失效，不產生
+可重用紀錄。兩個 scripts 可加 `--timeout-seconds <正整數>` 設定期限，預設 5400 秒；
+PR snapshot 仍使用 PR 命令自己的期限。
+
+PR 與本機合併候選先按整體差異決定檢查範圍，文件語意審查照常執行。隨後由
+[候選檢查](../tooling/git/candidates.py) 核對所需分流的最新紀錄：
+
+- 測試輸入的路徑、Git blob 與 mode 全部相同，只有已登錄的一般文件改變時，
+  沿用測試結果並補做文件格式、連結及 SRS 結構檢查。
+- 程式、測試、政策、模型提示詞、依賴、簡報或未知路徑改變，或環境指紋不同時，
+  重新執行對應的完整分流。`AGENTS.md` 不屬於一般文件例外。
+- 紀錄缺失、無法解析、執行中、失敗或不完整時不重用；不以最後一個文件 commit
+  掩蓋更早的未驗證程式修改，也不退回較舊的成功紀錄。
+
+[紀錄工具](../tooling/git/receipts.py) 將每個分流的最新狀態保存於 Git common directory
+下的 `tradingdev-checks/`，不加入版本控制；同分流使用鎖避免同時寫入。每次先保存
+執行中狀態，才探查環境或補做檢查，避免後續磁碟寫入失敗時留下舊成功紀錄。
+一般文件品質失敗仍阻擋候選；確認清理與環境正常後，可保留原測試 tree 的成功紀錄，
+修正文件後只需補驗證文件。逾時、中斷或清理未確認則不恢復該紀錄。紀錄綁定實際
+通過的 tree、指令、檢查工具內容及環境指紋。環境包含 Python 與已安裝套件、作業系統、
+可用 CPU、Git／uv／Node、已安裝的簡報套件與瀏覽器；完整分流另核對 Docker CLI、
+daemon 身分／版本／資源及容器映像。Python 與 Node 套件核對已安裝清單及檔案的
+路徑、mode、大小與修改時間；不接受無檔案清單的 Python 套件或連結的 Node 套件目錄。
+環境變數只保存雜湊，不把憑證內容寫入紀錄；runner 管理的工作目錄、暫存路徑及
+主機的呼叫／工作階段追蹤身分不參與比較。權限、sandbox 與未知設定仍參與比較。
+工具無法確認環境時仍執行檢查，但不產生可重用成功紀錄。這是本機執行證據，並非
+防竄改或跨機器驗證機制；不匯入手寫摘要或把既有日誌轉成成功紀錄。
+
+重用成功會輸出 `test_evidence_reused` JSON，列出 `tested_tree`、`candidate_tree`、
+`profile` 與紀錄位置；這表示先前測試仍適用，不代表當次又執行了 pytest。
+若要排查新疑慮，直接執行對應的完整檢查 script 即可強制重新驗證。
+
+### 檢查期間的主線更新
+
+同一次 PR 檢查中若只有主線前進，工具會重新取得合併候選。PR 身分與 head 必須不變，
+且 `change_scope.presentation_only_advance` 須確認更新僅含已登錄簡報檔案、與 PR 路徑
+不重疊，及相同 blob／mode 差異完整套入新候選，才可沿用本次已完成的檢查。
+新候選仍須通過簡報 snapshot；成功輸出 `pr_base_refreshed` JSON，包含 `reused_tree`、
+最新 base／head／tree 與補做的 `checks`，審閱者仍須確認新增差異的語意與必要視覺行為。
+主線更新含編譯工具、設定、一般文件、產品變更或改寫歷史不適用；PR 自身涉及簡報或其工具
+也不適用，因為不同檔案可能互為審查脈絡。補驗證期間再次變動也會失敗。
+這是同一次檢查的候選更新處理；跨次測試重用另依上述證據規則，結束後仍須核對即時版本。
+
+真實模型策略測試另依變更選取。涉及 SRS 的文件／簡報、開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
+這一步預設使用 `gpt-6-luna` 與 `high`；以 `TRADINGDEV_DOC_REVIEW_MODEL`、
+`TRADINGDEV_DOC_REVIEW_REASONING_EFFORT` 分別覆寫模型及推理強度，例如：
 
 ```bash
-TRADINGDEV_CODEX_MODEL=gpt-6.1-sol ./scripts/check-pr.sh 27
+TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 ```
 
 文件審查會帶入完整的變更檔案及按責任選取的既有文件原文，輸入量不只取決於
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
-上述命令為這次 PR 文件審查指定模型；開發階段 `codex review` 的模型須另行指定。
+每批證據區分實際 Git 變更與必須附上的未修改簡報參照；參照仍保留完整原文，
+供檢查本次變更造成的不一致，不將列入審查等同於本次新增或修改。
+上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
+設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
+舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。
+PR 文件審查每次只使用選定模型與推理強度；執行失敗直接回報，不自動切換模型。
 審查程式與來源入口見
 [review_docs.py](../tooling/review_docs.py)、[review_scope.py](../tooling/review_scope.py)。
 
@@ -357,6 +756,21 @@ uv run --no-sync python -m tooling.review_docs --list-scopes
 uv run --no-sync python -m tooling.review_docs \
   --repo /absolute/path/to/repository --base origin/main --tree HEAD --plan-only
 ```
+
+檢查規劃中的 `path_owners` 與 `selected_scopes`，確認程式與測試取得其負責文件。
+新模組落入 `general` 時，先依實際使用端與契約判斷責任；已確認的歸屬由
+[review_scope.py](../tooling/review_scope.py) 登錄，並在
+[test_review_scope.py](../tests/tooling/test_review_scope.py) 與
+[test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證必要文件、完整來源與差異仍保留。
+未確認或跨責任的共用內容仍保守選取，不為降低容量任意改派範圍。
+各批 `document_sections` 也列出選取原因；`unknown-sections-preserved` 或
+`unfamiliar-document-full-document` 表示尚未登錄的內容被保守保留。
+盤點時須核對章節讀者、契約及使用端，再更新同一責任登錄與原文保留測試；
+新增章節不能直接沿用父章節歸屬，跨範圍的總覽仍可保留完整內容。
+預設容量是工具的操作上限。若 `--plan-only` 因預設上限中止，可在同一命令提供下表的
+容量選項以完成純規劃；這不呼叫模型，也不代表已核實模型容量。取得唯一證據、單批
+與總 prompt 大小後，再核對所選模型容量並預留輸出空間，明確設定當次檢查選項。
+UTF-8 bytes 與字元數不是 tokens。
 
 通常使用自動推導的範圍；需要調整時，`check-pr.sh` 支援：
 
@@ -374,7 +788,7 @@ uv run --no-sync python -m tooling.review_docs \
 ```bash
 ./scripts/check-pr.sh 27 \
   --review-context-for interfaces:src/tradingdev/mcp/server.py \
-  --documentation-timeout-seconds 900 --snapshot-timeout-seconds 3600
+  --documentation-timeout-seconds 900 --snapshot-timeout-seconds 7200
 ```
 
 請以實際規劃的 scope／檔案代換。預設值與其他選項以 `scripts/check-pr.sh --help`
@@ -387,6 +801,12 @@ stderr 與事件診斷各限制為 4,000 個 Unicode 字元，超量會標示 `[
 這只限制錯誤輸出，不截斷審查證據。事件不會整份輸出，缺少可辨識診斷時會明示。
 錯誤訊息仍可能包含服務回傳的敏感內容，分享日誌前須檢查；檢查器不會自動發布日誌。
 非零退出、零退出但有失敗事件、無效事件或工具呼叫均不算通過，須排除原因後重新檢查。
+
+文件審查及 Git 檢查入口以退出碼 `86` 表示程序清理未確認，外層自動保留相關工作區。
+stderr JSON 診斷契約見 [ProcessCleanupError.payload](../tooling/process_guard.py)，
+文字 `message` 僅供顯示。文件審查在同一程序內彙整 batch 的保留路徑及中斷狀態；
+跨 CLI 時各程序分別輸出 JSON，外層依退出碼保留自己的工作區，不彙整子程序的欄位。
+一般失敗或已確認停止的逾時仍自動清理。
 
 長時間檢查保留完整日誌，透過[完成通知 skill](../.agents/skills/wait-for-check/SKILL.md)
 等待原執行結束；完成後讀退出碼與摘要，有異常再讀診斷。未確認程序停止前保留臨時目錄。

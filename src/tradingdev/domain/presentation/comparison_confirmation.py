@@ -5,13 +5,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tradingdev.domain.presentation.confirmation import (
+    build_confirmation_document,
+)
+from tradingdev.domain.presentation.confirmation_contract import (
     ConfirmationDocument,
     ConfirmationField,
     ConfirmationIdentity,
     ConfirmationPresentation,
     ConfirmationPresentationError,
     ConfirmationSection,
-    build_confirmation_document,
     parameter_paths,
 )
 

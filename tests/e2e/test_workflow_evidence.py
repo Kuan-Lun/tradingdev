@@ -11,7 +11,7 @@ import pytest
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
-from tests.e2e.test_llm_workflows import assert_workflow
+from tests.e2e.workflow_evidence import assert_workflow
 from tests.integration.execution_fixtures import (
     execution_evidence_draft,
     synthetic_preflight_receipt,
@@ -203,7 +203,7 @@ def test_natural_runtime_repair_accepts_report_without_artifact_listing(
     metrics_before_summary: bool,
 ) -> None:
     calls = [call for call in _repair_evidence() if call.name != "list_artifacts"]
-    calls[2].result["diagnostics"] = [{"code": "strategy_check_failed"}]
+    calls[2].result["diagnostics"] = [{"code": "strategy_execution_failed"}]
     if metrics_before_summary:
         summary = next(call for call in calls if call.name == "get_run")
         calls.remove(summary)
@@ -229,6 +229,32 @@ def test_scripted_repair_still_requires_artifact_listing() -> None:
     calls = [call for call in _repair_evidence() if call.name != "list_artifacts"]
     with pytest.raises(AssertionError, match="list_artifacts"):
         assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize("missing", [None, "daily_pnl_mean", "total_volume", "n_days"])
+def test_natural_repair_can_read_definitions_with_saved_metrics(
+    missing: str | None,
+) -> None:
+    calls = [call for call in _repair_evidence() if call.name != "get_metric_catalog"]
+    calls[2].result["diagnostics"] = [{"code": "strategy_execution_failed"}]
+    calls[-1].result["definitions"] = {
+        name: {"id": name}
+        for name in ("daily_pnl_mean", "total_volume", "n_days")
+        if name != missing
+    }
+    calls.append(
+        ToolCall(
+            "generate_report",
+            {"run_ids": ["run"]},
+            {"success": True, "run_ids": ["run"], "artifact_id": "report:html"},
+        )
+    )
+    scenario = replace(SCENARIOS["repair"], runtime_exit=True)
+    if missing is None:
+        assert_workflow(calls, scenario)
+    else:
+        with pytest.raises(AssertionError, match="must include their definitions"):
+            assert_workflow(calls, scenario)
 
 
 def test_detail_from_another_run_is_rejected() -> None:
@@ -779,3 +805,27 @@ def test_history_workflow_accepts_sdk_encoded_report_and_query_arguments() -> No
     calls[-1].arguments["run_ids"] = '["another-run"]'
     with pytest.raises(AssertionError, match="generate_report"):
         assert_workflow(calls, scenario)
+
+
+@pytest.mark.parametrize(
+    ("tool", "field", "invalid", "expected_excerpt"),
+    [
+        ("get_job_status", "revision_id", "revision_b", "revision_a"),
+        ("submit_execution_decision", "manifest_hash", "b" * 64, "a" * 12),
+        ("get_run_metrics", "scope", "training", "full"),
+    ],
+    ids=["revision", "manifest", "metric-scope"],
+)
+def test_workflow_failure_message_retains_actual_and_expected_values(
+    tool: str, field: str, invalid: str, expected_excerpt: str
+) -> None:
+    calls = _repair_evidence()
+    selected = next(call for call in calls if call.name == tool)
+    selected.result[field] = invalid
+
+    with pytest.raises(AssertionError) as failure:
+        assert_workflow(calls, SCENARIOS["repair"])
+
+    message = str(failure.value)
+    assert invalid[:12] in message
+    assert expected_excerpt in message

@@ -170,6 +170,9 @@ class MCPWorkspace:
             "TRADINGDEV_WORKSPACE": str(self.workspace),
             "TRADINGDEV_DATA_ROOT": str(self.data_root),
             "TRADINGDEV_PROJECT_ROOT": str(self.root),
+            "TRADINGDEV_RUNTIME_CONTROL_ROOT": str(
+                self.workspace / ".strategy-runtime"
+            ),
             "MYPY_CACHE_DIR": str(self.root / "mypy-cache"),
             "RUFF_CACHE_DIR": str(self.root / "ruff-cache"),
             "NUMBA_CACHE_DIR": str(self.root / "numba-cache"),
@@ -177,6 +180,15 @@ class MCPWorkspace:
             "XDG_CACHE_HOME": str(self.root / "cache"),
             "UV_OFFLINE": "1",
         }
+        for name in (
+            "TRADINGDEV_STRATEGY_IMAGE",
+            "TRADINGDEV_RUNTIME_LIMITS",
+            "DOCKER_HOST",
+            "DOCKER_CONTEXT",
+            "DOCKER_CONFIG",
+        ):
+            if name in os.environ:
+                env[name] = os.environ[name]
         # Test-only network guard; the MCP server and workers remain real.
         guard = self.root / "python-guard"
         guard.mkdir(exist_ok=True)
@@ -325,6 +337,9 @@ def temporary_mcp_workspace() -> Generator[MCPWorkspace]:
     finally:
         try:
             workspace.stop_workers()
+            from tests.runtime_cleanup import recover_test_strategy_units
+
+            recover_test_strategy_units(directory)
         except Exception as error:
             raise RuntimeError(
                 f"Worker cleanup failed; temporary directory retained: {directory}"

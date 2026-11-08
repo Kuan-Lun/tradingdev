@@ -70,6 +70,19 @@ BENCHMARKS = MappingProxyType(
                 "價格報酬，未計入成分股現金股利，因此不是含息總報酬指數。"
             ),
         ),
+        "tw_equity": BenchmarkDefinition(
+            id="tw_equity_taiex_buy_and_hold",
+            asset_class="tw_equity",
+            symbol="^TWII",
+            sources=("yahoo_finance",),
+            label="台股加權指數（^TWII）買進持有",
+            weighting="buy_and_hold",
+            rationale=(
+                "台灣掛牌標的統一使用台股加權指數作為市場基準，包含上市、上櫃"
+                "及 ETF；此政策不代表標的的實際投資範圍都與台股大盤相同。"
+                "使用 ^TWII 的價格報酬，未計入現金股利，因此不是含息總報酬指數。"
+            ),
+        ),
     }
 )
 
@@ -79,6 +92,11 @@ def asset_class_for(source: str, symbol: str) -> str | None:
     if source in CRYPTO_SOURCES and re.fullmatch(r"[A-Z0-9]+/?USDT", symbol.upper()):
         return "crypto"
     if source == "yahoo_finance":
+        value = symbol.strip().upper()
+        # Taiwan's baseline is a listing-market policy, including ETFs with
+        # overseas or non-equity holdings, rather than underlying-asset inference.
+        if value == "^TWII" or re.fullmatch(r"[A-Z0-9]+\.(?:TW|TWO)", value):
+            return "tw_equity"
         return "us_equity" if is_us_equity_symbol(symbol) else None
     return None
 

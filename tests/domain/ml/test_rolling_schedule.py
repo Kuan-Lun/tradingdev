@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tradingdev.domain.ml.features.context import FeatureContext
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.ml.rolling_gen import (
@@ -22,6 +23,7 @@ from tradingdev.domain.ml.rolling_gen import (
     get_rolling_scheme,
     rolling_probabilities,
 )
+from tradingdev.domain.ml.rolling_gen.scheme import resolve_geometry
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 
 _LOOKBACK = 10
@@ -43,11 +45,14 @@ def _schedule(rtype: RollType, **overrides: int) -> tuple[tuple[int, ...], ...]:
         **overrides,
     )
     rolls = enumerate_rolls(
-        scheme,
+        resolve_geometry(
+            scheme,
+            lookback=_LOOKBACK,
+            retrain_interval=_INTERVAL,
+            context=FeatureContext(1, 21),
+        ),
         n_scored_bars=_SCORED,
         history_bars=_HISTORY,
-        lookback=_LOOKBACK,
-        retrain_interval=_INTERVAL,
     )
     return tuple(
         (
@@ -85,11 +90,14 @@ def test_expanding_schedule_keeps_the_first_bar() -> None:
 def test_no_roll_trains_on_a_bar_it_scores(rtype: RollType) -> None:
     """``train_end`` is the bar being scored, and the bound is half-open."""
     rolls = enumerate_rolls(
-        get_rolling_scheme("roll_sd" if rtype is RollType.ROLL_SD else "roll_ex"),
+        resolve_geometry(
+            get_rolling_scheme("roll_sd" if rtype is RollType.ROLL_SD else "roll_ex"),
+            lookback=_LOOKBACK,
+            retrain_interval=_INTERVAL,
+            context=FeatureContext(1, 21),
+        ),
         n_scored_bars=_SCORED,
         history_bars=_HISTORY,
-        lookback=_LOOKBACK,
-        retrain_interval=_INTERVAL,
     )
 
     for roll in rolls:
@@ -102,11 +110,14 @@ def test_no_roll_trains_on_a_bar_it_scores(rtype: RollType) -> None:
 
 def test_rolls_cover_every_bar_exactly_once() -> None:
     rolls = enumerate_rolls(
-        get_rolling_scheme("roll_sd"),
+        resolve_geometry(
+            get_rolling_scheme("roll_sd"),
+            lookback=_LOOKBACK,
+            retrain_interval=_INTERVAL,
+            context=FeatureContext(1, 21),
+        ),
         n_scored_bars=_SCORED,
         history_bars=_HISTORY,
-        lookback=_LOOKBACK,
-        retrain_interval=_INTERVAL,
     )
 
     covered: list[int] = []
@@ -118,11 +129,14 @@ def test_rolls_cover_every_bar_exactly_once() -> None:
 def test_a_step_covering_the_run_gives_one_roll() -> None:
     """A cadence longer than the run is qlib's degenerate single-roll case."""
     rolls = enumerate_rolls(
-        get_rolling_scheme("roll_sd"),
+        resolve_geometry(
+            get_rolling_scheme("roll_sd"),
+            lookback=_LOOKBACK,
+            retrain_interval=10_000,
+            context=FeatureContext(1, 21),
+        ),
         n_scored_bars=_SCORED,
         history_bars=_HISTORY,
-        lookback=_LOOKBACK,
-        retrain_interval=10_000,
     )
 
     assert len(rolls) == 1
@@ -131,11 +145,14 @@ def test_a_step_covering_the_run_gives_one_roll() -> None:
 
 def test_an_empty_scored_frame_has_no_rolls() -> None:
     rolls = enumerate_rolls(
-        get_rolling_scheme("roll_sd"),
+        resolve_geometry(
+            get_rolling_scheme("roll_sd"),
+            lookback=_LOOKBACK,
+            retrain_interval=_INTERVAL,
+            context=FeatureContext(1, 21),
+        ),
         n_scored_bars=0,
         history_bars=_HISTORY,
-        lookback=_LOOKBACK,
-        retrain_interval=_INTERVAL,
     )
 
     assert rolls == ()
@@ -144,11 +161,14 @@ def test_an_empty_scored_frame_has_no_rolls() -> None:
 def test_a_full_replay_starts_with_an_empty_window() -> None:
     """Scoring the fitted frame leaves the first roll nothing to train on."""
     rolls = enumerate_rolls(
-        get_rolling_scheme("roll_sd"),
+        resolve_geometry(
+            get_rolling_scheme("roll_sd"),
+            lookback=_LOOKBACK,
+            retrain_interval=_INTERVAL,
+            context=FeatureContext(1, 21),
+        ),
         n_scored_bars=_SCORED,
         history_bars=0,
-        lookback=_LOOKBACK,
-        retrain_interval=_INTERVAL,
     )
 
     assert (rolls[0].train_start, rolls[0].train_end) == (0, 0)
@@ -167,16 +187,30 @@ def test_negative_counts_are_rejected(kwargs: dict[str, int], message: str) -> N
     arguments = {
         "n_scored_bars": _SCORED,
         "history_bars": _HISTORY,
-        "lookback": _LOOKBACK,
-        "retrain_interval": _INTERVAL,
     } | kwargs
 
     with pytest.raises(ValueError, match=message):
-        enumerate_rolls(get_rolling_scheme("roll_sd"), **arguments)
+        enumerate_rolls(
+            resolve_geometry(
+                get_rolling_scheme("roll_sd"),
+                lookback=_LOOKBACK,
+                retrain_interval=_INTERVAL,
+                context=FeatureContext(1, 21),
+            ),
+            **arguments,
+        )
 
 
 class _RecordingFeatureEngineer(FeatureEngineer):
     """Record the training window the engine actually uses."""
+
+    @property
+    def minimum_context_rows(self) -> int:
+        return 1
+
+    @property
+    def context_rows(self) -> int:
+        return 21
 
     def __init__(self) -> None:
         super().__init__(lookback=_LOOKBACK, target_horizon=1)
@@ -240,11 +274,14 @@ def test_the_schedule_is_what_the_engine_runs() -> None:
     )
 
     schedule = enumerate_rolls(
-        scheme,
+        resolve_geometry(
+            scheme,
+            lookback=_LOOKBACK,
+            retrain_interval=_INTERVAL,
+            context=FeatureContext(1, 21),
+        ),
         n_scored_bars=len(scored),
         history_bars=len(history),
-        lookback=_LOOKBACK,
-        retrain_interval=_INTERVAL,
     )
     assert len(recorder.windows) == len(schedule) == 3
     for roll, window in zip(schedule, recorder.windows, strict=True):

@@ -25,10 +25,9 @@ from tradingdev.domain.strategies.base import BaseStrategy
 
 class SampleStrategy(BaseStrategy):
     def __init__(
-        self, threshold: float = 0.0, backtest_engine: object | None = None
+        self, threshold: float = 0.0
     ) -> None:
         self.threshold = threshold
-        self.engine = backtest_engine
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
         moves = result["close"].pct_change().fillna(0)

@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -51,7 +52,9 @@ def _manifest(*, count: int = 3, label: str = "Window") -> ComparisonManifest:
                         },
                     },
                     strategy_execution=StrategyExecution(
-                        kind="generated", constructor_kwargs={"period": index}
+                        kind="generated",
+                        program=GENERATED_PROGRAM,
+                        constructor_kwargs={"period": index},
                     ),
                 ),
             )

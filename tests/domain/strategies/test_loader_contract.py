@@ -10,10 +10,11 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import sha256_file
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
+from tradingdev.domain.runtime import IsolatedRuntimeError
 from tradingdev.domain.strategies.contract import SignalContractChecker
-from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import StrategyMetadata
 
 _PARAMETERIZED_CODE = """\
@@ -28,12 +29,10 @@ class ParameterStrategy(BaseStrategy):
     def __init__(
         self,
         threshold: float,
-        backtest_engine: object | None = None,
         direction: int = 1,
     ) -> None:
         self.threshold = threshold
         self.direction = direction
-        self.engine = backtest_engine
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
@@ -88,10 +87,10 @@ def _contract_metadata(tmp_path: Path, raw: dict[str, Any]) -> StrategyMetadata:
 
 
 def test_loader_rejects_deprecated_strategy_name_field(tmp_path: Path) -> None:
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
 
     with pytest.raises(ValueError, match="strategy.id is required"):
-        loader.load_class(
+        loader.resolve_execution(
             {
                 "name": "legacy_strategy",
                 "class_name": "LegacyStrategy",
@@ -103,10 +102,10 @@ def test_loader_rejects_deprecated_strategy_name_field(tmp_path: Path) -> None:
 def test_loader_rejects_deprecated_strategy_class_and_file_fields(
     tmp_path: Path,
 ) -> None:
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
 
     with pytest.raises(ValueError, match="strategy.class_name is required"):
-        loader.load_class(
+        loader.resolve_execution(
             {
                 "id": "legacy_strategy",
                 "class": "LegacyStrategy",
@@ -122,9 +121,8 @@ def test_loader_creates_bundled_strategy_without_hard_coded_aliases() -> None:
     raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     engine = SignalBacktestEngine(init_cash=10_000.0)
 
-    strategy = StrategyLoader().create_from_config(raw_config, engine)
-
-    assert strategy.__class__.__name__ == "KDStrategy"
+    with StrategyFactory().open_from_config(raw_config, engine) as strategy:
+        assert strategy.__class__.__name__ == "KDStrategy"
 
 
 def test_loader_rejects_legacy_bundled_strategy_id() -> None:
@@ -135,8 +133,11 @@ def test_loader_rejects_legacy_bundled_strategy_id() -> None:
     raw_config["strategy"]["id"] = "kd_strategy"
     engine = SignalBacktestEngine(init_cash=10_000.0)
 
-    with pytest.raises(ValueError, match="Bundled strategy id 'kd_strategy'"):
-        StrategyLoader().create_from_config(raw_config, engine)
+    with (
+        pytest.raises(ValueError, match="Bundled strategy id 'kd_strategy'"),
+        StrategyFactory().open_from_config(raw_config, engine),
+    ):
+        pass
 
 
 @pytest.mark.parametrize(
@@ -166,10 +167,13 @@ def test_bundled_invalid_periods_fail_when_loading_without_execution(
     )
     raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     raw_config["strategy"]["parameters"][field] = value
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
 
-    with pytest.raises(ValidationError) as exc_info:
-        loader.create_from_config(raw_config, engine=None)
+    with (
+        pytest.raises(ValidationError) as exc_info,
+        loader.open_from_config(raw_config, engine=None),
+    ):
+        pass
 
     assert exc_info.value.errors()[0]["loc"] == error_location
 
@@ -178,21 +182,19 @@ def test_generated_parameters_match_contract_and_execution(
     tmp_path: Path,
     generated_config: dict[str, Any],
 ) -> None:
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
     engine = SignalBacktestEngine(init_cash=10_000.0)
-    strategy = loader.create_from_config(generated_config, engine)
-
-    assert strategy.get_parameters() == {"threshold": 101.0, "direction": -1}
-    assert vars(strategy)["engine"] is engine
-    metadata = _contract_metadata(tmp_path, generated_config)
-    for fixture_rows in (80, 240):
-        checked = SignalContractChecker(loader).check(
-            metadata, fixture_rows=fixture_rows
-        )
-        assert checked["diagnostics"] == []
-        assert checked["signal_analysis"]["active_signal_ratio"] > 0
-        assert "-1" in checked["signal_analysis"]["signal_distribution"]
-        assert "1" not in checked["signal_analysis"]["signal_distribution"]
+    with loader.open_from_config(generated_config, engine) as strategy:
+        assert strategy.get_parameters() == {"threshold": 101.0, "direction": -1}
+        metadata = _contract_metadata(tmp_path, generated_config)
+        for fixture_rows in (80, 240):
+            checked = SignalContractChecker(loader).check(
+                metadata, fixture_rows=fixture_rows
+            )
+            assert checked["diagnostics"] == []
+            assert checked["signal_analysis"]["active_signal_ratio"] > 0
+            assert "-1" in checked["signal_analysis"]["signal_distribution"]
+            assert "1" not in checked["signal_analysis"]["signal_distribution"]
 
 
 @pytest.mark.parametrize(
@@ -201,20 +203,20 @@ def test_generated_parameters_match_contract_and_execution(
         (
             {"direction": 1},
             "missing a required argument: 'threshold'",
-            "contract_execution_error",
+            "strategy_execution_failed",
             "missing a required argument: 'threshold'",
         ),
         (
             {"threshold": 101, "thresholdd": 99},
             "unexpected keyword argument",
-            "contract_execution_error",
+            "strategy_execution_failed",
             "unexpected keyword argument",
         ),
         (
             {"threshold": 101, "backtest_engine": None},
-            "cannot override",
-            "contract_execution_error",
-            "cannot override",
+            "cannot accept",
+            "strategy_execution_failed",
+            "cannot accept",
         ),
         (
             [],
@@ -233,9 +235,12 @@ def test_bad_parameters_fail_contract_and_execution(
     diagnostic_message: str,
 ) -> None:
     generated_config["strategy"]["parameters"] = parameters
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
-    with pytest.raises((TypeError, ValueError), match=message):
-        loader.create_from_config(generated_config, engine=None)
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
+    with (
+        pytest.raises((TypeError, ValueError, IsolatedRuntimeError), match=message),
+        loader.open_from_config(generated_config, engine=None),
+    ):
+        pass
 
     checked = SignalContractChecker(loader).check(
         _contract_metadata(tmp_path, generated_config), fixture_rows=80
@@ -245,25 +250,7 @@ def test_bad_parameters_fail_contract_and_execution(
     assert diagnostic_message in checked["diagnostics"][0].message
 
 
-def test_generated_constructor_can_omit_engine(
-    tmp_path: Path,
-    generated_config: dict[str, Any],
-) -> None:
-    source = Path(generated_config["strategy"]["source_path"])
-    source.write_text(
-        _PARAMETERIZED_CODE.replace(
-            "        backtest_engine: object | None = None,\n", ""
-        ).replace("        self.engine = backtest_engine\n", ""),
-        encoding="utf-8",
-    )
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
-
-    strategy = loader.create_from_config(generated_config, engine=None)
-
-    assert strategy.get_parameters() == {"threshold": 101.0, "direction": -1}
-
-
-def test_signal_contract_injects_the_same_parallel_policy_as_execution(
+def test_signal_contract_rejects_application_service_injection(
     tmp_path: Path,
     generated_config: dict[str, Any],
 ) -> None:
@@ -281,13 +268,17 @@ def test_signal_contract_injects_the_same_parallel_policy_as_execution(
         )
     )
     generated_config["parallel"] = {"reserve_cores": 1}
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
 
     checked = SignalContractChecker(loader).check(
         _contract_metadata(tmp_path, generated_config), fixture_rows=80
     )
 
-    assert checked["diagnostics"] == []
+    assert checked["diagnostics"][0].code == "strategy_execution_failed"
+    assert (
+        "cannot accept backtest_engine or parallel_config"
+        in checked["diagnostics"][0].message
+    )
 
 
 def test_signal_contract_rejects_unrecordable_constructor_defaults(
@@ -303,11 +294,11 @@ def test_signal_contract_rejects_unrecordable_constructor_defaults(
     )
 
     checked = SignalContractChecker(
-        StrategyLoader(workspace_root=tmp_path / "workspace")
+        StrategyFactory(workspace_root=tmp_path / "workspace")
     ).check(_contract_metadata(tmp_path, generated_config), fixture_rows=80)
 
     assert len(checked["diagnostics"]) == 1
-    assert checked["diagnostics"][0].code == "contract_execution_error"
+    assert checked["diagnostics"][0].code == "strategy_execution_failed"
     assert "finite JSON" in checked["diagnostics"][0].message
 
 
@@ -318,12 +309,14 @@ def test_loader_honors_workspace_environment_and_explicit_override(
 ) -> None:
     monkeypatch.setenv("TRADINGDEV_WORKSPACE", str(tmp_path / "workspace"))
 
-    strategy = StrategyLoader().create_from_config(generated_config, engine=None)
-
-    assert strategy.get_parameters()["threshold"] == 101.0
-    loader = StrategyLoader(workspace_root=tmp_path / "other_workspace")
-    with pytest.raises(ValueError, match="Generated strategy must live under"):
-        loader.create_from_config(generated_config, engine=None)
+    with StrategyFactory().open_from_config(generated_config, engine=None) as strategy:
+        assert strategy.get_parameters()["threshold"] == 101.0
+        loader = StrategyFactory(workspace_root=tmp_path / "other_workspace")
+        with (
+            pytest.raises(ValueError, match="Generated strategy must live under"),
+            loader.open_from_config(generated_config, engine=None),
+        ):
+            pass
 
 
 @pytest.mark.parametrize("field", ["id", "revision_id", "class_name", "source_path"])
@@ -340,7 +333,7 @@ def test_contract_rejects_config_pointing_at_another_strategy(
     metadata.config_hash = sha256_file(Path(metadata.config_path))
 
     checked = SignalContractChecker(
-        StrategyLoader(workspace_root=tmp_path / "workspace")
+        StrategyFactory(workspace_root=tmp_path / "workspace")
     ).check(metadata, fixture_rows=80)
 
     assert len(checked["diagnostics"]) == 1
@@ -353,23 +346,22 @@ def test_loader_reads_latest_source_after_same_size_same_timestamp_rewrite(
     tmp_path: Path,
     generated_config: dict[str, Any],
 ) -> None:
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
     source = Path(generated_config["strategy"]["source_path"])
     original_stat = source.stat()
-    first = loader.create_from_config(generated_config, engine=None)
-    assert first.get_parameters()["threshold"] == 101.0
+    with loader.open_from_config(generated_config, engine=None) as first:
+        assert first.get_parameters()["threshold"] == 101.0
 
-    revised = _PARAMETERIZED_CODE.replace(
-        "self.threshold = threshold", "self.threshold = 999999999"
-    )
-    source.write_text(revised, encoding="utf-8")
-    os.utime(source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-    assert source.stat().st_size == original_stat.st_size
+        revised = _PARAMETERIZED_CODE.replace(
+            "self.threshold = threshold", "self.threshold = 999999999"
+        )
+        source.write_text(revised, encoding="utf-8")
+        os.utime(source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        assert source.stat().st_size == original_stat.st_size
 
-    second = loader.create_from_config(generated_config, engine=None)
-
-    assert second.get_parameters()["threshold"] == 999999999
-    assert not (source.parent / "__pycache__").exists()
+        with loader.open_from_config(generated_config, engine=None) as second:
+            assert second.get_parameters()["threshold"] == 999999999
+            assert not (source.parent / "__pycache__").exists()
 
 
 def test_loader_rejects_modified_source_with_pinned_hash(
@@ -380,10 +372,13 @@ def test_loader_rejects_modified_source_with_pinned_hash(
     source.write_text(
         _PARAMETERIZED_CODE + "\nraise AssertionError('must not execute')\n"
     )
-    loader = StrategyLoader(workspace_root=tmp_path / "workspace")
+    loader = StrategyFactory(workspace_root=tmp_path / "workspace")
 
-    with pytest.raises(ValueError, match="revision source has changed"):
-        loader.create_from_config(generated_config, engine=None)
+    with (
+        pytest.raises(ValueError, match="revision source has changed"),
+        loader.open_from_config(generated_config, engine=None),
+    ):
+        pass
 
 
 def test_contract_rejects_changed_config_bytes(
@@ -394,7 +389,7 @@ def test_contract_rejects_changed_config_bytes(
     Path(metadata.config_path).write_text(yaml.safe_dump(generated_config))
 
     checked = SignalContractChecker(
-        StrategyLoader(workspace_root=tmp_path / "workspace")
+        StrategyFactory(workspace_root=tmp_path / "workspace")
     ).check(metadata, fixture_rows=80)
 
     assert len(checked["diagnostics"]) == 1

@@ -1,21 +1,35 @@
-"""Build and verify registered, self-contained Marp presentations."""
+"""Build and verify registered Marp presentations and their offline bundles."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import time
 from contextlib import contextmanager
-from html.parser import HTMLParser
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING
 
+from tooling.environment import (
+    EnvironmentCheckError,
+    check_environment,
+    node_environment,
+    require_node,
+)
+from tooling.presentation_bundle import (
+    IMAGE_SUFFIXES,
+    bundle_files,
+    check_bundle,
+    evidence_content_allowed,
+    is_image,
+    write_bundle,
+)
+from tooling.presentation_errors import PresentationError
+from tooling.presentation_html import check_html
 from tooling.process_guard import (
     CLEANUP_UNVERIFIED_EXIT_CODE,
     ProcessCleanupError,
@@ -27,27 +41,36 @@ if TYPE_CHECKING:
 
 DECK = "docs/talks/tradingdev-introduction"
 PRESENTATION_PATHS = frozenset(
-    f"{DECK}/{name}" for name in ("README.md", "slides.md", "theme.css", "index.html")
+    f"{DECK}/{name}" for name in ("README.md", "slides.md", "theme.css")
 )
-_SPECIAL_PATHS = frozenset({"docs/.nojekyll", ".vscode/tasks.json"})
+GENERATED_HTML = f"{DECK}/index.html"
+_SPECIAL_PATHS = frozenset(
+    {"docs/.nojekyll", ".vscode/tasks.json", ".gitignore", GENERATED_HTML}
+)
+TOOLCHAIN_FILES = (
+    "package.json",
+    "package-lock.json",
+    "build.mjs",
+    "render-diagrams.mjs",
+)
 _TOOL_PATHS = frozenset(
     {
         "tooling/presentations.py",
+        "tooling/presentation_html.py",
+        "tooling/presentation_bundle.py",
+        "tooling/presentation_errors.py",
         "scripts/check-presentations.sh",
         "scripts/presentations.sh",
+        "scripts/stage-presentations.sh",
+        "scripts/build-presentations-site.sh",
+        "wrangler.jsonc",
     }
 )
-_TITLE = "TradingDev｜讓 AI 助手協助研究交易策略"
-_DESCRIPTION = "產品介紹、使用場景、分類比較與後續開發方向"
 _SETUP_HELP = "Run scripts/presentations.sh setup to install the locked toolchain."
 _NODE_HELP = (
-    "Install Node.js 18+ and npm, confirm `node` is on PATH, then run "
+    "Install Node.js 22.17+ and npm, confirm `node` is on PATH, then run "
     "scripts/presentations.sh setup to install the locked toolchain."
 )
-
-
-class PresentationError(RuntimeError):
-    """A presentation or its locked compiler cannot be verified."""
 
 
 class _CleanupError(ProcessCleanupError):
@@ -149,8 +172,10 @@ def _presentation_tasks_change_allowed(
 
 def is_presentation_path(path: str) -> bool:
     """Identify deck or compiler changes requiring the presentation checks."""
-    return path in PRESENTATION_PATHS | _SPECIAL_PATHS | _TOOL_PATHS or path.startswith(
-        "tooling/marp/"
+    return (
+        path.startswith((f"{DECK}/assets/", f"{DECK}/evidence/"))
+        or path in PRESENTATION_PATHS | _SPECIAL_PATHS | _TOOL_PATHS
+        or path.startswith("tooling/marp/")
     )
 
 
@@ -164,6 +189,33 @@ def presentation_change_allowed(
     """
     if path in PRESENTATION_PATHS:
         return True
+    if path == GENERATED_HTML:
+        return after is None
+    if path == ".gitignore":
+        entry = f"/{GENERATED_HTML}"
+
+        def other_rules(value: bytes | None) -> list[str]:
+            return [
+                line
+                for line in (value or b"").decode("utf-8").splitlines()
+                if line and not line.startswith("#") and line != entry
+            ]
+
+        try:
+            return other_rules(before) == other_rules(after)
+        except UnicodeError:
+            return False
+    if path.startswith(f"{DECK}/assets/"):
+        suffix = Path(path).suffix.lower()
+        return suffix in IMAGE_SUFFIXES and all(
+            value is None or is_image(value, suffix) for value in (before, after)
+        )
+    if path.startswith(f"{DECK}/evidence/"):
+        relative = path.removeprefix(f"{DECK}/evidence/")
+        return all(
+            value is None or evidence_content_allowed(relative, value)
+            for value in (before, after)
+        )
     if path == "docs/.nojekyll":
         return before in {None, b""} and after in {None, b""}
     if path != ".vscode/tasks.json":
@@ -172,115 +224,6 @@ def presentation_change_allowed(
         return _presentation_tasks_change_allowed(before, after)
     except ValueError, UnicodeError:
         return False
-
-
-def _css_unescape(value: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        escaped = match[1]
-        if re.fullmatch(r"[0-9a-fA-F]{1,6}\s?", escaped):
-            number = int(escaped.strip(), 16)
-            return chr(number) if 0 < number <= 0x10FFFF else "\ufffd"
-        return escaped
-
-    return re.sub(r"\\([0-9a-fA-F]{1,6}\s?|[^\n\r\f])", replace, value)
-
-
-def _check_css(value: str) -> None:
-    css = _css_unescape(re.sub(r"/\*.*?\*/", "", value, flags=re.DOTALL))
-    if re.search(r"@import\b", css, flags=re.IGNORECASE):
-        raise PresentationError("External CSS imports are not allowed.")
-    if re.search(r"\b(?:image-set|image)\s*\(", css, flags=re.IGNORECASE):
-        raise PresentationError(
-            "CSS image functions with implicit URLs are not allowed."
-        )
-    for match in re.finditer(r"\burl\s*\(\s*([^)]*)\)", css, flags=re.IGNORECASE):
-        target = match[1].strip().strip("\"'").strip()
-        if target and not target.casefold().startswith(("data:", "#")):
-            raise PresentationError(f"External CSS resource is not allowed: {target}")
-
-
-class _PresentationHTML(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.sections: list[dict[str, str | None]] = []
-        self.active: str | None = None
-        self.content: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attributes = dict(attrs)
-        if tag in {"iframe", "object", "embed"}:
-            raise PresentationError(f"Embedded active content is not allowed: {tag}")
-        if tag == "section":
-            self.sections.append(attributes)
-        if tag in {"style", "script"}:
-            self.active, self.content = tag, []
-        if tag == "base" or (
-            tag == "meta" and (attributes.get("http-equiv") or "").lower() == "refresh"
-        ):
-            raise PresentationError(f"Unexpected navigation element: {tag}")
-        for name, value in attrs:
-            if name == "style" and value:
-                _check_css(value)
-            if name in {"srcdoc", "srcset", "ping"} or name.startswith("on"):
-                raise PresentationError(f"Inline executable HTML attribute: {name}")
-            resource = name in {"src", "srcset", "poster", "data", "background"} or (
-                name in {"href", "xlink:href"} and tag not in {"a"}
-            )
-            if (
-                resource
-                and value
-                and not value.strip().lower().startswith(("data:", "#"))
-            ):
-                raise PresentationError(
-                    f"External HTML resource is not allowed: {value}"
-                )
-            if (
-                tag == "a"
-                and name == "href"
-                and value
-                and re.match(r"\s*(?:javascript|data):", value, flags=re.IGNORECASE)
-            ):
-                raise PresentationError("Executable citation URLs are not allowed.")
-
-    def handle_data(self, data: str) -> None:
-        if self.active:
-            self.content.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag != self.active:
-            return
-        content = "".join(self.content)
-        if tag == "style":
-            _check_css(content)
-        elif re.search(
-            r"WebSocket|EventSource|location\s*\.\s*reload|marp-cli-reload|wss?://",
-            content,
-            flags=re.IGNORECASE,
-        ):
-            raise PresentationError(
-                "Watch/reload code is not allowed in committed HTML."
-            )
-        self.active, self.content = None, []
-
-
-def check_html(content: str) -> int:
-    """Inspect generated output as data; never open it in a browser."""
-    parser = _PresentationHTML()
-    parser.feed(content)
-    parser.close()
-    count = len(parser.sections)
-    if not count:
-        raise PresentationError("The presentation contains no sections.")
-    for number, section in enumerate(parser.sections, 1):
-        if (
-            section.get("id") != str(number)
-            or section.get("data-marpit-pagination") != str(number)
-            or section.get("data-marpit-pagination-total") != str(count)
-        ):
-            raise PresentationError(
-                "Section IDs, page numbers and totals are inconsistent."
-            )
-    return count
 
 
 @contextmanager
@@ -304,12 +247,7 @@ def _environment(temporary: Path) -> dict[str, str]:
     global_config = temporary / "npm-global.rc"
     user_config.touch()
     global_config.touch()
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key != "DEBUG"
-        and not key.upper().startswith(("NODE_", "NPM_CONFIG_", "MARP_"))
-    }
+    environment = node_environment()
     environment.update(
         TMPDIR=str(temporary),
         TMP=str(temporary),
@@ -396,7 +334,7 @@ def _toolchain(root: Path) -> Path:
         os.environ.get("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(expected))
     ).resolve()
     try:
-        for name in ("package.json", "package-lock.json"):
+        for name in TOOLCHAIN_FILES:
             if (expected / name).read_bytes() != (installed / name).read_bytes():
                 raise PresentationError(
                     f"Toolchain {name} differs from the checked snapshot."
@@ -459,28 +397,15 @@ def _toolchain(root: Path) -> Path:
 
 
 def _command(toolchain: Path, source: Path, theme: Path, output: Path) -> list[str]:
-    node = shutil.which("node")
-    if node is None:
-        raise PresentationError(f"Node.js is unavailable. {_install_help()}")
-    return [
-        node,
-        str(toolchain / "node_modules/@marp-team/marp-cli/marp-cli.js"),
-        "--no-config",
-        "--no-html",
-        "--engine",
-        str(toolchain / "node_modules/@marp-team/marp-core/lib/marp.js"),
-        str(source),
-        "--theme-set",
-        str(theme),
-        "--theme",
-        "tradingdev",
-        "--title",
-        _TITLE,
-        "--description",
-        _DESCRIPTION,
-        "--output",
-        str(output),
-    ]
+    node = _node()
+    return [node, str(toolchain / "build.mjs"), str(source), str(theme), str(output)]
+
+
+def _node(*, npm: bool = False) -> str:
+    try:
+        return require_node(npm=npm)
+    except EnvironmentCheckError as error:
+        raise PresentationError(f"{error} {_SETUP_HELP}") from error
 
 
 def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> None:
@@ -498,25 +423,39 @@ def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> No
             temporary=temporary,
             timeout=timeout,
         )
-        (output or root / DECK / "index.html").write_bytes(generated.read_bytes())
+        check_html(generated.read_text(encoding="utf-8"), root=root / DECK)
+        (output or root / GENERATED_HTML).write_bytes(generated.read_bytes())
+
+
+def _build_delivery(root: Path, destination: Path, *, timeout: float = 120) -> int:
+    """Build and validate a disposable delivery without relying on a local preview."""
+    for source in bundle_files(root / DECK, include_html=False):
+        target = destination / source.relative_to(root / DECK)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    output = destination / "index.html"
+    build(root, output=output, timeout=timeout)
+    count = check_html(output.read_text(encoding="utf-8"), root=destination)
+    check_bundle(destination)
+    return count
+
+
+def _check_sources(root: Path) -> None:
+    """Check prerequisites before importing document tools or preparing delivery."""
+    check_environment("docs")
+    _toolchain(root)
+    _node()
+    from tooling.documentation import check_documents
+
+    check_documents(root)
 
 
 def check_presentations(root: Path, *, timeout: float = 120) -> None:
     """Check documents, rebuild with the locked compiler and verify the output."""
-    from tooling.documentation import check_documents
-
     root = root.resolve()
-    check_documents(root)
+    _check_sources(root)
     with _workspace() as temporary:
-        output = temporary / "index.html"
-        build(root, output=output, timeout=timeout)
-        committed = root / DECK / "index.html"
-        if output.read_bytes() != committed.read_bytes():
-            raise PresentationError(
-                "Committed index.html is out of date; "
-                "run scripts/presentations.sh build."
-            )
-        count = check_html(output.read_text(encoding="utf-8"))
+        count = _build_delivery(root, temporary, timeout=timeout)
     print(
         f"Presentation checks passed ({count} slides; "
         "locked build, links, pages and resources)."
@@ -524,6 +463,7 @@ def check_presentations(root: Path, *, timeout: float = 120) -> None:
 
 
 def setup(root: Path, *, timeout: float = 300) -> None:
+    _node(npm=True)
     npm = shutil.which("npm")
     if npm is None:
         raise PresentationError("Node.js and npm are required to install the compiler.")
@@ -539,8 +479,10 @@ def setup(root: Path, *, timeout: float = 300) -> None:
 
 
 def watch(root: Path) -> None:
+    _toolchain(root)
+    _node()
     # Rebuild static HTML on changes; Marp's native --watch injects a reload
-    # WebSocket into the artifact, which must never enter the committed output.
+    # WebSocket into the artifact, which must never enter the delivered output.
     inputs = [root / DECK / name for name in ("slides.md", "theme.css")]
     previous: list[bytes] | None = None
     try:
@@ -570,10 +512,30 @@ def watch(root: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("setup", "build", "watch", "check"))
+    parser.add_argument(
+        "action", choices=("setup", "build", "watch", "check", "package")
+    )
+    parser.add_argument(
+        "--output", type=Path, help="New folder for the offline package"
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     try:
+        if args.action == "package":
+            if args.output is None:
+                parser.error("package requires --output <new-folder>")
+            if args.output.resolve().is_relative_to((root / DECK).resolve()):
+                raise PresentationError(
+                    "Bundle output must be outside its source directory"
+                )
+            _check_sources(root)
+            with _workspace() as temporary:
+                _build_delivery(root, temporary)
+                archive = write_bundle(temporary, args.output.resolve())
+            print(f"Offline presentation: {archive}")
+            return 0
+        if args.output is not None:
+            parser.error("--output is only available for package")
         {"setup": setup, "build": build, "watch": watch, "check": check_presentations}[
             args.action
         ](root)

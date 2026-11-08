@@ -7,7 +7,7 @@ strategy:
   description: "GLFT + FLAML AutoML direction prediction — limit-order market making"
   parameters:
     # --- ML parameters ---
-    prediction_horizon: 5  # Predict direction N minutes ahead
+    prediction_horizon: 5  # Predict direction N input bars ahead
     feature_lookback: 60   # Feature lookback window (bars)
     ml_time_limit: 300     # AutoML search time budget (seconds)
     ml_estimator_list: ["lgbm", "xgboost", "catboost", "rf", "extra_tree"]

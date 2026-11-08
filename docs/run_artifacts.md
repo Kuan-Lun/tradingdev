@@ -14,6 +14,7 @@ schemas through `tools/list` and use the [lookup tools](#mcp-lookup).
 | Information needed | Maintained definition |
 | --- | --- |
 | Execution fields, schema version and digest | [ExecutionManifest and OptimizationSpec](../src/tradingdev/domain/execution.py) |
+| Generated source/runtime binding and resource limits | [StrategyExecution and GeneratedProgram](../src/tradingdev/domain/strategies/execution.py), [RuntimeSpec and RuntimeLimits](../src/tradingdev/domain/runtime.py) |
 | Comparison membership and candidate limits | [ComparisonManifest](../src/tradingdev/domain/comparison.py) |
 | Research explanation fields and bindings | [ResearchEvidenceDraft, BoundResearchEvidence and bind_research_evidence](../src/tradingdev/domain/research_evidence.py); MCP `get_strategy_contract(section="evidence")` supplies authoring guidance |
 | Runtime table columns and record updates | [SQLiteStore](../src/tradingdev/adapters/storage/sqlite.py), [ExecutionPlanStore](../src/tradingdev/adapters/storage/execution_plans.py) and [ResearchNoteStore](../src/tradingdev/adapters/storage/research_notes.py) |
@@ -39,10 +40,13 @@ result exists. Standard roots are resolved by
 | `runs/<run_id>/` | [Completed run files](#completed-run-files); a standalone job's manifest is already published here at submission. |
 | `comparisons/<job_id>/` | Shared manifest/config, ledger and post-approval data snapshot/receipt; see [comparison evidence](#fixed-comparison-evidence). |
 | `.workers/<launch_token>/` | Supervisor startup, readiness, stop request and cleanup acknowledgement; see [worker identity](#job-state-and-worker-identity). |
+| `.workers/<launch_token>/runtime/`, `.strategy-runtime/` | Generated execution ownership records for supervised jobs or direct API sessions; retained only when cleanup is uncertain or a session is active. |
 | `research_evidence/`, `submitted_research/` | Draft explanations and approved job snapshots, described below. |
 | `execution_plans/<plan_id>/` | Saved confirmation text/HTML and approval lock; see [Execution Plans](execution_plans.md). |
 | `ml_datasets/`, `ml_feature_cache/`, `models/`, `ml_leaderboard/` | Independent [ML stores](ml_research.md#ml-research-artifacts). |
 | `reports/`, `research_archives/`, `feature_requests/` | Derived reports, notebook exports and recorded unsupported requests; see [Reports](reports.md). |
+| `conversations/<export_id>/` | Fixed-version conversation HTML, JSON and manifest; see [recorded conversations](reports.md#recorded-conversations). |
+| `.conversation-clients/<conversation_id>/` | Native client state and logs used for live conversation resume, not sharing artifacts; see [Codex recording](reports.md#codex-cli-recording-adapter). The original Codex profile is also required for resume. |
 
 Strategy validation/dry-run use separate `tradingdev-strategy-check-*` system
 temporary directories, not research runs. Request/response evidence binds the
@@ -203,6 +207,13 @@ do not trust a potentially reused PID alone. Control records remain in normal
 workspaces for later cleanup verification. Temporary tests remove them only after
 verified shutdown.
 
+Generated units have separate daemon identity, container ID and owner leases.
+The host supervisor recovers its units after stopping the worker group before
+publishing cleanup acknowledgement. Direct API calls use the same container
+ownership protocol. A lost controller leaves recoverable records and an
+independent in-container deadline. Do not delete retained records to suppress a
+cleanup error; restore the owning daemon and resolve the units first.
+
 Persisted legacy jobs with `status: pending_confirmation` are incompatible with
 the current job response contracts and are not migrated. `get_job_status` and
 `cancel_job` reject their responses at the MCP boundary; even one such record
@@ -221,6 +232,13 @@ fail a started job whose supervisor identity is missing/mismatched. Comparisons
 first require verified worker cleanup; failure leaves lifecycle states unchanged.
 Cancellation likewise preserves states on cleanup failure. Both return the saved
 job, so concurrent `done` may coexist with a cleanup diagnostic.
+
+All job types check a stopped supervisor's cleanup acknowledgement, including when
+the execution has already reached a terminal state. `get_job_status.cleanup_error`
+reports unverified host/container cleanup independently of the saved outcome and
+`detail_error` for result or comparison evidence. A null cleanup error alone does
+not establish that a still-active supervisor has finished cleanup. Missing or failed
+acknowledgement retains the control path; a saved `done` result is not overwritten.
 
 Status failure returns its persisted error immediately; launch failure saves the
 error and terminal timestamp before propagating. For response placement and codes,
@@ -338,9 +356,18 @@ file; file publication and the database job write do not form one transaction.
 The [ExecutionManifest definition](#artifact-references) owns the supported schema,
 fields and digest calculation. `config` holds effective execution settings and
 resolved absolute data/feature paths. `strategy_execution` separately captures
-constructor values, including nested bundled config/fit defaults; injected engine
-and parallel objects are supplied from execution configuration, outside this JSON.
+constructor values, including nested bundled config/fit defaults. Generated
+executions also bind source hash, class, immutable runtime image and effective
+resource limits. Bundled engine/parallel objects remain trusted injections outside
+this JSON; generated constructors cannot receive them.
 Research origins and display names are saved metadata, not constructor arguments.
+
+Changing the configured runtime image or resource policy affects newly captured
+executions only. Source drift or an unavailable fixed image rejects reuse; the
+factory does not recapture defaults, switch images or fall back to host execution.
+Generated manifests without this program identity are incompatible and must be
+prepared again. Existing files are not migrated or deleted; preserve the original
+workspace/version when its historical manifest readers are still needed.
 
 Optimization fixes candidate ranges, objective/direction, calendar train/test
 bounds and the first-trial estimation timeout. The timeout limits only that
@@ -358,7 +385,7 @@ research provenance, is identical. Strategy identity and non-parameter declarati
 remain bound to the revision. Without an MCP `parameters` override, or with
 `parameters: null`, `config.strategy.parameters` retains the input configuration's
 parameter mapping while constructor defaults are expanded separately into
-`strategy_execution`. CLI execution likewise retains the parameter mapping from
+`strategy_execution`. Direct backtest CLI execution likewise retains the parameter mapping from
 its submitted YAML, which may already contain experiment settings.
 
 An explicit MCP `parameters` mapping, including `{}`, recursively overlays the
@@ -595,8 +622,10 @@ contain identities, not metrics or growing scope catalogs; use `get_run` and
 scoped metric/history tools for details. Artifact pages omit producer metadata;
 `get_artifact` retrieves it. These are record-count bounds and deliberately
 small projections, not a universal byte or token budget for arbitrary fields.
-The internal Python service list APIs remain complete lists for their existing
-application callers; only the MCP discovery contract uses these pages.
+The existing strategy, run and artifact service list APIs retain complete lists
+for their application callers; their MCP discovery methods return these pages.
+The separate conversation service and reading CLI also provide paged discovery;
+see the [conversation contract](reports.md#recorded-conversations).
 
 ### Reading Artifact Text
 
@@ -650,7 +679,7 @@ run seed. Run comparison,
 dashboard rendering, and artifact lookup always read through SQLite first, then
 resolve files from the recorded artifact paths.
 
-CLI runs keep dashboard pickles under the processed-data `cache` directory, while
+Direct backtest CLI runs keep dashboard pickles under the processed-data `cache` directory, while
 `runs.artifact_dir` points to `runs/cli_<cache_key>_<execution_id>/` with the
 registered manifest and shared performance/observation JSON. Each save gets a
 fresh execution ID and separate pickle; rerunning the same request can preserve
@@ -725,6 +754,90 @@ date rules, returning availability, accounting and valuation/time semantics.
 `not_recorded` and volume `unsupported_volume_accounting` return explicit
 unavailable status with zero rows, never reconstructed history. Records remain
 aligned to their original bar indices after filtering and paging.
+
+## Ranking Saved Run Scopes
+
+`RankingService.rank_run_scopes` orders saved scopes by one metric a run already
+recorded. The MCP `leaderboard` tool exposes it through
+`RankingService.rank_candidates`: a `run.<metric>` id with explicit `runs`
+selections is the public form of this contract, and
+[the ML research contract](ml_research.md) documents the shared response shape,
+source selection and paging. The Python library accepts `(run_id, scope)` tuples
+and `top_k`; MCP accepts selection objects and pages with `offset`/`limit`.
+Arguments are exclusive
+to a source: a run ranking refuses the signal filters, `allow_mixed=True` and
+`allow_parameter_axes=True`, and a signal ranking refuses `runs`.
+
+A null `scope` selects that run's saved default. Duplicates are refused in two
+layers. Identical requested pairs are refused before anything is loaded, so a
+repeated unknown run is a `duplicate_selections` error rather than two skipped rows.
+Differently spelled selections are compared only after they load and resolve, which
+is what catches an omitted scope naming the same scalar scope as an explicit one. A
+selection that cannot be loaded — an unknown run, a missing bundle, or an aggregate
+fold summary — is skipped before that second comparison, so two spellings of it
+appear as two skipped rows. Neither is ranked, so no comparison is invented either
+way.
+
+Each `(run_id, scope)` pair is one candidate, so several saved scopes of a single
+run can be ranked in one result. The metric id is source-qualified (`run.<name>`)
+and must exist in [the metric catalog](../src/tradingdev/domain/performance/catalog.py)
+with a declared optimization direction; a `signal.` id is refused here because
+recorded signal evaluations are a different measurement, ranked through the
+leaderboard's signal path; an id without a direction cannot order candidates.
+
+A scope must hold scalar values. Scalar backtest scopes, including numbered
+walk-forward folds such as `fold/0/test`, are rankable. Aggregate fold summaries
+such as `test_summary` are skipped with a reason directing the caller to a numbered
+fold; their descriptive statistics are not scalar backtest measurements. Other
+valid selections still rank normally.
+
+Each row's `parameters` is the selected scope's saved mapping: simple and
+walk-forward runs store constructor parameters including captured defaults;
+optimization scopes store trial overrides, not the fully merged constructor.
+Ranking does not reconstruct or merge these settings. Its `metadata` preserves the scope's
+provenance and settings; fitted values remain separately identified by
+`metadata.strategy_parameters` when recorded. Growing rolling traces retain the
+summary and artifact references supplied by `get_run_metrics`.
+
+The trading `conditions` describe the run's submitted manifest and remain the same
+for all scopes of that run. They are not a fold's observed dates: use the scope's
+saved `metadata.observations` for the actual measurement period. Missing metadata
+remains unknown rather than being reconstructed from the run configuration.
+
+Values come from the saved performance bundle; nothing is recomputed. Before a
+value is used, the manifest recorded on the run is loaded and verified against the
+hash stored with that run. A pair whose run, bundle, manifest or conditions cannot
+be read is skipped with that reason: an unknown run, a bundle that never recorded
+the metric, a run with no recorded manifest, an unreadable manifest, or a manifest
+that no longer matches its hash. A skipped candidate keeps its place in the report
+and is never zero filled, so a failed measurement cannot look like a low one. This
+skip path also covers unsupported fold summaries and incompatible saved metric
+definitions; neither invalidates the remaining candidates.
+
+Ordering, shared ranks, the missing-value rule, the returned slice and the base
+caveats all come from `rank_candidates`; `top_k` limits only the returned page,
+while `ranked_total` counts every candidate that had a usable value. Two distinct
+cases share a rank and must not be conflated. Values that are exactly equal are
+ordered by candidate id, not by the order the pairs were requested in. Values that
+are merely close within the core's tolerance also share a rank, but they keep their
+numeric order, so a shared rank does not by itself imply candidate-id ordering.
+
+Each ranked row carries the run's trading conditions: symbol, timeframe, the
+resolved start and end timestamps, fees and slippage. Different conditions do not
+make two results incomparable, but they do not establish a controlled comparison
+either — a ranking across instruments, periods or cost models describes a
+conditional ordering, and a reader must check the conditions before reading a
+difference as an effect. See
+[Performance Artifacts](performance_artifacts.md#metric-interpretation) for metric
+meanings, units and the provider behind each value.
+
+Ranking uses the current catalogue direction and unit only after verifying the
+selected metric's saved definition against the current catalogue. A definition
+mismatch is skipped with the differing fields rather than relabeling historical
+values or silently converting units. No historical values are recomputed.
+Provider package versions and measurement settings remain in each row's saved
+metadata. These can differ even when catalogue definitions match; the response
+always states that ordering is conditional, not proof of a controlled comparison.
 
 ## Research Notes and Archives
 

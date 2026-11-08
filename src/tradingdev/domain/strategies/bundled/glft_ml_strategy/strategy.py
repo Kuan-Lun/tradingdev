@@ -2,7 +2,7 @@
 
 Combines the GLFT analytical spread model with a FLAML AutoML
 direction predictor.  The ML model forecasts price direction over
-a configurable horizon (e.g. 5 min); the GLFT model determines
+a configurable horizon (e.g. 5 input bars); the GLFT model determines
 optimal entry thresholds.  Entries are only taken when both agree.
 
 Designed for limit-order execution (maker fees).
@@ -26,6 +26,13 @@ from tradingdev.domain.optimization.grid_search import (
     tuple_grid,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.bundled.glft_time import (
+    ensure_glft_fit_scale,
+    glft_bar_seconds,
+)
+from tradingdev.domain.strategies.bundled.glft_volatility import (
+    compute_glft_volatility,
+)
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -46,7 +53,11 @@ _GLFTParamTuple = tuple[float, float, int, int, float, float]
 class GLFTMLStrategy(BaseStrategy):
     """GLFT + FLAML AutoML direction prediction strategy.
 
-    The ML model predicts price direction over the next N minutes.
+    The ML model predicts price direction over the next N input bars.
+    Windows and holding horizons also count input bars. Timestamps must be
+    uniformly spaced (at least two bars); gaps are errors. Annualized DVOL
+    is converted to that per-bar scale using a 365.25-day continuous year.
+    After fit(), generating signals at a different bar duration requires refitting.
     The GLFT model computes entry thresholds based on volatility.
     Entries require both ML direction agreement and GLFT deviation
     threshold to be met.
@@ -62,6 +73,7 @@ class GLFTMLStrategy(BaseStrategy):
         backtest_engine: BaseBacktestEngine | None = None,
         parallel_config: ParallelConfig | None = None,
     ) -> None:
+        self._fitted_bar_seconds: float | None = None
         self._config = config
         self._backtest_engine = backtest_engine
         self._parallel_config = parallel_config
@@ -81,6 +93,7 @@ class GLFTMLStrategy(BaseStrategy):
             random_seed=config.random_seed,
         )
         self._ml_trained = False
+        self._fit_failed = False
         self._confidence_threshold: float = config.confidence_threshold
 
         # GLFT parameters (populated by fit or use defaults)
@@ -113,9 +126,15 @@ class GLFTMLStrategy(BaseStrategy):
         2. Generate ML direction predictions on training data
         3. Grid-search GLFT parameters using ML-filtered signals
         """
+        bar_seconds = glft_bar_seconds(df)
         if self._backtest_engine is None:
             logger.warning("No backtest engine; skipping fit()")
             return
+
+        # Training replaces the model before parameter search completes. Block
+        # prediction (including fallback) until the whole fit succeeds.
+        self._fit_failed = True
+        self._ml_trained = False
 
         # --- Step 1: Train ML model ---
         logger.info(
@@ -130,19 +149,28 @@ class GLFTMLStrategy(BaseStrategy):
         )
 
         self._ml_model.train(feat_df)
-        self._ml_trained = True
 
         # Score predictions and search parameters on the same complete timeline
         # used by generate_signals, not the rows retained for supervised training.
         self._grid_search_glft(df)
+        self._fitted_bar_seconds = bar_seconds
+        self._ml_trained = True
+        self._fit_failed = False
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate position-state signals via GLFT + ML."""
-        if not self._ml_trained:
+        """Generate GLFT position states, filtering by ML only after training."""
+        if self._fit_failed:
+            raise ValueError("GLFT-ML fit did not complete; refit successfully first")
+        bar_seconds = glft_bar_seconds(df)
+        ensure_glft_fit_scale(bar_seconds, self._fitted_bar_seconds)
+        ml_directions: npt.NDArray[np.float64] | None
+        if self._ml_trained:
+            ml_directions = self._predict_ml_directions(
+                df, self._best_confidence_threshold
+            )
+        else:
             logger.warning("ML model not trained; falling back to pure GLFT signals")
-            return self._generate_pure_glft(df)
-
-        ml_directions = self._predict_ml_directions(df, self._best_confidence_threshold)
+            ml_directions = None
 
         close = np.asarray(df["close"].astype(float).values)
         high = np.asarray(df["high"].astype(float).values)
@@ -154,7 +182,9 @@ class GLFTMLStrategy(BaseStrategy):
             dvol = np.asarray(df["dvol"].astype(float).values)
 
         ema = self._compute_ema(close, self._best_ema_window)
-        sigma = self._compute_volatility(close, high, low, dvol=dvol)
+        sigma = self._compute_volatility(
+            close, high, low, dvol=dvol, bar_seconds=bar_seconds
+        )
 
         signals = self._run_ml_glft_state_machine(
             close=close,
@@ -243,6 +273,7 @@ class GLFTMLStrategy(BaseStrategy):
 
     def _grid_search_glft(self, df: pd.DataFrame) -> None:
         """Grid-search GLFT parameters with ML direction filter."""
+        bar_seconds = glft_bar_seconds(df)
         assert self._backtest_engine is not None
 
         cfg = self._config
@@ -304,6 +335,7 @@ class GLFTMLStrategy(BaseStrategy):
                     high,
                     low,
                     dvol=dvol,
+                    bar_seconds=bar_seconds,
                 )
 
                 signals = self._run_ml_glft_state_machine(
@@ -388,7 +420,7 @@ class GLFTMLStrategy(BaseStrategy):
         close: npt.NDArray[np.floating[Any]],
         ema_window: int,
     ) -> npt.NDArray[np.floating[Any]]:
-        """Compute EMA on 1-min close; NaN until the window has warmed up."""
+        """Compute EMA on input-bar closes; NaN until the window has warmed up."""
         return np.asarray(
             indicators.ema(pd.Series(close), ema_window),
             dtype=np.float64,
@@ -398,30 +430,25 @@ class GLFTMLStrategy(BaseStrategy):
     # Volatility estimation
     # ------------------------------------------------------------------
 
-    _MINUTES_PER_YEAR: float = 525_960.0
-
     def _compute_volatility(
         self,
         close: npt.NDArray[np.floating[Any]],
         high: npt.NDArray[np.floating[Any]],
         low: npt.NDArray[np.floating[Any]],
         dvol: npt.NDArray[np.floating[Any]] | None = None,
+        *,
+        bar_seconds: float,
     ) -> npt.NDArray[np.floating[Any]]:
         """Compute per-bar volatility sigma."""
-        if self._config.vol_type == "implied":
-            if dvol is None:
-                msg = "dvol array is required when vol_type is 'implied'"
-                raise ValueError(msg)
-            sigma = dvol / 100.0 / np.sqrt(self._MINUTES_PER_YEAR)
-        else:
-            window = self._config.vol_window
-            log_ret = np.diff(np.log(np.maximum(close, 1e-10)))
-            log_ret = np.concatenate([[0.0], log_ret])
-            sigma = pd.Series(log_ret).rolling(window, min_periods=1).std().values
-
-        # Keep unknown volatility missing; only floor nonpositive observations.
-        sigma = np.where(sigma <= 0, 1e-10, sigma)
-        return np.asarray(sigma, dtype=np.float64)
+        return compute_glft_volatility(
+            close,
+            high,
+            low,
+            vol_type=self._config.vol_type,
+            window=self._config.vol_window,
+            dvol=dvol,
+            bar_seconds=bar_seconds,
+        )
 
     # ------------------------------------------------------------------
     # ML-filtered GLFT state machine
@@ -432,7 +459,7 @@ class GLFTMLStrategy(BaseStrategy):
         close: npt.NDArray[np.floating[Any]],
         ema: npt.NDArray[np.floating[Any]],
         sigma: npt.NDArray[np.floating[Any]],
-        ml_dir: npt.NDArray[np.float64],
+        ml_dir: npt.NDArray[np.float64] | None,
         gamma: float,
         kappa: float,
         min_hold: int,
@@ -441,10 +468,10 @@ class GLFTMLStrategy(BaseStrategy):
         profit_target_ratio: float = 1.0,
         strategy_sl: float = 0.005,
     ) -> npt.NDArray[np.floating[Any]]:
-        """GLFT state machine with ML direction filter.
+        """GLFT state machine with an optional ML direction filter.
 
-        Same as the pure GLFT state machine, but entries are only
-        allowed when the ML direction prediction agrees:
+        None disables ML filtering for an untrained strategy. When predictions
+        are provided, entries require agreement with their direction:
         - ML=1 (up): only long entries allowed
         - ML=-1 (down): only short entries allowed
         - ML=0 (uncertain): no entries allowed
@@ -483,15 +510,15 @@ class GLFTMLStrategy(BaseStrategy):
                 want_long = deviation < -half_spread
                 want_short = deviation > half_spread
 
-                # ML direction filter
-                md = ml_dir[i]
-                if md >= 0.5:
-                    want_short = False  # ML says up → only long
-                elif md <= -0.5:
-                    want_long = False  # ML says down → only short
-                else:
-                    want_long = False
-                    want_short = False
+                if ml_dir is not None:
+                    md = ml_dir[i]
+                    if md >= 0.5:
+                        want_short = False  # ML says up → only long
+                    elif md <= -0.5:
+                        want_long = False  # ML says down → only short
+                    else:
+                        want_long = False
+                        want_short = False
 
                 if want_long:
                     state = 1
@@ -532,39 +559,3 @@ class GLFTMLStrategy(BaseStrategy):
             signals[i] = float(state)
 
         return signals
-
-    # ------------------------------------------------------------------
-    # Fallback: pure GLFT (no ML)
-    # ------------------------------------------------------------------
-
-    def _generate_pure_glft(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate signals without ML (fallback)."""
-        close = np.asarray(df["close"].astype(float).values)
-        high = np.asarray(df["high"].astype(float).values)
-        low = np.asarray(df["low"].astype(float).values)
-
-        dvol: npt.NDArray[np.floating[Any]] | None = None
-        if self._config.vol_type == "implied" and "dvol" in df.columns:
-            dvol = np.asarray(df["dvol"].astype(float).values)
-
-        ema = self._compute_ema(close, self._best_ema_window)
-        sigma = self._compute_volatility(close, high, low, dvol=dvol)
-        ml_dir = np.zeros(len(close), dtype=np.float64)
-
-        signals = self._run_ml_glft_state_machine(
-            close=close,
-            ema=ema,
-            sigma=sigma,
-            ml_dir=ml_dir,
-            gamma=self._best_gamma,
-            kappa=self._best_kappa,
-            min_hold=self._config.min_holding_bars,
-            max_hold=self._best_max_holding_bars,
-            min_entry_edge=self._best_min_entry_edge,
-            profit_target_ratio=self._best_profit_target_ratio,
-            strategy_sl=self._config.strategy_sl,
-        )
-
-        result = df.copy()
-        result["signal"] = signals
-        return result

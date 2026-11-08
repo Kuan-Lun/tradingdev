@@ -12,7 +12,7 @@ from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.flaml_model import FLAMLAutoMLDirectionModel
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
-from tradingdev.domain.ml.retrainer import RollingRetrainer
+from tradingdev.domain.ml.rolling_gen import run_rolling
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.strategies.bundled.glft_ml_strategy.config import (
     GLFTMLStrategyConfig,
@@ -133,11 +133,20 @@ def test_rolling_retraining_uses_only_mature_outcomes_before_each_prediction(
     test = frame.iloc[500:].copy()
     calls = _capture_xgboost_training(monkeypatch)
     initial_model = XGBoostDirectionModel(XGBoostModelConfig())
-    retrainer = RollingRetrainer(
-        XGBoostModelConfig(), retrain_interval=4, threshold=0.5, cooldown=0, lookback=24
-    )
 
-    signals = retrainer.run(test, train, initial_model, FeatureEngineer(24, 5))
+    signals = run_rolling(
+        train,
+        test,
+        None,
+        model=initial_model,
+        fe=FeatureEngineer(24, 5),
+        label_horizon=(FeatureEngineer(24, 5)).target_horizon,
+        model_config=XGBoostModelConfig(),
+        retrain_interval=4,
+        threshold=0.5,
+        cooldown=0,
+        lookback=24,
+    )
 
     assert len(signals) == len(test)
     assert len(calls) == 3
@@ -164,12 +173,19 @@ def test_rolling_retraining_keeps_existing_model_without_mature_samples(
         return pd.DataFrame({-1: 0.0, 1: 1.0}, index=df.index)
 
     monkeypatch.setattr(XGBoostDirectionModel, "predict_proba", predict_proba)
-    retrainer = RollingRetrainer(
-        XGBoostModelConfig(), retrain_interval=2, threshold=0.5, cooldown=0, lookback=24
-    )
 
-    signals = retrainer.run(
-        frame.iloc[80:], frame.iloc[:80], initial_model, FeatureEngineer(24, 100)
+    signals = run_rolling(
+        frame.iloc[:80],
+        frame.iloc[80:],
+        None,
+        model=initial_model,
+        fe=FeatureEngineer(24, 100),
+        label_horizon=(FeatureEngineer(24, 100)).target_horizon,
+        model_config=XGBoostModelConfig(),
+        retrain_interval=2,
+        threshold=0.5,
+        cooldown=0,
+        lookback=24,
     )
 
     assert calls == []

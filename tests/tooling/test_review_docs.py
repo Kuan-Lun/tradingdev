@@ -18,14 +18,25 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from tooling import review_docs
+from tooling import environment, review_docs
 from tooling.presentations import PRESENTATION_PATHS
-from tooling.process_guard import terminate_tree
+from tooling.process_guard import (
+    CLEANUP_UNVERIFIED_EXIT_CODE,
+    ProcessCleanupError,
+    terminate_tree,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from pytest import MonkeyPatch
+
+
+@pytest.fixture(autouse=True)
+def isolated_review_settings(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(review_docs, "require_codex", lambda: "unused-codex")
+    monkeypatch.delenv("TRADINGDEV_DOC_REVIEW_MODEL", raising=False)
+    monkeypatch.delenv("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", raising=False)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -57,6 +68,8 @@ def fake_codex(monkeypatch: MonkeyPatch) -> Iterator[Path]:
         binary.write_text(
             f"#!{sys.executable}\n"
             "import json, os, pathlib, signal, sys, time\n"
+            "if sys.argv[1:] == ['login', 'status']:\n"
+            "    raise SystemExit(int(os.environ.get('REVIEW_FAKE_AUTH_EXIT', '0')))\n"
             "prompt = sys.stdin.read()\n"
             "mode = os.environ.get('REVIEW_FAKE_MODE', 'pass')\n"
             "evidence = json.loads(prompt.rsplit('\\n\\n', 1)[-1])\n"
@@ -88,14 +101,14 @@ def fake_codex(monkeypatch: MonkeyPatch) -> Iterator[Path]:
             "    print(os.environ['REVIEW_FAKE_EVENTS'], end='')\n"
             "    print(os.environ['REVIEW_FAKE_STDERR'], end='', file=sys.stderr)\n"
             "    pathlib.Path('verdict.json').write_text(\n"
-            "        json.dumps({'passed': True, 'findings': []}))\n"
+            "        json.dumps({'findings': []}))\n"
             "    sys.exit(int(os.environ['REVIEW_FAKE_EXIT']))\n"
-            "verdict = {'passed': True, 'findings': []}\n"
+            "verdict = {'findings': []}\n"
             "if mode == 'outdated':\n"
-            "    verdict = {'passed': False, 'findings': [{'file': 'README.md', "
+            "    verdict = {'findings': [{'file': 'README.md', "
             "'explanation': f'Update old behavior to staged behavior. "
             "Batch {batch}.'}]}\n"
-            "if mode == 'inconsistent': verdict['passed'] = False\n"
+            "if mode == 'extra_field': verdict['passed'] = True\n"
             "result = 'broken json' if mode == 'malformed' else json.dumps(verdict)\n"
             "output = pathlib.Path(sys.argv["
             "sys.argv.index('--output-last-message') + 1])\n"
@@ -111,11 +124,36 @@ def fake_codex(monkeypatch: MonkeyPatch) -> Iterator[Path]:
         )
         binary.chmod(0o700)
         monkeypatch.setenv("TRADINGDEV_CODEX_BIN", str(binary))
+        monkeypatch.setattr(review_docs, "require_codex", environment.require_codex)
+        monkeypatch.delenv("REVIEW_FAKE_AUTH_EXIT", raising=False)
         monkeypatch.setenv("REVIEW_FAKE_RECORD", str(record))
         monkeypatch.delenv("REVIEW_FAKE_MODE", raising=False)
         monkeypatch.delenv("REVIEW_FAKE_BATCH_MODES", raising=False)
         monkeypatch.delenv("REVIEW_FAKE_READY_COUNT", raising=False)
         yield record
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        None,
+        {},
+        {"findings": False},
+        {"findings": [None]},
+        {"findings": [{"file": "README.md", "explanation": "  "}]},
+        {"findings": [{"file": 1, "explanation": "Update the changed command."}]},
+        {
+            "findings": [
+                {"file": "README.md", "explanation": "Update it.", "passed": True}
+            ]
+        },
+    ],
+)
+def test_invalid_finding_payload_cannot_be_treated_as_an_empty_review(
+    verdict: Any,
+) -> None:
+    with pytest.raises(review_docs.ReviewError, match="malformed documentation"):
+        review_docs._validate_verdict(json.dumps(verdict))
 
 
 def test_review_uses_immutable_candidate_and_removes_temporary_files(
@@ -131,11 +169,72 @@ def test_review_uses_immutable_candidate_and_removes_temporary_files(
     assert "UNSTAGED" not in record["prompt"]
     assert "ignore-user-config" in " ".join(record["args"])
     assert "features.shell_tool=false" in record["args"]
+    assert "features.sleep_tool=false" in record["args"]
     assert "features.shell_snapshot=false" in record["args"]
     assert 'web_search="disabled"' in record["args"]
     assert "--ephemeral" in record["args"]
     assert "read-only" in record["args"]
     assert not Path(record["root"]).exists()
+
+
+def test_failed_login_prevents_every_review_batch(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repo, base, tree = repository
+    monkeypatch.setenv("REVIEW_FAKE_AUTH_EXIT", "1")
+    with pytest.raises(review_docs.ReviewError, match="Codex is not logged in"):
+        review_docs.review(base, tree, repo=repo)
+    assert not fake_codex.exists()
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_review_launches_explicit_settings_independent_of_product_tests(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+    override: bool,
+) -> None:
+    monkeypatch.setenv("TRADINGDEV_CODEX_MODEL", "old-shared-model")
+    monkeypatch.setenv("TRADINGDEV_LLM_MODEL", "product-test-model")
+    monkeypatch.setenv("TRADINGDEV_LLM_REASONING_EFFORT", "xhigh")
+    if override:
+        monkeypatch.setenv("TRADINGDEV_DOC_REVIEW_MODEL", "selected-review-model")
+        monkeypatch.setenv("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", "medium")
+    repo, base, tree = repository
+    review_docs.review(base, tree, repo=repo)
+    record = json.loads(fake_codex.read_text())
+    args = record["args"]
+    assert args[args.index("--model") + 1] == (
+        "selected-review-model" if override else "gpt-6-luna"
+    )
+    effort = "medium" if override else "high"
+    assert f'model_reasoning_effort="{effort}"' in args
+    assert not Path(record["root"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("TRADINGDEV_DOC_REVIEW_MODEL", " "),
+        ("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", ""),
+        ("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", "ultra"),
+        ("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", "typo"),
+    ],
+)
+def test_invalid_review_settings_do_not_start_a_model(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+    setting: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(setting, value)
+    repo, base, tree = repository
+    with pytest.raises(review_docs.ReviewError, match=setting):
+        review_docs.review(base, tree, repo=repo)
+    assert not fake_codex.exists()
 
 
 def test_evidence_preserves_deleted_file_diff_and_existing_document_inventory(
@@ -289,14 +388,14 @@ def test_incomplete_registered_presentation_fails_before_model_call(
 ) -> None:
     repo, base, _ = repository
     files = _write_presentation(repo)
-    html_path = next(path for path in files if path.endswith(".html"))
-    html = repo / html_path
+    theme_path = next(path for path in files if path.endswith(".css"))
+    theme = repo / theme_path
     if invalid == "executable":
-        html.chmod(0o755)
+        theme.chmod(0o755)
     else:
-        html.unlink()
+        theme.unlink()
         if invalid == "symlink":
-            html.symlink_to("slides.md")
+            theme.symlink_to("slides.md")
     _git(repo, "add", ".")
     tree = _git(repo, "write-tree")
 
@@ -358,7 +457,10 @@ def test_audience_review_keeps_original_policy_context_separate_from_instruction
     (repo / "docs/contracts.md").write_text(contract, encoding="utf-8")
     for index in range(3):
         (repo / f"src/context_{index}.py").write_text(
-            "VALUE = 'old'\n" + "# source context\n" * 300, encoding="utf-8"
+            # One file plus the review instructions fits the small test budget;
+            # all three still require batching without dropping source evidence.
+            "VALUE = 'old'\n" + "# source context\n" * 200,
+            encoding="utf-8",
         )
     _git(repo, "add", ".")
     base = _git(repo, "write-tree")
@@ -473,7 +575,7 @@ def test_evidence_includes_deleted_codex_hook(
     [
         ("outdated", "README.md: Update old behavior"),
         ("malformed", "could not complete"),
-        ("inconsistent", "inconsistent documentation verdict"),
+        ("extra_field", "malformed documentation verdict"),
         ("missing", "could not complete"),
         ("exit", "exited 9: stderr: authentication failed"),
         ("failed_event", "failed review"),
@@ -921,8 +1023,8 @@ def test_batches_keep_complete_registered_presentation_context_together(
     )
     _assert_original_assignment_evidence(prompts, evidence)
 
-    html_path = next(path for path in context if path.endswith(".html"))
-    evidence["candidate_files"][html_path] = "x" * 30_000
+    theme_path = next(path for path in context if path.endswith(".css"))
+    evidence["candidate_files"][theme_path] = "x" * 30_000
     _candidate_metadata(evidence)
     with pytest.raises(
         review_docs.ReviewError, match="Scope 'presentation'.*required file group"
@@ -1077,7 +1179,7 @@ def test_findings_from_separate_batches_are_all_reported(
     ("mode", "message"),
     [
         ("malformed", "could not complete"),
-        ("inconsistent", "inconsistent documentation verdict"),
+        ("extra_field", "malformed documentation verdict"),
         ("missing", "could not complete"),
         ("exit", "exited 9: stderr: authentication failed"),
         ("failed_event", "failed review"),
@@ -1140,7 +1242,7 @@ def test_queued_and_running_batches_share_one_absolute_deadline(
         if clock.now >= deadline:
             raise review_docs.ReviewError("Codex documentation review timed out.")
         (root / "verdict.json").write_text(
-            json.dumps({"passed": True, "findings": []}), encoding="utf-8"
+            json.dumps({"findings": []}), encoding="utf-8"
         )
 
     monkeypatch.setattr(review_docs, "_run", controlled_run)
@@ -1174,7 +1276,7 @@ def test_interrupt_cancels_running_batches_and_cleans_all_reviewer_processes(
             leader = args[0]
             assert leader is not None
             terminate_tree(*args, **kwargs)
-            raise RuntimeError(
+            raise ProcessCleanupError(
                 f"cleanup verification failed for leader PID {leader.pid}"
             )
 
@@ -1191,29 +1293,32 @@ def test_interrupt_cancels_running_batches_and_cleans_all_reviewer_processes(
         raise interruption
 
     monkeypatch.setattr(Future, "result", interrupt_result)
-    with pytest.raises(KeyboardInterrupt) as error:
-        review_docs.review(base, tree, repo=repo, timeout_seconds=30)
-    assert error.value is interruption
-    records = _records(fake_codex)
-    assert len(records) == workers
-    assert all("ended" not in record for record in records)
-    _assert_reviewer_cleanup(records)
-    notes = getattr(error.value, "__notes__", [])
-    if cleanup_failure:
-        assert len(notes) == workers
-        for record in records:
-            batch = _prompt_evidence(record["prompt"])["batch"]["index"]
-            assert any(
-                f"Batch {batch}/{batch_count}" in note
-                and "RuntimeError: cleanup verification failed" in note
-                and f"leader PID {record['pid']}" in note
-                for note in notes
-            )
-    else:
-        assert notes == []
+    try:
+        expected = ProcessCleanupError if cleanup_failure else KeyboardInterrupt
+        with pytest.raises(expected) as error:
+            review_docs.review(base, tree, repo=repo, timeout_seconds=30)
+        records = _records(fake_codex)
+        assert len(records) == workers
+        assert all("ended" not in record for record in records)
+        if cleanup_failure:
+            assert error.value.__cause__ is interruption
+            assert isinstance(error.value, ProcessCleanupError)
+            assert error.value.interrupted
+            for record in records:
+                batch = _prompt_evidence(record["prompt"])["batch"]["index"]
+                assert f"Batch {batch}/{batch_count}" in str(error.value)
+                assert f"leader PID {record['pid']}" in str(error.value)
+                assert Path(record["root"]).resolve() in error.value.retained_workspaces
+                assert Path(record["root"], "events.jsonl").exists()
+        else:
+            assert error.value is interruption
+            assert getattr(error.value, "__notes__", []) == []
+            _assert_reviewer_cleanup(records)
+    finally:
+        _remove_stopped_review_workspaces(_records(fake_codex))
 
 
-def test_batch_cleanup_error_is_reported_even_when_all_verdicts_pass(
+def test_batch_cleanup_error_retains_diagnostics_even_when_all_verdicts_pass(
     repository: tuple[Path, str, str], fake_codex: Path, monkeypatch: MonkeyPatch
 ) -> None:
     repo, base, tree = repository
@@ -1221,11 +1326,87 @@ def test_batch_cleanup_error_is_reported_even_when_all_verdicts_pass(
 
     def fail_after_cleanup(*args: Any, **kwargs: Any) -> None:
         terminate_tree(*args, **kwargs)
-        raise RuntimeError("cleanup verification failed")
+        raise ProcessCleanupError("cleanup verification failed")
 
     monkeypatch.setattr(review_docs, "terminate_tree", fail_after_cleanup)
-    with pytest.raises(review_docs.ReviewError, match="cleanup verification failed"):
-        review_docs.review(base, tree, repo=repo)
-    records = _records(fake_codex)
-    assert len(records) == 7
-    _assert_reviewer_cleanup(records)
+    try:
+        with pytest.raises(
+            ProcessCleanupError, match="cleanup verification failed"
+        ) as error:
+            review_docs.review(base, tree, repo=repo)
+        records = _records(fake_codex)
+        assert len(records) == 7
+        assert not error.value.interrupted
+        for record in records:
+            assert Path(record["root"]).resolve() in error.value.retained_workspaces
+            root = Path(record["root"])
+            assert (root / "events.jsonl").is_file()
+            assert (root / "stderr.log").is_file()
+            assert (root / "verdict.json").is_file()
+    finally:
+        _remove_stopped_review_workspaces(_records(fake_codex))
+
+
+def _remove_stopped_review_workspaces(records: list[dict[str, Any]]) -> None:
+    # Failure injection calls real termination before reporting uncertainty.
+    # Verify every child is gone before deleting intentionally retained evidence.
+    for record in records:
+        with pytest.raises(ProcessLookupError):
+            os.kill(record["pid"], 0)
+    for record in records:
+        root = Path(record["root"])
+        if root.exists():
+            shutil.rmtree(root)
+
+
+def test_review_cli_preserves_cleanup_failure_exit_protocol(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise ProcessCleanupError(
+            "opaque detail",
+            retained_workspaces=[Path("/test/evidence")],
+            interrupted=True,
+        )
+
+    monkeypatch.setattr(review_docs, "review", fail)
+    monkeypatch.setattr(
+        sys, "argv", ["review_docs", "--base", "base", "--tree", "tree"]
+    )
+    assert review_docs.main() == CLEANUP_UNVERIFIED_EXIT_CODE
+    assert json.loads(capsys.readouterr().err) == {
+        "code": "process_cleanup_unverified",
+        "retained_workspaces": ["/test/evidence"],
+        "interrupted": True,
+        "message": "opaque detail",
+    }
+
+
+def test_communication_timeout_does_not_hide_unverified_cleanup(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class Process:
+        pid = 123
+        calls = 0
+
+        def communicate(self, **kwargs: Any) -> None:
+            self.calls += 1
+            if self.calls > 1:
+                raise subprocess.TimeoutExpired("reviewer", 5)
+
+    def unverified(*args: Any, **kwargs: Any) -> None:
+        raise ProcessCleanupError("cleanup remains unverified")
+
+    monkeypatch.setattr(review_docs, "_command", lambda root: ["unused"])
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: Process())
+    monkeypatch.setattr(review_docs, "process_identity", lambda pid: None)
+    monkeypatch.setattr(review_docs, "process_descendants", lambda identity: set())
+    monkeypatch.setattr(review_docs, "terminate_tree", unverified)
+    with TemporaryDirectory(
+        prefix="tradingdev-review-communication-test-"
+    ) as temporary:
+        with pytest.raises(
+            ProcessCleanupError, match="cleanup remains unverified"
+        ) as error:
+            review_docs._run(Path(temporary), "evidence", 10)
+        assert "communication also failed" in " ".join(error.value.__notes__)

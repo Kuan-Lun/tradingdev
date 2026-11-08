@@ -1,19 +1,22 @@
 """Shared test fixtures."""
 
 import os
+import shutil
 from datetime import UTC
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import pytest
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+from tests.runtime_cleanup import recover_test_strategy_units
 
-pytest_plugins = ["tests.llm_plugin"]
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
+
+pytest_plugins = ["tests.llm_plugin", "tests.parallel_plugin"]
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -27,27 +30,33 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture
 def tmp_path() -> Iterator[Path]:
+    """Use immediate cleanup with ownership retention on unverifiable failure."""
+    yield from _temporary_path()
+
+
+def _temporary_path() -> Generator[Path]:
     """Remove each test's files during teardown, including failed tests.
 
-    Pytest's built-in fixture retains recent runs by default. TemporaryDirectory
-    reports cleanup errors instead of silently retaining strategy/data artifacts.
+    Pytest's built-in fixture retains recent runs by default. Unverified generated
+    unit cleanup retains its records instead of deleting ownership evidence.
     Tests that launch processes must stop them before this fixture is torn down.
     """
     original_cwd = Path.cwd()
-    with TemporaryDirectory(prefix="tradingdev-test-") as directory:
-        path = Path(directory).resolve()
+    path = Path(mkdtemp(prefix="tradingdev-test-")).resolve()
+    try:
+        yield path
+    finally:
+        # A test may request monkeypatch before tmp_path, making its chdir
+        # undo run after our teardown. Windows cannot remove the current cwd.
         try:
-            yield path
-        finally:
-            # A test may request monkeypatch before tmp_path, making its chdir
-            # undo run after our teardown. Windows cannot remove the current cwd.
-            try:
-                current_cwd = Path.cwd()
-            except FileNotFoundError:
+            current_cwd = Path.cwd()
+        except FileNotFoundError:
+            os.chdir(original_cwd)
+        else:
+            if current_cwd.is_relative_to(path):
                 os.chdir(original_cwd)
-            else:
-                if current_cwd.is_relative_to(path):
-                    os.chdir(original_cwd)
+        recover_test_strategy_units(path)
+        shutil.rmtree(path)
 
 
 def _make_ohlcv(

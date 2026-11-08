@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -99,6 +101,56 @@ def report(saved_report: MLReportWorkflow) -> MLReportWorkflow:
     return replace(
         saved_report, calls=calls, turn=replace(saved_report.turn, calls=calls)
     )
+
+
+@pytest.mark.parametrize("failure_type", [AssertionError, TimeoutError])
+def test_ml_report_keeps_call_evidence_when_model_fails_before_delivery(
+    monkeypatch: pytest.MonkeyPatch, failure_type: type[Exception]
+) -> None:
+    from tests.e2e import test_llm_ml
+
+    roots: list[Path] = []
+    failure = failure_type("model stopped before final delivery")
+    call = ToolCall(
+        "get_artifact",
+        {"artifact_id": "report:saved:html", "offset": 8192},
+        {"content_page": {"next_offset": 16384}},
+    )
+
+    @contextmanager
+    def tracked_workspace() -> Iterator[MCPWorkspace]:
+        with temporary_mcp_workspace() as workspace:
+            roots.append(workspace.root)
+            yield workspace
+
+    async def failing_model(root: Path, prompt: str, **options: Any) -> None:
+        assert root == roots[0] and prompt == ML_REPORT_REQUEST
+        assert options["max_tool_calls"] == 18
+        options["on_tool_call"](call)
+        raise failure
+
+    monkeypatch.setattr(test_llm_ml, "temporary_mcp_workspace", tracked_workspace)
+    monkeypatch.setattr(test_llm_ml, "run_codex", failing_model)
+    options = {
+        "llm_provider": "codex",
+        "llm_timeout": 1800,
+        "llm_model": "test-only-model",
+        "llm_reasoning_effort": "high",
+    }
+    config = cast("pytest.Config", SimpleNamespace(getoption=options.__getitem__))
+    with pytest.raises(failure_type) as caught:
+        test_llm_ml.test_natural_request_discovers_saved_ml_report(config)
+    assert caught.value is failure
+    note = next(
+        note
+        for note in caught.value.__notes__
+        if note.startswith("ML report calls before model failure:\n")
+    )
+    evidence = json.loads(note.split("\n", 1)[1])
+    assert evidence == [
+        {"name": call.name, "arguments": call.arguments, "result": call.result}
+    ]
+    assert len(roots) == 1 and not roots[0].exists()
 
 
 def test_natural_ml_request_does_not_supply_tools_ids_or_schema_answers(
@@ -311,6 +363,29 @@ def test_ml_report_requires_an_explicit_transaction_cost_limitation(
 
 
 @pytest.mark.parametrize(
+    "explanation",
+    [
+        "這份研究保存的是訊號相關性等指標，沒有交易成本、成交、持倉路徑或帳戶損益；"
+        "因此無法據此推論扣除交易成本後策略是否獲利。",
+        "這只是訊號研究，並不是策略回測。尚未計入交易成本。",
+    ],
+    ids=["no-backtest-keyword", "context-in-previous-sentence"],
+)
+def test_ml_report_accepts_cost_limit_with_context(
+    report: MLReportWorkflow,
+    explanation: str,
+) -> None:
+    path = report.calls[-1].result["path"]
+    text = (
+        f"[報告](<{path}>)\n\n"
+        "訊號評估視窗 12 有分數，視窗 24 分數不可用，不能視為零。"
+        + explanation
+        + _UNKNOWN_PROVENANCE_CONTEXT
+    )
+    replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+@pytest.mark.parametrize(
     "claim",
     [
         "這份研究可支持樣本內訊號關聯的描述。",
@@ -325,6 +400,61 @@ def test_ml_report_requires_an_explicit_transaction_cost_limitation(
         "例如依照上述規則這些結果為樣本內評估。",
         "如上面的規則，這些結果為樣本內評估。",
         "究竟是哪個模型未知，但這些結果是樣本內評估。",
+        # Rule framing does not rescue a claim whose subject is the saved result.
+        "依一般規則，這些結果屬於樣本內。",
+        "一般規則：這些結果屬於樣本內。",
+        "訓練資料上的評估是樣本內，因此這些結果屬於樣本內。",
+        "這份在訓練資料上做的評估是樣本內。",
+        # Naming the candidate makes the same words a claim about the saved rows.
+        "兩個候選在訓練資料上做的評估是樣本內。",
+        "模型在訓練資料上的評估是樣本內。",
+        "視窗 12 在訓練資料上做的評估是樣本內。",
+        "報告中的訓練資料評估是樣本內。",
+        "候選評估是樣本內。",
+        "在驗證資料上做的評估是樣本內。",
+        "對這兩個候選而言，訓練資料上的評估是樣本內。",
+        # An elided restatement must not ride on the exempted definition.
+        "在訓練資料上做的評估是樣本內；候選結果亦然。",
+        "在訓練資料上做的評估是樣本內；視窗 12 亦然。",
+        "在訓練資料上做的評估是樣本內，這也適用於本次兩個候選。",
+        "依定義，在訓練資料上做的評估是樣本內，兩個候選的評估也是如此。",
+        "在訓練資料上做的評估是樣本內；候選結果亦然，雖然切分紀錄未保存。",
+        "在訓練資料上做的評估是樣本內。這是定義。兩個候選的結果亦然。",
+        "在訓練資料上做的評估是樣本內；這對兩個候選也成立。",
+        "在訓練資料上做的評估是樣本內；兩個候選亦復如此。",
+        "在訓練資料上做的評估是樣本內；候選雖然缺少切分證據，同樣如此。",
+        "在訓練資料上做的評估是樣本內；候選雖然無法確認切分證據，同樣如此。",
+        # A reporting frame does not excuse a claim about the saved rows.
+        "工具說明這些結果屬於樣本內。",
+        "報告指出兩個候選在訓練資料上做的評估屬於樣本內。",
+        # Only the product's definition is exempt: training-data evaluation is
+        # in-sample. The opposite rule stays rejected as an inverted claim.
+        "訓練資料上的評估是樣本外。",
+        "只有另一項研究保存訓練資料，本研究結果為樣本內評估。",
+        "只有訓練與評估資料相同時才可判為樣本內；本研究是樣本內評估。",
+        "只有這份研究的結果才可視為已證實的樣本外評估。",
+        "只有本次結果才可判為樣本內；其他研究尚未確認。",
+        "本研究的訓練與評估資料相同，故結果為樣本內評估。",
+        "training_dataset_id 與 dataset_id 相同，本研究為樣本內評估。",
+        "本研究就是因為 training_dataset_id 與 dataset_id 相同才可據此判為樣本內。",
+        "一般判讀原則是：本研究就是因為 training_dataset_id 與 dataset_id "
+        "相同才可據此判為樣本內。",
+        "一般而言，模型產生訊號且訓練資料集 ID 等於評估資料集 ID 時為樣本內；"
+        "候選結果亦然。",
+        "一般而言，模型產生訊號且訓練資料集 ID 等於評估資料集 ID 時為樣本外；"
+        "候選來源仍未知。",
+        "依契約，本研究已確認模型產生訊號且保存的訓練與評估 dataset_id "
+        "相同，才可確認此評分為樣本內。",
+        "依契約，只有模型產生訊號且保存的訓練與評估 dataset_id "
+        "相同才可確認此評分為樣本內；候選結果亦然。",
+        "一般而言，本研究的模型產生訊號且保存的訓練與評估 dataset_id "
+        "相同，可判定該評估為樣本內。",
+        "其分數是樣本內；模型種類未知。",
+        "其分數是樣本內或樣本外已確認。",
+        "一般而言，只有確認訊號由該模型產生且訓練與評估資料集相同，"
+        "才可依此判為樣本內；候選結果亦然。",
+        "一般而言，只有確認訊號由該模型產生且訓練與評估資料集相同，"
+        "才可依此判為樣本外。",
     ],
 )
 def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
@@ -345,10 +475,45 @@ def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
         "如果資料曾用於訓練，則屬於樣本內；目前沒有切分證據。",
         "是否屬於樣本內仍未知。",
         "結果屬於樣本內與否仍未知。",
+        "模型候選未保存訓練資料，因此其分數是樣本內或樣本外未知。",
         "這不是已證實的樣本外評估。",
         "契約的一般規則是：如評估用於訓練的資料則仍為樣本內；"
         "本次沒有證據可套用為既成事實。",
         "本研究究竟是樣本內、樣本外，或是否完成時間隔離與防洩漏檢查，均未知。",
+        # General rule about training-data evaluation, candidate left unknown.
+        "一般規則：在訓練資料上做的評估是樣本內；"
+        "這些既有結果沒有切分證據，因此歸屬仍未知。",
+        "訓練資料上做的評估屬於樣本內；這批保存結果缺少切分證據，來源仍未知。",
+        "凡在訓練資料上做的評估都屬樣本內；本次候選是否符合則沒有紀錄。",
+        "依定義，以訓練資料做的評估為樣本內；保存紀錄未交代候選的切分方式。",
+        "「在訓練資料上做的評估」屬於樣本內；這些結果的切分證據沒有保存。",
+        "訓練資料上的評估僅能支持樣本內關聯；候選是否如此仍未知。",
+        "在訓練資料上做的評估是樣本內；視窗 24 的分數不可用，視窗 12 亦然。",
+        "在訓練資料上做的評估是樣本內；視窗 12 的分數尚待確認，視窗 24 亦然。",
+        "在訓練資料上做的評估是樣本內。視窗 12 的平均 IC 為 0.2。",
+        "凡在訓練資料上做的評估，都屬於樣本內；候選是否如此仍未知。",
+        "至於訓練資料上的評估，屬於樣本內；這些結果的切分證據沒有保存。",
+        "在訓練資料上做的評估是樣本內；候選結果是否亦然未知。",
+        "在訓練資料上做的評估是樣本內；兩個候選也一樣需要確認訓練與評估切分證據。",
+        "依契約，只有模型產生訊號且保存的訓練與評估 dataset_id "
+        "相同才可確認此評分為樣本內；不同 ID 也不能證明樣本外。",
+        "一般而言，模型產生訊號且保存的訓練與評估 dataset_id 相同，"
+        "可判定該評估為樣本內；識別不同仍不足以證明樣本外，還需期間與分割證據。",
+        "一般而言，只有確認訊號由該模型產生且訓練與評估資料集相同，"
+        "才可依此判為樣本內；不同資料集 ID 仍可能期間重疊，不能據此稱為樣本外。",
+        # Reported rule: the model quotes the product rule instead of stating it.
+        "工具一般規則說明訓練資料上的評估屬於樣本內，"
+        "但不能由一般規則推定這兩筆實際屬於樣本內；同樣也不能宣稱樣本外。",
+        "契約說明在訓練資料上做的評估是樣本內；這些結果的切分證據沒有保存。",
+        "工具文件指出訓練資料上的評估屬於樣本內。",
+        "一般而言，只有保存的訓練資料集與評估資料集相同且訊號確由模型產生時"
+        "才可判為樣本內；不同 ID 也不證明樣本外。此處不符合可判定條件。",
+        "一般而言，模型產生訊號且訓練資料集 ID 等於評估資料集 ID 時為樣本內；"
+        "ID 不同也不保證期間不重疊。本次缺乏此欄位、訓練期間、分割及驗證紀錄，"
+        "不能判定樣本內外或無洩漏。",
+        "一般判讀原則是：由模型產生訊號且 training_dataset_id 與 dataset_id "
+        "相同才可據此判為樣本內；不同 ID 本身亦不證明樣本外。"
+        "本候選缺少訓練 ID，不能套用同集判定。",
     ],
 )
 def test_ml_report_accepts_unknown_or_conditional_sample_provenance(
@@ -366,6 +531,8 @@ def test_ml_report_accepts_unknown_or_conditional_sample_provenance(
         "模型擬合與這份評估的資料是否重疊，紀錄沒有交代。",
         "樣本內／外來源尚不明。",
         "無法確認這些結果的樣本內或樣本外歸屬。",
+        "模型候選未保存訓練資料，因此其分數是樣本內或樣本外未知。",
+        "模型候選未保存訓練資料，因此其分數是樣本外或樣本內未知。",
         _UNKNOWN_PROVENANCE_CONTEXT,
     ],
 )
@@ -416,19 +583,25 @@ def test_ml_report_commentary_cannot_replace_final_provenance_explanation(
         replace(report, turn=replace(report.turn, text=text)).verify()
 
 
-@pytest.mark.parametrize("has_unsupported_claim", [False, True])
+@pytest.mark.parametrize(
+    "claim",
+    [
+        None,
+        "這些結果屬於樣本內評估。",
+        "在訓練資料上做的評估是樣本內；候選結果亦然。",
+        "在訓練資料上做的評估是樣本內；候選雖然缺少切分證據，同樣如此。",
+    ],
+)
 @pytest.mark.parametrize("structured", [False, True])
 def test_ml_report_commentary_also_retains_unknown_sample_provenance(
-    report: MLReportWorkflow, has_unsupported_claim: bool, structured: bool
+    report: MLReportWorkflow, claim: str | None, structured: bool
 ) -> None:
     report_call = report.calls[-1]
     old_path = report_call.result["path"]
     report_call.arguments["commentary"] = [
         {
             "title": "保存來源限制",
-            "text": "這些結果屬於樣本內評估。"
-            if has_unsupported_claim
-            else ML_SAMPLE_PROVENANCE_NOTE,
+            "text": claim or ML_SAMPLE_PROVENANCE_NOTE,
         }
     ]
     if structured:
@@ -446,11 +619,46 @@ def test_ml_report_commentary_also_retains_unknown_sample_provenance(
     assert report_call.result["success"] is True
     text = report.turn.text.replace(old_path, report_call.result["path"])
     delivered = replace(report, turn=replace(report.turn, text=text))
-    if has_unsupported_claim:
+    if claim is not None:
         with pytest.raises(AssertionError, match="no evidence for an affirmative"):
             delivered.verify()
     else:
         delivered.verify()
+
+
+@pytest.mark.parametrize("delivered_in", ["commentary", "analysis", "both"])
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "一般規則：在訓練資料上做的評估是樣本內；"
+        "這些既有結果沒有切分證據，因此歸屬仍未知。",
+        "在訓練資料上做的評估是樣本內；兩個候選也一樣需要確認訓練與評估切分證據。",
+        "依契約，只有模型產生訊號且保存的訓練與評估 dataset_id "
+        "相同才可確認此評分為樣本內；不同 ID 也不能證明樣本外。",
+    ],
+)
+def test_ml_report_accepts_the_general_rule_in_each_delivered_entry_point(
+    report: MLReportWorkflow, delivered_in: str, rule: str
+) -> None:
+    """Commentary and structured analysis must accept the rule independently."""
+    report_call = report.calls[-1]
+    old_path = report_call.result["path"]
+    if delivered_in != "analysis":
+        report_call.arguments["commentary"] = [{"title": "來源限制", "text": rule}]
+    if delivered_in != "commentary":
+        report_call.arguments["analysis"] = {
+            "summary": rule,
+            "observations": "保存的視窗比較。",
+            "hypotheses_and_limits": ML_SAMPLE_PROVENANCE_NOTE,
+            "next_steps": "先核對資料。",
+            "references": [],
+        }
+    report_call.result = ReportService(
+        workspace=WorkspacePaths(report.workspace.workspace)
+    ).generate_report(**report_call.arguments)
+    assert report_call.result["success"] is True
+    text = report.turn.text.replace(old_path, report_call.result["path"])
+    replace(report, turn=replace(report.turn, text=text)).verify()
 
 
 @pytest.mark.parametrize("filename", ["report.html", "manifest.json"])

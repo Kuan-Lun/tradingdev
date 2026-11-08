@@ -12,6 +12,7 @@ from threading import Event, Thread
 from typing import TYPE_CHECKING
 
 import pytest
+from tooling.process_guard import run_captured
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,6 +26,11 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.live_llm
+
+
+@pytest.fixture(autouse=True)
+def record_setup():
+    Path("setup.ran").touch()
 
 
 def test_01_workflow(pytestconfig):
@@ -53,6 +59,29 @@ def _script_environment(tmp_path: Path) -> dict[str, str]:
         _REPOSITORY / "scripts/check-llm.sh", tmp_path / "scripts/check-llm.sh"
     )
     shutil.copy2(_REPOSITORY / "tests/llm_plugin.py", tmp_path / "conftest.py")
+    (tmp_path / "tooling").mkdir()
+    (tmp_path / "tooling/__init__.py").touch()
+    for name in ("environment.py", "llm_check.py", "process_guard.py"):
+        shutil.copy2(_REPOSITORY / "tooling" / name, tmp_path / "tooling" / name)
+    with (tmp_path / "conftest.py").open("a") as conftest:
+        conftest.write("""
+from pathlib import Path
+from tooling import environment
+
+def probe(name):
+    with Path("environment.ran").open("a") as log:
+        log.write(name + "\\n")
+    if os.environ.get("TRADINGDEV_TEST_ENV_FAILURE") == name:
+        raise environment.EnvironmentCheckError("fixture prerequisite unavailable")
+    if os.environ.get("TRADINGDEV_TEST_ENV_FAILURE") == "cleanup":
+        from tooling.process_guard import ProcessCleanupError
+        raise ProcessCleanupError("fixture probe cleanup unverified")
+    return "fixture"
+
+environment.require_strategy_runtime = lambda: probe("runtime")
+environment.require_codex = lambda: probe("codex")
+environment.require_local_service = lambda _url: probe("local")
+""")
     (tmp_path / "pytest.ini").write_text(
         "[pytest]\nmarkers =\n    live_llm: offline launcher fixture\n",
         encoding="utf-8",
@@ -164,6 +193,45 @@ def script_workspace(tmp_path: Path) -> Iterator[Path]:
     assert not workspace.exists()
 
 
+@pytest.mark.parametrize("source", ["arguments", "environment"])
+@pytest.mark.parametrize("mode", ["parallel", "looponfail"])
+def test_live_launcher_rejects_parallelism_before_setup(
+    script_workspace: Path, source: str, mode: str
+) -> None:
+    environment = _script_environment(script_workspace)
+    environment["TRADINGDEV_TEST_ENV_FAILURE"] = "runtime"
+    options = (
+        ["-p", "xdist.plugin", "-n", "2"]
+        if mode == "parallel"
+        else ["-p", "xdist.looponfail", "--looponfail"]
+    )
+    if source == "environment":
+        environment["PYTEST_ADDOPTS"] = " ".join(options)
+        options = []
+    result = run_captured(
+        [
+            "bash",
+            "scripts/check-llm.sh",
+            "local",
+            "--llm-model",
+            "offline-fixture",
+            "-k",
+            "cleanup_only",
+            *options,
+        ],
+        cwd=script_workspace,
+        env=environment,
+        timeout=20,
+    )
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR, (
+        result.stdout + result.stderr
+    )
+    assert "requires serial execution" in result.stderr
+    assert not (script_workspace / "cleanup.ran").exists()
+    assert not (script_workspace / "setup.ran").exists()
+    assert not (script_workspace / "environment.ran").exists()
+
+
 def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
     script_workspace: Path,
 ) -> None:
@@ -272,3 +340,117 @@ def test_script_selects_scenario_without_running_authoring_suite(
     assert "1 passed, 12 deselected" in result.stdout
     assert (script_workspace / f"{scenario}.ran").read_text() == "done"
     assert not (script_workspace / "completed.ran").exists()
+
+
+@pytest.mark.parametrize(
+    "provider, failing_probe, options",
+    [
+        ("local", "runtime", []),
+        ("local", "local", []),
+        ("codex", "codex", []),
+        ("local", "runtime", ["--setup-only"]),
+        ("local", "runtime", ["-p", "xdist.plugin", "-n", "0"]),
+    ],
+)
+def test_missing_prerequisite_stops_live_suite_before_test_setup(
+    script_workspace: Path,
+    provider: str,
+    failing_probe: str,
+    options: list[str],
+) -> None:
+    environment = _script_environment(script_workspace)
+    environment["TRADINGDEV_TEST_ENV_FAILURE"] = failing_probe
+    result = subprocess.run(
+        [
+            "bash",
+            "scripts/check-llm.sh",
+            provider,
+            "--llm-model",
+            "offline-fixture",
+            "-k",
+            "test_01_workflow",
+            *options,
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=script_workspace,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "Live-test environment check failed" in result.stderr
+    assert not (script_workspace / "setup.ran").exists()
+    assert (script_workspace / "environment.ran").read_text().splitlines() == (
+        ["runtime"] if failing_probe == "runtime" else ["runtime", provider]
+    )
+
+
+@pytest.mark.parametrize(
+    "selection, expected",
+    [
+        (["--collect-only"], 0),
+        (["--help"], 0),
+        (["--fixtures"], 0),
+        (["--fixtures-per-test"], 0),
+        (["--setup-plan"], 0),
+        (["-k", "no_matching_scenario"], 5),
+    ],
+)
+@pytest.mark.parametrize("provider", ["codex", "local"])
+def test_information_or_empty_selection_does_not_probe_services(
+    script_workspace: Path,
+    provider: str,
+    selection: list[str],
+    expected: int,
+) -> None:
+    environment = _script_environment(script_workspace)
+    environment["TRADINGDEV_TEST_ENV_FAILURE"] = "runtime"
+    result = subprocess.run(
+        [
+            "bash",
+            "scripts/check-llm.sh",
+            provider,
+            "--llm-model",
+            "offline-fixture",
+            *selection,
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=script_workspace,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == expected, result.stdout + result.stderr
+    assert not (script_workspace / "environment.ran").exists()
+    assert not (script_workspace / "setup.ran").exists()
+    assert not (script_workspace / "cleanup.ran").exists()
+
+
+def test_live_launcher_preserves_unverified_cleanup_exit_status(
+    script_workspace: Path,
+) -> None:
+    environment = _script_environment(script_workspace)
+    environment["TRADINGDEV_TEST_ENV_FAILURE"] = "cleanup"
+    result = subprocess.run(
+        [
+            "bash",
+            "scripts/check-llm.sh",
+            "codex",
+            "-k",
+            "cleanup_only",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=script_workspace,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 86
+    assert '"code": "process_cleanup_unverified"' in result.stderr
+    assert not (script_workspace / "cleanup.ran").exists()

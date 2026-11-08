@@ -1,17 +1,21 @@
 """Configuration models for the bundled GLFT strategy."""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from tradingdev.domain.strategies.bundled.indicator_parameters import (
     MovingAveragePeriod,
     TrendEMAPeriod,
 )
 
+type AggregationBars = Annotated[int, Field(strict=True, ge=1)]
+
 
 class GLFTStrategyConfig(BaseModel):
     """GLFT market-making strategy configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     gamma: float = 500.0
     kappa: float = 1000.0
@@ -37,8 +41,8 @@ class GLFTStrategyConfig(BaseModel):
     profit_target_ratio_candidates: list[float] = [0.5, 0.75, 1.0]
     strategy_sl: float = 0.005
     momentum_guard: bool = True
-    signal_agg_minutes: int = 1
-    signal_agg_minutes_candidates: list[int] = [1]
+    signal_agg_bars: AggregationBars = 1
+    signal_agg_bars_candidates: list[AggregationBars] = [1]
     dynamic_sizing: bool = False
     min_position_size: float = 500.0
     edge_for_full_size: float = 0.005

@@ -5,10 +5,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 import re
 import shutil
-import stat
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -19,6 +17,7 @@ from filelock import FileLock
 from tradingdev.adapters.reporting.notebook import render_notebook
 from tradingdev.adapters.storage.filesystem import now_iso
 from tradingdev.adapters.storage.research_notes import note_bytes
+from tradingdev.adapters.storage.workspace_files import WorkspaceFiles
 from tradingdev.app.contracts.research_notes import NoteExport
 from tradingdev.domain.research_notes import ResearchNoteRecord
 
@@ -43,31 +42,7 @@ def _json(value: object) -> bytes:
 class ResearchArchiveStore:
     def __init__(self, workspace: WorkspacePaths, store: SQLiteStore) -> None:
         self.workspace, self.store = workspace, store
-
-    def safe_path(self, path: Path) -> Path:
-        root = self.workspace.root
-        if root.is_symlink() or root.resolve() != root:
-            raise ValueError("Archive workspace is not a canonical directory")
-        relative = path.relative_to(root)
-        current = root
-        for part in relative.parts:
-            current /= part
-            if part in {".", ".."} or current.is_symlink():
-                raise ValueError("Archive paths must not traverse symlinks or parents")
-        return current
-
-    def read(self, path: Path, limit: int = MAX_ARCHIVE_BYTES) -> bytes:
-        descriptor = os.open(
-            self.safe_path(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-        )
-        with os.fdopen(descriptor, "rb") as stream:
-            info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
-                raise ValueError("Archive source is not a bounded regular file")
-            content = stream.read(limit + 1)
-        if len(content) > limit:
-            raise ValueError("Archive exceeds 64 MiB; select fewer reports")
-        return content
+        self.files = WorkspaceFiles(workspace.root)
 
     def _attachment(self, artifact_id: str) -> tuple[bytes, dict[str, Any]]:
         row = self.store.get_artifact(artifact_id)
@@ -92,7 +67,7 @@ class ResearchArchiveStore:
             )
         if str(expected) != row["path"]:
             raise ValueError("Artifact path differs from its expected identity")
-        content = self.read(expected)
+        content = self.files.read(expected, MAX_ARCHIVE_BYTES)
         if _digest(content) != row["sha256"]:
             raise ValueError(f"Referenced report changed: {artifact_id}")
         return content, {
@@ -143,18 +118,21 @@ class ResearchArchiveStore:
             or len(files["research.zip"]) > MAX_ARCHIVE_BYTES
         ):
             raise ValueError("Archive exceeds 64 MiB including notebook and manifest")
-        root = self.safe_path(self.workspace.root / "research_archives")
+        root = self.files.safe_path(self.workspace.root / "research_archives")
         root.mkdir(exist_ok=True)
-        directory = self.safe_path(root / archive_id)
+        directory = self.files.safe_path(root / archive_id)
         artifact_id = f"research:{archive_id}:zip"
         sha = _digest(files["research.zip"])
-        lock = self.safe_path(root / f".{archive_id}.lock")
+        lock = self.files.safe_path(root / f".{archive_id}.lock")
         with FileLock(lock, timeout=5):
             created = False
             try:
                 if directory.exists():
                     for name, content in files.items():
-                        if self.read(directory / name) != content:
+                        if (
+                            self.files.read(directory / name, MAX_ARCHIVE_BYTES)
+                            != content
+                        ):
                             raise ValueError(
                                 "Existing archive bytes changed; refusing replacement"
                             )
@@ -166,7 +144,7 @@ class ResearchArchiveStore:
                             path = staged / name
                             path.parent.mkdir(parents=True, exist_ok=True)
                             path.write_bytes(content)
-                        self.safe_path(directory)
+                        self.files.safe_path(directory)
                         staged.rename(directory)
                         created = True
                 with self.store.connect() as conn:
@@ -223,7 +201,7 @@ class ResearchArchiveStore:
             or row["sha256"] != sha256
         ):
             raise ValueError("Unknown archive or mismatched download identity")
-        content = self.read(path)
+        content = self.files.read(path, MAX_ARCHIVE_BYTES)
         if _digest(content) != sha256:
             raise ValueError("Archive bytes changed")
         return content
@@ -246,7 +224,7 @@ class ResearchArchiveStore:
         html_path = None
         try:
             if all(
-                self.read(directory / name) == data
+                self.files.read(directory / name, MAX_ARCHIVE_BYTES) == data
                 for name, data in reading_files.items()
             ):
                 html_path = str(directory / "index.html")

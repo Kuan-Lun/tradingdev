@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.domain.backtest.schemas import (
     BacktestConfig,
@@ -143,7 +144,7 @@ def test_raw_config_and_manifest_reject_the_same_lossy_values(
             kind="backtest",
             config=config,
             strategy_execution=StrategyExecution(
-                kind="generated", constructor_kwargs={}
+                kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
             ),
         )
 
@@ -160,7 +161,7 @@ def test_raw_config_and_manifest_reject_circular_parameters() -> None:
             kind="backtest",
             config=config,
             strategy_execution=StrategyExecution(
-                kind="generated", constructor_kwargs={}
+                kind="generated", program=GENERATED_PROGRAM, constructor_kwargs={}
             ),
         )
 

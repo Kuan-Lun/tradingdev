@@ -10,7 +10,7 @@ from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
-from tradingdev.domain.ml.retrainer import RollingRetrainer
+from tradingdev.domain.ml.rolling_gen import run_rolling
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.ml.threshold_optimizer import ThresholdOptimizer
 
@@ -34,6 +34,9 @@ class _PredictionRecorder(XGBoostDirectionModel):
     def __init__(self) -> None:
         super().__init__(XGBoostModelConfig())
         self.frames: list[pd.DataFrame] = []
+
+    def train(self, df: pd.DataFrame, eval_df: pd.DataFrame | None = None) -> None:
+        pass
 
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
         self.frames.append(df.copy(deep=True))
@@ -106,17 +109,45 @@ def test_threshold_search_without_complete_features_keeps_default() -> None:
 def test_rolling_prediction_requires_the_current_source_row(
     position: int, expected: int
 ) -> None:
+    """A bar is scored from its own feature row, or not at all.
+
+    Positions 20 and 100 have no complete row of their own -- warm-up, and a
+    flat region whose Bollinger width is zero -- so no prediction is made for
+    them and the frame handed to the model is always the bar itself.
+    """
     frame = _gapped_frame()
     original = frame.copy(deep=True)
     model = _PredictionRecorder()
-    retrainer = RollingRetrainer(XGBoostModelConfig(), 1000, 0.6, 0, 24)
 
-    signal = retrainer._predict_bar(frame, position, FeatureEngineer(24), model)
+    signals = run_rolling(
+        frame.iloc[:0],
+        frame,
+        None,
+        model=model,
+        fe=FeatureEngineer(24),
+        label_horizon=(FeatureEngineer(24)).target_horizon,
+        model_config=XGBoostModelConfig(),
+        retrain_interval=10,
+        model_factory=lambda _: model,
+        threshold=0.6,
+        cooldown=0,
+        lookback=24,
+    )
 
-    assert signal == expected
-    assert len(model.frames) == expected
-    if expected:
-        pd.testing.assert_frame_equal(
-            model.frames[0][frame.columns], frame.iloc[[position]]
+    predicted = [int(request.index[0]) for request in model.frames]
+    assert (position in predicted) is bool(expected)
+    assert signals[position] == expected
+    for request in model.frames:
+        assert len(request) == 1
+        bar = int(request.index[0])
+        # ``run()`` normalises the scored frame to UTC; the fixture is naive.
+        assert pd.Timestamp(request["timestamp"].iloc[0]) == pd.Timestamp(
+            frame["timestamp"].iloc[bar]
+        ).tz_localize("UTC")
+        np.testing.assert_allclose(
+            request[["open", "high", "low", "close", "volume"]].to_numpy(dtype=float),
+            frame.loc[[bar], ["open", "high", "low", "close", "volume"]].to_numpy(
+                dtype=float
+            ),
         )
     pd.testing.assert_frame_equal(frame, original)

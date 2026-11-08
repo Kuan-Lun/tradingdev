@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import pytest
 from mcp_types import CallToolResult
+from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.cli.reports import main as report_main
 from tradingdev.adapters.storage.comparisons import ComparisonStore
@@ -78,7 +79,9 @@ def _fixture(
                         },
                     },
                     strategy_execution=StrategyExecution(
-                        kind="generated", constructor_kwargs={"period": index}
+                        kind="generated",
+                        program=GENERATED_PROGRAM,
+                        constructor_kwargs={"period": index},
                     ),
                 ),
             )

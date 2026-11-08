@@ -34,10 +34,11 @@ def test_bundled_capabilities_are_available_in_discovery_without_imports(
             "strategy:\n  id: training_fixture\n  class_name: TrainingFixture\n"
             "  training_requirement: required\n"
         )
-        service = StrategyService(WorkspacePaths(root / "workspace"))
+        catalog = BundledStrategyCatalog(root / "bundled")
         monkeypatch.setattr(
-            service, "_catalog", BundledStrategyCatalog(root / "bundled")
+            "tradingdev.app.strategy_service.BundledStrategyCatalog", lambda: catalog
         )
+        service = StrategyService(WorkspacePaths(root / "workspace"))
         listed = service.list_strategies()
         selected = service.get_strategy("training_fixture")
         spec = service.resolve_executable("training_fixture")

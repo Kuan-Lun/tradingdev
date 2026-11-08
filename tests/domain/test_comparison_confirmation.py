@@ -23,7 +23,7 @@ from tradingdev.domain.preflight import (
 from tradingdev.domain.presentation.comparison_confirmation import (
     build_comparison_confirmation,
 )
-from tradingdev.domain.presentation.confirmation import (
+from tradingdev.domain.presentation.confirmation_contract import (
     ConfirmationPresentationError,
     ParameterDescription,
 )

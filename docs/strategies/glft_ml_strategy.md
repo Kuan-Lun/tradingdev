@@ -3,7 +3,7 @@
 ## 策略概述
 
 結合 GLFT（Gueant-Lehalle-Fernandez-Tapia）解析型做市模型與 FLAML AutoML
-方向預測器。ML 模型預測短期（5-15 分鐘）方向，用於提前掛 limit order，
+方向預測器。ML 模型預測未來 5–15 根 K 棒的方向，用於提前掛 limit order，
 以 maker fee（0.02%/side）取代 taker fee（0.06%/side）。
 
 與純 GLFT 策略的關鍵差異：
@@ -12,12 +12,18 @@
 - Maker fee：假設使用 limit order（fee_rate=0.0002）
 - 更低的 entry edge 門檻（因手續費更低）
 
+時間軸限制、每根波動率換算與換頻後重新訓練的要求，見[共用時間尺度](glft_strategy.md#時間尺度)。
+若 ML 訓練或其後的參數搜尋失敗，該實例須成功重新 `fit()` 才能產生訊號；不會混用
+部分更新的模型與舊參數，也不會自動退回未訓練路徑。
+
 ## 信號邏輯
 
 以下 ML 方向條件適用於已完成訓練的模型；未訓練時保留純 GLFT 訊號路徑，
 不使用 ML 方向過濾。
+未訓練路徑仍使用本策略的 EMA、波動率與進出場設定；這與已訓練但信心不足的
+零方向預測不同，後者仍不開新倉。沒有回測引擎時 `fit()` 會略過訓練，仍使用未訓練路徑。
 
-1. **ML 方向預測**：FLAML AutoML 在時間預算內搜尋 learner 與超參數，預測 N 分鐘後的價格方向
+1. **ML 方向預測**：FLAML AutoML 在時間預算內搜尋 learner 與超參數，預測 N 根 K 棒後的價格方向
    - ML=1（看漲）：只允許做多
    - ML=-1（看跌）：只允許做空
    - ML=0（信心不足）：不開倉
@@ -44,7 +50,7 @@
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| prediction_horizon | 5 | ML 預測方向的未來 N 分鐘 |
+| prediction_horizon | 5 | ML 預測方向的未來 N 根 K 棒 |
 | feature_lookback | 60 | 特徵工程回看窗口（bars） |
 | ml_time_limit | 300 | AutoML 搜尋時間預算（秒） |
 | ml_estimator_list | ["lgbm", "xgboost", "catboost", "rf", "extra_tree"] | FLAML 搜尋的 learner 清單 |
@@ -66,7 +72,7 @@
 | min_entry_edge | 0.0012 | 最低進場偏離（>= fee_rate * 2） |
 | profit_target_ratio | 0.75 | 獲利目標（entry deviation 的比例） |
 | strategy_sl | 0.003 | 策略止損（超過 entry 偏離的額外容忍） |
-| min_holding_bars | 5 | 最小持倉 bars（交易所合規） |
+| min_holding_bars | 5 | 最小持倉根數 |
 | max_holding_bars | 13 | 最大持倉 bars |
 
 ### 波動度與費率
@@ -79,12 +85,14 @@
 
 DVOL 檔案路徑由 `data.requirements.features` 宣告。策略參數只控制
 `vol_type` 與交易邏輯，不保存 feature 資料路徑。
+歷史波動率的公式、滾動窗口與缺值語意見
+[共用波動率定義](glft_strategy.md#historical-volatility)；參數搜尋與訊號生成均依所選模式計算。
 
 ## 特徵工程
 
 `DirectionFeatureEngineer` 產生約 50 個特徵：
 
-- **收益率特徵**：1/5/15/30/60 分鐘 log return 及其 lag
+- **收益率特徵**：以輸入 K 棒根數定義的 log return 窗口 及其 lag
 - **滾動統計**：均值、標準差、偏度、峰度
 - **EMA 偏離**：多個窗口的 close/EMA 偏離比
 - **波動度**：rolling std、Parkinson estimator、DVOL
