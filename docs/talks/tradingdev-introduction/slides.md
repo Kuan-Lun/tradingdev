@@ -655,9 +655,31 @@ sequenceDiagram
 
 ## 內部訊號流程：TradingDev 的主要模組
 
-<!-- _class: compact -->
+<!-- _class: compact diagram-wide -->
 
-![w:1000 TradingDev 內部模組的訊號流程](assets/architecture-internal-flow.png)
+```mermaid
+sequenceDiagram
+    accTitle: TradingDev 內部模組的訊號流程
+    participant MCP
+    participant App
+    participant Plan
+    participant Worker
+    participant Store
+    participant Result
+
+    MCP->>App: prepare
+    App->>Plan: check
+    Plan->>App: receipt
+    App->>MCP: plan
+    MCP->>App: approve
+    App->>Worker: submit job
+    Worker->>Store: save run
+    MCP->>App: query
+    App->>Result: get / compare / rank
+    Store->>Result: read
+    Result->>App: metrics / rank
+    App->>MCP: reply
+```
 
 Plan 代表 ExecutionPlan／Preflight；Worker 使用資料與回測模組；Result 代表 Run、Ranking 與 Report services。
 

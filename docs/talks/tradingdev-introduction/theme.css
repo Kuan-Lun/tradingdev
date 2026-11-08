@@ -99,6 +99,13 @@ section.references li { margin: 13px 0; }
 /* Mermaid SVG is embedded during the build and keeps its intrinsic proportions. */
 section .mermaid-diagram { display: flex; justify-content: center; margin: 0; }
 section .mermaid-diagram > svg { width: 100%; height: 400px; max-width: 1120px; }
+/* Six lanes need larger labels after fitting the wide SVG into a slide. */
+section.diagram-wide .mermaid-diagram text { font-size: 54px !important; }
+section.diagram-wide .mermaid-diagram > svg { height: 360px; }
+section.diagram-wide .mermaid-diagram .messageText { transform: translateY(-20px); }
+section.diagram-wide .mermaid-diagram rect.actor { stroke: none; fill: none; }
+section.diagram-wide .mermaid-diagram .messageLine0,
+section.diagram-wide .mermaid-diagram .messageLine1 { stroke-width: 3px !important; }
 
 /* Visible conversation text remains selectable and readable at presentation scale. */
 section.case-dialogue { font-size: 24px; }
