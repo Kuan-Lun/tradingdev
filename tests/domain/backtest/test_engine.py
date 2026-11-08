@@ -106,6 +106,7 @@ class TestSignalBacktestEngine:
         signals = [1] * 50
         df = self._make_simple_df(prices, signals)
         result = self.engine.run(df)
+        assert result.metrics["total_return"] is not None
         assert result.metrics["total_return"] > 0
 
     def test_no_signal_no_trades(self) -> None:
@@ -123,6 +124,8 @@ class TestSignalBacktestEngine:
 
         engine_fees = SignalBacktestEngine(init_cash=10_000.0, fees=0.01, slippage=0.0)
         result_fees = engine_fees.run(df)
+        assert result_fees.metrics["total_return"] is not None
+        assert result_no_fees.metrics["total_return"] is not None
         assert (
             result_fees.metrics["total_return"] < result_no_fees.metrics["total_return"]
         )
@@ -163,6 +166,7 @@ class TestVolumeBacktestEngine:
             stop_loss=0.01,
         )
         result = engine.run(df)
+        assert result.metrics["total_trades"] is not None
         assert result.metrics["total_trades"] >= 2
 
     def test_direction_change(self) -> None:
@@ -175,6 +179,7 @@ class TestVolumeBacktestEngine:
             position_size=200.0,
         )
         result = engine.run(df)
+        assert result.metrics["total_trades"] is not None
         assert result.metrics["total_trades"] >= 2
 
     def test_always_in_position(self) -> None:
@@ -193,6 +198,7 @@ class TestVolumeBacktestEngine:
             take_profit=0.004,
         )
         result = engine.run(df)
+        assert result.metrics["total_trades"] is not None
         assert result.metrics["total_trades"] > 10
 
     def test_metrics_keys(self) -> None:
@@ -233,6 +239,8 @@ class TestVolumeBacktestEngine:
         )
         sig_r = sig_engine.run(df)
         vol_r = vol_engine.run(df)
+        assert sig_r.metrics["total_trades"] is not None
+        assert vol_r.metrics["total_trades"] is not None
         assert vol_r.metrics["total_trades"] >= sig_r.metrics["total_trades"]
 
     def test_no_signal_no_trades(self) -> None:
@@ -279,6 +287,7 @@ class TestVolumeCircuitBreaker:
         )
         result = engine.run(df)
         # Total PnL should be bounded near -monthly_max_loss
+        assert result.metrics["total_pnl"] is not None
         assert result.metrics["total_pnl"] >= -10.0
 
     def test_circuit_breaker_resets_on_new_month(self) -> None:
@@ -319,6 +328,7 @@ class TestVolumeCircuitBreaker:
         )
         result = engine.run(df)
         # Should have trades in both January and February
+        assert result.metrics["total_trades"] is not None
         assert result.metrics["total_trades"] >= 2
 
     def test_circuit_breaker_force_closes_position(self) -> None:
@@ -335,6 +345,7 @@ class TestVolumeCircuitBreaker:
         )
         result = engine.run(df)
         # After breaker: no open position, all trades closed
+        assert result.metrics["total_trades"] is not None
         assert result.metrics["total_trades"] >= 1
         # Final equity should be cash (no unrealized position)
         assert result.equity_curve[-1] == result.metrics["total_pnl"]

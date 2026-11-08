@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from tradingdev.domain.performance.sampling import DAILY_EQUITY_METRICS
 
+type MetricScalar = int | float | None
+
 
 @dataclass(frozen=True)
 class MetricDefinition:
@@ -286,7 +288,7 @@ def metric_catalog(mode: str | None = None) -> list[dict[str, Any]]:
     ]
 
 
-def summarize_metrics(metrics: dict[str, Any], mode: str) -> dict[str, Any]:
+def summarize_metrics[T](metrics: dict[str, T], mode: str) -> dict[str, T]:
     """Select a compact view without changing stored or calculated metrics."""
     return {
         key: value

@@ -413,6 +413,7 @@ class TestGLFTIntegration:
         )
         result = engine.run(signals)
 
+        assert result.metrics["total_trades"] is not None
         assert result.metrics["total_trades"] >= 0
         assert "total_return" in result.metrics
 

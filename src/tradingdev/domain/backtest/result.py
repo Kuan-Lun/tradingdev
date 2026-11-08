@@ -13,6 +13,7 @@ if TYPE_CHECKING:
         AccountState,
         ExecutionRecord,
     )
+    from tradingdev.domain.performance.catalog import MetricScalar
 
 
 @dataclass
@@ -40,7 +41,7 @@ class BacktestResult:
             are not exchange wallet balances or perpetual margin snapshots.
     """
 
-    metrics: dict[str, Any]
+    metrics: dict[str, MetricScalar]
     equity_curve: npt.NDArray[np.float64]
     trades: list[dict[str, Any]] = field(default_factory=list)
     timestamps: npt.NDArray[Any] | None = None

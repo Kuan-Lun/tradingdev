@@ -206,9 +206,13 @@ def test_date_aggregation_uses_market_timestamp_and_preserves_first_pnl() -> Non
     result = SignalBacktestEngine(init_cash=1000, fees=0.01, slippage=0).run(df)
     assert result.metrics["n_days"] == 3
     assert result.metrics["n_months"] == 2
+    assert result.metrics["daily_pnl_mean"] is not None
+    assert result.metrics["total_pnl"] is not None
     assert result.metrics["daily_pnl_mean"] * 3 == pytest.approx(
         result.metrics["total_pnl"]
     )
+    assert result.metrics["monthly_pnl_mean"] is not None
+    assert result.metrics["total_pnl"] is not None
     assert result.metrics["monthly_pnl_mean"] * 2 == pytest.approx(
         result.metrics["total_pnl"]
     )
@@ -274,12 +278,17 @@ def test_volume_ledger_reconciles_all_close_paths(
     gross_pnl = sum(trade["gross_pnl"] for trade in result.trades)
     assert result.equity_curve[-1] == pytest.approx(net_pnl)
     assert result.metrics["total_pnl"] == pytest.approx(net_pnl)
+    assert result.metrics["total_fees"] is not None
+    assert result.metrics["total_volume"] is not None
     assert result.metrics["total_fees"] == pytest.approx(
         result.metrics["total_volume"] * 0.001
     )
+    assert result.metrics["total_slippage"] is not None
+    assert result.metrics["total_volume"] is not None
     assert result.metrics["total_slippage"] == pytest.approx(
         result.metrics["total_volume"] * 0.002
     )
+    assert result.metrics["total_volume"] is not None
     assert net_pnl == pytest.approx(gross_pnl - result.metrics["total_volume"] * 0.003)
     assert result.metrics["open_trades"] == 0
 
@@ -465,11 +474,17 @@ def test_unavailable_daily_sampling_preserves_bar_and_trade_metrics(
         assert result.metric_metadata["unavailable"][metric_id] == expected
     assert result.metrics["total_pnl"] is not None
     assert result.metrics["max_drawdown_amount"] is not None
+    assert result.metrics["total_trades"] is not None
     assert result.metrics["total_trades"] > 0
+    assert result.metrics["total_volume"] is not None
     assert result.metrics["total_volume"] > 0
     assert result.metrics["n_days"] == 5
     assert result.metrics["n_months"] == 2
+    assert result.metrics["monthly_trades_mean"] is not None
+    assert result.metrics["total_trades"] is not None
     assert result.metrics["monthly_trades_mean"] == result.metrics["total_trades"] / 2
+    assert result.metrics["monthly_volume_mean"] is not None
+    assert result.metrics["total_volume"] is not None
     assert result.metrics["monthly_volume_mean"] == result.metrics["total_volume"] / 2
     if mode == "signal":
         assert result.metrics["total_return"] is not None
