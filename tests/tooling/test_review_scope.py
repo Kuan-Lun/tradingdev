@@ -191,6 +191,12 @@ def test_repeated_headings_remain_distinct_with_correct_ancestors() -> None:
         ("src/tradingdev/mcp/workers/backtest.py", "execution"),
         ("tests/adapters/execution/test_worker_supervisor.py", "execution"),
         ("src/tradingdev/domain/performance/catalog.py", "results"),
+        ("src/tradingdev/domain/statistics/periods.py", "results"),
+        ("tests/domain/statistics/test_statistics_periods.py", "results"),
+        ("research/mae_analysis.py", "tooling"),
+        ("tests/test_mae_analysis.py", "tooling"),
+        ("research/new_analysis.py", "general"),
+        ("tests/test_new_analysis.py", "general"),
         ("tests/app/test_trade_history.py", "results"),
         ("src/tradingdev/app/contracts/reports.py", "results"),
         ("src/tradingdev/app/contracts/history.py", "results"),
@@ -263,6 +269,14 @@ def test_path_ownership_is_explicit_and_deterministic(path: str, expected: str) 
             "src/tradingdev/adapters/presentation/confirmation.py",
             "src/tradingdev/domain/presentation/confirmation.py",
             "tests/domain/test_confirmation_presentation.py",
+        )
+    ]
+    + [
+        (path, "tooling", document, heading)
+        for path in ("research/mae_analysis.py", "tests/test_mae_analysis.py")
+        for document, heading in (
+            ("docs/development.md", "MAE 研究原型"),
+            ("ARCHITECTURE.md", "Repository 開發工具與研究原型"),
         )
     ],
 )

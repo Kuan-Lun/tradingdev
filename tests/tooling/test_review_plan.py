@@ -82,6 +82,66 @@ def test_model_options_review_preserves_source_and_development_guidance(
     assert "Report-only instructions." not in plan.prompts[0]
 
 
+@pytest.mark.parametrize(
+    ("path", "scope", "required", "excluded"),
+    [
+        (
+            "src/tradingdev/domain/statistics/periods.py",
+            "results",
+            "Saved numeric semantics.",
+            "Developer model setup.",
+        ),
+        (
+            "tests/domain/statistics/test_statistics_periods.py",
+            "results",
+            "Saved numeric semantics.",
+            "Developer model setup.",
+        ),
+        (
+            "research/mae_analysis.py",
+            "tooling",
+            "MAE date and complete-window semantics.",
+            "Saved numeric semantics.",
+        ),
+        (
+            "tests/test_mae_analysis.py",
+            "tooling",
+            "MAE date and complete-window semantics.",
+            "Saved numeric semantics.",
+        ),
+    ],
+)
+def test_numeric_analysis_review_preserves_its_source_and_contract(
+    tmp_path: Path, path: str, scope: str, required: str, excluded: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, path, "VALUE = 'old'\n")
+    _write(
+        tmp_path,
+        "docs/performance_artifacts.md",
+        "# Performance Artifacts\n\n## Metric Interpretation\n"
+        "Saved numeric semantics.\n",
+    )
+    _write(
+        tmp_path,
+        "docs/development.md",
+        "# 開發指南\n\n## MAE 研究原型\n"
+        "MAE date and complete-window semantics.\n\n"
+        "## 選擇性 LLM 測試\nDeveloper model setup.\n",
+    )
+    base = _tree(tmp_path)
+    source = "VALUE = 'new'\n"
+    _write(tmp_path, path, source)
+    plan = review_docs.prepare_review(base, _tree(tmp_path), repo=tmp_path)
+    assert plan.manifest["selected_scopes"] == [scope]
+    batch = _payload(plan.prompts[0])
+    assert batch["assigned_paths"] == [path]
+    assert batch["candidate_files"][path] == source
+    assert "+VALUE = 'new'" in batch["path_diffs"][path]
+    assert required in plan.prompts[0]
+    assert excluded not in plan.prompts[0]
+
+
 def test_each_changed_file_has_one_complete_owner_and_one_cross_scope_audit(
     change: tuple[Path, str, str],
 ) -> None:

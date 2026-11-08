@@ -384,6 +384,8 @@ _EXACT_SCOPES = {
     "docs/development.md": "tooling",
     # Explicit model-test options only; shared fixtures remain conservative.
     "tests/llm_plugin.py": "tooling",
+    "research/mae_analysis.py": "tooling",
+    "tests/test_mae_analysis.py": "tooling",
     "docs/strategy_contract.md": "strategy",
     "docs/run_artifacts.md": "results",
     "docs/ml_research.md": "ml",
@@ -410,6 +412,7 @@ _MODULE_PREFIX_SCOPES = (
     ("domain/optimization/", "execution"),
     ("domain/validation/", "execution"),
     ("domain/performance/", "results"),
+    ("domain/statistics/", "results"),
     ("domain/presentation/", "results"),
     ("adapters/execution/", "execution"),
     ("adapters/reporting/", "results"),
