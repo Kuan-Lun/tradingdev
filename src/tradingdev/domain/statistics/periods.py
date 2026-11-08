@@ -133,7 +133,7 @@ def _parse_each(values: npt.NDArray[np.object_ | np.str_]) -> pd.DatetimeIndex:
 def equity_series(
     equity_curve: npt.ArrayLike,
     timestamps: npt.ArrayLike,
-) -> pd.Series:
+) -> pd.Series[float]:
     """Validate raw run outputs and pair them into a UTC-indexed series.
 
     Raises:
@@ -162,7 +162,7 @@ def period_closing_equity(
     equity_curve: npt.ArrayLike,
     timestamps: npt.ArrayLike,
     frequency: Frequency,
-) -> pd.Series:
+) -> pd.Series[float]:
     """Closing equity of each UTC period that contains an observation.
 
     The index holds each period's UTC start (midnight of the day or of the
@@ -188,7 +188,7 @@ def period_pnl(
     equity_curve: npt.ArrayLike,
     timestamps: npt.ArrayLike,
     frequency: Frequency,
-) -> pd.Series:
+) -> pd.Series[float]:
     """Absolute equity change of each UTC period."""
     closing = period_closing_equity(equity_curve, timestamps, frequency)
     pnl = closing - _opening_equity(closing, equity_curve)
@@ -200,7 +200,7 @@ def period_returns(
     equity_curve: npt.ArrayLike,
     timestamps: npt.ArrayLike,
     frequency: Frequency,
-) -> pd.Series:
+) -> pd.Series[float]:
     """Simple return of each UTC period relative to its opening equity.
 
     Compounding the returns reproduces ``equity_curve[-1] / equity_curve[0]``.
@@ -227,6 +227,8 @@ def has_positive_equity(equity_curve: npt.ArrayLike) -> bool:
     return bool((real_array(equity_curve, "equity_curve") > 0.0).all())
 
 
-def _opening_equity(closing: pd.Series, equity_curve: npt.ArrayLike) -> pd.Series:
+def _opening_equity(
+    closing: pd.Series[float], equity_curve: npt.ArrayLike
+) -> pd.Series[float]:
     first = float(np.asarray(equity_curve, dtype=np.float64)[0])
     return closing.shift(1).fillna(first)
