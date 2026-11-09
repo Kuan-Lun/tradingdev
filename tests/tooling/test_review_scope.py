@@ -24,9 +24,17 @@ from tooling.review_scope import (
             "docs/development.md",
             "# 開發指南\n\n## 接手 issue\n",
         ),
+        (
+            "docs/development.md",
+            "# 開發指南\n\n## 環境與常用命令\n\n### 型別檢查與契約保護\n",
+        ),
+        (
+            "docs/development.md",
+            "# 開發指南\n\n## 環境與常用命令\n\n### 執行離線測試\n",
+        ),
     ],
 )
-def test_issue_claim_guidance_is_retained_in_development_review(
+def test_development_guidance_is_retained_in_its_review_scope(
     path: str, headings: str
 ) -> None:
     text = headings + "Claim policy evidence.\n"

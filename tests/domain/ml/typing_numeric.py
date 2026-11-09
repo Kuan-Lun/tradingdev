@@ -23,6 +23,9 @@ def numeric_results(prices: pd.Series[float], probabilities: pd.DataFrame) -> No
     )
     assert_type(compute_ta_indicators(prices)["rsi_14"], pd.Series[float])
     assert_type(class_probability(probabilities, 1), pd.Series[float] | pd.Series[int])
+    # These calls must remain errors even if a result loses its element type.
+    _requires_text(rolling_ic(prices, prices).iloc[0])  # type: ignore[arg-type]
+    _requires_text(compute_ta_indicators(prices)["rsi_14"].iloc[0])  # type: ignore[arg-type]
 
 
 def integer_inputs(prices: pd.Series[int]) -> None:
@@ -34,3 +37,7 @@ def integer_inputs(prices: pd.Series[int]) -> None:
         simulate_strategy_returns(prices, prices).long_short,
         pd.Series[float] | pd.Series[int],
     )
+
+
+def _requires_text(value: str) -> None:
+    pass

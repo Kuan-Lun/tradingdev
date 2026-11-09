@@ -66,10 +66,32 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 開發工具放在 [tests/](../tests/)；新增能力時依責任擴充相應測試，避免只依檔名選取。
 測試案例、測資與斷言以測試程式為準，不在本指南逐項重述。
 
-靜態型別案例以 `typing_*.py` 放在受測模組所屬的測試目錄，
-由快速檢查中的 Mypy 驗證，不由 pytest 執行。
-以 `assert_type` 驗證跨模組型別保留；預期錯誤使用具錯誤代碼的局部忽略，
+### 型別檢查與契約保護
+
+Ruff 檢查程式品質與格式，Mypy 檢查靜態型別相容性；`strict` 通過仍可能包含
+`Any`，不能據此判定型別契約足夠精確。未填元素型別的 `pd.Series` 也可能使用
+stub 的 `Any` 預設值，使不存在的方法或錯誤輸入失去檢查。
+
+已建立精確契約的核心模組在 [pyproject.toml](../pyproject.toml) 以逐模組
+`disallow_any_explicit` 限制新增的 `Any`；模組範圍以該設定為準。
+新增同類模組時，先確認輸入、輸出及使用端契約，再納入設定並執行快速檢查。
+動態 JSON、外部套件等邊界若需要 `Any`，應在邊界說明來源及限制，並在可驗證後
+收窄型別；不能用廣泛的忽略、`cast` 或擴大例外取代契約修正。
+此規則不禁止所有推導出的 `Any`，第三方回傳值及跨模組傳遞仍需契約案例保護。
+
+靜態型別案例以 `typing_*.py` 放在受測模組所屬的測試目錄，由快速檢查中的 Mypy
+驗證，不由 pytest 執行。公開介面新增或變更時，選擇有風險的輸入與輸出，
+以 `assert_type` 驗證跨模組型別保留；預期錯誤使用具錯誤代碼的局部忽略。
 若型別退化成 `Any` 而不再報錯，strict Mypy 的 unused-ignore 檢查會使案例失敗。
+這些案例驗證靜態契約，執行期資料驗證仍由相關行為測試負責。
+設定的拒絕能力由 [test_quality.py](../tests/tooling/test_quality.py) 使用實際 Mypy 驗證。
+
+快速檢查的 Python 目錄以 [tooling/quality.py](../tooling/quality.py) 的 `PYTHON_PATHS`
+為準。新增目錄時，確認可執行、持續維護的 Python 已納入該入口；歷史案例與封存
+證據另依其用途維護，不因副檔名相同就改寫。單獨執行 Mypy 時須指定 repository 的
+`pyproject.toml`，不能用另一份較寬鬆設定代替快速檢查。
+
+### 執行離線測試
 
 離線測試可直接使用 `uv run --all-extras pytest`，加檔案路徑或 `-k` 執行相關範圍。
 `check-full.sh` 一律跑完整離線套件；純開發政策／已登錄開發工具使用
