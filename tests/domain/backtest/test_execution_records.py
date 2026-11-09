@@ -68,15 +68,15 @@ def _engine(
     )
 
 
-def test_buy_reverse_close_and_open_final_have_native_fill_accounting() -> None:
+def test_buy_reverse_close_and_final_liquidation_have_native_fill_accounting() -> None:
     result = _engine().run(_market())
     records, accounts = result.execution_records, result.account_history
     assert records is not None and accounts is not None
-    assert [record.side for record in records] == ["buy", "sell", "buy", "buy"]
-    assert [record.bar_index for record in records] == [1, 2, 3, 4]
-    assert [record.order_id for record in records] == [0, 1, 2, 3]
+    assert [record.side for record in records] == ["buy", "sell", "buy", "buy", "sell"]
+    assert [record.bar_index for record in records] == [1, 2, 3, 4, 4]
+    assert [record.order_id for record in records] == [0, 1, 2, 3, 4]
     assert all(record.valuation_price == record.requested_price for record in records)
-    first, reverse, close, last = records
+    first, reverse, close, last, liquidation = records
     assert first.timestamp == "2024-01-01T16:00:00+00:00"
     assert first.market.open == first.requested_price == 110.0
     assert first.market.high == 120.0
@@ -100,8 +100,10 @@ def test_buy_reverse_close_and_open_final_have_native_fill_accounting() -> None:
     assert reverse.after.debt > 0
     assert close.after.position == 0.0
     assert last.after.position > 0
-    assert result.trades[-1]["status"] == "open"
-    assert len(records) == 4  # final mark is not an invented exit order
+    assert liquidation.requested_price == liquidation.market.close == 110.0
+    assert liquidation.after.position == 0.0
+    assert result.trades[-1]["status"] == "closed"
+    assert len(records) == 5
     assert len(accounts) == len(result.equity_curve) == 5
     assert accounts[1].position == first.after.position
     assert accounts[1].mark_price == 115.0
@@ -136,7 +138,8 @@ def test_logging_does_not_change_orders_values_trades_or_metrics(
         return logged
 
     monkeypatch.setattr(vbt.Portfolio, "from_signals", compare)
-    result = _engine(**settings).run(_market())
+    # Ordinary fills end flat here, isolating logging from terminal liquidation.
+    result = _engine(**settings).run(_market([1, -1, 0, 0, 0]))
     assert (
         result.metrics
         == calculate_metrics(
@@ -182,7 +185,11 @@ def test_large_all_in_account_tolerates_native_rounding_of_dust_cash() -> None:
     ).run(_market())
     _, observations = scope_from_backtest(result)
     assert observations.execution_records
-    assert observations.execution_records[-1].after.cash == pytest.approx(0.0)
+    entry, liquidation = observations.execution_records[-2:]
+    assert entry.after.position > 0
+    assert entry.after.cash == pytest.approx(0.0)
+    assert liquidation.after.position == 0.0
+    assert liquidation.after.cash == pytest.approx(result.equity_curve[-1])
 
 
 def test_rejected_native_attempt_has_no_fill_and_preserves_balances() -> None:

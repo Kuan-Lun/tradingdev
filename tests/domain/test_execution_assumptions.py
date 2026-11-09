@@ -56,6 +56,10 @@ def test_assumptions_bind_manifest_and_do_not_claim_checks_passed() -> None:
     assert "零值是零距離" in items["stops"]
     assert "不是只賣出平多倉" in items["signals"]
     assert "沒有槓桿" in items["leverage"]
+    assert "強制平倉" in items["end_of_data"]
+    assert "出場手續費與滑價" in items["end_of_data"]
+    assert "平倉後現金" in items["end_of_data"]
+    assert "無法完整平倉時執行失敗" in items["end_of_data"]
 
 
 @pytest.mark.parametrize("size", [None, 0, 200, 450])

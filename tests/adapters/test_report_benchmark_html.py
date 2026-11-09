@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
+import pytest
 
 from tradingdev.adapters.reporting.html import _benchmark
 from tradingdev.adapters.reporting.tables import _benchmark_row
@@ -78,6 +79,35 @@ def _available(count: int = 3, **changes: Any) -> dict[str, Any]:
 
 def _cells(row: str) -> list[str]:
     return [cell.split(">", 1)[1].split("<", 1)[0] for cell in row.split("<td")[1:]]
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected"),
+    [
+        ("liquidated_at_last_close", "期末權益為平倉後現金"),
+        ("not_liquidated_marked_at_last_close", "未計入出場成本"),
+        (None, "是否平倉及扣出場成本未知"),
+    ],
+)
+def test_benchmark_explanation_uses_the_saved_exit_policy(
+    policy: str | None, expected: str
+) -> None:
+    benchmark = _available(metadata={"benchmark": {"exit": policy}})
+    html = _benchmark(_scope(benchmark=benchmark))
+    assert expected in html
+    alternatives = {
+        "期末權益為平倉後現金",
+        "未計入出場成本",
+        "是否平倉及扣出場成本未知",
+    }
+    assert all(text not in html for text in alternatives - {expected})
+
+
+def test_invalid_benchmark_execution_has_an_explanatory_label() -> None:
+    benchmark = _available(status="unavailable", reason="invalid_benchmark_execution")
+    html = _benchmark(_scope(benchmark=benchmark))
+    assert "基準成交設定或計算金額無效，無法建立基準" in html
+    assert "未識別原因" not in html
 
 
 def test_benchmark_details_do_not_repeat_the_full_series() -> None:

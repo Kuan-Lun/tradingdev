@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tradingdev.domain.backtest.metrics import calculate_passive_metrics
+from tradingdev.domain.backtest.metrics import calculate_metrics_from_simulation
 from tradingdev.domain.backtest.pipeline_result import PipelineResult
 from tradingdev.domain.backtest.result import BacktestResult
 from tradingdev.domain.benchmark import BENCHMARKS, BenchmarkEvidence
@@ -45,11 +45,10 @@ def _config(*, init_cash: float | None) -> dict[str, Any]:
 
 def _strategy_result(*, init_cash: float | None) -> BacktestResult:
     equity = np.array([1000.0, 1010.0, 1020.0])
-    analysis = calculate_passive_metrics(
+    analysis = calculate_metrics_from_simulation(
         equity,
+        [],
         init_cash=1000.0,
-        total_fees=0.0,
-        total_volume=0.0,
         timestamps=STAMPS,
         periods_per_year=8760.0,
         frequency="1h",
@@ -125,17 +124,27 @@ def test_scope_records_the_baseline_priced_with_the_runs_own_costs(
     # Hand-derived: entry 100 with 0.1% commission, so quantity = 1000 / 100.1.
     quantity = 1000 / 100.1
     assert benchmark.equity_curve == pytest.approx(
-        [quantity * price for price in (100.0, 110.0, 121.0)]
+        [quantity * price for price in (100.0, 110.0, 121.0 * 0.999)]
     )
-    assert benchmark.values["total_return"] == pytest.approx(121 / 100 / 1.001 - 1)
-    assert benchmark.values["total_fees"] == pytest.approx(quantity * 100 * 0.001)
-    assert benchmark.values["total_trades"] == 0
+    assert benchmark.values["total_return"] == pytest.approx(
+        121 * 0.999 / 100 / 1.001 - 1
+    )
+    assert benchmark.values["total_fees"] == pytest.approx(quantity * 221 * 0.001)
+    assert benchmark.values["total_volume"] == pytest.approx(quantity * 221)
+    assert benchmark.values["total_trades"] == 1
+    assert benchmark.values["open_trades"] == 0
+    assert benchmark.values["total_slippage"] is None
+    assert benchmark.values["trade_expectancy"] == pytest.approx(
+        quantity * 121 * 0.999 - 1000.0
+    )
     assert benchmark.coverage is not None
     assert benchmark.coverage.complete
     assert benchmark.coverage.scope_bars == 3
     details = benchmark.metadata["benchmark"]
     assert isinstance(details, dict)
-    assert details["exit"] == "not_liquidated_marked_at_last_close"
+    assert details["exit"] == "liquidated_at_last_close"
+    assert details["exit_price"] == 121.0
+    assert details["exit_fee"] == pytest.approx(quantity * 121 * 0.001)
     # The baseline's own metric definitions are frozen alongside the run's.
     assert "total_return" in artifacts.performance.definitions
 
@@ -146,7 +155,9 @@ def test_baseline_without_initial_capital_uses_one_normalized_unit() -> None:
     benchmark = artifacts.performance.benchmarks["full"]
     assert benchmark.capital_basis == "normalized_unit"
     assert benchmark.init_cash == pytest.approx(1.0)
-    assert benchmark.values["total_return"] == pytest.approx(110 / 100 / 1.001 - 1)
+    assert benchmark.values["total_return"] == pytest.approx(
+        110 * 0.999 / 100 / 1.001 - 1
+    )
 
 
 def test_missing_baseline_bars_are_counted_and_never_back_filled() -> None:
@@ -231,7 +242,8 @@ def test_metric_failure_degrades_to_unavailable_instead_of_failing_the_run(
         raise ValueError("Equity must contain only finite values")
 
     monkeypatch.setattr(
-        "tradingdev.domain.performance.artifacts.calculate_passive_metrics", _fail
+        "tradingdev.domain.performance.artifacts.calculate_metrics_from_simulation",
+        _fail,
     )
     pipeline, projection = _pipeline(_available([100.0, 110.0, 121.0]))
     artifacts = bundles_from_pipeline("run-h", pipeline, projection)
@@ -243,6 +255,21 @@ def test_metric_failure_degrades_to_unavailable_instead_of_failing_the_run(
     # The aligned coverage survives, so the reader still sees what was compared.
     assert benchmark.coverage is not None
     assert benchmark.coverage.aligned_bars == 3
+
+
+def test_unrepresentable_benchmark_does_not_abort_strategy_publication() -> None:
+    pipeline, projection = _pipeline(_available([1.7e308] * 3))
+    assert pipeline.config_snapshot is not None
+    pipeline.config_snapshot["backtest"]["fees"] = 0.1
+    artifacts = bundles_from_pipeline("run-extreme-benchmark", pipeline, projection)
+    assert artifacts.performance.scopes["full"].values["total_pnl"] == 20.0
+    benchmark = artifacts.performance.benchmarks["full"]
+    assert benchmark.status == "unavailable"
+    assert benchmark.reason == "invalid_benchmark_execution"
+    assert benchmark.values == {}
+    assert benchmark.equity_curve is None
+    assert benchmark.coverage is not None
+    assert benchmark.coverage.complete
 
 
 def test_bundle_rejects_benchmarks_for_unknown_scopes() -> None:
