@@ -250,8 +250,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         ):
             assert metrics["total_return"] == pytest.approx(expected)
             assert metrics["total_pnl"] == pytest.approx(10000 * expected)
-            # The strategy holds its final position; trade statistics use closed trades.
-            assert metrics["total_trades"] == 0
+            # Each train/test scope closes its position at its final close.
+            assert metrics["total_trades"] == 1
         assert completed["train_metrics"]["profit_factor"] is None
         repeated = await client.call(
             "submit_execution_decision", plan_id=prepared["plan_id"], decision="approve"
@@ -282,8 +282,10 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         test_detail = await client.call("get_run_metrics", run_id=job_id)
         assert train_detail["metrics"]["total_return"] == pytest.approx(train_return)
         assert test_detail["metrics"]["total_return"] == pytest.approx(oos_return)
-        assert train_detail["metrics"]["open_trades"] == 1
-        assert test_detail["metrics"]["open_trades"] == 1
+        assert train_detail["metrics"]["open_trades"] == 0
+        assert test_detail["metrics"]["open_trades"] == 0
+        assert train_detail["metrics"]["win_rate"] == 1.0
+        assert test_detail["metrics"]["win_rate"] == 0.0
         assert (
             train_detail["parameters"] == test_detail["parameters"] == {"direction": 1}
         )
@@ -388,6 +390,10 @@ async def test_optimization_confirmation_search_and_persisted_oos(
                 == observations["scopes"]["trial/3/train"][field]
             )
         assert observations["scopes"]["trial/1/train"]["trades"] == []
+        for scope_id in ["trial/0/train", "trial/2/train", "trial/3/train", "test"]:
+            recorded_trades = observations["scopes"][scope_id]["trades"]
+            assert len(recorded_trades) == 1
+            assert recorded_trades[0]["status"] == "closed"
         assert observations["scopes"]["trial/2/train"]["trades"][0][
             "net_pnl"
         ] == pytest.approx(10000 * train_return)

@@ -663,8 +663,13 @@ def test_confirmation_renders_the_same_resolver_rules_in_every_view(
     assert "不證明合成檢查已通過" in text
     assert "每根 K 線調整投入金額" not in text
     assert "依回測引擎預設資金配置" not in text
-    # Measured baseline fixtures range from 754 to 976 characters. Keep normal
-    # confirmations bounded without deleting the active execution assumptions.
+    assert "末棒成交後按收盤價強制平倉" in summary
+    assert "出場手續費與滑價" in summary
+    if mode == "volume":
+        assert "期末為累積淨損益" in summary
+    else:
+        assert "期末為現金，無法完整平倉即失敗" in summary
+    # Keep confirmations bounded without deleting active execution assumptions.
     assert len(summary) < (1050 if active_stop else 900)
     if active_stop:
         assert "停損 5%；停利 10%" in summary
