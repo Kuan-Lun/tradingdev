@@ -278,15 +278,18 @@ carry a `reason` and may omit `fees`, `slippage`, `capital_basis` and
 series. `capital_basis` is `run_init_cash` when the scope had initial capital,
 and `normalized_unit` (capital `1.0`) when it did not.
 
-The baseline buys once at the first aligned close, paying the run's own
-per-side commission and slippage, and is marked to market afterwards. It is not
-liquidated on the final bar, matching how the strategy's open positions are
-valued, so no exit cost is charged. Its supported entry fees and slippage are
+The baseline buys once at the first aligned close and liquidates at the last
+aligned close, paying the run's own per-side commission and slippage on both
+fills. Intermediate equity is marked to market; final equity is the cash after
+exit costs, including when only one bar is available. Its supported fees and slippage are
 each in `[0, 1)`; either rate at or above 1 makes the baseline unavailable even
 when the strategy accepts those finite nonnegative execution settings.
 `values` uses the same metric catalog and annualization settings as the strategy.
-The closed-trade count is zero; statistics requiring closed trades are unavailable
-because the baseline has no closed trades. Bars align on shared UTC timestamps only:
+The round trip contributes one closed trade to the shared metric calculations.
+Benchmark metadata records both fills' prices, fees and notional amounts, and
+the liquidation policy. Previously saved baselines keep their original values
+and recorded exit policy; readers do not recalculate them under today's policy.
+Bars align on shared UTC timestamps only:
 `coverage` reports `scope_bars`, `aligned_bars`, `missing_bars` and `complete`,
 and a missing bar is never back-filled. An unavailable baseline carries a
 reason and no values, so it is never read as a zero return. Baseline

@@ -6,6 +6,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import vectorbt as vbt
+from vectorbt.portfolio.enums import (
+    Direction,
+    OrderStatus,
+    ProcessOrderState,
+    SizeType,
+)
+from vectorbt.portfolio.nb import order_nb, process_order_nb
 
 from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 from tradingdev.domain.backtest.execution_policy import signal_execution_defaults
@@ -30,6 +37,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
 
     Supports all-in or fixed-size positions with optional SL/TP.
     The signal is shifted by 1 bar to avoid look-ahead bias.
+    Remaining positions close at the final close with both execution costs.
     """
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
@@ -116,6 +124,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
             kwargs["tp_stop"] = self._take_profit
 
         pf = vbt.Portfolio.from_signals(**kwargs)
+        pf = _liquidate_at_last_close(pf, self._fees, self._slippage)
 
         analysis = calculate_metrics(
             pf,
@@ -149,3 +158,57 @@ class SignalBacktestEngine(BaseBacktestEngine):
             execution_records=execution_records,
             account_history=account_history,
         )
+
+
+def _liquidate_at_last_close(
+    portfolio: vbt.Portfolio, fees: float, slippage: float
+) -> vbt.Portfolio:
+    """Append a real closing fill after the final bar's ordinary executions.
+
+    Preserve the original bar index and every signal/stop fill, including an
+    entry or reversal at the final open. Native order processing supplies the
+    matching cash, fee, debt, trade and execution-log accounting. An unfillable
+    close fails the run instead of publishing a partly liquidated account.
+    """
+    original_logs = portfolio.logs.records_arr
+    if not len(original_logs):
+        return portfolio
+    last = original_logs[-1]
+    position = float(last["new_position"])
+    if position == 0:
+        return portfolio
+    original_orders = portfolio.orders.records_arr
+    orders = np.empty(len(original_orders) + 1, dtype=original_orders.dtype)
+    orders[:-1] = original_orders
+    logs = np.empty(len(original_logs) + 1, dtype=original_logs.dtype)
+    logs[:-1] = original_logs
+    close = float(portfolio.close.iloc[-1])
+    state = ProcessOrderState(
+        cash=float(last["new_cash"]),
+        position=position,
+        debt=float(last["new_debt"]),
+        free_cash=float(last["new_free_cash"]),
+        val_price=close,
+        value=float(portfolio.value().iloc[-1]),
+        oidx=len(original_orders),
+        lidx=len(original_logs),
+    )
+    order = order_nb(
+        size=-position,
+        price=close,
+        size_type=SizeType.Amount,
+        direction=Direction.Both,
+        fees=fees,
+        slippage=slippage,
+        min_size=0.0,
+        allow_partial=False,
+        log=True,
+    )
+    result, state = process_order_nb(
+        len(portfolio.close) - 1, 0, 0, state, True, order, orders, logs
+    )
+    if result.status != OrderStatus.Filled or state.position != 0:
+        raise ValueError("Terminal liquidation could not close the entire position")
+    return portfolio.replace(
+        order_records=orders[: state.oidx], log_records=logs[: state.lidx]
+    )

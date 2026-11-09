@@ -480,5 +480,6 @@ def test_summary_independently_reconciles_current_engine_outputs(mode: str) -> N
             assert actual == pytest.approx(expected), metric
     assert result.closed_trades.total_trades == run.metrics["total_trades"]
     assert result.marked_trades.total_trades == len(run.trades) == 2
+    assert result.closed_trades == result.marked_trades
     assert result.marked_trades.net_pnl == pytest.approx(result.total_pnl)
     assert result.closed_trades.win_rate == pytest.approx(run.metrics["win_rate"])

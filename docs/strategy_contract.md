@@ -97,6 +97,17 @@ change is needed for another entry. `re_entry_after_sl` does not affect signal
 mode. These are historical simulation assumptions, not exchange execution
 guarantees or isolation from every possible global vectorbt setting.
 
+At the end of each backtest scope, any remaining position is forcibly closed
+at the final bar's close after ordinary signal and stop executions. This also
+applies to a position opened or reversed at the final open. Signal-mode closing
+fills apply the configured per-side commission and slippage, retain the original
+bar timestamp, and appear in the trade and execution records. The final account
+equity is cash after costs; no extra bar is introduced. If available cash cannot
+fund a complete short close, the run fails rather than returning a partly
+liquidated account. This end-of-data rule is separate from exchange margin or
+intraperiod liquidation modeling. Previously saved results retain their recorded
+execution policy and values.
+
 The generated example is long-only and holds while finite fast SMA exceeds slow
 SMA, otherwise flat, including equality and warm-up. Adapt its direction, holding
 and exit rules to the user's idea rather than inheriting the example's intent.

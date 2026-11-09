@@ -91,6 +91,71 @@ def test_natural_generated_runtime_boundary_guidance(
 
 
 @pytest.mark.live_llm
+def test_llm_terminal_cash_explanation(pytestconfig: pytest.Config) -> None:
+    """Discover end-of-run cash semantics without tool names or supplied answers."""
+    with temporary_mcp_workspace() as workspace:
+        turns: list[ModelTurn] = []
+        readonly_tools: set[str] = set()
+
+        async def user(turn: ModelTurn) -> str | None:
+            turns.append(turn)
+            if len(turns) == 1:
+                return (
+                    "如果最後一根開盤才買進，或在那時由多翻空，結果又怎麼計算？"
+                    "假如空倉已經虧到無法買回呢？重建舊回測的報告會改掉舊數值嗎？"
+                    "仍只解釋，不執行研究。"
+                )
+            return None
+
+        request = (
+            "我想從投資人的角度解讀 TradingDev 回測結束時可拿回多少錢。"
+            "請查目前規則：Signal 回測到最後還持有部位時，結果是帳面市值還是現金？"
+            "進場和出場成本會怎麼算？Volume 模式及買進持有對照也一樣嗎？"
+            "只查詢與解釋，不建立策略或執行研究。"
+        )
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "user_reply": user,
+                "max_turns": 2,
+            }
+            async with workspace.connect() as client:
+                tools = (await client.session.list_tools()).tools
+                options["tool_names"] = [tool.name for tool in tools]
+                assert all(tool.name not in request for tool in tools)
+                readonly_tools.update(
+                    tool.name
+                    for tool in tools
+                    if tool.annotations and tool.annotations.read_only_hint is True
+                )
+                if pytestconfig.getoption("llm_provider") == "local":
+                    return await run_local_model(
+                        client,
+                        request,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        **options,
+                    )
+            return codex_calls(await run_codex(workspace.root, request, **options))
+
+        calls = asyncio.run(run())
+        verify_readonly_attempts(calls, readonly_tools)
+        assert len(turns) == 2 and all(turn.text.strip() for turn in turns)
+        assert any(
+            call.name == "get_strategy_contract"
+            and call.result.get("section") == "configuration"
+            and "liquidates remaining positions" in json.dumps(call.result)
+            for call in turns[0].calls
+        ), "The explanation must use the current product contract"
+        for index, turn in enumerate(turns, 1):
+            print(f"[terminal cash] Semantic review, turn {index}:\n{turn.text}")
+    assert not workspace.root.exists()
+
+
+@pytest.mark.live_llm
 def test_llm_glft_time_units(pytestconfig: pytest.Config) -> None:
     """Discover both bundled contracts and explain frequency changes naturally."""
     with temporary_mcp_workspace() as workspace:

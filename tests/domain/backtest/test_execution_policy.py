@@ -245,7 +245,11 @@ def test_signal_stop_does_not_consume_market_high_low() -> None:
         init_cash=1000, position_size=200, fees=0, slippage=0, stop_loss=0.05
     ).run(df)
     assert len(result.trades) == 1
-    assert result.trades[0]["status"] == "open"
+    assert result.trades[0]["status"] == "closed"
+    assert result.trades[0]["exit_idx"] == 3
+    assert result.trades[0]["exit_price"] == 100.0
+    assert result.account_history is not None
+    assert result.account_history[2].position == 2.0
 
 
 def test_fixed_short_notional_is_not_a_no_leverage_guarantee() -> None:

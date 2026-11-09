@@ -8,8 +8,10 @@ for the full saved performance artifact or its provenance checks.
 Equity and trade net_pnl already include incurred execution costs. Never
 subtract those costs again. Total P&L starts at the original capital (zero for
 volume-mode cumulative P&L), including any loss before the first observation.
-An open position contributes its last marked value, not hypothetical liquidation
-proceeds: unexecuted exit costs are not invented. Closed-trade statistics and
+Completed runs under the current execution policy already include terminal
+closing fills. Historical or caller-supplied open positions contribute their
+last marked value, not hypothetical liquidation proceeds: this function does
+not execute trades or invent unexecuted exit costs. Closed-trade statistics and
 statistics including marked open trades are returned in separate groups.
 
 Daily/monthly P&L dispersion describes the observed periods (ddof=0).

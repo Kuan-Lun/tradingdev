@@ -290,6 +290,14 @@ def strategy_contract_payload(
                 "statistics. Volume mode has no capital return; use total_pnl and "
                 "max_drawdown_amount. Query saved definitions and unavailable "
                 "reasons through get_metric_catalog/get_run_metrics; null is not zero.",
+                "Each backtest scope liquidates remaining positions at its final "
+                "close after ordinary fills, including final-open entries/reversals. "
+                "Exit commission and slippage apply; no extra bar is added. Signal "
+                "mode ends in cash and fails if a full close cannot be funded. "
+                "Volume mode ends in cumulative net P&L, not a capital account. "
+                "The buy-and-hold baseline also exits at its last aligned close "
+                "with both costs. Saved historical results keep their recorded "
+                "policy and values; regenerating a report does not recalculate them.",
             ],
         }
     else:

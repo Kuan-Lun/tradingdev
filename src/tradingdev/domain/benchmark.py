@@ -157,13 +157,37 @@ class BenchmarkEvidence:
 
 @dataclass(frozen=True)
 class BuyAndHold:
-    """A single full-size entry at the first close, marked to market after."""
+    """One entry at the first close and a cash liquidation at the last close."""
 
     equity: npt.NDArray[np.float64]
     quantity: float
     entry_price: float
     entry_fee: float
     entry_notional: float
+    exit_price: float
+    exit_fee: float
+    exit_notional: float
+
+    def trade_record(self) -> dict[str, float | int | str]:
+        """Export the actual round trip using the shared normalized ledger."""
+        gross_pnl = self.exit_notional - self.entry_notional
+        fee = self.entry_fee + self.exit_fee
+        return {
+            "direction": 1,
+            "entry_idx": 0,
+            "exit_idx": len(self.equity) - 1,
+            "entry_price": self.entry_price,
+            "exit_price": self.exit_price,
+            "size": self.quantity,
+            "size_quote": self.entry_notional,
+            "exit_notional": self.exit_notional,
+            "entry_fees": self.entry_fee,
+            "exit_fees": self.exit_fee,
+            "fee": fee,
+            "gross_pnl": gross_pnl,
+            "net_pnl": gross_pnl - fee,
+            "status": "closed",
+        }
 
 
 def buy_and_hold(
@@ -173,13 +197,13 @@ def buy_and_hold(
     fees: float,
     slippage: float,
 ) -> BuyAndHold:
-    """Invest ``init_cash`` once at the first close and hold it to the last bar.
+    """Invest at the first close and liquidate at the last observed close.
 
-    The entry pays the run's own per-side commission and slippage, so the
-    baseline is charged the same way the strategy is. The position is not
-    liquidated on the final bar: the strategy's open positions are also marked
-    at the closing price without a forced exit, and charging one side only
-    would make the comparison asymmetric.
+    Both fills pay the run's per-side commission and slippage. Intermediate
+    equity is marked to market; final equity is the exit proceeds after costs.
+    A single observed bar therefore includes both entry and exit costs.
+    Unrepresentable execution amounts raise ValueError so a supplementary
+    benchmark can be reported unavailable without losing the strategy result.
     """
     if not math.isfinite(init_cash) or init_cash <= 0:
         raise ValueError("Benchmark initial capital must be finite and positive")
@@ -192,13 +216,34 @@ def buy_and_hold(
         if not math.isfinite(value) or not 0 <= value < 1:
             raise ValueError(f"Benchmark {name} must be a fraction in [0, 1)")
     entry_price = float(prices[0]) * (1.0 + slippage)
-    quantity = init_cash / (entry_price * (1.0 + fees))
+    funded_price = entry_price * (1.0 + fees)
+    if not math.isfinite(funded_price) or funded_price <= 0:
+        raise ValueError("Benchmark funded entry price is not representable")
+    quantity = init_cash / funded_price
+    exit_price = float(prices[-1]) * (1.0 - slippage)
+    entry_notional = quantity * entry_price
+    entry_fee = entry_notional * fees
+    exit_notional = quantity * exit_price
+    exit_fee = exit_notional * fees
+    if any(
+        not math.isfinite(value) or value <= 0
+        for value in (quantity, entry_price, exit_price, entry_notional, exit_notional)
+    ) or not math.isfinite(entry_fee + exit_fee):
+        raise ValueError("Benchmark execution amounts are not representable")
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        equity = quantity * prices
+    if not np.isfinite(equity).all() or (equity <= 0).any():
+        raise ValueError("Benchmark marked equity is not representable")
+    equity[-1] = exit_notional - exit_fee
     return BuyAndHold(
-        equity=quantity * prices,
+        equity=equity,
         quantity=quantity,
         entry_price=entry_price,
-        entry_fee=quantity * entry_price * fees,
-        entry_notional=quantity * entry_price,
+        entry_fee=entry_fee,
+        entry_notional=entry_notional,
+        exit_price=exit_price,
+        exit_fee=exit_fee,
+        exit_notional=exit_notional,
     )
 
 
