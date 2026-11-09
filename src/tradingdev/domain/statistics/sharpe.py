@@ -425,8 +425,8 @@ def deflated_sharpe_ratio(
     is the expected maximum of ``N`` independent trials, as the limitation
     above describes. Within one series: each IC t-statistic Bonferroni
     compares (``ic_statistics`` in ``tradingdev.domain.ml.evaluation.metrics``)
-    approximates effective sample size as ``bars // window`` to account for
-    overlap, without estimating remaining serial dependence. This function
+    approximates effective sample size as ``max(1, bars // window)`` to account
+    for overlap, without estimating remaining serial dependence. This function
     uses the independent-return variance through its PSR. Bonferroni's
     robustness to dependence between tests does not repair miscalibrated
     individual IC tests.
