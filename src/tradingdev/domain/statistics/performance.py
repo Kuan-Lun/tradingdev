@@ -1,18 +1,22 @@
-"""Performance summary computed only from raw run outputs.
+"""Independently check performance from observations and fixed run settings.
 
-The summary reads the equity curve, bar timestamps, and trade records and
-never consults an engine's ``metrics`` dictionary, so it can cross-check
-whatever an engine reports. Daily and monthly figures follow the UTC period
-boundaries defined in :mod:`tradingdev.domain.statistics.periods`.
+The arithmetic does not read an engine's metrics or call its metric calculator.
+Shared metric meanings and daily-sampling eligibility follow the performance
+catalog. This summary covers nonempty, timestamped runs; it is not a replacement
+for the full saved performance artifact or its provenance checks.
 
-Conventions:
+Equity and trade net_pnl already include incurred execution costs. Never
+subtract those costs again. Total P&L starts at the original capital (zero for
+volume-mode cumulative P&L), including any loss before the first observation.
+An open position contributes its last marked value, not hypothetical liquidation
+proceeds: unexecuted exit costs are not invented. Closed-trade statistics and
+statistics including marked open trades are returned in separate groups.
 
-* Standard deviations are sample standard deviations (``ddof=1``) and are
-  ``None`` with fewer than two periods.
-* Return-based figures are ``None`` unless every equity value is strictly
-  positive; a cumulative P&L curve starting at zero has no return basis.
-* A trade wins when its ``net_pnl`` is above zero and loses when it is below
-  zero; break-even trades count toward ``total_trades`` only.
+Daily/monthly P&L dispersion describes the observed periods (ddof=0).
+Sharpe uses daily excess returns and a sample standard deviation (ddof=1),
+with the caller's fixed annualisation and risk-free settings. Missing calendar
+periods are not filled. Square-root annualisation and sample standard deviations
+do not correct serial dependence or guarantee unbiased Sharpe estimates.
 """
 
 from __future__ import annotations
@@ -20,53 +24,60 @@ from __future__ import annotations
 import math
 import numbers
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from tradingdev.domain.statistics.periods import (
-    equity_series,
-    has_positive_equity,
-    period_pnl,
-    period_returns,
-)
-from tradingdev.domain.statistics.sharpe import _annualisation
+import numpy as np
+import pandas as pd
+
+from tradingdev.domain.performance.sampling import daily_observation_unavailable_reason
+from tradingdev.domain.statistics.periods import equity_series
+from tradingdev.domain.statistics.sharpe import sharpe_ratio
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     import numpy.typing as npt
-    import pandas as pd
 
-DEFAULT_PERIODS_PER_YEAR = 365.0
+
+@dataclass(frozen=True)
+class TradeSummary:
+    """Net-P&L statistics over the explicitly named group of trade records.
+
+    Break-even records count in total_trades and the win-rate denominator.
+    net_pnl sums the group's already-net values. A profit factor without
+    losses is unavailable; its reason distinguishes positive gains from 0/0.
+    """
+
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    net_pnl: float
+    win_rate: float | None
+    profit_factor: float | None
+    unavailable: Mapping[str, str]
 
 
 @dataclass(frozen=True)
 class PerformanceSummary:
-    """Engine-independent performance overview of one run.
+    """Independent overview with the settings needed to interpret its values.
 
-    Attributes:
-        start: First timestamp, in UTC.
-        end: Last timestamp, in UTC.
-        n_bars: Number of equity observations.
-        n_days: Number of UTC days containing at least one observation.
-        n_months: Number of UTC months containing at least one observation.
-        total_pnl: Last equity minus first equity.
-        total_return: ``total_pnl`` relative to the first equity.
-        max_drawdown: Largest peak-to-trough equity decline, as a positive
-            absolute amount.
-        max_drawdown_pct: Largest peak-to-trough decline relative to the peak.
-        daily_pnl_mean: Mean daily P&L.
-        daily_pnl_std: Sample standard deviation of daily P&L.
-        monthly_pnl_mean: Mean monthly P&L.
-        monthly_pnl_std: Sample standard deviation of monthly P&L.
-        sharpe_ratio: Mean over sample standard deviation of daily returns,
-            scaled by ``sqrt(periods_per_year)``; zero risk-free rate.
-        total_trades: Number of trade records.
-        winning_trades: Trades with positive ``net_pnl``.
-        losing_trades: Trades with negative ``net_pnl``.
-        win_rate: ``winning_trades / total_trades``.
-        profit_factor: Gross winning P&L over gross losing P&L; ``None``
-            when there is no losing P&L.
-        trade_net_pnl: Sum of ``net_pnl`` over all trades.
+    total_pnl and total_return use the original capital/P&L baseline.
+    observed_equity_change instead measures last minus first observation;
+    it is not a substitute for total P&L. max_drawdown is a nonnegative
+    fraction and max_drawdown_amount an amount, both including the baseline.
+    Return-based figures are inapplicable to volume mode even if its cumulative
+    P&L happens to remain positive. Daily statistics require a declared bar
+    frequency of one day or finer; calendar gaps do not determine that frequency.
+    return_information_ratio is mean daily return divided by its sample standard
+    deviation, scaled by sqrt(periods_per_year), without a risk-free subtraction.
+    sharpe_ratio instead uses the run's configured risk-free benchmark.
+
+    closed_trades follows the engine's closed-trade metric scope.
+    marked_trades includes every provided record, including open positions
+    at their last mark. Neither group proves that the caller supplied a complete
+    trade history or observations from the same run. Unavailable values retain
+    their reasons; the caller must report those reasons with the values.
     """
 
     start: pd.Timestamp
@@ -74,21 +85,24 @@ class PerformanceSummary:
     n_bars: int
     n_days: int
     n_months: int
+    init_cash: float | None
+    frequency: str
+    periods_per_year: float | None
+    risk_free_rate: float
     total_pnl: float
+    observed_equity_change: float
     total_return: float | None
-    max_drawdown: float
-    max_drawdown_pct: float | None
-    daily_pnl_mean: float
+    max_drawdown: float | None
+    max_drawdown_amount: float
+    daily_pnl_mean: float | None
     daily_pnl_std: float | None
-    monthly_pnl_mean: float
+    monthly_pnl_mean: float | None
     monthly_pnl_std: float | None
     sharpe_ratio: float | None
-    total_trades: int
-    winning_trades: int
-    losing_trades: int
-    win_rate: float | None
-    profit_factor: float | None
-    trade_net_pnl: float
+    return_information_ratio: float | None
+    closed_trades: TradeSummary
+    marked_trades: TradeSummary
+    unavailable: Mapping[str, str]
 
 
 def summarize_performance(
@@ -96,88 +110,230 @@ def summarize_performance(
     timestamps: npt.ArrayLike,
     trades: Sequence[Mapping[str, object]],
     *,
-    periods_per_year: float = DEFAULT_PERIODS_PER_YEAR,
+    init_cash: float | None,
+    frequency: str,
+    periods_per_year: float | None,
+    risk_free_rate: float,
 ) -> PerformanceSummary:
-    """Summarize a run from its equity curve, timestamps, and trades.
+    """Recompute a nonempty run's overview from raw observations.
 
-    Args:
-        equity_curve: Per-bar equity values.
-        timestamps: Per-bar timestamps; naive values are treated as UTC.
-        trades: Trade records, each with a numeric ``net_pnl``.
-        periods_per_year: Daily periods per year used to annualize the
-            Sharpe ratio; 365 suits markets that trade every day.
+    Pass the run's fixed settings explicitly: positive init_cash for an
+    account-equity curve, or None for cumulative P&L with a zero baseline;
+    the declared bar frequency; daily periods_per_year (None if unavailable);
+    and annual risk_free_rate. Rates may be negative but must exceed -1.
+    No setting is inferred from equity or a timestamp gap.
+
+    Trades require finite numeric net_pnl and an explicit status of
+    "closed" or "open". Values already include incurred costs. All
+    supplied records contribute to marked_trades; only closed records
+    contribute to closed_trades.
 
     Raises:
-        ValueError: If the inputs are inconsistent (see
-            :func:`~tradingdev.domain.statistics.periods.equity_series`),
-            ``periods_per_year`` is not a positive finite number, or a trade
-            lacks a finite ``net_pnl``.
+        ValueError: For invalid settings or trades, or nonfinite derived
+            equity changes, period rates or aggregate P&L. Undefined ratios
+            are returned with reasons. Equity/timestamp validation and
+            conversion errors follow equity_series.
     """
-    annualisation = _annualisation(periods_per_year)
+    capital = None if init_cash is None else _positive(init_cash, "init_cash")
+    periods = (
+        None
+        if periods_per_year is None
+        else _positive(periods_per_year, "periods_per_year")
+    )
+    risk_free = _finite(risk_free_rate, "risk_free_rate")
+    if risk_free <= -1:
+        raise ValueError("risk_free_rate must be greater than -1")
+    if not isinstance(frequency, str):
+        raise ValueError("frequency must be a declared bar-frequency string")
+    sampling_reason = daily_observation_unavailable_reason(frequency)
     equity = equity_series(equity_curve, timestamps)
-    # Validated once: the period functions check their input again, and a
-    # plain list is the slow case for those checks.
-    values, index = equity.to_numpy(), equity.index
-    daily = period_pnl(values, index, "daily")
-    monthly = period_pnl(values, index, "monthly")
-    positive = has_positive_equity(values)
+    values = equity.to_numpy()
+    initial = 0.0 if capital is None else capital
+    baseline = np.concatenate(([initial], values))
+    with np.errstate(over="ignore", invalid="ignore"):
+        changes = np.diff(baseline)
+        drawdowns = np.maximum.accumulate(baseline) - baseline
+    if not np.isfinite(changes).all() or not np.isfinite(drawdowns).all():
+        raise ValueError("derived equity changes must be finite")
 
-    first = float(equity.iloc[0])
-    total_pnl = float(equity.iloc[-1]) - first
-    peaks = equity.cummax()
-    trade_pnls = _trade_net_pnls(trades)
-    gross_profit = sum(p for p in trade_pnls if p > 0)
-    gross_loss = -sum(p for p in trade_pnls if p < 0)
-    winning = sum(1 for p in trade_pnls if p > 0)
+    daily = equity.resample("D").last().dropna()
+    monthly = equity.resample("MS").last().dropna()
+    daily_pnl = _period_changes(daily, initial)
+    monthly_pnl = _period_changes(monthly, initial)
+    unavailable: dict[str, str] = {}
+    pnl_stats: dict[str, float | None] = {}
+    for prefix, pnl in (("daily", daily_pnl), ("monthly", monthly_pnl)):
+        for stat in ("mean", "std"):
+            name = f"{prefix}_pnl_{stat}"
+            if sampling_reason is not None:
+                pnl_stats[name] = None
+                unavailable[name] = sampling_reason
+            else:
+                value = float(pnl.mean() if stat == "mean" else pnl.std(ddof=0))
+                pnl_stats[name] = _finite(value, name)
 
+    total_return: float | None = None
+    max_drawdown: float | None = None
+    sharpe: float | None = None
+    return_information: float | None = None
+    reason: str | None
+    if capital is None:
+        reason = "not_applicable"
+    elif not ((baseline[:-1] > 0).all() and (values >= 0).all()):
+        reason = "nonpositive_capital"
+    else:
+        reason = None
+    if reason is not None:
+        for name in (
+            "total_return",
+            "max_drawdown",
+            "sharpe_ratio",
+            "return_information_ratio",
+        ):
+            unavailable[name] = reason
+    else:
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            bar_returns = changes / baseline[:-1]
+        if not np.isfinite(bar_returns).all():
+            raise ValueError("derived returns must be finite")
+        total_return = _finite(float(values[-1] / initial - 1), "total_return")
+        max_drawdown = float(np.max(drawdowns / np.maximum.accumulate(baseline)))
+        if sampling_reason is not None:
+            unavailable["sharpe_ratio"] = sampling_reason
+            unavailable["return_information_ratio"] = sampling_reason
+        elif periods is None:
+            unavailable["sharpe_ratio"] = "missing_annualization"
+            unavailable["return_information_ratio"] = "missing_annualization"
+        elif len(daily) < 2:
+            unavailable["sharpe_ratio"] = "insufficient_data"
+            unavailable["return_information_ratio"] = "insufficient_data"
+        else:
+            daily_opening = daily.shift(1).fillna(initial)
+            returns = daily_pnl / daily_opening
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                daily_rate = _finite(
+                    float(np.expm1(np.log1p(risk_free) / periods)),
+                    "daily risk-free rate",
+                )
+            excess = returns - daily_rate
+            sharpe = _ratio(excess, periods, "sharpe_ratio", unavailable)
+            return_information = _ratio(
+                returns, periods, "return_information_ratio", unavailable
+            )
+
+    closed, marked = _trade_groups(trades)
     return PerformanceSummary(
-        start=equity.index[0],
-        end=equity.index[-1],
+        start=pd.Timestamp(equity.index[0]),
+        end=pd.Timestamp(equity.index[-1]),
         n_bars=len(equity),
         n_days=len(daily),
         n_months=len(monthly),
-        total_pnl=total_pnl,
-        total_return=total_pnl / first if positive else None,
-        max_drawdown=float((peaks - equity).max()),
-        max_drawdown_pct=float((1.0 - equity / peaks).max()) if positive else None,
-        daily_pnl_mean=float(daily.mean()),
-        daily_pnl_std=_sample_std(daily),
-        monthly_pnl_mean=float(monthly.mean()),
-        monthly_pnl_std=_sample_std(monthly),
-        sharpe_ratio=(
-            _sharpe(period_returns(values, index, "daily"), annualisation)
-            if positive
-            else None
+        init_cash=capital,
+        frequency=frequency,
+        periods_per_year=periods,
+        risk_free_rate=risk_free,
+        total_pnl=_finite(float(values[-1] - initial), "total_pnl"),
+        observed_equity_change=_finite(
+            float(values[-1] - values[0]), "observed_equity_change"
         ),
-        total_trades=len(trade_pnls),
-        winning_trades=winning,
-        losing_trades=sum(1 for p in trade_pnls if p < 0),
-        win_rate=winning / len(trade_pnls) if trade_pnls else None,
-        profit_factor=gross_profit / gross_loss if gross_loss > 0 else None,
-        trade_net_pnl=float(sum(trade_pnls)),
+        total_return=total_return,
+        max_drawdown=max_drawdown,
+        max_drawdown_amount=float(drawdowns.max()),
+        daily_pnl_mean=pnl_stats["daily_pnl_mean"],
+        daily_pnl_std=pnl_stats["daily_pnl_std"],
+        monthly_pnl_mean=pnl_stats["monthly_pnl_mean"],
+        monthly_pnl_std=pnl_stats["monthly_pnl_std"],
+        sharpe_ratio=sharpe,
+        return_information_ratio=return_information,
+        closed_trades=_summarize_trades(closed),
+        marked_trades=_summarize_trades(marked),
+        unavailable=MappingProxyType(unavailable),
     )
 
 
-def _trade_net_pnls(trades: Sequence[Mapping[str, object]]) -> list[float]:
-    pnls: list[float] = []
+def _ratio(
+    returns: pd.Series[float],
+    periods: float,
+    name: str,
+    unavailable: dict[str, str],
+) -> float | None:
+    ratio = sharpe_ratio(returns, periods_per_year=periods)
+    if ratio is None:
+        unavailable[name] = (
+            "zero_denominator" if bool((returns == 0).all()) else "unbounded"
+        )
+    elif not math.isfinite(ratio):
+        unavailable[name] = "unbounded"
+        return None
+    return ratio
+
+
+def _period_changes(closing: pd.Series[float], initial: float) -> pd.Series[float]:
+    changes = closing - closing.shift(1).fillna(initial)
+    if not np.isfinite(changes.to_numpy()).all():
+        raise ValueError("derived period P&L must be finite")
+    return changes
+
+
+def _trade_groups(
+    trades: Sequence[Mapping[str, object]],
+) -> tuple[list[float], list[float]]:
+    closed: list[float] = []
+    marked: list[float] = []
     for position, trade in enumerate(trades):
-        value = trade.get("net_pnl")
-        if isinstance(value, bool) or not isinstance(value, numbers.Real):
-            raise ValueError(f"trade {position} has no numeric net_pnl")
-        if not math.isfinite(value):
-            raise ValueError(f"trade {position} has a non-finite net_pnl")
-        pnls.append(float(value))
-    return pnls
+        pnl = _finite(trade.get("net_pnl"), f"trade {position} net_pnl")
+        status = trade.get("status")
+        if status not in ("closed", "open"):
+            raise ValueError(f"trade {position} requires a closed/open status")
+        marked.append(pnl)
+        if status == "closed":
+            closed.append(pnl)
+    return closed, marked
 
 
-def _sample_std(values: pd.Series[float]) -> float | None:
-    if len(values) < 2:
-        return None
-    return float(values.std(ddof=1))
+def _summarize_trades(pnls: Sequence[float]) -> TradeSummary:
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    gross_profit = _finite(sum(wins), "winning trade P&L")
+    gross_loss = _finite(-sum(losses), "losing trade P&L")
+    unavailable: dict[str, str] = {}
+    profit_factor = None
+    if not pnls:
+        unavailable.update(win_rate="no_trades", profit_factor="no_trades")
+    elif gross_loss == 0:
+        unavailable["profit_factor"] = (
+            "unbounded" if gross_profit > 0 else "zero_denominator"
+        )
+    else:
+        profit_factor = gross_profit / gross_loss
+        if not math.isfinite(profit_factor):
+            profit_factor = None
+            unavailable["profit_factor"] = "unbounded"
+    return TradeSummary(
+        total_trades=len(pnls),
+        winning_trades=len(wins),
+        losing_trades=len(losses),
+        net_pnl=_finite(sum(pnls), "trade net P&L"),
+        win_rate=len(wins) / len(pnls) if pnls else None,
+        profit_factor=profit_factor,
+        unavailable=MappingProxyType(unavailable),
+    )
 
 
-def _sharpe(daily_returns: pd.Series[float], annualisation: float) -> float | None:
-    std = _sample_std(daily_returns)
-    if std is None or std == 0.0:
-        return None
-    return float(daily_returns.mean()) / std * annualisation
+def _finite(value: object, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise ValueError(f"{label} must be a finite real number")
+    try:
+        result = float(value)
+    except OverflowError as error:
+        raise ValueError(f"{label} must be a finite real number") from error
+    if not math.isfinite(result):
+        raise ValueError(f"{label} must be a finite real number")
+    return result
+
+
+def _positive(value: object, label: str) -> float:
+    result = _finite(value, label)
+    if result <= 0:
+        raise ValueError(f"{label} must be positive")
+    return result

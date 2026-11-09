@@ -14,8 +14,10 @@ and annualisation bases.
 Conventions:
 
 * The Sharpe ratio is the mean over the sample standard deviation
-  (``ddof=1``) of the returns, with a zero risk-free rate, as in
-  :mod:`tradingdev.domain.statistics.performance`.
+  (``ddof=1``) of the supplied returns. Supply excess returns when using
+  a nonzero risk-free benchmark; these functions do not subtract a rate.
+  The performance summary applies its fixed risk-free setting before
+  calling :func:`sharpe_ratio`.
 * Undefined scalar figures (fewer than two returns or zero dispersion)
   are ``None`` rather than infinities or zeros. The interval entry point,
   :func:`sharpe_interval_outcome`, returns an :class:`IntervalUnavailable`
