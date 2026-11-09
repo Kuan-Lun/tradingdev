@@ -170,9 +170,13 @@ not a user-facing link. The former `confirmation_link`, `html_path` and top-leve
 `artifact_id` response fields are removed. Clients must refresh tool schemas and
 consume the descriptor; stored plans and confirmation files are unchanged.
 
+For HTTP delivery, call `get_artifact_download` with the descriptor's artifact ID
+and `sha256` as `expected_sha256`, then present its `download_url` unchanged.
+The [reading artifact delivery contract](run_artifacts.md#reading-artifact-delivery)
+defines verification, expiry, refresh and deployment requirements.
 Clients may link `server_path` only when that exact path is accessible to the user;
 stdio or HTTP transport alone does not establish file access. Otherwise use the
-host's file/attachment mechanism to deliver a complete verified copy. For MCP text
+host's file/attachment mechanism if HTTP delivery is unavailable. For MCP text
 retrieval, call `get_artifact` with the descriptor's artifact ID, `include_content=true`
 and its `sha256` as `expected_sha256` on every page, starting at zero. Follow
 `content_page.next_offset` until null, preserve the concatenated UTF-8 text exactly,
@@ -183,10 +187,9 @@ accepting new content or submitting a job.
 
 Present one readable HTML link, preserving the exact destination and encoding
 special path characters. Once a client copy is delivered, omit the inaccessible
-server path. Without host file delivery/verification, explain the limitation and
+server path. If no readable document can be delivered, explain the limitation and
 stop without claiming the document is readable or requesting approval. Neither
 MCP text retrieval nor a valid Markdown path proves a human can open the file.
-This interface does not yet provide a direct HTTP URL for confirmation HTML.
 
 Full confirmation text remains in the saved plan; it is not copied into ordinary
 tool responses. The short summary starts with the model's

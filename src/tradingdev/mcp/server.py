@@ -25,6 +25,7 @@ from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.app.trade_history_service import TradeHistoryService
+from tradingdev.mcp.artifact_downloads import validate_public_base_url
 from tradingdev.mcp.prompts import SERVER_INSTRUCTIONS
 from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import (
@@ -109,7 +110,9 @@ def http_transport_security(
     )
 
 
-def create_server(workspace: WorkspacePaths | None = None) -> StrictMCPServer:
+def create_server(
+    workspace: WorkspacePaths | None = None, *, public_base_url: str | None = None
+) -> StrictMCPServer:
     """Compose an MCP server with one explicitly shared runtime workspace."""
     workspace = workspace or WorkspacePaths()
     store = get_sqlite_store(workspace)
@@ -141,8 +144,10 @@ def create_server(workspace: WorkspacePaths | None = None) -> StrictMCPServer:
         TradeHistoryService(workspace=workspace, store=store),
         ReportService(workspace=workspace, store=store),
     )
-    research_notes.register(mcp, ResearchNoteService(workspace, store))
-    artifacts.register(mcp, artifact_service)
+    downloads = artifacts.register(
+        mcp, artifact_service, public_base_url=public_base_url
+    )
+    research_notes.register(mcp, ResearchNoteService(workspace, store), downloads)
     feature_requests.register(mcp, feature_request_service)
     ml.register(mcp, MLService(workspace=workspace, data_service=data_service))
     return mcp
@@ -178,6 +183,10 @@ def main(argv: list[str] | None = None) -> None:
         help="HTTP port when --web is set.",
     )
     parser.add_argument(
+        "--public-base-url",
+        help="Public HTTP origin/proxy prefix for artifact URLs; requires --web.",
+    )
+    parser.add_argument(
         "--allow-host",
         action="append",
         default=[],
@@ -190,9 +199,17 @@ def main(argv: list[str] | None = None) -> None:
         help="Additional exact Origin (http(s)://host[:port]); repeat as needed.",
     )
     args = parser.parse_args(argv)
-    if not args.web and (args.host is not None or args.allow_host or args.allow_origin):
-        parser.error("--host, --allow-host and --allow-origin require --web")
+    if not args.web and (
+        args.host is not None
+        or args.allow_host
+        or args.allow_origin
+        or args.public_base_url is not None
+    ):
+        parser.error(
+            "--host, --allow-host, --allow-origin and --public-base-url require --web"
+        )
     try:
+        public_base_url = validate_public_base_url(args.public_base_url)
         host = str(ip_address(args.host)) if args.host is not None else "127.0.0.1"
         security = (
             http_transport_security(
@@ -205,7 +222,7 @@ def main(argv: list[str] | None = None) -> None:
         )
     except ValueError as error:
         parser.error(str(error))
-    mcp = create_server(WorkspacePaths(args.workspace))
+    mcp = create_server(WorkspacePaths(args.workspace), public_base_url=public_base_url)
 
     if args.web and args.transport == "streamable-http":
         mcp.run(

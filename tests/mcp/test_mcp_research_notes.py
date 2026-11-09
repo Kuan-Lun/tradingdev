@@ -26,6 +26,13 @@ def test_stdio_note_export_has_local_paths() -> None:
                 )
                 assert result["success"] and result["download_url"] is None
                 assert Path(result["path"]).is_file()
+                unavailable = await client.call(
+                    "get_artifact_download",
+                    artifact_id=result["artifact_id"],
+                    expected_sha256=result["sha256"],
+                )
+                assert unavailable["code"] == "artifact_delivery_unavailable"
+                assert "download_url" not in unavailable
                 retained = await client.call(
                     "get_research_archive", archive_id=result["archive_id"]
                 )
@@ -66,7 +73,7 @@ def test_http_download_identity_expiration_and_missing_capability(
 
                 with monkeypatch.context() as patch:
                     patch.setattr(
-                        "tradingdev.mcp.archive_downloads.time.time",
+                        "tradingdev.mcp.artifact_downloads.time.time",
                         lambda: result["download_expires_at"] + 1,
                     )
                     assert (await http.get(url)).status_code == 403
@@ -86,18 +93,21 @@ def test_http_download_identity_expiration_and_missing_capability(
                 ).content == response.content
                 from tradingdev.adapters.storage.filesystem import WorkspacePaths
                 from tradingdev.adapters.storage.sqlite import SQLiteStore
-                from tradingdev.app.contracts.research_notes import NoteExport
-                from tradingdev.app.research_note_service import ResearchNoteService
-                from tradingdev.mcp.archive_downloads import ArchiveDownloads
+                from tradingdev.app.artifact_service import ArtifactService
+                from tradingdev.mcp.artifact_downloads import (
+                    DOWNLOAD_ROUTE,
+                    ArtifactDownloads,
+                )
 
                 # A newly started server has a new key but can sign the retained ZIP.
                 workspace = WorkspacePaths(runtime.root / "workspace")
-                replacement = ArchiveDownloads(
-                    ResearchNoteService(workspace, SQLiteStore(workspace)).archives
+                replacement = ArtifactDownloads(
+                    ArtifactService(workspace=workspace, store=SQLiteStore(workspace))
                 )
-                fresh = replacement.attach(
-                    NoteExport.model_validate(retained),
-                    url.split("/research-download", 1)[0],
+                fresh = replacement.issue(
+                    retained["artifact_id"],
+                    retained["sha256"],
+                    url.split("/artifact-download", 1)[0],
                 )
                 assert fresh.download_url is not None
                 assert fresh.download_url != retained["download_url"]
@@ -105,9 +115,7 @@ def test_http_download_identity_expiration_and_missing_capability(
                 from starlette.applications import Starlette
                 from starlette.routing import Route
 
-                app = Starlette(
-                    routes=[Route("/research-download/{archive_id}", replacement.serve)]
-                )
+                app = Starlette(routes=[Route(DOWNLOAD_ROUTE, replacement.serve)])
                 async with httpx.AsyncClient(
                     transport=httpx.ASGITransport(app=app)
                 ) as restarted:

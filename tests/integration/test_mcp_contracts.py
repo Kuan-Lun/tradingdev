@@ -137,6 +137,8 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
     expected_hints = {
         **dict.fromkeys(_READ_ONLY_TOOLS, (True, False, True, False)),
         **_MUTATING_HINTS,
+        # URL expiry changes across reads without modifying saved artifacts.
+        "get_artifact_download": (True, False, False, False),
     }
     malformed_payloads: list[dict[str, object]] = [
         {},
