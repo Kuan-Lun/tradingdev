@@ -90,6 +90,18 @@ warn_unused_configs = true
 mypy_path = "$MYPY_CONFIG_FILE_DIR/src"
 
 [[tool.mypy.overrides]]
+# These numerical, parameter-grid and callable contracts have concrete types.
+# Reject explicit Any, including omitted pandas Series element types whose
+# stub default is Any. Dynamic storage and third-party boundaries are separate.
+module = [
+    "tradingdev.domain.indicators.technical",
+    "tradingdev.domain.optimization.grid_search",
+    "tradingdev.domain.ml.models.registry",
+    "tradingdev.domain.ml.validation.schemes",
+]
+disallow_any_explicit = true
+
+[[tool.mypy.overrides]]
 # PyArrow provides no py.typed marker or stubs for the dataset scanner.
 module = ["pyarrow", "pyarrow.dataset"]
 ignore_missing_imports = true

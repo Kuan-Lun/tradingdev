@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Protocol
 
 from tradingdev.domain.ml.models.catboost_model import CatBoostDirectionModel
 from tradingdev.domain.ml.models.lightgbm_model import LightGBMDirectionModel
@@ -15,23 +15,50 @@ from tradingdev.domain.ml.schemas import (
 )
 
 if TYPE_CHECKING:
-    from tradingdev.domain.ml.base import BaseModel
+    from collections.abc import Callable
 
-_REGISTRY: dict[str, ModelKind] = {}
+    from pydantic import BaseModel as ConfigModel
+
+    from tradingdev.domain.ml.base import BaseModel
 
 
 @dataclass(frozen=True)
-class ModelKind:
+class ModelKind[ConfigT: ConfigModel]:
     """A named, audited model implementation with its config schema."""
 
     name: str
     description: str
-    config_cls: type[Any]
-    model_cls: type[Any]
+    config_cls: type[ConfigT]
+    model_cls: Callable[[ConfigT], BaseModel]
     framework: str
 
+    def create(self, **params: object) -> BaseModel:
+        """Validate dynamic settings with this model's paired configuration."""
+        return self.model_cls(self.config_cls(**params))
 
-def register(kind: ModelKind) -> None:
+
+class RegisteredModelKind(Protocol):
+    """Read-only metadata and safe construction after config-type erasure."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def description(self) -> str: ...
+
+    @property
+    def framework(self) -> str: ...
+
+    @property
+    def config_cls(self) -> type[ConfigModel]: ...
+
+    def create(self, **params: object) -> BaseModel: ...
+
+
+_REGISTRY: dict[str, RegisteredModelKind] = {}
+
+
+def register[ConfigT: ConfigModel](kind: ModelKind[ConfigT]) -> None:
     """Register a model kind, rejecting duplicate names."""
     if kind.name in _REGISTRY:
         raise ValueError(f"duplicate model kind: {kind.name}")
@@ -72,7 +99,7 @@ def list_model_kinds() -> list[str]:
     return sorted(_REGISTRY)
 
 
-def get_model_kind(name: str) -> ModelKind:
+def get_model_kind(name: str) -> RegisteredModelKind:
     """Return the :class:`ModelKind` for ``name``.
 
     Raises:
@@ -83,8 +110,6 @@ def get_model_kind(name: str) -> ModelKind:
     return _REGISTRY[name]
 
 
-def create_direction_model(name: str, **params: Any) -> BaseModel:
+def create_direction_model(name: str, **params: object) -> BaseModel:
     """Build a direction model by kind name from a uniform parameter schema."""
-    kind = get_model_kind(name)
-    config = kind.config_cls(**params)
-    return cast("BaseModel", kind.model_cls(config=config))
+    return get_model_kind(name).create(**params)

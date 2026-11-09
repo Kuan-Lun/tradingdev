@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 
@@ -11,6 +11,16 @@ from tradingdev.domain.performance.catalog import METRIC_CATALOG
 
 if TYPE_CHECKING:
     from tradingdev.domain.validation.walk_forward import WalkForwardResult
+
+
+class FoldStatistics(TypedDict):
+    """Finite fold summary values and their actual sample count."""
+
+    mean: float | None
+    std: float | None
+    min: float | None
+    max: float | None
+    valid_count: int
 
 
 def _finite_number(value: object) -> int | float | None:
@@ -37,7 +47,7 @@ def _fmt_metric(key: str, value: object) -> str:
 
 def summarize_results(
     results: list[WalkForwardResult],
-) -> dict[str, Any]:
+) -> dict[str, int | FoldStatistics]:
     """Describe valid test-fold values, without treating means as pooled metrics.
 
     Each metric includes the number of finite fold values. Missing, null and
@@ -49,14 +59,14 @@ def summarize_results(
     metric_keys = dict.fromkeys(
         key for result in results for key in result.test_metrics
     )
-    summary: dict[str, Any] = {"n_folds": len(results)}
+    summary: dict[str, int | FoldStatistics] = {"n_folds": len(results)}
     for key in metric_keys:
         values = [
             number
             for result in results
             if (number := _finite_number(result.test_metrics.get(key))) is not None
         ]
-        stats: dict[str, float | int | None] = {
+        stats: FoldStatistics = {
             "mean": None,
             "std": None,
             "min": None,
@@ -66,10 +76,12 @@ def summarize_results(
         if values:
             arr = np.array(values, dtype=float)
             stats.update(
-                mean=float(np.mean(arr)),
-                std=float(np.std(arr)),
-                min=float(np.min(arr)),
-                max=float(np.max(arr)),
+                {
+                    "mean": float(np.mean(arr)),
+                    "std": float(np.std(arr)),
+                    "min": float(np.min(arr)),
+                    "max": float(np.max(arr)),
+                }
             )
         summary[key] = stats
     return summary

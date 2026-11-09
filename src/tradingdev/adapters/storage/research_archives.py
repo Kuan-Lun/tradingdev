@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from filelock import FileLock
 
 from tradingdev.adapters.reporting.notebook import render_notebook
+from tradingdev.adapters.storage.artifact_delivery import read_delivery_artifact
 from tradingdev.adapters.storage.filesystem import now_iso
 from tradingdev.adapters.storage.research_notes import note_bytes
 from tradingdev.adapters.storage.workspace_files import WorkspaceFiles
@@ -49,27 +49,13 @@ class ResearchArchiveStore:
         if row is None:
             raise ValueError(f"Referenced artifact not found: {artifact_id}")
         kind = row["artifact_type"]
-        if kind == "research_report_html":
-            match = re.fullmatch(r"report:([0-9a-f]{64}):html", artifact_id)
-            if match is None:
-                raise ValueError("Invalid report artifact identity")
-            expected = self.workspace.root / "reports" / match[1] / "report.html"
-        elif kind == "execution_confirmation":
-            match = re.fullmatch(r"([0-9a-f]{32}):confirmation_html", artifact_id)
-            if match is None:
-                raise ValueError("Invalid confirmation artifact identity")
-            expected = (
-                self.workspace.root / "execution_plans" / match[1] / "confirmation.html"
-            )
-        else:
+        if kind not in {"research_report_html", "execution_confirmation"}:
             raise ValueError(
                 "Only saved research reports and confirmation HTML can be attached"
             )
-        if str(expected) != row["path"]:
-            raise ValueError("Artifact path differs from its expected identity")
-        content = self.files.read(expected, MAX_ARCHIVE_BYTES)
-        if _digest(content) != row["sha256"]:
-            raise ValueError(f"Referenced report changed: {artifact_id}")
+        content = read_delivery_artifact(
+            self.workspace, self.store, artifact_id, row["sha256"]
+        ).content
         return content, {
             "artifact_id": artifact_id,
             "artifact_type": kind,
@@ -190,21 +176,9 @@ class ResearchArchiveStore:
         )
 
     def download(self, archive_id: str, sha256: str) -> bytes:
-        if not re.fullmatch(r"[0-9a-f]{64}", archive_id):
-            raise ValueError("Invalid archive ID")
-        row = self.store.get_artifact(f"research:{archive_id}:zip")
-        path = self.workspace.root / "research_archives" / archive_id / "research.zip"
-        if (
-            row is None
-            or row["artifact_type"] != "research_archive_zip"
-            or row["path"] != str(path)
-            or row["sha256"] != sha256
-        ):
-            raise ValueError("Unknown archive or mismatched download identity")
-        content = self.files.read(path, MAX_ARCHIVE_BYTES)
-        if _digest(content) != sha256:
-            raise ValueError("Archive bytes changed")
-        return content
+        return read_delivery_artifact(
+            self.workspace, self.store, f"research:{archive_id}:zip", sha256
+        ).content
 
     def describe(self, archive_id: str) -> NoteExport:
         """Reopen only registered snapshot bytes, without its mutable source note."""

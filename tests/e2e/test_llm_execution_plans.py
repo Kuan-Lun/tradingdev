@@ -172,8 +172,8 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
 取得 success=true/status=ready 後，將 confirmation_summary 逐行原文引用，
 建議每行加 > 作為 Markdown 引用；只可調整排版，
 不可改寫、刪除欄名、值、單位或訓練／測試角色。
-摘要已由後端完成，不要再摘要。引用外另行逐字貼上工具回覆的 confirmation_link，
-核對連結目的地為 html_path；不要自行組合或改寫識別碼與路徑。
+摘要已由後端完成，不要再摘要。這個測試客戶端與使用者能直接讀取伺服器的檔案；
+引用外另行提供 confirmation_artifact.server_path 的閱讀連結，保留完整路徑。
 連結放在一般 Markdown 文字行，不放 code block，不加 file:// 或自行創造其他 URI 前綴。
 然後結束本回合等待我回覆。一般解釋及回答問題可用自己的表達方式。
 目前尚未同意正式執行，不可在第一回合呼叫 submit_execution_decision。
@@ -285,9 +285,9 @@ def _assert_evidence(
     assert not prepare_call.result.get("job_id")
     assert prepare_call.result["manifest_hash"] == manifest.manifest_hash
     assert prepare_call.result["preflight"] == plan.preflight.model_dump(mode="json")
-    assert Path(prepare_call.result["html_path"]).is_file()
+    assert Path(prepare_call.result["confirmation_artifact"]["server_path"]).is_file()
     assert prepare_call.result["confirmation_summary"]
-    assert prepare_call.result["artifact_id"]
+    assert prepare_call.result["confirmation_artifact"]["artifact_id"]
     revision_id = manifest.config_copy()["strategy"].get("revision_id")
     assert revision_id == selected_revision_id, (
         "Execution must use the fixture's selected immutable revision"
@@ -410,7 +410,7 @@ def _assert_evidence(
             ) == parse_walk_forward_config(_WF_VALIDATION)
             assert source_config["random_seed"] == 42
         confirmation = (
-            Path(prepare_call.result["html_path"])
+            Path(prepare_call.result["confirmation_artifact"]["server_path"])
             .with_name("confirmation.txt")
             .read_text()
         )

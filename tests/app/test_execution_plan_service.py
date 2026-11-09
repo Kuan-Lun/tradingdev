@@ -394,7 +394,9 @@ def test_conversation_decision_applies_to_the_prepared_plan(
     prepared = _prepare(context)
     assert prepared.confirmation_summary
     assert "confirmation_text" not in prepared.model_dump()
-    assert "<html" in Path(prepared.html_path).read_text(encoding="utf-8")
+    assert "<html" in Path(prepared.confirmation_artifact.server_path).read_text(
+        encoding="utf-8"
+    )
     assert context.service.get(prepared.plan_id) == prepared
     assert context.runner.calls == []
     assert context.service.jobs.list_all_jobs() == []

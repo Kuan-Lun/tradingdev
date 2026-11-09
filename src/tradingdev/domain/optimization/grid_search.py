@@ -5,24 +5,24 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
-from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.performance.catalog import METRIC_CATALOG, MetricScalar
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
-class GridSearchResult:
+class GridSearchResult[T = object]:
     """One evaluated grid-search result."""
 
-    params: dict[str, Any]
+    params: dict[str, T]
     metric_value: float | None
-    metrics: dict[str, Any]
+    metrics: dict[str, MetricScalar]
 
 
-def parameter_grid(param_ranges: Mapping[str, Sequence[Any]]) -> list[dict[str, Any]]:
+def parameter_grid[T](param_ranges: Mapping[str, Sequence[T]]) -> list[dict[str, T]]:
     """Expand named parameter ranges into dictionaries."""
     names = list(param_ranges.keys())
     values = [list(param_ranges[name]) for name in names]
@@ -31,7 +31,7 @@ def parameter_grid(param_ranges: Mapping[str, Sequence[Any]]) -> list[dict[str, 
     ]
 
 
-def tuple_grid(*ranges: Iterable[Any]) -> list[tuple[Any, ...]]:
+def tuple_grid[T](*ranges: Iterable[T]) -> list[tuple[T, ...]]:
     """Expand positional parameter ranges into tuples."""
     return list(itertools.product(*ranges))
 
@@ -67,13 +67,13 @@ def is_better_metric(
     return value < incumbent if direction == "minimize" else value > incumbent
 
 
-def best_result(
-    results: Iterable[GridSearchResult],
+def best_result[T](
+    results: Iterable[GridSearchResult[T]],
     *,
     direction: OptimizationDirection,
-) -> GridSearchResult:
+) -> GridSearchResult[T]:
     """Select the best finite objective, failing if no trial can be ranked."""
-    selected: GridSearchResult | None = None
+    selected: GridSearchResult[T] | None = None
     for candidate in results:
         value = finite_metric_value(candidate.metric_value)
         if is_better_metric(

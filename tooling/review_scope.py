@@ -196,7 +196,9 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Cloudflare 自動發布",
             "共用網域與專案路徑",
         ),
-        **_headings({"tooling"}, "研究成果工程回饋"),
+        **_headings(
+            {"tooling"}, "研究成果工程回饋", "型別檢查與契約保護", "執行離線測試"
+        ),
         **_headings({"tooling", "results"}, "MAE 研究原型"),
         **_headings({"tooling", "interfaces"}, "選擇性 LLM 測試", "量測模型上下文"),
     },
@@ -261,6 +263,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Run Publication",
             "Job State and Worker Identity",
             "Execution Plans and Confirmation Documents",
+            "Reading Artifact Delivery",
         ),
         **_headings(
             {"strategy", "execution", "results", "interfaces"}, "Execution Manifest"

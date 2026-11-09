@@ -9,7 +9,11 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Buffer, Iterable
+    from typing import SupportsFloat, SupportsIndex
 
 # Schema 1 predates the training-dataset binding; both are readable so an
 # existing model is not rejected merely for being older than the field.
@@ -179,7 +183,7 @@ def content_sha256(data: bytes) -> str:
 
 def feature_importance_from_gain(
     feature_names: list[str],
-    importance: list[float] | Any,
+    importance: Iterable[SupportsFloat | SupportsIndex | str | Buffer],
 ) -> tuple[tuple[str, float], ...]:
     """Sort native feature_importances_ values alongside feature names.
 

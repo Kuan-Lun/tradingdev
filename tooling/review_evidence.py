@@ -2,14 +2,45 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 from pathlib import Path
 
-from tooling.presentations import PRESENTATION_PATHS, is_presentation_path
+from tooling.presentations import DECK, PRESENTATION_PATHS, is_presentation_path
 from tooling.review_options import validate_review_options
 
 MAX_EVIDENCE_BYTES = 600_000
+PRESENTATION_GUIDE = f"{DECK}/README.md"
+PRESENTATION_ARTIFACT_PATHS = PRESENTATION_PATHS - {PRESENTATION_GUIDE}
+# These entrypoints manage editing/setup/deployment, not rendered slide content.
+# Other registered presentation paths retain the complete deck as evidence.
+_PRESENTATION_OPERATION_PATHS = frozenset(
+    {
+        PRESENTATION_GUIDE,
+        ".vscode/tasks.json",
+        ".gitignore",
+        "docs/.nojekyll",
+        "scripts/presentations.sh",
+        "scripts/check-presentations.sh",
+        "scripts/stage-presentations.sh",
+        "scripts/build-presentations-site.sh",
+        "wrangler.jsonc",
+        "tooling/presentation_errors.py",
+    }
+)
+# presentations.py also owns rendering. Only changes confined to these existing
+# operation responsibilities may omit unchanged artwork; unknown nodes fail closed.
+_PRESENTATION_OPERATION_DEFINITIONS = frozenset(
+    {
+        "presentation_task",
+        "_toolchain",
+        "setup",
+        "_install_toolchain",
+        "main",
+        "_InstallationRequiredError",
+    }
+)
 
 
 class ReviewError(RuntimeError):
@@ -85,27 +116,122 @@ def _text_blob(repo: Path, tree: str, path: str, entry: tuple[str, str, str]) ->
     return content
 
 
+def _operation_definitions_only(before: str, after: str) -> bool:
+    """Classify a mixed module using both immutable blobs, without executing it."""
+
+    def statements(content: str) -> dict[str, str]:
+        body = ast.parse(content).body
+        result: dict[str, str] = {}
+        other = 0
+
+        def lock_import(node: ast.AST) -> bool:
+            return (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and node.module == "filelock"
+                and len(node.names) == 1
+                and node.names[0].name == "FileLock"
+                and node.names[0].asname is None
+            )
+
+        # A new installer import must not alter a renderer's existing binding.
+        lock_is_operation_only = not any(
+            isinstance(child, ast.Name)
+            and child.id == "FileLock"
+            or isinstance(child, ast.FunctionDef | ast.ClassDef)
+            and child.name == "FileLock"
+            or isinstance(child, ast.alias)
+            and (child.asname or child.name) == "FileLock"
+            for node in body
+            if not lock_import(node)
+            and not (
+                isinstance(node, ast.FunctionDef | ast.ClassDef)
+                and node.name in _PRESENTATION_OPERATION_DEFINITIONS
+            )
+            for child in ast.walk(node)
+        )
+        for node in body:
+            if lock_import(node) and lock_is_operation_only:
+                continue
+            if (
+                isinstance(node, ast.If)
+                and isinstance(node.test, ast.Name)
+                and node.test.id == "TYPE_CHECKING"
+                and not node.orelse
+                and all(
+                    isinstance(statement, ast.ImportFrom)
+                    and statement.level == 0
+                    and statement.module == "collections.abc"
+                    and all(
+                        alias.name in {"Callable", "Generator"} and alias.asname is None
+                        for alias in statement.names
+                    )
+                    for statement in node.body
+                )
+            ):
+                continue
+            if isinstance(node, ast.FunctionDef | ast.ClassDef):
+                key = f"<decorated:{node.name}>" if node.decorator_list else node.name
+            else:
+                key = f"<statement:{other}>"
+                other += 1
+            if key in result:
+                raise ValueError("Ambiguous module definition")
+            result[key] = ast.dump(node)
+        return result
+
+    try:
+        old, new = statements(before), statements(after)
+    except SyntaxError, ValueError, RecursionError:
+        return False
+    return {
+        key for key in old.keys() | new.keys() if old.get(key) != new.get(key)
+    } <= _PRESENTATION_OPERATION_DEFINITIONS
+
+
 def _presentation_context(
-    changed: set[str], entries: dict[str, tuple[str, str, str]]
+    repo: Path,
+    base: str,
+    tree: str,
+    changed: set[str],
+    entries: dict[str, tuple[str, str, str]],
+    base_entries: dict[str, tuple[str, str, str]],
 ) -> set[str]:
     present = PRESENTATION_PATHS & entries.keys()
     if not (changed & PRESENTATION_PATHS) and not (
         present and any(is_presentation_path(path) for path in changed)
     ):
         return set()
-    missing = PRESENTATION_PATHS - entries.keys()
+    related = {path for path in changed if is_presentation_path(path)}
+    artwork_changes = related - _PRESENTATION_OPERATION_PATHS
+    mixed_module = "tooling/presentations.py"
+    if (
+        mixed_module in artwork_changes
+        and mixed_module in base_entries
+        and mixed_module in entries
+        and base_entries[mixed_module][:2]
+        == entries[mixed_module][:2]
+        == ("100644", "blob")
+        and _operation_definitions_only(
+            _text_blob(repo, base, mixed_module, base_entries[mixed_module]),
+            _text_blob(repo, tree, mixed_module, entries[mixed_module]),
+        )
+    ):
+        artwork_changes.remove(mixed_module)
+    required = set(PRESENTATION_PATHS) if artwork_changes else {PRESENTATION_GUIDE}
+    missing = required - entries.keys()
     if missing:
         raise ReviewError(
             "Missing required registered presentation review evidence: "
             + ", ".join(sorted(missing))
         )
-    for path in sorted(PRESENTATION_PATHS):
+    for path in sorted(required):
         if entries[path][:2] != ("100644", "blob"):
             raise ReviewError(
                 f"Required presentation review evidence {path!r} "
                 "is not an ordinary non-executable Git blob."
             )
-    return set(PRESENTATION_PATHS)
+    return required
 
 
 def _exclusion_reason(path: str) -> str:
@@ -122,8 +248,11 @@ def automatic_document_paths(paths: set[str]) -> set[str]:
     return {
         path
         for path in paths
-        if path in {"README.md", "ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md"}
-        or (path.startswith("docs/") and path.endswith(".md"))
+        if path not in PRESENTATION_ARTIFACT_PATHS
+        and (
+            path in {"README.md", "ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md"}
+            or (path.startswith("docs/") and path.endswith(".md"))
+        )
     }
 
 
@@ -145,9 +274,12 @@ def build_evidence(
     changed = [path for path in changed if path]
     relevant = sorted(path for path in changed if _relevant(path))
     entries = _tree_entries(repo, candidate_tree)
+    base_entries = _tree_entries(repo, base_tree)
     files = set(entries)
     docs = automatic_document_paths(files)
-    context = _presentation_context(set(changed), entries)
+    context = _presentation_context(
+        repo, base_tree, candidate_tree, set(changed), entries, base_entries
+    )
     try:
         validate_review_options(
             review_context=review_context, review_context_for=review_context_for
@@ -179,7 +311,6 @@ def build_evidence(
     }
     # Force textual diffs only after validating both sides. Git attributes must
     # not hide selected source changes behind a "Binary files differ" marker.
-    base_entries = _tree_entries(repo, base_tree)
     for path in relevant:
         if path in base_entries:
             _text_blob(repo, base_tree, path, base_entries[path])
@@ -210,9 +341,11 @@ def build_evidence(
             "All changed scripts (including extensionless Git hooks), source, "
             "configuration, Markdown, HTML and CSS text files; docs/.nojekyll; "
             "all candidate README, ARCHITECTURE, agent policies and docs/**/*.md. "
-            "Registered presentation changes and related build/deployment changes "
-            "include the complete candidate presentation source, theme and "
-            "README as context. Selected content must be UTF-8 without NUL bytes. "
+            "Registered presentation operation changes include the editing guide. "
+            "Artwork, renderer and unclassified presentation changes additionally "
+            "include the complete candidate slide source and theme. Unchanged "
+            "slide source is an artifact, not automatic documentation context. "
+            "Selected content must be UTF-8 without NUL bytes. "
             "Other paths, including binary assets and unsupported lockfiles, and "
             "runtime workspace contents are excluded as individually listed. "
             "Explicit context can add regular UTF-8 text outside automatic "

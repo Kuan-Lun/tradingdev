@@ -56,6 +56,7 @@ LIFECYCLE_TOOLS = [
     "generate_report",
     "list_artifacts",
     "get_artifact",
+    "get_artifact_download",
 ]
 
 
@@ -97,15 +98,31 @@ def _command(root: Path, model: str, reasoning_effort: str) -> list[str]:
     return command
 
 
-def _mcp_config(root: Path, tool_names: list[str]) -> dict[str, Any]:
+def _mcp_config(
+    root: Path, tool_names: list[str], *, mcp_url: str | None = None
+) -> dict[str, Any]:
+    transport = (
+        {"url": mcp_url}
+        if mcp_url is not None
+        else {
+            "command": sys.executable,
+            "args": [
+                "-m",
+                "tradingdev.mcp.server",
+                "--workspace",
+                str(root / "workspace"),
+            ],
+            "cwd": str(root),
+            "env": runtime_environment(root),
+        }
+    )
     return {
-        "command": sys.executable,
-        "args": ["-m", "tradingdev.mcp.server", "--workspace", str(root / "workspace")],
-        "cwd": str(root),
-        "env": runtime_environment(root),
+        **transport,
         "enabled": True,
         "required": True,
-        "startup_timeout_sec": 30,
+        # Cold imports on a loaded host can exceed 30s. The enclosing run timeout
+        # still bounds startup plus every model turn and always reaps the tree.
+        "startup_timeout_sec": 120,
         "tool_timeout_sec": 60,
         "enabled_tools": tool_names,
         "default_tools_approval_mode": "approve",
@@ -145,6 +162,7 @@ async def run_codex(
     user_reply: UserReply | None = None,
     max_turns: int = 8,
     tool_names: list[str] | None = None,
+    mcp_url: str | None = None,
     on_tool_call: Callable[[ToolCall], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Run an MCP-only conversation with one thread and reap its process tree."""
@@ -220,7 +238,7 @@ async def run_codex(
                             "Use only the configured tradingdev MCP tools."
                         ),
                     },
-                    mcp_config=_mcp_config(root, enabled_tools),
+                    mcp_config=_mcp_config(root, enabled_tools, mcp_url=mcp_url),
                     expected_reasoning_effort=reasoning_effort,
                     user_reply=respond_to_turn if user_reply is not None else None,
                     max_turns=max_turns,

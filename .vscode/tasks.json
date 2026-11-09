@@ -3,16 +3,18 @@
   "tasks": [
     {
       "label": "slides: watch",
-      "detail": "儲存 TradingDev 簡報或主題時，自動更新 index.html。",
+      "detail": "檢查並補齊鎖定依賴，再於儲存簡報或主題時更新 index.html。",
       "type": "process",
       "command": "uv",
       "args": [
         "run",
-        "--no-sync",
+        "--locked",
+        "--all-extras",
         "python",
         "-m",
         "tooling.presentations",
-        "watch"
+        "watch",
+        "--ensure-toolchain"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -31,16 +33,18 @@
     },
     {
       "label": "slides: build",
-      "detail": "輸出供保存或發布的靜態 index.html。",
+      "detail": "檢查並補齊鎖定依賴，再輸出靜態 index.html。",
       "type": "process",
       "command": "uv",
       "args": [
         "run",
-        "--no-sync",
+        "--locked",
+        "--all-extras",
         "python",
         "-m",
         "tooling.presentations",
-        "build"
+        "build",
+        "--ensure-toolchain"
       ],
       "options": {
         "cwd": "${workspaceFolder}"

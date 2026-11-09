@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
-def _exported_fixture(close: pd.Series, length: int = 7) -> pd.Series:
+def _exported_fixture(close: pd.Series[float], length: int = 7) -> pd.Series[float]:
     """A newly exported callable discovered without editing a second API list."""
     raise AssertionError("Reference discovery must never execute indicators")
 

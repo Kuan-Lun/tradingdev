@@ -20,7 +20,7 @@ from tradingdev.domain.benchmark import (
     aligned_closes,
     buy_and_hold,
 )
-from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.performance.catalog import METRIC_CATALOG, MetricScalar
 from tradingdev.domain.research_policy import DEFAULT_FEES, DEFAULT_SLIPPAGE
 from tradingdev.shared.utils.json_values import (
     normalize_json_object,
@@ -30,9 +30,6 @@ from tradingdev.shared.utils.json_values import (
 if TYPE_CHECKING:
     from tradingdev.domain.backtest.pipeline_result import PipelineResult
     from tradingdev.domain.backtest.result import BacktestResult
-
-
-type MetricScalar = int | float | None
 
 
 class ArtifactModel(BaseModel):

@@ -5,9 +5,9 @@
 ## FR-EXEC-001 準備與明確確認
 
 - **需求**：MCP 正式回測、固定比較、walk-forward 及最佳化須先固定設定、研究說明與離線檢查證據，交付白話摘要及完整確認文件，再等待後續明確同意。
-- **驗收**：準備不取得真實行情、不訓練、不執行回測，也不建立正式 job；適用的生成程式檢查使用合成資料；固定比較的每個候選（包含 bundled）均須通過兩組合成 fixture 檢查。最初請求、提問與沉默不是同意；拒絕不啟動，修改須重新準備及確認。直接回測 CLI 命令不採用對話確認，Codex 對話入口仍遵循 MCP 確認流程；獨立 ML 研究不適用此計畫流程。
+- **驗收**：準備不取得真實行情、不訓練、不執行回測，也不建立正式 job；適用的生成程式檢查使用合成資料；固定比較的每個候選（包含 bundled）均須通過兩組合成 fixture 檢查。最初請求、提問與沉默不是同意；拒絕不啟動，修改須重新準備及確認。直接回測 CLI 命令不採用對話確認，Codex 對話入口仍遵循 MCP 確認流程；獨立 ML 研究不適用此計畫流程。確認單交付：確認單以固定產物身分與雜湊供客戶端取得；HTTP 提供綁定該身分與雜湊的短效閱讀連結；無 HTTP 交付時由客戶端交付完整且經核對的副本，只呈現使用者可讀的閱讀連結，不附上不可存取的伺服器路徑。客戶端無法交付時須明示限制，不宣稱使用者可讀或請其核准未交付文件；讀取與傳輸不啟動工作，也不延長計畫期限。
 - **契約**：[執行計畫與確認](../execution_plans.md#execution-plans-and-confirmation-documents)。
-- **驗證**：[preflight service](../../tests/app/test_preflight_service.py) 檢查離線邊界；[真實模型確認流程](../../tests/e2e/test_llm_execution_plans.py) 檢查跨回合互動，須另啟模型測試。
+- **驗證**：[preflight service](../../tests/app/test_preflight_service.py) 檢查離線邊界；[HTTP 確認單傳輸](../../tests/mcp/test_http_execution_confirmation.py) 檢查分頁與完整性；[短效閱讀連結](../../tests/mcp/test_artifact_downloads.py) 檢查實際 HTTP、失效與不啟動工作；[交付證據](../../tests/e2e/test_conversation_user.py) 拒絕不完整副本與失效原始連結；[真實模型確認流程](../../tests/e2e/test_llm_execution_plans.py) 及[遠端交付情境](../../tests/e2e/test_llm_research_delivery.py) 檢查跨回合互動與交付選擇，須另啟模型測試。
 
 ## FR-EXEC-002 提交完整性與重複請求
 

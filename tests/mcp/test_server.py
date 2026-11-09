@@ -139,6 +139,43 @@ def test_main_passes_explicit_proxy_allowlists(
     assert options["host"] == "127.0.0.1"
 
 
+def test_public_url_cli_validates_before_creating_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tradingdev.mcp import server as module
+
+    workspace = tmp_path / "unused"
+    for options in (
+        ["--public-base-url", "https://public.example"],
+        ["--web", "--public-base-url", "https://user:secret@public.example"],
+    ):
+        with pytest.raises(SystemExit) as error:
+            main(["--workspace", str(workspace), *options])
+        assert error.value.code == 2 and not workspace.exists()
+
+    urls = []
+    original = module.create_server
+
+    def create(
+        paths: WorkspacePaths, *, public_base_url: str | None = None
+    ) -> StrictMCPServer:
+        urls.append(public_base_url)
+        return original(paths, public_base_url=public_base_url)
+
+    monkeypatch.setattr(module, "create_server", create)
+    monkeypatch.setattr(StrictMCPServer, "run", lambda *args, **kwargs: None)
+    main(
+        [
+            "--workspace",
+            str(workspace),
+            "--web",
+            "--public-base-url",
+            "https://public.example/prefix/",
+        ]
+    )
+    assert urls == ["https://public.example/prefix"]
+
+
 def test_server_instances_keep_generated_strategies_in_their_workspace(
     runtime_root: Path,
 ) -> None:
@@ -242,18 +279,19 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     server = create_server(WorkspacePaths(runtime_root / "workspace"))
     assert server.instructions is not None
     instructions = " ".join(server.instructions.split())
-    assert "Quote confirmation_summary verbatim" in instructions
+    assert "quote confirmation_summary verbatim" in instructions
     assert "Preserve every label, value, unit and train/test role" in instructions
     assert "answer or clarify and wait" in instructions
-    assert "Copy confirmation_link verbatim" in instructions
-    assert "its destination against html_path" in instructions
-    assert "do not assemble or edit IDs or paths" in instructions
+    assert "get_artifact_download with confirmation_artifact's ID/hash" in instructions
+    assert "Link server_path only" in instructions
+    assert "transport alone does not prove access" in instructions
     assert 'section="research") before explaining date boundaries' in instructions
     assert "No code block, file:// or invented URI" in instructions
-    assert "not a public URL" in instructions
-    assert "End the turn after the user can read the HTML" in instructions
+    assert "append an inaccessible original link" in instructions
+    assert "do not claim the user can read the HTML" in instructions
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     assert "get_artifact" in tools
+    assert "get_artifact_download" in tools
     for name in (
         "prepare_backtest",
         "prepare_comparison",
@@ -262,16 +300,21 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     ):
         description = " ".join((tools[name].description or "").split())
         assert "confirmation_summary" in description and "verbatim" in description, name
-        assert "confirmation_link" in description, name
+        assert "confirmation_artifact" in description, name
         assert "HTML" in description and "end the turn" in description, name
         schema = tools[name].output_schema
         assert schema is not None
         assert {
             "plan_id",
             "confirmation_summary",
-            "confirmation_link",
-            "html_path",
+            "confirmation_artifact",
         } <= set(schema["$defs"]["PlanResponse"]["required"])
+        assert not {"confirmation_link", "html_path", "artifact_id"} & set(
+            schema["$defs"]["PlanResponse"]["properties"]
+        )
+        artifact = schema["$defs"]["ConfirmationArtifact"]
+        assert {"artifact_id", "sha256", "server_path"} <= set(artifact["required"])
+        assert artifact["properties"]["sha256"]["pattern"] == "^[0-9a-f]{64}$"
     decision = " ".join((tools["submit_execution_decision"].description or "").split())
     assert "explicit later decision" in decision
     assert "questions and ambiguous replies are not consent" in instructions

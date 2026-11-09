@@ -142,6 +142,40 @@ def test_numeric_analysis_review_preserves_its_source_and_contract(
     assert excluded not in plan.prompts[0]
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/tradingdev/app/execution_plan_service.py",
+        "src/tradingdev/app/artifact_service.py",
+        "src/tradingdev/mcp/artifact_downloads.py",
+    ],
+)
+def test_artifact_delivery_review_retains_contract_and_complete_source(
+    tmp_path: Path, path: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, path, "VALUE = 'old'\n")
+    contract = (
+        "# Run Artifacts\n\n## MCP Lookup\n\n### Reading Artifact Delivery\n"
+        "Hash-bound bearer URLs expire without changing saved artifacts.\n"
+    )
+    _write(tmp_path, "docs/run_artifacts.md", contract)
+    base = _tree(tmp_path)
+    source = "VALUE = 'new'\n"
+    _write(tmp_path, path, source)
+    plan = review_docs.prepare_review(base, _tree(tmp_path), repo=tmp_path)
+    batch = _payload(plan.prompts[0])
+    assert batch["candidate_files"][path] == source
+    assert "+VALUE = 'new'" in batch["path_diffs"][path]
+    selected = "".join(
+        section["text"]
+        for section in batch["document_sections"]
+        if section["path"] == "docs/run_artifacts.md"
+    )
+    assert "### Reading Artifact Delivery\n" in selected
+    assert contract.split("### Reading Artifact Delivery\n", 1)[1] in selected
+
+
 def test_each_changed_file_has_one_complete_owner_and_one_cross_scope_audit(
     change: tuple[Path, str, str],
 ) -> None:
@@ -214,6 +248,55 @@ def test_required_deck_context_is_distinguished_from_actual_changes(
                     payload["candidate_files"][path]
                     == _git(tmp_path, "show", f"{tree}:{path}") + "\n"
                 )
+
+
+def test_operation_batches_split_without_truncating_changed_files(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    for path in PRESENTATION_PATHS:
+        _write(tmp_path, path, "Original deck context\n")
+    operation = "tooling/presentations.py"
+    test = "tests/tooling/test_presentations.py"
+    before = {
+        operation: "def setup(root):\n    pass\n"
+        + "# stable operation context\n" * 500,
+        test: "EXPECTED = 'old'\n" + "# stable test context\n" * 600,
+    }
+    for path, text in before.items():
+        _write(tmp_path, path, text)
+    base = _tree(tmp_path)
+    after = {
+        operation: before[operation].replace("pass", "install(root)"),
+        test: before[test].replace("'old'", "'new'"),
+    }
+    for path, text in after.items():
+        _write(tmp_path, path, text)
+    evidence = build_evidence(tmp_path, base, _tree(tmp_path))
+    plan = build_review_plan(evidence, max_prompt_bytes=30_000)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owners = [batch for batch in batches if batch["scope"] == "presentation"]
+    assert len(owners) > 1
+    for batch in batches:
+        assert batch["candidate_files"][f"{DECK}/README.md"] == (
+            "Original deck context\n"
+        )
+    for path, content in after.items():
+        assigned = [batch for batch in owners if path in batch["assigned_paths"]]
+        assert len(assigned) == 1
+        assert assigned[0]["candidate_files"][path] == content
+        assert (
+            assigned[0]["path_diffs"][path] == json.loads(evidence)["path_diffs"][path]
+        )
+    assert all(len(prompt.encode()) <= 30_000 for prompt in plan.prompts)
+    assert not any(
+        "Original deck context" in section["text"]
+        for batch in batches
+        for section in batch["document_sections"]
+        if section["path"] == f"{DECK}/slides.md"
+    )
+    audit = next(batch for batch in batches if batch["scope"] == "cross_scope")
+    assert audit["path_diffs"] == json.loads(evidence)["path_diffs"]
 
 
 def test_explicit_scope_cannot_hide_a_changed_responsibility(

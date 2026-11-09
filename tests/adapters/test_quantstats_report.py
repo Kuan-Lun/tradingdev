@@ -234,7 +234,7 @@ def test_utc_daily_compounding_preserves_first_return_and_missing_days(
     ]
     captured: list[float] = []
 
-    def native(daily: pd.Series, periods: int | float, rate: float) -> str:
+    def native(daily: pd.Series[float], periods: int | float, rate: float) -> str:
         assert daily.index.tolist() == [
             pd.Timestamp("2024-01-02"),
             pd.Timestamp("2024-01-05"),

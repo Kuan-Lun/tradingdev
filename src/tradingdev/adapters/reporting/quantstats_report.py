@@ -84,7 +84,7 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def _daily_returns(scope: dict[str, Any], settings: dict[str, Any]) -> pd.Series:
+def _daily_returns(scope: dict[str, Any], settings: dict[str, Any]) -> pd.Series[float]:
     if scope.get("kind") != "backtest":
         raise _UnavailableInputError("unsupported_scope")
     if scope.get("mode") != "signal":
@@ -151,7 +151,7 @@ def _daily_returns(scope: dict[str, Any], settings: dict[str, Any]) -> pd.Series
     return daily
 
 
-def _native_html(daily: pd.Series, periods: int | float, rate: float) -> str:
+def _native_html(daily: pd.Series[float], periods: int | float, rate: float) -> str:
     # Keep optional plotting imports out of unavailable-data paths. QuantStats
     # lazily imports its plotting module, which changes rcParams on first import.
     import matplotlib as mpl

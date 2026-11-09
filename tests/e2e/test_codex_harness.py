@@ -158,11 +158,13 @@ def test_codex_process_config_isolates_effort_and_host_capabilities(
 
 @pytest.mark.parametrize("status", ["completed", "failed", "timeout"])
 @pytest.mark.parametrize("tool_names", [None, ["get_ml_contract", "build_dataset"]])
+@pytest.mark.parametrize("mcp_url", [None, "http://127.0.0.1:18080/mcp"])
 def test_codex_stops_client_and_detached_child(
     monkeypatch: MonkeyPatch,
     status: str,
     model_environment: str | None,
     tool_names: list[str] | None,
+    mcp_url: str | None,
 ) -> None:
     monkeypatch.setattr(
         codex_harness,
@@ -178,7 +180,9 @@ def test_codex_stops_client_and_detached_child(
         root = Path(temporary)
         if status == "completed":
             events = asyncio.run(
-                codex_harness.run_codex(root, "prompt", tool_names=tool_names)
+                codex_harness.run_codex(
+                    root, "prompt", tool_names=tool_names, mcp_url=mcp_url
+                )
             )
             assert events[-1]["method"] == "turn/completed"
         else:
@@ -186,7 +190,11 @@ def test_codex_stops_client_and_detached_child(
             with pytest.raises(AssertionError, match=expected):
                 asyncio.run(
                     codex_harness.run_codex(
-                        root, "prompt", timeout_seconds=1, tool_names=tool_names
+                        root,
+                        "prompt",
+                        timeout_seconds=1,
+                        tool_names=tool_names,
+                        mcp_url=mcp_url,
                     )
                 )
         requested = json.loads((root / "thread_request.json").read_text())
@@ -196,6 +204,13 @@ def test_codex_stops_client_and_detached_child(
         )
         servers = requested["config"]["mcp_servers"]
         assert len(servers) == 1
+        transport = next(iter(servers.values()))
+        if mcp_url is not None:
+            assert transport["url"] == mcp_url
+            assert not {"command", "args", "env", "cwd"} & transport.keys()
+        else:
+            assert transport["command"] == sys.executable
+            assert "url" not in transport
         assert next(iter(servers.values()))["enabled_tools"] == (
             codex_harness.LIFECYCLE_TOOLS if tool_names is None else tool_names
         )

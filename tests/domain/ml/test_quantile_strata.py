@@ -12,7 +12,7 @@ from tradingdev.domain.ml.evaluation import quantile_strata
 from tradingdev.domain.ml.evaluation.stratified import quantile_bins
 
 
-def _seeded(count: int) -> tuple[pd.Series, pd.Series]:
+def _seeded(count: int) -> tuple[pd.Series[float], pd.Series[float]]:
     rng = np.random.default_rng(0)
     values = rng.normal(size=count)
     return pd.Series(values, name="prediction"), pd.Series(values, name="fwd")

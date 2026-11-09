@@ -64,15 +64,19 @@ Strategy development workflow
      availability or successful full execution.
 
 5. Present the prepared plan for review (all prepare_* tools).
-   - Quote confirmation_summary verbatim, preferably as a Markdown blockquote.
-     Preserve every label, value, unit and train/test role; do not recalculate or
-     shorten the execution assumptions needed for approval.
-   - Copy confirmation_link verbatim on a separate normal Markdown line. Verify
-     its destination against html_path; do not assemble or edit IDs or paths.
-     No code block, file:// or invented URI. Remote clients must retrieve the artifact
-     through their delivery mechanism: a server-local path is not a public URL.
-     Do not paste the entire plan data.
-   - End the turn after the user can read the HTML and wait for their response.
+   - Use get_artifact_download with confirmation_artifact's ID/hash for HTTP
+     delivery. If unavailable, get_artifact describes complete, hash-bound copying
+     through the host's file/attachment mechanism. Link server_path only when that
+     exact path is accessible to the user; transport alone does not prove access.
+     Present one readable HTML link on a normal Markdown line, preserving its exact
+     destination (encode special path characters). No code block, file:// or invented
+     URI. Do not paste the entire plan data or append an inaccessible original link.
+   - If delivery is unavailable, explain the limitation and stop; do not claim the
+     user can read the HTML or ask for approval of an undelivered document.
+   - After delivery, quote confirmation_summary verbatim, preferably as a Markdown
+     blockquote. Preserve every label, value, unit and train/test role; do not
+     recalculate or shorten the execution assumptions needed for approval.
+     End the turn and wait for their response.
      The initial request does not approve an unseen plan.
 
 6. Relay the user's later decision for that exact plan.
@@ -125,6 +129,9 @@ Strategy development workflow
      intermediate link or delegated answer alone is not delivery: the orchestrator
      must include the link and guide in its own final answer. Do not claim omitted
      sections are included.
+     Use get_artifact_download with the report's artifact_id/sha256 for HTTP;
+     otherwise deliver a verified host copy or a user-accessible local path.
+     Explain link expiry; refresh links without rerunning research.
 
 9. Preserve research summaries and deliverables.
    - When saving/sharing research is requested, use save_research_note at meaningful

@@ -14,6 +14,8 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING
 
+from filelock import FileLock
+
 from tooling.environment import (
     EnvironmentCheckError,
     check_environment,
@@ -37,7 +39,7 @@ from tooling.process_guard import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 DECK = "docs/talks/tradingdev-introduction"
 PRESENTATION_PATHS = frozenset(
@@ -77,6 +79,10 @@ class _CleanupError(ProcessCleanupError):
     """Process teardown could not be verified; keep affected workspaces."""
 
 
+class _InstallationRequiredError(PresentationError):
+    """The source lock is valid, but its installed packages need synchronization."""
+
+
 def presentation_task(action: str) -> dict[str, object]:
     """Return the complete allowed VS Code task; unknown keys cannot be inherited."""
     if action not in {"build", "watch"}:
@@ -84,13 +90,22 @@ def presentation_task(action: str) -> dict[str, object]:
     task: dict[str, object] = {
         "label": f"slides: {action}",
         "detail": (
-            "儲存 TradingDev 簡報或主題時，自動更新 index.html。"
+            "檢查並補齊鎖定依賴，再於儲存簡報或主題時更新 index.html。"
             if action == "watch"
-            else "輸出供保存或發布的靜態 index.html。"
+            else "檢查並補齊鎖定依賴，再輸出靜態 index.html。"
         ),
         "type": "process",
         "command": "uv",
-        "args": ["run", "--no-sync", "python", "-m", "tooling.presentations", action],
+        "args": [
+            "run",
+            "--locked",
+            "--all-extras",
+            "python",
+            "-m",
+            "tooling.presentations",
+            action,
+            "--ensure-toolchain",
+        ],
         "options": {"cwd": "${workspaceFolder}"},
         "problemMatcher": [],
         "presentation": {"reveal": "silent", "focus": False, "panel": "dedicated"},
@@ -351,13 +366,6 @@ def _toolchain(root: Path) -> Path:
         cli = packages.get("node_modules/@marp-team/marp-cli")
         if not isinstance(cli, dict) or cli.get("version") != "4.5.1":
             raise PresentationError("The locked Marp CLI version must be 4.5.1.")
-        actual = _json_object(
-            (installed / "node_modules/.package-lock.json").read_bytes()
-        ).get("packages")
-        if not isinstance(actual, dict):
-            raise PresentationError(
-                "The installed toolchain has no dependency manifest."
-            )
         for path, package in packages.items():
             if not path:
                 continue
@@ -368,6 +376,21 @@ def _toolchain(root: Path) -> Path:
                 or ".." in Path(path).parts
             ):
                 raise PresentationError("Invalid locked dependency path.")
+    except (OSError, ValueError) as error:
+        raise PresentationError(
+            f"Locked presentation dependencies are unavailable. {_install_help()}"
+        ) from error
+    try:
+        actual = _json_object(
+            (installed / "node_modules/.package-lock.json").read_bytes()
+        ).get("packages")
+        if not isinstance(actual, dict):
+            raise _InstallationRequiredError(
+                "The installed toolchain has no dependency manifest."
+            )
+        for path, package in packages.items():
+            if not path:
+                continue
             present = actual.get(path)
             if not isinstance(present, dict) or any(
                 present.get(key) != package.get(key)
@@ -375,7 +398,7 @@ def _toolchain(root: Path) -> Path:
             ):
                 if package.get("optional") is True and present is None:
                     continue
-                raise PresentationError(
+                raise _InstallationRequiredError(
                     f"Installed dependency differs from lock: {path}"
                 )
             manifest = installed / path / "package.json"
@@ -384,13 +407,15 @@ def _toolchain(root: Path) -> Path:
             if _json_object(manifest.read_bytes()).get("version") != package.get(
                 "version"
             ):
-                raise PresentationError(f"Installed dependency version differs: {path}")
+                raise _InstallationRequiredError(
+                    f"Installed dependency version differs: {path}"
+                )
         if set(actual) - set(packages):
-            raise PresentationError(
+            raise _InstallationRequiredError(
                 "Installed toolchain includes unlocked dependencies."
             )
     except (OSError, ValueError) as error:
-        raise PresentationError(
+        raise _InstallationRequiredError(
             f"Locked presentation dependencies are unavailable. {_install_help()}"
         ) from error
     return installed
@@ -462,7 +487,30 @@ def check_presentations(root: Path, *, timeout: float = 120) -> None:
     )
 
 
-def setup(root: Path, *, timeout: float = 300) -> None:
+def setup(root: Path, *, timeout: float = 300, only_if_needed: bool = False) -> None:
+    """Serialize installers; task startup only repairs the local installation."""
+    _node()
+    with FileLock(root / ".venv/.presentation-setup.lock", timeout=timeout + 30):
+        if only_if_needed:
+            try:
+                _toolchain(root)
+                return
+            except _InstallationRequiredError:
+                configured = os.environ.get("TRADINGDEV_PRESENTATION_TOOLCHAIN")
+                if (
+                    configured
+                    and Path(configured).resolve() != (root / "tooling/marp").resolve()
+                ):
+                    raise PresentationError(
+                        "The external TRADINGDEV_PRESENTATION_TOOLCHAIN needs repair; "
+                        "automatic installation only updates this repository's "
+                        "tooling/marp directory."
+                    ) from None
+            print("Installing the locked presentation compiler...", flush=True)
+        _install_toolchain(root, timeout=timeout)
+
+
+def _install_toolchain(root: Path, *, timeout: float) -> None:
     _node(npm=True)
     npm = shutil.which("npm")
     if npm is None:
@@ -518,7 +566,14 @@ def main() -> int:
     parser.add_argument(
         "--output", type=Path, help="New folder for the offline package"
     )
+    parser.add_argument(
+        "--ensure-toolchain",
+        action="store_true",
+        help="For build/watch, install missing or stale locked npm dependencies",
+    )
     args = parser.parse_args()
+    if args.ensure_toolchain and args.action not in {"build", "watch"}:
+        parser.error("--ensure-toolchain is only available for build and watch")
     root = Path(__file__).resolve().parents[1]
     try:
         if args.action == "package":
@@ -536,9 +591,15 @@ def main() -> int:
             return 0
         if args.output is not None:
             parser.error("--output is only available for package")
-        {"setup": setup, "build": build, "watch": watch, "check": check_presentations}[
-            args.action
-        ](root)
+        if args.ensure_toolchain:
+            setup(root, only_if_needed=True)
+        actions: dict[str, Callable[[Path], None]] = {
+            "setup": setup,
+            "build": build,
+            "watch": watch,
+            "check": check_presentations,
+        }
+        actions[args.action](root)
     except ProcessCleanupError as error:
         print(f"Presentation cleanup is unverified: {error}", file=sys.stderr)
         return CLEANUP_UNVERIFIED_EXIT_CODE

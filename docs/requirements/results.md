@@ -26,9 +26,9 @@
 ## FR-RES-004 研究解讀與最終交付
 
 - **需求**：要求完成研究並解讀績效時，助手須提供結果、證據限制及報告連結，除非使用者明確拒絕報告或只要摘要；建議不自動授權下一次實驗。
-- **驗收**：最終回覆識別所選結果及明細查看方式，確認交付檔案存在可讀。只回報工作啟動或中途貼連結不算完成；報告失敗可沿用已保存結果重試。遠端主機路徑須由客戶端適當交付，不冒充可公開下載網址。
+- **驗收**：最終回覆識別所選結果及明細查看方式，確認交付檔案存在可讀。只回報工作啟動或中途貼連結不算完成；報告失敗可沿用已保存結果重試。HTTP 可提供綁定已保存確認單、報告或研究封存的短效連結；檔案變動或連結失效須明示，重新取得不重跑研究。無 HTTP 交付時由客戶端適當交付，遠端主機路徑不冒充下載網址。
 - **契約**：[研究解讀與診斷](../reports.md#research-interpretation-and-diagnostic-providers)、[報告交付](../reports.md#composable-offline-reports)。
-- **驗證**：[交付證據檢查](../../tests/e2e/test_report_delivery.py) 為離線驗證器測試；[真實模型成果交付](../../tests/e2e/test_llm_research_delivery.py) 驗證完整流程，須另啟模型測試。
+- **驗證**：[交付證據檢查](../../tests/e2e/test_report_delivery.py) 為離線驗證器測試；[真實模型成果交付](../../tests/e2e/test_llm_research_delivery.py) 及 [HTTP 模型交付](../../tests/e2e/test_llm_http_delivery.py) 驗證受測流程，須另啟模型測試。
 
 ## FR-RES-005 研究筆記與封存
 

@@ -19,7 +19,7 @@ from tradingdev.domain.strategies.bundled.xgboost_strategy.strategy import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from tests.domain.strategies.conftest import LookAheadAssertion
 
 
 class TestXGBoostStrategy:
@@ -145,7 +145,7 @@ class TestXGBoostStrategy:
     def test_no_look_ahead_bias(
         self,
         large_ohlcv_df: pd.DataFrame,
-        assert_no_look_ahead: Callable[..., None],
+        assert_no_look_ahead: LookAheadAssertion,
     ) -> None:
         """Rolling prediction may only use bars at or before each bar."""
         strategy = XGBoostStrategy(config=self._make_config())

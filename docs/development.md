@@ -14,9 +14,12 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上及已初始化的鎖定工具鏈，
-含 Mermaid 時另需 Chrome／Chromium。本機 npm 用於初始化依賴，Python 簡報命令的
-build／watch／check／package 及離線測試不呼叫 npm；Cloudflare 發布入口會先執行 `npm ci`。
+一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上；
+含 Mermaid 時另需 Chrome／Chromium。VS Code 的 build／watch 工作使用 uv，
+啟動時先同步鎖定的 Python 依賴，再按需初始化本機 Marp 工具鏈；
+只有工具鏈需要安裝或修復時才需要 npm。
+Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check／package 與離線測試，
+均要求工具鏈已初始化，執行時不呼叫 npm。Cloudflare 發布入口會先執行 `npm ci`。
 完整離線 pytest 與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器；
 離線表示執行時不呼叫模型或下載依賴。
 初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
@@ -62,6 +65,33 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 實作集中於 [tooling/](../tooling/)。測試按 domain、app、adapters、MCP、整合流程及
 開發工具放在 [tests/](../tests/)；新增能力時依責任擴充相應測試，避免只依檔名選取。
 測試案例、測資與斷言以測試程式為準，不在本指南逐項重述。
+
+### 型別檢查與契約保護
+
+Ruff 檢查程式品質與格式，Mypy 檢查靜態型別相容性；`strict` 通過仍可能包含
+`Any`，不能據此判定型別契約足夠精確。未填元素型別的 `pd.Series` 也可能使用
+stub 的 `Any` 預設值，使不存在的方法或錯誤輸入失去檢查。
+
+已建立精確契約的核心模組在 [pyproject.toml](../pyproject.toml) 以逐模組
+`disallow_any_explicit` 限制新增的 `Any`；模組範圍以該設定為準。
+新增同類模組時，先確認輸入、輸出及使用端契約，再納入設定並執行快速檢查。
+動態 JSON、外部套件等邊界若需要 `Any`，應在邊界說明來源及限制，並在可驗證後
+收窄型別；不能用廣泛的忽略、`cast` 或擴大例外取代契約修正。
+此規則不禁止所有推導出的 `Any`，第三方回傳值及跨模組傳遞仍需契約案例保護。
+
+靜態型別案例以 `typing_*.py` 放在受測模組所屬的測試目錄，由快速檢查中的 Mypy
+驗證，不由 pytest 執行。公開介面新增或變更時，選擇有風險的輸入與輸出，
+以 `assert_type` 驗證跨模組型別保留；預期錯誤使用具錯誤代碼的局部忽略。
+若型別退化成 `Any` 而不再報錯，strict Mypy 的 unused-ignore 檢查會使案例失敗。
+這些案例驗證靜態契約，執行期資料驗證仍由相關行為測試負責。
+設定的拒絕能力由 [test_quality.py](../tests/tooling/test_quality.py) 使用實際 Mypy 驗證。
+
+快速檢查的 Python 目錄以 [tooling/quality.py](../tooling/quality.py) 的 `PYTHON_PATHS`
+為準。新增目錄時，確認可執行、持續維護的 Python 已納入該入口；歷史案例與封存
+證據另依其用途維護，不因副檔名相同就改寫。單獨執行 Mypy 時須指定 repository 的
+`pyproject.toml`，不能用另一份較寬鬆設定代替快速檢查。
+
+### 執行離線測試
 
 離線測試可直接使用 `uv run --all-extras pytest`，加檔案路徑或 `-k` 執行相關範圍。
 `check-full.sh` 一律跑完整離線套件；純開發政策／已登錄開發工具使用
@@ -272,13 +302,14 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 ### 簡報的編輯與輸出
 
 [簡報入口](talks/tradingdev-introduction/README.md)提供編輯、預覽與發布操作。
-編輯環境須有 Node.js 22.17 以上及 npm，再初始化鎖定的 Marp 工具鏈：
+命令列建置前需備妥 Node.js 22.17 以上與鎖定的 Marp 工具鏈。
+手動初始化工具鏈時另需 npm，再執行：
 
 ```bash
 ./scripts/presentations.sh setup
 ```
 
-`setup` 會下載 npm 套件；一般 build／check 使用已安裝工具鏈，不自動安裝。
+`setup` 會下載 npm 套件；命令列 build／watch 預設及 check 使用已安裝工具鏈。
 執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝鎖定的 npm 工具鏈
 （Marp CLI、Mermaid 與圖表字型），不會安裝 Node.js 或 npm 本身。若報錯提示
 `Node.js is unavailable` 或 `Node.js and npm are required`，
@@ -288,8 +319,19 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 #### 在 VS Code 儲存時自動編譯
 
 [VS Code Tasks](../.vscode/tasks.json) 提供 `slides: watch` 與 `slides: build`。
-完成初始化後，在可信任的工作區允許自動工作，或以 **Tasks: Run Task** 啟動。
-監看時儲存來源會重建 HTML；結束使用 **Tasks: Terminate Task**。
+備妥 uv 與 Node.js 後，在可信任的工作區允許自動工作，或以 **Tasks: Run Task** 啟動。
+兩個工作會先依 `uv.lock` 同步專案 Python 環境及全部 extras，再檢查 Marp 工具鏈；
+缺少套件或安裝版本與 npm lock 不符時才執行安裝，已齊備時直接開始建置或監看。
+工具鏈需要安裝或修復時另需 npm；首次使用或鎖定依賴更新後可能需要網路，不會自行更新 lock。
+Node.js 及 Mermaid 所需的 Chrome／Chromium 仍須先安裝；依賴安裝失敗時不會開始編譯。
+
+兩個工作共用安裝鎖，避免同時初始化 Marp。監看開始後，儲存來源只會重建 HTML；
+變更依賴後須重新啟動工作。結束使用 **Tasks: Terminate Task**。
+命令列需要相同行為時，執行
+`uv run --locked --all-extras python -m tooling.presentations build --ensure-toolchain`，
+或將 `build` 改為 `watch`。此選項只適用於 build／watch，
+不修改 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定的外部工具鏈；外部安裝須由其維護者修復。
+品質檢查與打包入口維持不下載依賴。
 詳細操作見[簡報入口](talks/tradingdev-introduction/README.md#編輯與預覽)。
 
 #### 手動輸出與預覽
@@ -556,6 +598,7 @@ Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順�
 | 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
+| HTTP 確認單可讀／不可讀、使用者拒絕執行、既有報告與封存網址交付 | [test_llm_http_delivery.py](../tests/e2e/test_llm_http_delivery.py)（`-k http_delivery`） |
 | 授權後的草稿清理 | [test_llm_cleanup.py](../tests/e2e/test_llm_cleanup.py) |
 
 測試使用隔離工作區、固定合成行情與模擬使用者，不下載市場資料；完成驗證後清理。
@@ -742,6 +785,17 @@ TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
 每批證據區分實際 Git 變更與必須附上的未修改簡報參照；參照仍保留完整原文，
 供檢查本次變更造成的不一致，不將列入審查等同於本次新增或修改。
+簡報的啟動、安裝、操作指南與部署入口變更附上編輯指南；涉及投影片、主題、渲染器
+或無法辨識的簡報行為時，才一併附上完整投影片與主題，並維持同批審查。
+混合責任模組 `tooling/presentations.py` 會比對固定 base／candidate 的定義；
+只有已登錄的操作定義及其型別／安裝鎖匯入變動時，才採操作範圍。
+未修改的投影片是產物來源，不自動當作所有責任範圍的一般文件。簡報變更僅涉及操作時，
+`presentation` 範圍可按變更檔案分批；完整編輯指南附於每個 `presentation` 批次及該次
+跨範圍審查，仍保留每個變更檔案全文與 diff。其他責任範圍仍依各自文件選取規則取證。
+涉及渲染或產物時，完整指南與簡報來源集中於同一簡報批次。正式選取規則見
+[review_evidence.py](../tooling/review_evidence.py) 的 `_presentation_context`、
+`_operation_definitions_only` 與 `automatic_document_paths`；批次規則見
+[review_plan.py](../tooling/review_plan.py) 的 `build_review_plan`。
 上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
 設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
 舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。

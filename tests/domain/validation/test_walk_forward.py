@@ -144,7 +144,9 @@ class TestWalkForwardValidator:
         summary = summarize_results(results)
         assert summary["n_folds"] == 2
         assert "total_return" in summary
-        assert "mean" in summary["total_return"]
+        statistics = summary["total_return"]
+        assert isinstance(statistics, dict)
+        assert "mean" in statistics
 
     def test_result_contains_full_backtest(
         self, walk_forward_ohlcv_df: pd.DataFrame
