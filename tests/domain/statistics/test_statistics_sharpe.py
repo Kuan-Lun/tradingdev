@@ -17,7 +17,6 @@ from tradingdev.domain.statistics.sharpe import (
     SharpeInterval,
     deflated_sharpe_ratio,
     probabilistic_sharpe_ratio,
-    sharpe_confidence_interval,
     sharpe_interval_outcome,
     sharpe_ratio,
 )
@@ -173,8 +172,8 @@ class TestProbabilisticSharpeRatio:
 class TestConfidenceInterval:
     def test_autocorrelated_returns_widen_the_interval(self) -> None:
         returns = _ar1(1_000, 0.6, seed=7)
-        interval = sharpe_confidence_interval(returns, periods_per_year=_DAILY, seed=11)
-        assert interval is not None
+        interval = sharpe_interval_outcome(returns, periods_per_year=_DAILY, seed=11)
+        assert isinstance(interval, SharpeInterval)
 
         iid = IIDBootstrap(returns, seed=np.random.default_rng(11))
         draws = iid.apply(_annual_sharpe, 1_000)[:, 0]
@@ -186,11 +185,11 @@ class TestConfidenceInterval:
 
     def test_interval_fields(self) -> None:
         returns = np.random.default_rng(8).normal(0.001, 0.01, 400)
-        interval = sharpe_confidence_interval(
+        interval = sharpe_interval_outcome(
             returns, periods_per_year=_DAILY, confidence=0.9, reps=200, seed=1
         )
 
-        assert interval is not None
+        assert isinstance(interval, SharpeInterval)
         assert interval.sharpe == pytest.approx(
             sharpe_ratio(returns, periods_per_year=_DAILY)
         )
@@ -202,9 +201,10 @@ class TestConfidenceInterval:
 
     def test_seed_makes_the_interval_reproducible(self) -> None:
         returns = _ar1(300, 0.3, seed=9)
-        first = sharpe_confidence_interval(returns, periods_per_year=_DAILY, seed=5)
-        second = sharpe_confidence_interval(returns, periods_per_year=_DAILY, seed=5)
+        first = sharpe_interval_outcome(returns, periods_per_year=_DAILY, seed=5)
+        second = sharpe_interval_outcome(returns, periods_per_year=_DAILY, seed=5)
 
+        assert isinstance(first, SharpeInterval)
         assert first == second
 
 
@@ -213,7 +213,10 @@ class TestDegenerateReturns:
     def test_too_few_returns(self, returns: list[float]) -> None:
         assert sharpe_ratio(returns, periods_per_year=_DAILY) is None
         assert probabilistic_sharpe_ratio(returns) is None
-        assert sharpe_confidence_interval(returns, periods_per_year=_DAILY) is None
+        outcome = sharpe_interval_outcome(returns, periods_per_year=_DAILY)
+        assert isinstance(outcome, IntervalUnavailable)
+        assert outcome.reason == "insufficient_observations"
+        assert outcome.observations == len(returns)
 
     def test_too_few_returns_to_bootstrap(self) -> None:
         returns = np.random.default_rng(10).normal(
@@ -222,7 +225,10 @@ class TestDegenerateReturns:
 
         assert sharpe_ratio(returns, periods_per_year=_DAILY) is not None
         assert probabilistic_sharpe_ratio(returns) is not None
-        assert sharpe_confidence_interval(returns, periods_per_year=_DAILY) is None
+        outcome = sharpe_interval_outcome(returns, periods_per_year=_DAILY)
+        assert isinstance(outcome, IntervalUnavailable)
+        assert outcome.reason == "insufficient_observations"
+        assert outcome.estimate is not None
 
     @pytest.mark.parametrize("value", [0.0, 0.1, -0.003], ids=["zero", "pos", "neg"])
     def test_constant_returns(self, value: float) -> None:
@@ -230,7 +236,6 @@ class TestDegenerateReturns:
 
         assert sharpe_ratio(returns, periods_per_year=_DAILY) is None
         assert probabilistic_sharpe_ratio(returns) is None
-        assert sharpe_confidence_interval(returns, periods_per_year=_DAILY) is None
 
 
 class TestExtremeMagnitudes:
@@ -363,7 +368,6 @@ class TestIntervalOutcome:
         )
         assert "12 observations" in outcome.message
         assert f"{MIN_BOOTSTRAP_OBSERVATIONS} needed" in outcome.message
-        assert sharpe_confidence_interval(returns, periods_per_year=_MONTHLY) is None
 
     def test_constant_returns_are_an_undefined_statistic(self) -> None:
         outcome = sharpe_interval_outcome([0.01] * 100, periods_per_year=_DAILY)
@@ -395,12 +399,6 @@ class TestIntervalOutcome:
         assert outcome.estimate == pytest.approx(
             sharpe_ratio(returns, periods_per_year=_DAILY)
         )
-        assert (
-            sharpe_confidence_interval(
-                returns, periods_per_year=_DAILY, reps=3, seed=24
-            )
-            is None
-        )
 
     def test_twenty_months_give_an_interval(self) -> None:
         returns = np.random.default_rng(13).normal(
@@ -412,9 +410,8 @@ class TestIntervalOutcome:
         )
 
         assert isinstance(outcome, SharpeInterval)
-        assert outcome == sharpe_confidence_interval(
-            returns, periods_per_year=_MONTHLY, reps=200, seed=0
-        )
+        assert outcome.reps == 200
+        assert outcome.lower < outcome.upper
 
 
 class TestVolatilityClustering:
@@ -471,17 +468,12 @@ class TestVolatilityClustering:
         assert isinstance(result, SharpeInterval)
         assert result.block_size >= raw
 
-    @pytest.mark.parametrize(
-        "call",
-        [sharpe_interval_outcome, sharpe_confidence_interval],
-        ids=["outcome", "interval"],
-    )
-    def test_a_given_block_size_is_used_and_reported(self, call: object) -> None:
+    def test_a_given_block_size_is_used_and_reported(self) -> None:
         values = _regime_returns(0)
-        fixed = call(  # type: ignore[operator]
+        fixed = sharpe_interval_outcome(
             values, periods_per_year=1, reps=200, seed=0, block_size=7
         )
-        other = call(  # type: ignore[operator]
+        other = sharpe_interval_outcome(
             values, periods_per_year=1, reps=200, seed=0, block_size=80
         )
 
@@ -519,7 +511,7 @@ class TestValidation:
         self, kwargs: dict[str, object], match: str
     ) -> None:
         with pytest.raises(ValueError, match=match):
-            sharpe_confidence_interval(
+            sharpe_interval_outcome(
                 [0.01, 0.02],
                 periods_per_year=_DAILY,
                 **kwargs,  # type: ignore[arg-type]

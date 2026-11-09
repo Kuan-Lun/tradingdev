@@ -16,10 +16,10 @@ Conventions:
 * The Sharpe ratio is the mean over the sample standard deviation
   (``ddof=1``) of the returns, with a zero risk-free rate, as in
   :mod:`tradingdev.domain.statistics.performance`.
-* Undefined figures (fewer than two returns, zero dispersion, too few
-  returns to bootstrap) are ``None`` rather than infinities or zeros.
-  :func:`sharpe_interval_outcome` returns an :class:`IntervalUnavailable`
-  instead of ``None``, saying why the interval is missing; monthly returns
+* Undefined scalar figures (fewer than two returns or zero dispersion)
+  are ``None`` rather than infinities or zeros. The interval entry point,
+  :func:`sharpe_interval_outcome`, returns an :class:`IntervalUnavailable`
+  saying why the interval is missing; monthly returns
   need ``MIN_BOOTSTRAP_OBSERVATIONS`` months, so one year never has one.
 * Non-finite returns raise ``ValueError``; the caller decides how to treat
   missing periods before calling.
@@ -165,31 +165,6 @@ def sharpe_ratio(returns: Iterable[float], *, periods_per_year: float) -> float 
     values = _returns(returns)
     sharpe = _period_sharpe(values)
     return sharpe * scale if sharpe is not None else None
-
-
-def sharpe_confidence_interval(
-    returns: Iterable[float],
-    *,
-    periods_per_year: float,
-    confidence: float = 0.95,
-    reps: int = 1000,
-    seed: int | None = None,
-    block_size: int | None = None,
-) -> SharpeInterval | None:
-    """Stationary-bootstrap percentile interval of the annualised Sharpe.
-
-    The same as :func:`sharpe_interval_outcome`, with every
-    :class:`IntervalUnavailable` collapsed to ``None``.
-    """
-    outcome = sharpe_interval_outcome(
-        returns,
-        periods_per_year=periods_per_year,
-        confidence=confidence,
-        reps=reps,
-        seed=seed,
-        block_size=block_size,
-    )
-    return outcome if isinstance(outcome, SharpeInterval) else None
 
 
 def sharpe_interval_outcome(
