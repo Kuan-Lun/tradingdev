@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
+from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
 from tradingdev.domain.statistics.breakeven import summarize_breakeven
 
 _START = pd.Timestamp("2024-01-01")
@@ -27,6 +29,7 @@ def _trade(
         "entry_price": entry_price,
         "exit_price": exit_price,
         "fee": fee,
+        "status": "closed",
     }
 
 
@@ -85,9 +88,58 @@ class TestBreakevenWinRate:
         assert summary.traded_notional == 0.0
         assert summary.annual_turnover == 0.0
         assert summary.cost_per_turnover is None
+        assert summary.annual_cost_drag == 0.0
 
 
 class TestTurnoverCost:
+    @pytest.mark.parametrize("mode", ["signal", "volume"])
+    def test_current_engine_records_reconcile_cost_and_turnover(
+        self, mode: str
+    ) -> None:
+        prices = [100.0, 100.0, 110.0, 100.0, 120.0]
+        timestamps = pd.date_range("2024-01-01", periods=5, freq="h", tz="UTC")
+        market = pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "open": prices,
+                "high": prices,
+                "low": prices,
+                "close": prices,
+                "signal": [1, 0, 1, 1, 1],
+            }
+        )
+        engine = (
+            SignalBacktestEngine(
+                init_cash=1_000.0, position_size=100.0, fees=0.01, slippage=0.0
+            )
+            if mode == "signal"
+            else VolumeBacktestEngine(
+                position_size=100.0,
+                fees=0.01,
+                slippage=0.0,
+                signal_as_position=True,
+            )
+        )
+        result = engine.run(market)
+        summary = summarize_breakeven(
+            result.trades,
+            start=timestamps[0],
+            end=timestamps[-1],
+            capital=result.init_cash,
+        )
+
+        # Signal mode leaves the second position open; volume mode executes
+        # a terminal close. A mark must never be counted as an exit order.
+        expected_statuses = ["closed", "open" if mode == "signal" else "closed"]
+        assert [trade["status"] for trade in result.trades] == expected_statuses
+        expected_notional = 310.0 if mode == "signal" else 430.0
+        assert summary.traded_notional == pytest.approx(expected_notional)
+        assert summary.traded_notional == pytest.approx(result.metrics["total_volume"])
+        assert summary.total_cost == pytest.approx(result.metrics["total_fees"])
+        assert result.metrics["total_pnl"] == pytest.approx(
+            sum(trade["net_pnl"] for trade in result.trades)
+        )
+
     def test_counts_entry_and_exit_notional(self) -> None:
         trades = [
             _trade(100.0, size_quote=1_000.0, entry_price=100.0, exit_price=110.0),
@@ -122,15 +174,6 @@ class TestTurnoverCost:
         assert summary.total_trades == 2
         assert (summary.winning_trades, summary.losing_trades) == (1, 1)
         assert summary.avg_loss == pytest.approx(20.0)
-
-    def test_missing_status_counts_as_closed(self) -> None:
-        trade = _trade(1.0, entry_price=100.0, exit_price=110.0)
-        explicit = summarize_breakeven(
-            [trade | {"status": "closed"}], start=_START, end=_ONE_YEAR
-        )
-        legacy = summarize_breakeven([trade], start=_START, end=_ONE_YEAR)
-
-        assert legacy.traded_notional == explicit.traded_notional == 2_100.0
 
     def test_annualizes_over_the_given_period(self) -> None:
         trades = [_trade(1.0, size_quote=5_000.0, fee=6.0)] * 4
@@ -249,7 +292,13 @@ class TestValidation:
         with pytest.raises(ValueError, match=f"trade 1 has .*{message}"):
             summarize_breakeven([_trade(1.0), trade], start=_START, end=_ONE_YEAR)
 
-    @pytest.mark.parametrize("status", ["OPEN", "partial", None])
+    def test_rejects_missing_status(self) -> None:
+        trade = _trade(1.0)
+        del trade["status"]
+        with pytest.raises(ValueError, match="trade 1 has no status"):
+            summarize_breakeven([_trade(1.0), trade], start=_START, end=_ONE_YEAR)
+
+    @pytest.mark.parametrize("status", ["OPEN", "partial", None, True])
     def test_rejects_unknown_status(self, status: object) -> None:
         trade = _trade(1.0) | {"status": status}
         with pytest.raises(ValueError, match="trade 1 has an unknown status"):

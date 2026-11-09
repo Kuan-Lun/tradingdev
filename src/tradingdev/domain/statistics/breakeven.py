@@ -29,8 +29,8 @@ Conventions:
   still counts as a win or loss, keeping the trades' total ``net_pnl``
   equal to the run's P&L. The engines' ``total_trades`` and ``win_rate``
   count closed trades only, so with an open trade at the end the counts
-  and win rate here differ from theirs. Records without ``status`` count
-  as closed.
+  and win rate here differ from theirs. Every record must explicitly state
+  whether it is ``"closed"`` or ``"open"``.
 * Costs are the sum of the trades' ``fee`` fields. Figures are only as
   complete as those records: an engine that folds costs into ``net_pnl``
   without reporting them in ``fee`` understates the cost here.
@@ -88,7 +88,10 @@ class BreakevenSummary:
         cost_per_turnover: ``total_cost / traded_notional``, the cost paid
             per unit of notional traded.
         annual_cost_drag: ``annual_cost / capital``, equal to
-            ``annual_turnover * cost_per_turnover``.
+            ``annual_turnover * cost_per_turnover`` when a capital basis
+            is supplied and traded notional is positive. With no trades
+            and a capital basis, the drag is zero but cost per turnover
+            is undefined.
     """
 
     total_trades: int
@@ -124,7 +127,7 @@ def summarize_breakeven(
 
     Args:
         trades: Trade records, each with numeric ``net_pnl``, ``size_quote``,
-            ``entry_price``, ``exit_price``, and ``fee``, and optionally a
+            ``entry_price``, ``exit_price``, and ``fee``, and a required
             ``status`` of ``"closed"`` or ``"open"``.
         start: Start of the evaluation period, as a timestamp, datetime or
             date string; naive values are UTC.
@@ -139,8 +142,8 @@ def summarize_breakeven(
             is not after ``start``, ``capital`` is not a positive number,
             or a trade lacks a required finite field, has a negative size
             or fee, has a non-positive entry or a negative
-            exit price, or has a ``status`` other than ``"closed"`` or
-            ``"open"``.
+            exit price, or has a missing ``status`` or one other than
+            ``"closed"`` or ``"open"``.
     """
     years = _years_between(start, end)
     if capital is not None and not (
@@ -240,7 +243,9 @@ def _utc_timestamp(value: object, label: str) -> pd.Timestamp:
 
 
 def _is_open(trade: Mapping[str, object], position: int) -> bool:
-    status: object = trade.get("status", "closed")
+    if "status" not in trade:
+        raise ValueError(f"trade {position} has no status")
+    status = trade["status"]
     if status not in ("closed", "open"):
         raise ValueError(f"trade {position} has an unknown status {status!r}")
     return status == "open"
