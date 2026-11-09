@@ -79,13 +79,13 @@ def test_saved_volume_result_and_policy_match_monthly_engine(
     assert loaded.performance.values["total_pnl"] == 10
     assert loaded.execution_assumptions == evidence.execution_assumptions[0]
     assert loaded.execution_assumptions is not None
-    assert loaded.execution_assumptions.policy_version == "execution-v2"
+    assert loaded.execution_assumptions.policy_version == "execution-v3"
     reports = ReportService(workspace=jobs.workspace, store=jobs.store)
     response = reports.generate_report(
         run_ids=["monthly"], sections=["research", "settings", "trades"]
     )
     html, payload = _payload(response)
     scope = payload["runs"][0]["scopes"][0]
-    assert scope["execution_assumptions"]["policy_version"] == "execution-v2"
+    assert scope["execution_assumptions"]["policy_version"] == "execution-v3"
     assert "上個有行情月份最後收盤權益" in html
     assert "不重計前月損益" in html

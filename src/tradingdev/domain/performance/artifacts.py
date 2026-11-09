@@ -14,7 +14,7 @@ from tradingdev.domain.backtest.execution_records import (  # noqa: TC001
     AccountState,
     ExecutionRecord,
 )
-from tradingdev.domain.backtest.metrics import calculate_passive_metrics
+from tradingdev.domain.backtest.metrics import calculate_metrics_from_simulation
 from tradingdev.domain.benchmark import (
     BenchmarkEvidence,
     aligned_closes,
@@ -619,16 +619,15 @@ def _benchmark_scope(
         return _absent_benchmark(
             evidence,
             "unavailable",
-            "invalid_benchmark_cost_settings",
+            "invalid_benchmark_execution",
             detail=str(exc),
             coverage=coverage,
         )
     try:
-        analysis = calculate_passive_metrics(
+        analysis = calculate_metrics_from_simulation(
             hold.equity,
+            [hold.trade_record()],
             init_cash=capital,
-            total_fees=hold.entry_fee,
-            total_volume=hold.entry_notional,
             timestamps=aligned_index,
             periods_per_year=settings["periods_per_year"],
             risk_free_rate=settings["risk_free_rate"],
@@ -653,7 +652,10 @@ def _benchmark_scope(
             "quantity": hold.quantity,
             "entry_fee": hold.entry_fee,
             "entry_notional": hold.entry_notional,
-            "exit": "not_liquidated_marked_at_last_close",
+            "exit": "liquidated_at_last_close",
+            "exit_price": hold.exit_price,
+            "exit_fee": hold.exit_fee,
+            "exit_notional": hold.exit_notional,
             "bar_alignment": "shared_timestamps_only",
         }
     )

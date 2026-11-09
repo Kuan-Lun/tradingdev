@@ -30,6 +30,8 @@ class BaseStrategy(ABC):
     Both modes shift signals by one bar. Signal-driven entries and exits use
     the following bar's open, falling back to close when open is absent.
     Stop-loss and take-profit rules are separate from these signal changes.
+    The engine closes remaining positions at the final close with exit costs.
+    See the configuration contract for final-cash and failure semantics.
     """
 
     @abstractmethod

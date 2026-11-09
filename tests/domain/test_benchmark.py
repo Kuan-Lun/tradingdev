@@ -100,7 +100,7 @@ def test_us_listing_detection_rejects_other_venues_and_derivatives() -> None:
     assert not is_us_equity_symbol("")
 
 
-def test_buy_and_hold_charges_the_entry_costs_once_and_marks_to_market() -> None:
+def test_buy_and_hold_charges_both_sides_and_ends_in_cash() -> None:
     # Hand-derived: entry 100 * (1 + 0.01) = 101; quantity = 1000 / (101 * 1.001).
     quantity = 1000 / 101.101
     result = buy_and_hold(
@@ -112,9 +112,44 @@ def test_buy_and_hold_charges_the_entry_costs_once_and_marks_to_market() -> None
     assert result.entry_fee == pytest.approx(quantity * 101.0 * 0.001)
     # Notional plus commission spends exactly the initial capital.
     assert result.entry_notional + result.entry_fee == pytest.approx(1000.0)
-    assert result.equity == pytest.approx(quantity * np.array([100.0, 110.0, 121.0]))
-    # The baseline is not liquidated on the last bar, so no exit cost is charged.
-    assert result.equity[-1] / 1000.0 - 1 == pytest.approx(121 / 101 / 1.001 - 1)
+    assert result.exit_price == pytest.approx(119.79)
+    assert result.exit_notional == pytest.approx(quantity * 119.79)
+    assert result.exit_fee == pytest.approx(quantity * 119.79 * 0.001)
+    assert result.equity == pytest.approx(
+        quantity * np.array([100.0, 110.0, 119.79 * 0.999])
+    )
+    assert result.equity[-1] / 1000.0 - 1 == pytest.approx(
+        121 * 0.99 * 0.999 / 101 / 1.001 - 1
+    )
+    trade = result.trade_record()
+    assert trade["status"] == "closed"
+    assert trade["entry_idx"] == 0
+    assert trade["exit_idx"] == 2
+    assert trade["net_pnl"] == pytest.approx(result.equity[-1] - 1000.0)
+
+
+def test_one_bar_buy_and_hold_pays_a_complete_round_trip() -> None:
+    result = buy_and_hold(np.array([99.0]), 100.0, fees=1 / 99, slippage=0.0)
+    assert result.quantity == 1.0
+    assert result.entry_fee == result.exit_fee == 1.0
+    assert result.equity.tolist() == [98.0]
+    assert result.trade_record()["net_pnl"] == -2.0
+
+
+@pytest.mark.parametrize(
+    ("prices", "capital", "fee"),
+    [
+        ([1.7e308], 1000.0, 0.1),
+        ([1e100], 1e-300, 0.001),
+        ([1e-100, 1e308], 1000.0, 0.001),
+        ([1e100, 1e-300], 1000.0, 0.001),
+    ],
+)
+def test_unrepresentable_execution_is_explicitly_unavailable(
+    prices: list[float], capital: float, fee: float
+) -> None:
+    with pytest.raises(ValueError, match="not representable"):
+        buy_and_hold(np.asarray(prices), capital, fees=fee, slippage=0.0)
 
 
 def test_costs_only_ever_reduce_the_baseline() -> None:

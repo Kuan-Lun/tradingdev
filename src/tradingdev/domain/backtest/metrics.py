@@ -137,44 +137,9 @@ def calculate_metrics_from_simulation(
         timestamps,
         sum(float(t["size_quote"] + t["exit_notional"]) for t in trades),
         sum(float(t["fee"]) for t in trades),
-        sum(float(t.get("slippage", 0.0)) for t in trades),
-        periods_per_year,
-        risk_free_rate,
-        required_return,
-        frequency,
-    )
-
-
-def calculate_passive_metrics(
-    equity_curve: npt.NDArray[np.float64],
-    *,
-    init_cash: float,
-    total_fees: float,
-    total_volume: float,
-    timestamps: pd.DatetimeIndex | None = None,
-    periods_per_year: float | None = None,
-    risk_free_rate: float = 0.0,
-    required_return: float = 0.0,
-    frequency: str = "1h",
-) -> PerformanceAnalysis:
-    """Analyze a cost-bearing buy-and-hold path that contains no trades.
-
-    A baseline has one entry and no exits, so closed-trade statistics are
-    unavailable by construction while return and risk statistics use the same
-    definitions, sampling and annualization as the strategy it is compared to.
-    """
-    equity = np.asarray(equity_curve, dtype=np.float64)
-    index = timestamps if timestamps is not None else pd.RangeIndex(len(equity))
-    wrapper = vbt.ArrayWrapper(index, [0], ndim=1, freq=frequency)
-    empty = vbt.Trades(wrapper, np.zeros(0, dtype=trade_dt), close=np.ones(len(equity)))
-    return _analyze(
-        equity,
-        empty,
-        init_cash,
-        timestamps,
-        total_volume,
-        total_fees,
-        None,
+        sum(float(t.get("slippage", 0.0)) for t in trades)
+        if init_cash is None
+        else None,
         periods_per_year,
         risk_free_rate,
         required_return,

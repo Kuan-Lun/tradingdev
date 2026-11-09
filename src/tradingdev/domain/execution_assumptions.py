@@ -244,9 +244,14 @@ def resolve_execution_assumptions(manifest: ExecutionManifest) -> ExecutionAssum
         (
             "end_of_data",
             "資料結束時",
-            "剩餘持倉以最後一棒 close 強制平倉並計入出場成本。"
-            if volume
-            else "剩餘持倉保留為未平倉，以最後 close 評價，不虛構出場成交。",
+            "最後一棒的一般成交完成後，剩餘持倉以該棒 close 強制平倉，"
+            "計入出場手續費與滑價。"
+            + (
+                "期末為平倉後累積淨損益，不是有本金的現金帳戶。"
+                if volume
+                else "期末權益為平倉後現金；無法完整平倉時執行失敗，"
+                "不發布仍有部位的成功結果。"
+            ),
         ),
         (
             "limitations",
@@ -275,6 +280,8 @@ def resolve_execution_assumptions(manifest: ExecutionManifest) -> ExecutionAssum
             if config.risk_free_rate or config.required_return
             else ""
         ),
+        "end_of_data": "末棒成交後按收盤價強制平倉，含出場手續費與滑價；"
+        + ("期末為累積淨損益。" if volume else "期末為現金，無法完整平倉即失敗。"),
         "limitations": None,
     }
     if not volume:

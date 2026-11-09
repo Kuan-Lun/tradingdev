@@ -315,23 +315,23 @@ def test_signal_closed_trade_scope_fees_and_executed_notional() -> None:
         slippage=0,
         position_size=100,
     ).run(df)
-    assert result.metrics["total_trades"] == 1
-    assert result.metrics["open_trades"] == 1
+    assert result.metrics["total_trades"] == 2
+    assert result.metrics["open_trades"] == 0
     assert result.metrics["win_rate"] == 1
     assert result.metrics["profit_factor"] is None
     assert result.metric_metadata["unavailable"]["profit_factor"] == "unbounded"
-    assert result.metrics["trade_expectancy"] == pytest.approx(7.9)
-    assert result.metrics["total_fees"] == pytest.approx(3.1)
-    assert result.metrics["total_volume"] == pytest.approx(310)
+    assert result.metrics["trade_expectancy"] == pytest.approx(12.85)
+    assert result.metrics["total_fees"] == pytest.approx(4.3)
+    assert result.metrics["total_volume"] == pytest.approx(430)
     assert result.metrics["total_pnl"] == pytest.approx(
         sum(t["net_pnl"] for t in result.trades)
     )
-    closed, opened = result.trades
+    closed, terminal = result.trades
     assert closed["fee"] == pytest.approx(2.1)
     assert closed["gross_pnl"] == pytest.approx(10)
     assert closed["exit_notional"] == pytest.approx(110)
-    assert opened["exit_notional"] == 0
-    assert opened["status"] == "open"
+    assert terminal["exit_notional"] == 120
+    assert terminal["status"] == "closed"
 
 
 def test_empty_and_flat_mark_unavailable_without_fake_zeros() -> None:

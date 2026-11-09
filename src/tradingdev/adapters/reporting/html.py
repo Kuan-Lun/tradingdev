@@ -520,13 +520,23 @@ def _benchmark(scope: dict[str, Any]) -> str:
             + details_html("基準狀態（原始欄位）", benchmark)
         )
     coverage = _object(benchmark.get("coverage"))
+    exit_policy = _object(_object(benchmark.get("metadata")).get("benchmark")).get(
+        "exit"
+    )
+    if exit_policy == "liquidated_at_last_close":
+        exit_note = "期末按最後一根共有收盤平倉，計入出場成本，期末權益為平倉後現金。"
+    elif exit_policy == "not_liquidated_marked_at_last_close":
+        exit_note = "此保存基準期末未平倉，以最後一根收盤估值，未計入出場成本。"
+    else:
+        exit_note = "此保存基準未記錄可識別的期末處理政策，是否平倉及扣出場成本未知。"
     costs = (
         "<p>基準套用本次回測的手續費 "
         + _format_metric(benchmark.get("fees"), "fraction")
         + " 與滑價 "
         + _format_metric(benchmark.get("slippage"), "fraction")
-        + "，在首根 K 線收盤一次買進；期末不強制平倉，以最後一根收盤估值，"
-        "因此不計出場成本，與策略未平倉部位的估值方式一致。</p>"
+        + "，在首根共有 K 線收盤一次買進；"
+        + exit_note
+        + "</p>"
     )
     missing = coverage.get("missing_bars")
     coverage_note = (

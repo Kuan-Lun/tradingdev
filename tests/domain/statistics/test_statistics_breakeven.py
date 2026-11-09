@@ -128,12 +128,10 @@ class TestTurnoverCost:
             capital=result.init_cash,
         )
 
-        # Signal mode leaves the second position open; volume mode executes
-        # a terminal close. A mark must never be counted as an exit order.
-        expected_statuses = ["closed", "open" if mode == "signal" else "closed"]
-        assert [trade["status"] for trade in result.trades] == expected_statuses
-        expected_notional = 310.0 if mode == "signal" else 430.0
-        assert summary.traded_notional == pytest.approx(expected_notional)
+        # Both engines execute a terminal close, including its exit leg and fee.
+        assert [trade["status"] for trade in result.trades] == ["closed", "closed"]
+        assert summary.traded_notional == pytest.approx(430.0)
+        assert summary.total_cost == pytest.approx(4.3)
         assert summary.traded_notional == pytest.approx(result.metrics["total_volume"])
         assert summary.total_cost == pytest.approx(result.metrics["total_fees"])
         assert result.metrics["total_pnl"] == pytest.approx(

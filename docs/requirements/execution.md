@@ -19,9 +19,9 @@
 ## FR-EXEC-003 執行模式與回測
 
 - **需求**：以所選策略版本、行情、有效參數與成本執行歷史回測，依策略能力拒絕不支援的模式。Signal 與 volume 模式按各自交易及績效語意處理。
-- **驗收**：必須訓練的策略不能以一般回測或不支援的最佳化繞過訓練；可離線判定的設定錯誤於正式資料載入前拒絕，資料相依檢查仍可能在正式執行時失敗。結果保存實際設定，不把模擬帳戶宣稱為交易所保證金或資金費率帳本。
+- **驗收**：必須訓練的策略不能以一般回測或不支援的最佳化繞過訓練；可離線判定的設定錯誤於正式資料載入前拒絕，資料相依檢查仍可能在正式執行時失敗。每段回測結束須將剩餘部位完整平倉並計入出場成本，無法完成時不得發布仍有部位的成功結果。結果保存實際設定，不把模擬帳戶宣稱為交易所保證金或資金費率帳本。
 - **契約**：[訓練前置條件](../strategy_contract.md#training-before-scoring)、[訊號與成交語意](../strategy_contract.md#signal-and-execution-semantics)。
-- **驗證**：[策略能力](../../tests/domain/strategies/test_strategy_capabilities.py)、[回測 service](../../tests/app/test_backtest_service.py) 驗證模式與執行邊界。
+- **驗證**：[策略能力](../../tests/domain/strategies/test_strategy_capabilities.py)、[回測 service](../../tests/app/test_backtest_service.py) 驗證模式與執行邊界；[期末平倉](../../tests/domain/backtest/test_terminal_liquidation.py) 核對多空成交、成本、期末現金與失敗路徑。
 
 ## FR-EXEC-004 固定參數比較
 
