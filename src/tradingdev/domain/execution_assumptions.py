@@ -280,6 +280,8 @@ def resolve_execution_assumptions(manifest: ExecutionManifest) -> ExecutionAssum
             if config.risk_free_rate or config.required_return
             else ""
         ),
+        "end_of_data": "末棒成交後按收盤價強制平倉，含出場手續費與滑價；"
+        + ("期末為累積淨損益。" if volume else "期末為現金，無法完整平倉即失敗。"),
         "limitations": None,
     }
     if not volume:

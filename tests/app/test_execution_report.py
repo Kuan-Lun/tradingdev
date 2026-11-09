@@ -179,7 +179,7 @@ def test_saved_real_engine_records_share_one_ordered_static_interactive_and_csv_
     spec = scope["tables"]["ledger"]
     columns, rows = spec["columns"], spec["rows"]
     assert document.sections == ["ledger"]
-    assert document.rows == {"ledger-0-0-static": 10}
+    assert document.rows == {"ledger-0-0-static": 11}
     assert document.headers["ledger-0-0-static"] == [item["title"] for item in columns]
     assert [item["field"] for item in columns[:2]] == ["timestamp", "sequence"]
     assert [item["title"] for item in columns[:2]] == [
@@ -221,8 +221,8 @@ def test_saved_real_engine_records_share_one_ordered_static_interactive_and_csv_
         item["title"] + ("（比例，1 = 100%）" if item["kind"] == "percent" else "")
         for item in columns
     ]
-    assert len(exported) == len(rows) == 9
-    assert [row["sequence"] for row in rows] == list(range(1, 10))
+    assert len(exported) == len(rows) == 10
+    assert [row["sequence"] for row in rows] == list(range(1, 11))
     assert [row["filter_status"] for row in rows] == [
         "bar_close",
         "filled",
@@ -232,8 +232,16 @@ def test_saved_real_engine_records_share_one_ordered_static_interactive_and_csv_
         "filled",
         "bar_close",
         "filled",
+        "filled",
         "bar_close",
     ]
+    terminal_fill, final_account = rows[-2:]
+    assert terminal_fill["timestamp"] == final_account["timestamp"]
+    assert terminal_fill["requested_price"] == 110.0
+    assert terminal_fill["before.position"] > 0
+    assert terminal_fill["after.position"] == final_account["after.position"] == 0
+    assert terminal_fill["fees"] > 0
+    assert terminal_fill["after.cash"] == final_account["after.equity"]
     assert all(row["reconciliation"] == "可核對項目一致" for row in rows)
     for cells, csv_row, row in zip(
         document.cells["ledger-0-0-static"], exported, rows, strict=True
@@ -288,7 +296,7 @@ def test_saved_real_engine_records_share_one_ordered_static_interactive_and_csv_
     assert "不是逐筆報價或交易所精確成交時間" in text
     manifest = json.loads((path.parent / "manifest.json").read_text())
     availability = manifest["available_data"]["execution"]["full"]
-    assert availability["execution_record_count"] == 4
+    assert availability["execution_record_count"] == 5
     assert availability["account_history_count"] == 5
     assert {p: p.read_bytes() for p in directory.iterdir()} == saved
 
