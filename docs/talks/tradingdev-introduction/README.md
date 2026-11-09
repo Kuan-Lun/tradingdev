@@ -6,8 +6,8 @@
 
 ## 編輯與預覽
 
-首次使用先依[開發指南](../../development.md#簡報的編輯與輸出)準備 uv、Node.js、npm
-及圖表所需的瀏覽器，再用 VS Code 開啟整個 repository 資料夾。
+使用前依[開發指南](../../development.md#簡報的編輯與輸出)準備 uv、Node.js
+及 Mermaid 所需的瀏覽器；安裝或修復工具鏈時另需 npm，再用 VS Code 開啟整個 repository 資料夾。
 `slides: watch` 與 `slides: build` 會自動檢查並補齊鎖定的 Python 與 Marp 依賴；
 首次執行或依賴更新後可能需要網路，安裝失敗時會停止。詳細行為見
 [VS Code 工作](../../development.md#在-vs-code-儲存時自動編譯)。

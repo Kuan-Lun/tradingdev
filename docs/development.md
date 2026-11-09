@@ -275,7 +275,8 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 ### 簡報的編輯與輸出
 
 [簡報入口](talks/tradingdev-introduction/README.md)提供編輯、預覽與發布操作。
-編輯環境須有 Node.js 22.17 以上及 npm，再初始化鎖定的 Marp 工具鏈：
+命令列建置前需備妥 Node.js 22.17 以上與鎖定的 Marp 工具鏈。
+手動初始化工具鏈時另需 npm，再執行：
 
 ```bash
 ./scripts/presentations.sh setup
@@ -291,11 +292,11 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 #### 在 VS Code 儲存時自動編譯
 
 [VS Code Tasks](../.vscode/tasks.json) 提供 `slides: watch` 與 `slides: build`。
-安裝 uv、Node.js 與 npm 後，在可信任的工作區允許自動工作，或以 **Tasks: Run Task** 啟動。
+備妥 uv 與 Node.js 後，在可信任的工作區允許自動工作，或以 **Tasks: Run Task** 啟動。
 兩個工作會先依 `uv.lock` 同步專案 Python 環境及全部 extras，再檢查 Marp 工具鏈；
 缺少套件或安裝版本與 npm lock 不符時才執行安裝，已齊備時直接開始建置或監看。
-首次使用或鎖定依賴更新後可能需要網路；不會自行更新 lock。Node.js、npm 及圖表所需的
-Chrome／Chromium 仍須先安裝，安裝失敗時不會開始編譯。
+工具鏈需要安裝或修復時另需 npm；首次使用或鎖定依賴更新後可能需要網路，不會自行更新 lock。
+Node.js 及 Mermaid 所需的 Chrome／Chromium 仍須先安裝；依賴安裝失敗時不會開始編譯。
 
 兩個工作共用安裝鎖，避免同時初始化 Marp。監看開始後，儲存來源只會重建 HTML；
 變更依賴後須重新啟動工作。結束使用 **Tasks: Terminate Task**。
