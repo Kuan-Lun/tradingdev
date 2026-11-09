@@ -14,9 +14,12 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上及已初始化的鎖定工具鏈，
-含 Mermaid 時另需 Chrome／Chromium。本機 npm 用於初始化依賴，Python 簡報命令的
-build／watch／check／package 及離線測試不呼叫 npm；Cloudflare 發布入口會先執行 `npm ci`。
+一般文件檢查不需要模型服務。本機簡報建置與檢查另需 Node.js 22.17 以上；
+含 Mermaid 時另需 Chrome／Chromium。VS Code 的 build／watch 工作使用 uv，
+啟動時先同步鎖定的 Python 依賴，再按需初始化本機 Marp 工具鏈；
+只有工具鏈需要安裝或修復時才需要 npm。
+Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check／package 與離線測試，
+均要求工具鏈已初始化，執行時不呼叫 npm。Cloudflare 發布入口會先執行 `npm ci`。
 完整離線 pytest 與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器；
 離線表示執行時不呼叫模型或下載依賴。
 初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
@@ -277,13 +280,14 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 ### 簡報的編輯與輸出
 
 [簡報入口](talks/tradingdev-introduction/README.md)提供編輯、預覽與發布操作。
-編輯環境須有 Node.js 22.17 以上及 npm，再初始化鎖定的 Marp 工具鏈：
+命令列建置前需備妥 Node.js 22.17 以上與鎖定的 Marp 工具鏈。
+手動初始化工具鏈時另需 npm，再執行：
 
 ```bash
 ./scripts/presentations.sh setup
 ```
 
-`setup` 會下載 npm 套件；一般 build／check 使用已安裝工具鏈，不自動安裝。
+`setup` 會下載 npm 套件；命令列 build／watch 預設及 check 使用已安裝工具鏈。
 執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝鎖定的 npm 工具鏈
 （Marp CLI、Mermaid 與圖表字型），不會安裝 Node.js 或 npm 本身。若報錯提示
 `Node.js is unavailable` 或 `Node.js and npm are required`，
@@ -293,8 +297,19 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 #### 在 VS Code 儲存時自動編譯
 
 [VS Code Tasks](../.vscode/tasks.json) 提供 `slides: watch` 與 `slides: build`。
-完成初始化後，在可信任的工作區允許自動工作，或以 **Tasks: Run Task** 啟動。
-監看時儲存來源會重建 HTML；結束使用 **Tasks: Terminate Task**。
+備妥 uv 與 Node.js 後，在可信任的工作區允許自動工作，或以 **Tasks: Run Task** 啟動。
+兩個工作會先依 `uv.lock` 同步專案 Python 環境及全部 extras，再檢查 Marp 工具鏈；
+缺少套件或安裝版本與 npm lock 不符時才執行安裝，已齊備時直接開始建置或監看。
+工具鏈需要安裝或修復時另需 npm；首次使用或鎖定依賴更新後可能需要網路，不會自行更新 lock。
+Node.js 及 Mermaid 所需的 Chrome／Chromium 仍須先安裝；依賴安裝失敗時不會開始編譯。
+
+兩個工作共用安裝鎖，避免同時初始化 Marp。監看開始後，儲存來源只會重建 HTML；
+變更依賴後須重新啟動工作。結束使用 **Tasks: Terminate Task**。
+命令列需要相同行為時，執行
+`uv run --locked --all-extras python -m tooling.presentations build --ensure-toolchain`，
+或將 `build` 改為 `watch`。此選項只適用於 build／watch，
+不修改 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指定的外部工具鏈；外部安裝須由其維護者修復。
+品質檢查與打包入口維持不下載依賴。
 詳細操作見[簡報入口](talks/tradingdev-introduction/README.md#編輯與預覽)。
 
 #### 手動輸出與預覽
@@ -748,6 +763,17 @@ TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
 每批證據區分實際 Git 變更與必須附上的未修改簡報參照；參照仍保留完整原文，
 供檢查本次變更造成的不一致，不將列入審查等同於本次新增或修改。
+簡報的啟動、安裝、操作指南與部署入口變更附上編輯指南；涉及投影片、主題、渲染器
+或無法辨識的簡報行為時，才一併附上完整投影片與主題，並維持同批審查。
+混合責任模組 `tooling/presentations.py` 會比對固定 base／candidate 的定義；
+只有已登錄的操作定義及其型別／安裝鎖匯入變動時，才採操作範圍。
+未修改的投影片是產物來源，不自動當作所有責任範圍的一般文件。簡報變更僅涉及操作時，
+`presentation` 範圍可按變更檔案分批；完整編輯指南附於每個 `presentation` 批次及該次
+跨範圍審查，仍保留每個變更檔案全文與 diff。其他責任範圍仍依各自文件選取規則取證。
+涉及渲染或產物時，完整指南與簡報來源集中於同一簡報批次。正式選取規則見
+[review_evidence.py](../tooling/review_evidence.py) 的 `_presentation_context`、
+`_operation_definitions_only` 與 `automatic_document_paths`；批次規則見
+[review_plan.py](../tooling/review_plan.py) 的 `build_review_plan`。
 上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
 設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
 舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。

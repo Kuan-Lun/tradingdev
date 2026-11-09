@@ -250,6 +250,55 @@ def test_required_deck_context_is_distinguished_from_actual_changes(
                 )
 
 
+def test_operation_batches_split_without_truncating_changed_files(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    for path in PRESENTATION_PATHS:
+        _write(tmp_path, path, "Original deck context\n")
+    operation = "tooling/presentations.py"
+    test = "tests/tooling/test_presentations.py"
+    before = {
+        operation: "def setup(root):\n    pass\n"
+        + "# stable operation context\n" * 500,
+        test: "EXPECTED = 'old'\n" + "# stable test context\n" * 600,
+    }
+    for path, text in before.items():
+        _write(tmp_path, path, text)
+    base = _tree(tmp_path)
+    after = {
+        operation: before[operation].replace("pass", "install(root)"),
+        test: before[test].replace("'old'", "'new'"),
+    }
+    for path, text in after.items():
+        _write(tmp_path, path, text)
+    evidence = build_evidence(tmp_path, base, _tree(tmp_path))
+    plan = build_review_plan(evidence, max_prompt_bytes=30_000)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owners = [batch for batch in batches if batch["scope"] == "presentation"]
+    assert len(owners) > 1
+    for batch in batches:
+        assert batch["candidate_files"][f"{DECK}/README.md"] == (
+            "Original deck context\n"
+        )
+    for path, content in after.items():
+        assigned = [batch for batch in owners if path in batch["assigned_paths"]]
+        assert len(assigned) == 1
+        assert assigned[0]["candidate_files"][path] == content
+        assert (
+            assigned[0]["path_diffs"][path] == json.loads(evidence)["path_diffs"][path]
+        )
+    assert all(len(prompt.encode()) <= 30_000 for prompt in plan.prompts)
+    assert not any(
+        "Original deck context" in section["text"]
+        for batch in batches
+        for section in batch["document_sections"]
+        if section["path"] == f"{DECK}/slides.md"
+    )
+    audit = next(batch for batch in batches if batch["scope"] == "cross_scope")
+    assert audit["path_diffs"] == json.loads(evidence)["path_diffs"]
+
+
 def test_explicit_scope_cannot_hide_a_changed_responsibility(
     change: tuple[Path, str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

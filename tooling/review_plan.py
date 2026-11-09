@@ -12,7 +12,11 @@ from tooling.requirements import (
     contract_references,
     is_requirements_path,
 )
-from tooling.review_evidence import ReviewError, automatic_document_paths
+from tooling.review_evidence import (
+    PRESENTATION_ARTIFACT_PATHS,
+    ReviewError,
+    automatic_document_paths,
+)
 from tooling.review_scope import (
     SCOPES,
     markdown_lines,
@@ -25,7 +29,7 @@ from tooling.review_scope import (
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 6
+SCOPE_POLICY_VERSION = 7
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -347,6 +351,8 @@ def build_review_plan(
     def scope_batch(scope: str, paths: list[str]) -> dict[str, Any]:
         assigned = set(paths)
         included = assigned | additional | scoped.get(scope, set())
+        if scope == "presentation":
+            included |= presentation
         return common | {
             "phase": "scope",
             "scope": scope,
@@ -402,7 +408,11 @@ def build_review_plan(
     batches: list[dict[str, Any]] = []
     for scope in sorted(selected):
         paths = sorted(p for p, owner in owners.items() if owner == scope)
-        units = [paths] if scope == "presentation" else [[p] for p in paths]
+        units = (
+            [paths]
+            if scope == "presentation" and presentation & PRESENTATION_ARTIFACT_PATHS
+            else [[p] for p in paths]
+        )
         if not units:
             units = [[]]
         group: list[str] = []
@@ -423,6 +433,8 @@ def build_review_plan(
 
     if len(batches) > 1 or "cross_scope" in scoped:
         audit_context = additional | scoped.get("cross_scope", set())
+        if not presentation & PRESENTATION_ARTIFACT_PATHS:
+            audit_context |= presentation
         audit = common | {
             "phase": "cross_scope",
             "scope": "cross_scope",

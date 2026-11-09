@@ -14,12 +14,19 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree
+from zipfile import ZipFile
 
 import psutil
 import pytest
+from filelock import FileLock, Timeout
 from tooling import presentation_html, presentations
+from tooling.environment import EnvironmentCheckError
 from tooling.presentation_errors import PresentationError
-from tooling.process_guard import CLEANUP_UNVERIFIED_EXIT_CODE, ProcessCleanupError
+from tooling.process_guard import (
+    CLEANUP_UNVERIFIED_EXIT_CODE,
+    ProcessCleanupError,
+    run_captured,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -29,6 +36,71 @@ if TYPE_CHECKING:
 
 def _tasks(*tasks: dict[str, object], **settings: object) -> bytes:
     return json.dumps({"version": "2.0.0", "tasks": tasks, **settings}).encode()
+
+
+@pytest.mark.parametrize("action", ["build", "watch"])
+def test_vscode_task_installs_missing_python_dependency_before_entrypoint(
+    tmp_path: Path, action: str
+) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    tasks = json.loads((repository / ".vscode/tasks.json").read_text())["tasks"]
+    task = next(task for task in tasks if task["label"] == f"slides: {action}")
+    assert task == presentations.presentation_task(action)
+    wheel = tmp_path / "slides_fixture-1.0-py3-none-any.whl"
+    with ZipFile(wheel, "w") as archive:
+        archive.writestr("slides_fixture.py", "READY = True\n")
+        archive.writestr(
+            "slides_fixture-1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: slides-fixture\nVersion: 1.0\n",
+        )
+        archive.writestr(
+            "slides_fixture-1.0.dist-info/WHEEL",
+            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr("slides_fixture-1.0.dist-info/RECORD", "")
+    manifest = tmp_path / "pyproject.toml"
+    manifest.write_text(
+        '[project]\nname = "slides-task-fixture"\nversion = "1.0"\n'
+        'requires-python = ">=3.14,<3.15"\ndependencies = ["slides-fixture"]\n'
+        f'[tool.uv.sources]\nslides-fixture = {{path = "{wheel.name}"}}\n'
+    )
+    module = tmp_path / "tooling/presentations.py"
+    module.parent.mkdir()
+    module.write_text(
+        "import sys\nfrom pathlib import Path\nfrom slides_fixture import READY\n"
+        "assert READY\nPath('started').write_text(sys.argv[1])\n"
+    )
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("UV_") and key not in {"VIRTUAL_ENV", "PYTHONPATH"}
+    }
+    environment.update(
+        UV_OFFLINE="1",
+        UV_CACHE_DIR=str(tmp_path / "cache"),
+        UV_PYTHON=sys.executable,
+        UV_PYTHON_DOWNLOADS="never",
+    )
+    for arguments in (["lock"], ["venv", ".venv"]):
+        run_captured(
+            ["uv", *arguments], cwd=tmp_path, env=environment, timeout=30
+        ).check_returncode()
+    lock = tmp_path / "uv.lock"
+    locked = lock.read_bytes()
+    command = [task["command"], *task["args"]]
+    for _ in range(2):
+        result = run_captured(command, cwd=tmp_path, env=environment, timeout=30)
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / "started").read_text() == action
+        assert lock.read_bytes() == locked
+        (tmp_path / "started").unlink()
+    manifest.write_text(
+        manifest.read_text().replace('version = "1.0"', 'version = "2.0"')
+    )
+    result = run_captured(command, cwd=tmp_path, env=environment, timeout=30)
+    assert result.returncode != 0
+    assert not (tmp_path / "started").exists()
+    assert lock.read_bytes() == locked
 
 
 def test_registered_tasks_allow_only_known_changes_and_unchanged_other_tasks() -> None:
@@ -227,6 +299,140 @@ def _fake_toolchain(root: Path) -> Path:
     )
     (toolchain / cli / "package.json").write_text('{"version":"4.5.1"}')
     return toolchain
+
+
+@pytest.mark.parametrize("action", ["build", "watch"])
+@pytest.mark.parametrize("state", ["ready", "missing", "stale"])
+def test_task_prepares_compiler_once_before_build_or_watch(
+    tmp_path: Path, monkeypatch: MonkeyPatch, action: str, state: str
+) -> None:
+    installed = _fake_toolchain(tmp_path)
+    deck = _deck(tmp_path)
+    if state == "missing":
+        shutil.rmtree(installed / "node_modules")
+    elif state == "stale":
+        (installed / "node_modules/@marp-team/marp-cli/package.json").write_text(
+            '{"version":"0.0.0"}'
+        )
+    monkeypatch.delenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", raising=False)
+    monkeypatch.setattr(
+        presentations, "__file__", str(tmp_path / "tooling/presentations.py")
+    )
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
+    monkeypatch.setattr(shutil, "which", lambda _: "/fixture/npm")
+    monkeypatch.setattr(sys, "argv", ["presentations", action, "--ensure-toolchain"])
+    installations: list[Path] = []
+    builds: list[str] = []
+
+    def install(
+        command: list[str], *, cwd: Path, temporary: Path, timeout: float
+    ) -> None:
+        assert command[1:] == ["ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+        assert cwd == installed
+        with (
+            pytest.raises(Timeout),
+            FileLock(tmp_path / ".venv/.presentation-setup.lock", timeout=0),
+        ):
+            pytest.fail("Another installer acquired the same lock")
+        installations.append(temporary)
+        if (installed / "node_modules").exists():
+            shutil.rmtree(installed / "node_modules")
+        _fake_toolchain(tmp_path)
+
+    def build(root: Path) -> None:
+        assert presentations._toolchain(root) == installed
+        builds.append((deck / "slides.md").read_text())
+
+    def edit(seconds: float) -> None:
+        if len(builds) == 1:
+            (deck / "slides.md").write_text("# Updated slides\n")
+        else:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(presentations, "_execute", install)
+    monkeypatch.setattr(presentations, "build", build)
+    monkeypatch.setattr(time, "sleep", edit)
+    assert presentations.main() == 0
+    assert len(builds) == (2 if action == "watch" else 1)
+    presentations.setup(tmp_path, only_if_needed=True)
+    assert len(installations) == (0 if state == "ready" else 1)
+    assert all(not path.exists() for path in installations)
+
+
+@pytest.mark.parametrize("reason", ["invalid_lock", "external", "missing_node"])
+def test_automatic_setup_does_not_install_for_unrepairable_configuration(
+    tmp_path: Path, monkeypatch: MonkeyPatch, reason: str
+) -> None:
+    installed = _fake_toolchain(tmp_path)
+    monkeypatch.delenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", raising=False)
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
+    if reason == "invalid_lock":
+        manifest = installed / "package.json"
+        manifest.write_text(manifest.read_text().replace("4.5.1", "4.6.0"))
+        message = "differs from the npm lock"
+    elif reason == "external":
+        external = tmp_path / "shared-compiler"
+        shutil.copytree(installed, external)
+        shutil.rmtree(external / "node_modules")
+        monkeypatch.setenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", str(external))
+        message = "external TRADINGDEV_PRESENTATION_TOOLCHAIN"
+    else:
+
+        def missing(**kwargs: object) -> str:
+            raise EnvironmentCheckError("Node.js is unavailable")
+
+        monkeypatch.setattr(presentations, "require_node", missing)
+        message = "Node.js is unavailable"
+    monkeypatch.setattr(
+        presentations, "_execute", lambda *_, **__: pytest.fail("Installer started")
+    )
+    with pytest.raises(PresentationError, match=message):
+        presentations.setup(tmp_path, only_if_needed=True)
+
+
+@pytest.mark.parametrize("failure", ["npm", "timeout", "incomplete"])
+def test_failed_automatic_install_stops_before_build_and_releases_workspace(
+    tmp_path: Path, monkeypatch: MonkeyPatch, failure: str
+) -> None:
+    installed = _fake_toolchain(tmp_path)
+    shutil.rmtree(installed / "node_modules")
+    monkeypatch.delenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", raising=False)
+    monkeypatch.setattr(
+        presentations, "__file__", str(tmp_path / "tooling/presentations.py")
+    )
+    monkeypatch.setattr(presentations, "require_node", lambda **_: "/fixture/node")
+    monkeypatch.setattr(shutil, "which", lambda _: "/fixture/npm")
+    monkeypatch.setattr(sys, "argv", ["presentations", "build", "--ensure-toolchain"])
+    workspaces: list[Path] = []
+
+    def install(
+        command: list[str], *, cwd: Path, temporary: Path, timeout: float
+    ) -> None:
+        workspaces.append(temporary)
+        if failure == "npm":
+            raise PresentationError("npm failed")
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(presentations, "_execute", install)
+    monkeypatch.setattr(presentations, "build", lambda _: pytest.fail("Build started"))
+    assert presentations.main() == 1
+    assert len(workspaces) == 1 and not workspaces[0].exists()
+    with FileLock(tmp_path / ".venv/.presentation-setup.lock", timeout=0):
+        pass
+
+
+@pytest.mark.parametrize("action", ["setup", "check", "package"])
+def test_automatic_install_option_is_restricted_to_editor_actions(
+    monkeypatch: MonkeyPatch, action: str
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["presentations", action, "--ensure-toolchain"])
+    monkeypatch.setattr(
+        presentations, "setup", lambda *_: pytest.fail("Installer started")
+    )
+    with pytest.raises(SystemExit) as error:
+        presentations.main()
+    assert error.value.code == 2
 
 
 @pytest.mark.parametrize(
