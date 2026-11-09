@@ -350,8 +350,11 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 時間戳、交易紀錄與明示的原始本金、頻率、年化及無風險利率設定，依績效契約獨立驗算，
 `sharpe.py` 則接受呼叫端的報酬序列及年化設定，提供 Sharpe、bootstrap 區間及
 PSR／DSR。各可呼叫函式的 docstring 維護輸入、不可用條件與推論假設。
-摘要保留金額與比例回撤；整段淨損益以原始本金為基準，首筆觀測後的權益變化另行命名。
-`sharpe_ratio` 使用當次無風險利率，`return_information_ratio` 另提供未扣無風險報酬的比率。
+摘要保留金額與比例回撤；帳戶權益的整段淨損益以原始本金為基準，累積 P&L
+（`init_cash=None`，例如 Volume 模式）以零為基準，首筆觀測後的權益變化另行命名。
+`summarize_performance` 依當次無風險利率計算摘要的 `sharpe_ratio` 欄位，
+`return_information_ratio` 欄位另保留未扣無風險報酬的比率；底層
+`sharpe.sharpe_ratio` 只計算傳入的報酬序列，不自行扣除無風險報酬。
 已平倉與包含未平倉市值的交易統計分組提供，不將未發生成交的出場費假設為已扣除。
 這些計算不讀取 run／artifact，也未接入績效發佈或 MCP 結果查詢；不能自行證明呼叫端
 提供的原始資料完整或來自同次執行。保存結果仍由上述績效產物流程負責。
