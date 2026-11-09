@@ -1034,32 +1034,21 @@ CLI 的直接回測是同步入口，不使用 MCP 計畫確認或背景 supervi
 
 ## 04　現況與邊界
 
-目前主線已有完整回測績效與排行榜；PR #38 的統計擴充仍是未合併項目。
-
-<!--
-main 於 2026-11-07 為 9e502ce。GitHub PR API 回報 PR #38 state=open、merged=false；其 head 為 005854fdb59a4affd528c18a745fd572dc07a5dd。
-來源：https://github.com/Kuan-Lun/tradingdev/pull/38
-來源：https://github.com/Kuan-Lun/tradingdev/tree/9e502ce
--->
+回測績效與排行榜使用已保存的結果；統計 API 提供獨立計算，尚未接入結果查詢。
 
 ---
 
 <!-- _class: compact -->
 
-## 主線績效與 PR #38 擴充
+## 績效管線與獨立統計 API
 
-| 狀態 | 已有或新增內容 |
+| 範圍 | 已提供的內容與限制 |
 | --- | --- |
-| 主線 `9e502ce` | 一般 run performance、年化報酬、Sharpe、日／月損益及 run leaderboard |
-| PR #38，尚未合併 | 新增 `domain/statistics` 推論模組，涵蓋期間分析、Sharpe 推論、候選比較與參數平台等 |
-| 整合狀態 | PR #38 沒有修改 app services 或 MCP tools，因此不能說其統計結果已接上排行榜 |
+| 績效管線 | 一般 run performance、年化報酬、Sharpe、日／月損益及 run leaderboard |
+| 獨立統計 API | `domain/statistics` 例如提供期間分析、原始資料績效摘要及 Sharpe 推論 |
+| 整合邊界 | 統計 API 尚未接入績效發布或 MCP 結果查詢，並非排行榜新增欄位 |
 
-<!--
-主線已有 Sharpe 與日／月損益等績效計算。PR #38 的主要差異是新增統計推論模組與相關文件／測試；PR 檔案清單沒有 app 或 mcp/tools 整合。因此本簡報不把 PR 的額外結果當成目前 leaderboard 欄位。
-來源：https://github.com/Kuan-Lun/tradingdev/pull/38/files
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/app/ranking_service.py
--->
+<!-- _footer: "模組責任與統計慣例見 ARCHITECTURE.md 的績效計算與對話摘要。" -->
 
 ---
 
@@ -1105,7 +1094,7 @@ main 於 2026-11-07 為 9e502ce。GitHub PR API 回報 PR #38 state=open、merge
 - [策略契約與驗證](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md)
 - [執行計畫](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/execution_plans.md)
 - [執行產物與績效指標](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md) · [Performance artifacts](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md)
-- [ML research](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md) · [PR #38](https://github.com/Kuan-Lun/tradingdev/pull/38)
+- [ML research](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md) · [統計研究背景：PR #38](https://github.com/Kuan-Lun/tradingdev/pull/38)
 
 <!--
 投影片版型參考 docs/talks/tradingdev-introduction/theme.css。本檔使用同一 Marp theme 名稱及 cover、chapter、compact、statement、closing、references class。
