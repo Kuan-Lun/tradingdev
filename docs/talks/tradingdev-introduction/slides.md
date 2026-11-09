@@ -28,13 +28,13 @@ _footer: |-
 
 ## 參與成員
 
-* **王冠倫** 國立臺灣大學資訊工程學系 博士候選人
-  * 實驗室：計算理論暨金融計算實驗室 (呂育道 教授)
-* xxx
-  * xxx
-* xxx
-  * xxx
-* **黃如君** 永豐銀行專案經理
+- **王冠倫** 國立臺灣大學資訊工程學系 博士候選人
+  - 實驗室：計算理論暨金融計算實驗室 (呂育道 教授)
+- xxx
+  - xxx
+- xxx
+  - xxx
+- **黃如君** 永豐銀行專案經理
 
 ---
 
@@ -70,10 +70,10 @@ _footer: |-
 
 > **建立共用研究後端，支援成員開發各自的交易策略。**
 
-* **實驗基礎**：在同一後端執行回測，保存可重現的設定與結果。
-* **策略與模型**：支援成員建構、修改與驗證不同的量化方法。
-* **策略分析與修正**：檢查策略問題，分析實驗結果，協助下一輪修正。
-* **後端改進**：透過提示詞，讓 AI 代理依研究經驗提出並驗證後端改進。
+- **實驗基礎**：在同一後端執行回測，保存可重現的設定與結果。
+- **策略與模型**：支援成員建構、修改與驗證不同的量化方法。
+- **策略分析與修正**：檢查策略問題，分析實驗結果，協助下一輪修正。
+- **後端改進**：透過提示詞，讓 AI 代理依研究經驗提出並驗證後端改進。
 
 <!-- _footer: "開發目標，尚未全部完成。" -->
 
@@ -102,9 +102,9 @@ _footer: |-
 
 **自行維護 TradingDev，讓研究經驗能回饋下一次開發。**
 
-* **案例與證據**：連結問題、修正依據與適用條件。
-* **修改與驗證**：AI 代理提出檢查或元件，經跨策略測試與審查整合。
-* **追蹤與評估**：保留改進版本，檢查後續研究是否減少重複錯誤。
+- **案例與證據**：連結問題、修正依據與適用條件。
+- **修改與驗證**：AI 代理提出檢查或元件，經跨策略測試與審查整合。
+- **追蹤與評估**：保留改進版本，檢查後續研究是否減少重複錯誤。
 
 這需要掌握**研究證據、檢查規則與版本更新流程**。
 
@@ -126,10 +126,10 @@ _footer: |-
 > TradingDev 透過 MCP，讓 AI 代理運用研究指引建立與修正策略，
 > 依據檢查與實驗結果，提出可追問的分析。
 
-* **策略實驗**：建立與修正策略，完成檢查與歷史回測。
-* **ML 訊號**：提供已登錄模型的訓練、預測與評估。
-* **證據保存**：連結策略版本、有效設定與實驗結果。
-* **結果分析與研究筆記**：提供診斷提示、報告解讀與可續讀的研究筆記。
+- **策略實驗**：建立與修正策略，完成檢查與歷史回測。
+- **ML 訊號**：提供已登錄模型的訓練、預測與評估。
+- **證據保存**：連結策略版本、有效設定與實驗結果。
+- **結果分析與研究筆記**：提供診斷提示、報告解讀與可續讀的研究筆記。
 
 已建立 [軟體需求規格（SRS）](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md)，整理產品需求與驗收條件。
 
@@ -260,8 +260,8 @@ gpt-6.1-sol｜該輪最終回覆
 
 > 可以。我建議先研究「均線判斷趨勢」的方式：
 >
-> * **買進並持有**：短期均線高於長期均線。
-> * **賣出轉空手**：短期均線低於長期均線，不做空。
+> - **買進並持有**：短期均線高於長期均線。
+> - **賣出轉空手**：短期均線低於長期均線，不做空。
 >
 > 這種方法可能跟上較長的漲勢，但盤整時容易反覆買賣，成本也會影響成果；目前還不能判斷是否適合 0050。
 >
@@ -730,11 +730,11 @@ MCP server 在建立服務時註冊 strategy、data、execution、jobs、runs、
 
 **Application services 接住用戶需求，組合 Domain 與 Adapters。**
 
-* `StrategyService` 管理策略版本與資格
-* `ExecutionPlanService` 準備確認計畫
-* `JobService` 與 `OptimizationService` 提交背景工作
-* `BacktestService` 協調策略訊號、行情與回測引擎
-* `RunService`、`ReportService` 與 `RankingService` 提供結果服務
+- `StrategyService` 管理策略版本與資格
+- `ExecutionPlanService` 準備確認計畫
+- `JobService` 與 `OptimizationService` 提交背景工作
+- `BacktestService` 協調策略訊號、行情與回測引擎
+- `RunService`、`ReportService` 與 `RankingService` 提供結果服務
 
 <!--
 MCP tools 主要負責協定與資料轉換；工作流程及狀態轉移由 application 層服務協調。部分流程仍由 worker 負責協調，例如最佳化搜尋與樣本外測試。
@@ -798,10 +798,10 @@ MCP tools 主要負責協定與資料轉換；工作流程及狀態轉移由 app
 
 ## 策略驗證檢查什麼
 
-* 靜態品質檢查與策略設定檢查
-* 訊號資料形狀、索引對齊及 `-1 / 0 / 1` 值域
-* 生成策略的合成資料驗證與 dry-run
-* 正式回測再次檢查策略資格及訊號契約
+- 靜態品質檢查與策略設定檢查
+- 訊號資料形狀、索引對齊及 `-1 / 0 / 1` 值域
+- 生成策略的合成資料驗證與 dry-run
+- 正式回測再次檢查策略資格及訊號契約
 
 **這些檢查不會證明程式完全符合自然語言構想，也不能單靠合成資料證明沒有前視偏誤。**
 
@@ -851,10 +851,10 @@ Preflight 是離線準備：不下載正式行情、不執行回測或訓練、�
 
 ## Background jobs 與 workers
 
-* 背景 job 保存進度、程序身分及控制狀態
-* Supervisor 啟動 worker 並確認程序清理
-* Worker 使用已固定的 manifest 執行並保存成果
-* `done` 代表結果已保存；不等於所有程序狀態都相同
+- 背景 job 保存進度、程序身分及控制狀態
+- Supervisor 啟動 worker 並確認程序清理
+- Worker 使用已固定的 manifest 執行並保存成果
+- `done` 代表結果已保存；不等於所有程序狀態都相同
 
 <!--
 CLI 同步回測與 MCP 背景 job 的入口不同，但都使用共用的策略資格、manifest 與績效模型。Job 與 Run 分開描述：一個是執行流程，一個是保存結果。
@@ -907,9 +907,9 @@ Signal 與 volume 模式採不同的引擎和指標基礎。volume mode 無初�
 
 **資料集 → 特徵 → 模型 → 訊號評估 → 候選排名。**
 
-* 保存獨立版本的資料集、特徵快取與模型
-* 評估 IC、命中率、換手率及簡化持有期報酬
-* `record=true` 才會將候選寫入 ML leaderboard
+- 保存獨立版本的資料集、特徵快取與模型
+- 評估 IC、命中率、換手率及簡化持有期報酬
+- `record=true` 才會將候選寫入 ML leaderboard
 
 <!--
 ML 研究是同步的獨立介面，不會自動建立一般 backtest run，也尚未接入回測 Dashboard 或 CLI。簡化持有期統計不等同包含完整交易成本的交易回測。
@@ -958,9 +958,9 @@ ML 研究是同步的獨立介面，不會自動建立一般 backtest run，也�
 
 ## 主線已保存的績效指標
 
-* 報酬與風險：總報酬、年化報酬、Sharpe、Sortino、Calmar、波動度與回撤
-* 交易結果：交易數、勝率、profit factor、期望值與未平倉交易
-* 期間觀察：日／月損益與統計，適用時才計算
+- 報酬與風險：總報酬、年化報酬、Sharpe、Sortino、Calmar、波動度與回撤
+- 交易結果：交易數、勝率、profit factor、期望值與未平倉交易
+- 期間觀察：日／月損益與統計，適用時才計算
 
 **每個數字都應連同單位、資料頻率、成本及可用條件一起解讀。**
 
@@ -1015,9 +1015,9 @@ CLI 的直接回測是同步入口，不使用 MCP 計畫確認或背景 supervi
 
 ## 研究紀錄與可追溯性
 
-* 研究說明與執行假設會綁定到計畫及 manifest
-* Run 保存策略、參數、行情與績效產物的身分資訊
-* 研究筆記、報告與 artifact 可由後續對話查詢
+- 研究說明與執行假設會綁定到計畫及 manifest
+- Run 保存策略、參數、行情與績效產物的身分資訊
+- 研究筆記、報告與 artifact 可由後續對話查詢
 
 <!--
 來源與設定會隨成果保存，避免只留下聊天結論。研究筆記與報告是獨立產物，不會覆寫已保存的 run 或 ML leaderboard 歷史內容。
@@ -1067,10 +1067,10 @@ main 於 2026-11-07 為 9e502ce。GitHub PR API 回報 PR #38 state=open、merge
 
 ## 架構保證與限制
 
-* TradingDev 研究歷史資料，不提供真實下單
-* Preflight 驗證設定與訊號契約，不預測真實績效
-* 生成程式的隔離執行不等於完整安全 sandbox
-* 指標受資料頻率、成本假設及可用觀察值限制
+- TradingDev 研究歷史資料，不提供真實下單
+- Preflight 驗證設定與訊號契約，不預測真實績效
+- 生成程式的隔離執行不等於完整安全 sandbox
+- 指標受資料頻率、成本假設及可用觀察值限制
 
 <!--
 策略檢查不能證明任意 Python 完全符合文字描述或不存在前視偏誤。生成程式的 Linux 執行單元是程序邊界，不應描述為完整安全沙箱。缺少的資料或不可用指標須保留原因，不能改成零。
@@ -1100,12 +1100,12 @@ main 於 2026-11-07 為 9e502ce。GitHub PR API 回報 PR #38 state=open、merge
 
 ## 參考資料
 
-* [README：安裝與使用流程](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/README.md)
-* [系統架構](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md)
-* [策略契約與驗證](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md)
-* [執行計畫](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/execution_plans.md)
-* [執行產物與績效指標](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md) · [Performance artifacts](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md)
-* [ML research](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md) · [PR #38](https://github.com/Kuan-Lun/tradingdev/pull/38)
+- [README：安裝與使用流程](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/README.md)
+- [系統架構](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md)
+- [策略契約與驗證](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md)
+- [執行計畫](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/execution_plans.md)
+- [執行產物與績效指標](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md) · [Performance artifacts](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md)
+- [ML research](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md) · [PR #38](https://github.com/Kuan-Lun/tradingdev/pull/38)
 
 <!--
 投影片版型參考 docs/talks/tradingdev-introduction/theme.css。本檔使用同一 Marp theme 名稱及 cover、chapter、compact、statement、closing、references class。
