@@ -12,8 +12,6 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 
 # 自動整合多人研究成果而演進的量化交易策略開發 MCP 服務
 
-A Model Context Protocol Service Advancing Quantitative Trading Strategy Development Through Shared Learning Across Users
-
 能學習策略開發經驗、自我演進的研究後端
 
 **永豐 x CCNS 合作專案**
