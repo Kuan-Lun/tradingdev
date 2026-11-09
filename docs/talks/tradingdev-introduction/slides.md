@@ -14,9 +14,13 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 
 能學習策略開發經驗、自我演進的研究後端
 
-**永豐 x CCNS 合作專案**
+**永豐 x CCNS** 合作專案
 
-<!-- _footer: "Github: [TradingDev](https://github.com/Kuan-Lun/tradingdev)" -->
+<!--
+_footer: |-
+  GitHub: [TradingDev](https://github.com/Kuan-Lun/tradingdev)\
+  簡報網址：[slides.klwang.tw/tradingdev/](https://slides.klwang.tw/tradingdev/)
+-->
 
 ---
 
@@ -26,9 +30,9 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 
 * **王冠倫** 國立臺灣大學資訊工程學系 博士候選人
   * 實驗室：計算理論暨金融計算實驗室 (呂育道 教授)
-* **xxx**
+* xxx
   * xxx
-* **xxx**
+* xxx
   * xxx
 * **黃如君** 永豐銀行專案經理
 
