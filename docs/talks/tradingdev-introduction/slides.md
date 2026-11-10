@@ -1112,21 +1112,6 @@ AI 代理能叫到哪些「種類」的工具，以及工具不能保證什麼�
 
 ---
 
-<!-- _class: closing -->
-<!-- _header: "" -->
-
-## TradingDev 的工具設計
-
-把工具分成 **11 群、52 個 MCP 工具**，對應從構想到分享的 **三個分期、九個研究階段**；
-AI 代理依對話觸發對應工具，先以唯讀確認、再於明確同意後執行。
-
-<!--
-以明確輸入、確認計畫、固定 manifest 及保存的 artifacts 支援重現與後續比較；
-這不代表策略結果已被證明有效。
--->
-
----
-
 <!--
 style: |
   /* Layouts used only by the architecture and case analysis slides. */
