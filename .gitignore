@@ -56,6 +56,7 @@ tooling/marp/node_modules/
 
 # Generated local presentation preview
 /docs/talks/tradingdev-introduction/index.html
+/docs/talks/tradingdev-mcp-tools/index.html
 
 # Cloudflare static presentation deployment output
 /site-dist/
