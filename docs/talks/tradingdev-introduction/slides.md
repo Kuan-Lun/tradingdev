@@ -1096,6 +1096,28 @@ CLI 的直接回測是同步入口，不使用 MCP 計畫確認或背景 supervi
 - [執行產物與績效指標](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md) · [Performance artifacts](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md)
 - [ML research](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md) · [統計研究背景：PR #38](https://github.com/Kuan-Lun/tradingdev/pull/38)
 
+---
+
+## 王冠倫的心得 (1/2)
+
+- 合作專案為完善原已發布的 TradingDev
+  - 經由定期會議可以讓我確認從前制定的暫時方案是否正確、業界比較常見的做法或特殊考量
+- 了解挑選 LLM 模型的性質
+  - 本專案開發期間會需要多次使用 LLM 來模擬使用者操作來完成整合測試，使用高階模型會錯估成功率 (使用者的 AI 代理模型品質不可控)
+  - 由提示詞驅動的文件檢查需要分流以此避免 Token 過度消耗
+  - 設定 AI 審查工具自動調用的參附資料範圍以此增加審查品質與降低 Token 消耗
+
+---
+
+## 王冠倫的心得 (2/2)
+
+- 學習新的 AI 自動開發流程：
+  - ISO/IEC/IEEE 29148:2018 確保了需求層級
+    - 「規格」可以由無 MCP 伺服器時的本地思考過程抽取
+    - 「需求」可以轉化成開發提示詞
+    - 「驗收」可以由有無 MCP 伺服器運行時的執行差異做為基準
+  - 自動發布 Issue -> 喚醒 LLM 開發後發布 PR -> 排序檢查後集中合併
+
 <!--
 投影片版型參考 docs/talks/tradingdev-introduction/theme.css。本檔使用同一 Marp theme 名稱及 cover、chapter、compact、statement、closing、references class。
 -->
