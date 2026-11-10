@@ -213,3 +213,27 @@ section.case-preview-pair > p:has(> a > img) + p {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 32px;
 }
+
+/* ---- MCP-tools presentation slides --------------------------------------
+   Rules needed by the inserted deck. Scoped to classes used only by those
+   slides so the original introduction deck renders exactly as before. */
+section.stage-tbl table th:nth-child(-n+2),
+section.stage-tbl table td:nth-child(-n+2) { white-space: nowrap; }
+
+section.diagram-slim .mermaid-diagram > svg { height: 280px; }
+section.diagram-short .mermaid-diagram > svg { height: 280px; }
+section.diagram-slim .mermaid-diagram { margin: 0 -40px; }
+section.diagram-slim .mermaid-diagram > svg { max-width: 1200px; }
+
+section:is(.diagram-slim, .diagram-short, .diagram-mid, .diagram-tight, .diagram-dense) .mermaid-diagram {
+  --arrowhead-scale: 1.4;
+  --message-line-width: 2.5px;
+}
+section:is(.diagram-slim, .diagram-short, .diagram-mid, .diagram-tight, .diagram-dense) .mermaid-diagram text.messageText {
+  font-size: var(--msg-size, 42px) !important;
+  transform: translateY(calc(-1 * var(--msg-lift, 20px)));
+}
+section.diagram-slim { --msg-size: 50px; --msg-lift: 27px; }
+section.diagram-mid { --msg-size: 48px; --msg-lift: 24px; }
+section.diagram-tight { --msg-size: 55px; --msg-lift: 31px; }
+section.diagram-dense { --msg-size: 56px; --msg-lift: 32px; }

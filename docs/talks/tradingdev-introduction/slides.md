@@ -44,9 +44,10 @@ _footer: |-
 
 | 章節 | 主題 | 內容 |
 | --- | --- | --- |
-| 01 | [開發動機與專案定位](index.html#3) | 工具比較、工程回饋與使用情境 |
-| 02 | [策略研究](index.html#10) | 角色分工、運算安排與策略實驗 |
-| 03 | [後續開發方向](index.html#26) | 可獨立指定的開發目標 |
+| 01 | [開發動機與專案定位](index.html#4) | 工具比較、工程回饋與使用情境 |
+| 02 | [策略研究](index.html#11) | 角色分工、運算安排與策略實驗 |
+| 03 | [後續開發方向](index.html#49) | 可獨立指定的開發目標 |
+| 04 | [工具語意與邊界](index.html#52) | 註解語意、產品限制 |
 
 <!-- _footer: "點選章名跳轉。方向鍵換頁，P 開啟講者模式。" -->
 
@@ -177,6 +178,55 @@ TradingDev 透過 **MCP 協定**，提供研究指引與工具給 Codex 等 AI �
 
 ---
 
+## 一次工具呼叫的內部路徑（1/2）
+
+<!-- _class: compact diagram-short -->
+
+```mermaid
+sequenceDiagram
+    accTitle: 一次工具呼叫在 TradingDev 內部的路徑：代理到應用層
+    participant A as AI 代理
+    participant MCP as MCP 工具
+    participant App as Application services
+    A->>MCP: 呼叫工具（參數與契約）
+    MCP->>App: 整理輸入、檢查型別
+    App->>App: 協調工作流程
+```
+
+MCP 工具負責協定與資料轉換；工作流程與狀態轉移由 application 層服務協調。
+
+<!--
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/ARCHITECTURE.md
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/server.py
+-->
+
+---
+
+## 一次工具呼叫的內部路徑（2/2）
+
+<!-- _class: compact diagram-short -->
+
+```mermaid
+sequenceDiagram
+    accTitle: 一次工具呼叫在 TradingDev 內部的路徑：領域層到回傳
+    participant App as Application services
+    participant Dom as Domain／Adapters
+    participant WS as Workspace
+    App->>Dom: 協調策略／資料／執行
+    Dom->>WS: 讀寫 revision／快取／結果
+    WS-->>App: 回傳結構化結果
+```
+
+**Workspace 是獨立於程式之外的外部存放空間**（策略修訂、行情快取、執行結果），與前面各層的程式內運算層類型不同；Domain／Adapters 讀寫它，再由 MCP 回傳給 AI 代理。
+
+<!--
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/ARCHITECTURE.md
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/docs/run_artifacts.md#workspace-layout
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/server.py
+-->
+
+---
+
 ## TradingDev 提供的研究流程指引
 
 1. **釐清構想**：確認交易想法、標的、期間與 K 棒頻率。
@@ -186,6 +236,21 @@ TradingDev 透過 **MCP 協定**，提供研究指引與工具給 Codex 等 AI �
 5. **延續研究**：提出下一步，依需要保存研究筆記。
 
 <!-- _footer: "來源：[執行確認流程](https://github.com/Kuan-Lun/tradingdev/blob/35d709d4ac9ed8c9d3a71a3e24cd98996bf3a1e6/README.md#完成第一次回測)" -->
+
+---
+
+<!-- _class: compact -->
+
+## 開發經驗的整合與驗證
+
+由人員選定研究案例，啟動 research-feedback Skill，讓能存取 TradingDev 原始碼的開發 AI 代理整合與驗證後端改進。
+
+1. **挑選共通問題**：比較案例與既有元件，確認可共用範圍、保留策略假設。
+2. **定義契約並整合**：明確輸入、輸出與適用條件，提供共用檢查或元件的使用入口。
+3. **驗證使用端**：固定資料與設定，檢查其他策略、正常情境及既有行為。
+4. **審查與版本更新**：完成獨立審查，記錄行為變更與版本，再依流程更新服務。
+
+*跨研究採用，以及減少重複錯誤與人工工時的成效，仍待驗證。*
 
 ---
 
@@ -278,6 +343,36 @@ gpt-6.1-sol｜該輪最終回覆
 
 ---
 
+<!-- _class: compact diagram-tight -->
+
+## UC-01（1/2）：釐清、建立與驗證策略
+
+```mermaid
+sequenceDiagram
+    accTitle: UC-01 從構想到回測（釐清與建立）
+    participant U as 使用者
+    participant A as AI 代理
+    participant T as TradingDev
+    U->>A: 策略想法（標的／期間／K 棒頻率）
+    A->>T: get_strategy_contract(section=research/core)
+    A->>T: list_data_sources
+    A->>U: 追問必要研究選擇
+    U->>A: 補齊標的、期間、成本等
+    A->>T: save_strategy
+    A->>T: validate_strategy
+    A->>T: dry_run_strategy
+    A->>T: promote_strategy
+```
+
+缺項先追問；每個 `save_strategy` 回傳 `revision_id`，驗證與執行都綁定它。
+
+<!--
+來源：[SERVER_INSTRUCTIONS 步驟 1–3](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/strategy.py
+-->
+
+---
+
 <!-- _class: case-dialogue case-transcript case-options case-with-input case-preview -->
 <!-- _header: "02　策略研究　／　0050 均線策略案例" -->
 
@@ -310,6 +405,31 @@ gpt-6.1-sol｜該輪最終回覆（節錄；確認單由連結續讀）
 [回測確認單｜開啟完整內容](evidence/0050-taiex/cases/01-ma-discussion/confirmation.html)
 
 <!-- _footer: "CLI 實際對話原文；操作者由 AI 代理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-2)" -->
+
+---
+
+<!-- _class: compact diagram-slim -->
+
+## 研究生命週期以「確認」為分界
+
+三個分期以**確認回測參數**為界；前與後是兩個工具截然不同的世界。
+
+```mermaid
+sequenceDiagram
+    accTitle: 研究生命週期：確認前的準備 vs 回測完的查詢
+    participant 前 as 確認回測參數前
+    participant 界 as 確認／執行邊界
+    participant 後 as 回測完
+    前->>前: 釐清、建立、驗證、準備
+    前->>界: prepare_* 產生確認單
+    界->>界: 使用者明確同意才執行
+    界->>後: submit 建立背景 job
+    後->>後: 監控、查詢、報告、分享
+```
+
+分界之前只做合成檢查、不下載正式行情、不跑回測；分界之後才讀取真實結果。修改或拒絕則回到準備，需重新確認。
+
+<!-- _footer: "來源：[SERVER_INSTRUCTIONS 步驟 4–6](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)" -->
 
 ---
 
@@ -377,6 +497,66 @@ gpt-6.1-sol｜該輪最終回覆
 
 ---
 
+## UC-01（2/2）：準備、確認、執行與查詢
+
+<!-- _class: compact diagram-tight -->
+
+```mermaid
+sequenceDiagram
+    accTitle: UC-01 從構想到回測（準備到查詢）
+    participant U as 使用者
+    participant A as AI 代理
+    participant T as TradingDev
+    A->>T: save_research_evidence
+    A->>T: prepare_backtest
+    T->>A: 確認單（confirmation_artifact）＋摘要
+    A->>U: 顯示計畫，等待決定
+    U->>A: 明確同意
+    A->>T: submit_execution_decision(approve)
+    T->>A: 建立背景 job
+    A->>T: get_job_status（輪詢）
+    T->>A: done 與 run_id
+    A->>T: get_run_metrics／generate_report
+    A->>U: 解讀結果與報告連結
+```
+
+準備本身不執行回測；只有使用者明確同意後才提交並建立背景工作。
+
+<!--
+來源：[SERVER_INSTRUCTIONS 步驟 4–8](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/execution.py
+-->
+
+---
+
+<!-- _class: compact diagram-mid -->
+
+## UC-03：找回歷史研究（不重跑）
+
+```mermaid
+sequenceDiagram
+    accTitle: UC-03 找回歷史研究
+    participant U as 使用者
+    participant A as AI 代理
+    participant T as TradingDev
+    U->>A: 找回之前的研究結果
+    A->>T: list_runs／get_run
+    A->>T: get_run_metrics（含 scope）
+    A->>T: get_run_trades／equity／executions
+    A->>T: generate_report（run_ids）
+    T->>A: 離線報告 artifact
+    A->>U: 解讀與報告連結
+```
+
+以保存內容產生報告；缺少或損壞證據會明示，不悄悄重建歷史。
+
+<!--
+來源：[UC-03](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例)
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/history.py
+-->
+
+---
+
 <!-- _class: case-dialogue case-transcript case-options case-with-input -->
 <!-- _header: "02　策略研究　／　0050 均線策略案例" -->
 
@@ -441,6 +621,39 @@ gpt-6.1-sol｜該輪最終回覆
 [台股大盤比較｜5／20 日均線](evidence/0050-taiex/cases/01-ma-discussion/report.html#result-0-0) · [基準資料](evidence/0050-taiex/cases/01-ma-discussion/benchmark.json)
 
 <!-- _footer: "CLI 實際對話原文；操作者由 AI 代理依委託擔任。[本輪完整對話與工具紀錄](evidence/0050-taiex/cases/01-ma-discussion/conversation/index.html#turn-4)" -->
+
+---
+
+<!-- _class: compact diagram-dense -->
+
+## UC-02：比較、Walk-forward 與最佳化
+
+```mermaid
+sequenceDiagram
+    accTitle: UC-02 比較與樣本外研究
+    participant U as 使用者
+    participant A as AI 代理
+    participant T as TradingDev
+    U->>A: 比較多組／做樣本外／搜尋參數
+    A->>T: save_research_evidence
+    A->>T: prepare_comparison 或 walk_forward 或 optimization
+    T->>A: 確認單（含模式與期間）
+    A->>U: 顯示計畫
+    U->>A: 同意
+    A->>T: submit_execution_decision(approve)
+    T->>A: 建立 job（比較含父子候選）
+    A->>T: get_job_status
+    T->>A: done
+    A->>T: generate_report(comparison_job_id=job_id)
+    A->>U: 比較報告與排名
+```
+
+三種 `prepare_*` 回答不同問題；最佳化結果不直接等同樣本外保證。
+
+<!--
+來源：[UC-02](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例)
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/execution.py
+-->
 
 ---
 
@@ -541,18 +754,268 @@ gpt-6.1-sol｜該輪最終回覆
 
 ---
 
+<!-- _class: compact diagram-mid -->
+
+## UC-05：保存與分享研究
+
+```mermaid
+sequenceDiagram
+    accTitle: UC-05 保存與分享
+    participant U as 使用者
+    participant A as AI 代理
+    participant T as TradingDev
+    U->>A: 整理並分享這次研究
+    A->>T: save_research_note
+    A->>T: export_research_note
+    T->>A: 研究分享包 ZIP artifact
+    A->>T: get_artifact_download（HTTP 連結）
+    A->>U: 解釋解壓與開啟 index.html
+```
+
+研究筆記為摘要，非逐字紀錄；分享包完整解壓後離線可讀。
+
+<!--
+來源：[UC-05](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例)
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/research_notes.py
+-->
+
+---
+
 <!-- _class: compact -->
 
-## 開發經驗的整合與驗證
+## 五個研究目的，對應不同工具群
 
-由人員選定研究案例，啟動 research-feedback Skill，讓能存取 TradingDev 原始碼的開發 AI 代理整合與驗證後端改進。
+- **把構想變成可執行策略**：`strategy` 群（建立、修訂、驗證、提升）。
+- **把策略跑成可信實驗**：`execution` 與 `jobs` 群（準備、確認、執行、監控）。
+- **把結果看清楚並能比較**：`runs`、`history`、`artifacts` 群（查詢、分析、報告、交付）。
+- **把行情與特徵準備好**：`data` 與 `ml` 群（快取、獨立訊號研究）。
+- **把研究留下來並能分享**：`research_notes`、`feature_requests`、`strategy_cleanup` 群。
 
-1. **挑選共通問題**：比較案例與既有元件，確認可共用範圍、保留策略假設。
-2. **定義契約並整合**：明確輸入、輸出與適用條件，提供共用檢查或元件的使用入口。
-3. **驗證使用端**：固定資料與設定，檢查其他策略、正常情境及既有行為。
-4. **審查與版本更新**：完成獨立審查，記錄行為變更與版本，再依流程更新服務。
+**代理在每個目的下都先看再寫：先用唯讀工具確認，再用寫入工具推進。**
 
-*跨研究採用，以及減少重複錯誤與人工工時的成效，仍待驗證。*
+<!-- _footer: "來源：[SERVER_INSTRUCTIONS 九步流程](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)" -->
+
+---
+
+<!-- _class: compact -->
+
+## 依研究目的劃分的工具群（1/2）
+
+| 工具群 | 研究目的 | 工具數 | 讀寫 |
+| --- | --- | ---: | --- |
+| Strategy | 把構想寫成可檢查、可執行的策略 | 7 | 3 讀 / 4 寫 |
+| Execution | 固定研究條件並產生可確認的計畫 | 8 | 1 讀 / 7 寫 |
+| Data | 取得或確認行情與特徵資料 | 4 | 3 讀 / 1 寫 |
+| Jobs | 追蹤與管理背景工作 | 3 | 1 讀 / 2 寫 |
+| Runs | 查詢已保存的回測結果與指標 | 5 | 5 讀 |
+| History | 讀取交易紀錄、診斷與組裝報告 | 8 | 7 讀 / 1 寫 |
+
+<!-- _footer: "數量依 @mcp.tool 裝飾函式統計；讀寫以 ToolAnnotations.read_only_hint 為準。" -->
+
+---
+
+<!-- _class: compact -->
+
+## 依研究目的劃分的工具群（2/2）
+
+| 工具群 | 研究目的 | 工具數 | 讀寫 |
+| --- | --- | ---: | --- |
+| Artifacts | 列出與交付已保存產物 | 3 | 3 讀 |
+| Research Notes | 留下可續讀的研究筆記 | 4 | 2 讀 / 2 寫 |
+| Feature Requests | 記錄暫不支援的能力 | 2 | 1 讀 / 1 寫 |
+| Strategy Cleanup | 預覽並清理未用草稿 | 1 | 1 寫 |
+| ML | 獨立訓練與評估訊號 | 7 | 3 讀 / 4 寫 |
+| **合計** | — | **52** | **29 讀 / 23 寫** |
+
+<!-- _footer: "數量依 @mcp.tool 裝飾函式統計；讀寫以 ToolAnnotations.read_only_hint 為準。" -->
+
+---
+
+<!-- _class: statement -->
+
+## 目前共 52 個 MCP 工具
+
+> **29 個唯讀工具、23 個會建立或變更狀態的工具。**
+
+工具依責任分成 11 群；同一群內同時有讀取與寫入，方便代理在對話中反覆查詢與遞進修改。
+
+<!--
+數量依 src/tradingdev/mcp/tools/ 各模組的 @mcp.tool 裝飾函式統計；隨版本增減。
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/
+-->
+
+---
+
+<!-- _class: compact -->
+
+## 這 52 個工具分在哪裡（1/2）
+
+| 模組 | 工具數 | 主要責任 |
+| --- | ---: | --- |
+| `strategy` | 7 | 建立、修訂、查詢與驗證策略 |
+| `execution` | 8 | 準備回測、比較、Walk-forward、最佳化與確認 |
+| `data` | 4 | 探索、查詢與快取行情 |
+| `jobs` | 3 | 查詢與管理背景工作 |
+| `runs` | 5 | 查詢回測結果、指標與比較 |
+| `history` | 8 | 交易紀錄、診斷與報告 |
+
+<!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/" -->
+
+---
+
+<!-- _class: compact -->
+
+## 這 52 個工具分在哪裡（2/2）
+
+| 模組 | 工具數 | 主要責任 |
+| --- | ---: | --- |
+| `artifacts` | 3 | 列出與交付已保存產物 |
+| `research_notes` | 4 | 保存與匯出研究筆記 |
+| `feature_requests` | 2 | 記錄未支援能力 |
+| `strategy_cleanup` | 1 | 預覽與清理草稿 |
+| `ml` | 7 | 獨立資料集、模型、訊號評估與排名 |
+
+前 6 群負責「把構想與研究條件變成可執行物件」；後 5 群負責「把結果留下並可分享」。共 11 群、52 個工具。
+
+<!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/" -->
+
+---
+
+<!-- _class: compact -->
+
+## 五個使用案例對應的工具流程（1/2）
+
+| 案例 | 觸發的階段 | 關鍵寫入工具 |
+| --- | --- | --- |
+| UC-01 從構想到回測 | 釐清 → 建立 → 驗證 → 準備 → 確認 → 執行 → 查詢 | `save_strategy`、`prepare_backtest`、`submit_execution_decision` |
+| UC-02 比較與樣本外研究 | 準備比較／Walk-forward／最佳化 → 確認 → 執行 | `prepare_comparison` / `walk_forward` / `optimization` |
+| UC-03 找回歷史研究 | 查詢 → 報告（不重跑） | `generate_report`（run_ids） |
+
+<!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例" -->
+
+---
+
+<!-- _class: compact -->
+
+## 五個使用案例對應的工具流程（2/2）
+
+| 案例 | 觸發的階段 | 關鍵寫入工具 |
+| --- | --- | --- |
+| UC-04 獨立 ML 訊號研究 | 合約 → 資料 → 資料集 → 訓練 → 評估 → 排名 | `build_dataset`、`train_model`、`evaluate_signal` |
+| UC-05 保存與分享 | 筆記 → 匯出 → 交付 | `save_research_note`、`export_research_note` |
+
+五個案例都遵循「先唯讀確認、再明確同意後寫入」；UC-03 不重跑回測，UC-04 走獨立 ML 軌道。
+
+<!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例" -->
+
+---
+
+<!-- _class: compact stage-tbl -->
+
+## 分期與階段：執行前（1/2）
+
+| 分期 | 研究階段 | 主要工具 |
+| --- | --- | --- |
+| 執行前 | 需求釐清 | `get_strategy_contract`、`list_data_sources`、`list_strategies`、`get_strategy` |
+| 執行前 | 策略建立與驗證 | `save_strategy`、`validate_strategy`、`dry_run_strategy`、`promote_strategy` |
+
+取得確認回測參數前，代理交錯呼叫多個階段；**只做合成檢查，不下載正式行情、不跑回測**。
+
+`get_strategy_contract`、`list_data_sources`、`get_artifact`(_download) 為跨鄰近階段重複呼叫的參考與交付工具；其餘工具依主要階段歸屬，各階段不會完全重疊。
+
+<!-- _footer: "來源：[requirements.md 使用案例](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例) · [SERVER_INSTRUCTIONS](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)" -->
+
+---
+
+<!-- _class: compact stage-tbl -->
+
+## 分期與階段：執行前（2/2）
+
+| 分期 | 研究階段 | 主要工具 |
+| --- | --- | --- |
+| 執行前 | 資料準備 | `list_available_data`、`inspect_dataset`、`ensure_data` |
+| 執行前 | 執行準備與確認 | `save_research_evidence`、`prepare_backtest` / `comparison` / `walk_forward` / `optimization`、`get_execution_plan`、`submit_execution_decision`、`cancel_execution_plan` |
+
+這一階段以 `prepare_*` 產生確認單，等待使用者明確同意；**準備本身不執行回測**。
+
+<!-- _footer: "來源：[requirements.md 使用案例](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例) · [SERVER_INSTRUCTIONS](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)" -->
+
+---
+
+<!-- _class: compact stage-tbl -->
+
+## 分期與階段：執行中／後（1/2）
+
+| 分期 | 研究階段 | 主要工具 |
+| --- | --- | --- |
+| 執行中 | 執行監控 | `get_job_status`、`list_jobs`、`cancel_job` |
+| 執行後 | 結果查詢與分析 | `list_runs`、`get_run`、`get_run_metrics`、`get_metric_catalog`、`compare_runs`、`find_runs`、`get_run_trades` / `equity` / `executions` / `account_history`、`get_run_diagnostics` |
+
+確認後才讀取真實結果；此分期的工具多為唯讀，與執行前以寫入為主明顯不同。
+
+<!-- _footer: "來源：[requirements.md 使用案例](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例) · [SERVER_INSTRUCTIONS](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)" -->
+
+---
+
+<!-- _class: compact stage-tbl -->
+
+## 分期與階段：執行後（2/2）與獨立軌道
+
+| 分期 | 研究階段 | 主要工具 |
+| --- | --- | --- |
+| 執行後 | 報告與交付 | `get_report_sections`、`generate_report`、`list_artifacts`、`get_artifact`(_download) |
+| 執行後 | 保存與分享 | `save_research_note`、`get_research_notes`、`export_research_note`、`get_research_archive`、`record_feature_request`、`list_feature_requests`、`cleanup_strategy_drafts` |
+| 獨立軌道 | ML 訊號研究 | `get_ml_contract`、`build_dataset` / `build_panel`、`train_model`、`predict`、`evaluate_signal`、`leaderboard` |
+
+<!-- _footer: "來源：[requirements.md 使用案例](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例) · [SERVER_INSTRUCTIONS](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)" -->
+
+---
+
+<!-- _class: compact -->
+
+## 確認前：代理在執行前交錯呼叫多群工具
+
+以 UC-01「從構想到回測」為例，代理在**確認回測參數之前**依序穿過多個階段：
+
+1. **釐清**：`get_strategy_contract`、`list_data_sources` 確認選擇與能力。
+2. **建立與驗證**：`save_strategy` → `validate_strategy` → `dry_run_strategy` → `promote_strategy`。
+3. **準備與確認**：`save_research_evidence` → `prepare_backtest` → `get_execution_plan`。
+4. **執行與監控**：`submit_execution_decision` → `get_job_status`。
+5. **查詢與報告**：`get_run_metrics` → `generate_report` → `get_artifact_download`。
+
+**寫入工具一律在前一步的唯讀確認之後才呼叫。**
+
+<!-- _footer: "來源：[UC-01 正常流程](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例)" -->
+
+---
+
+<!-- _class: compact diagram-mid -->
+
+## UC-04：獨立 ML 訊號研究
+
+```mermaid
+sequenceDiagram
+    accTitle: UC-04 獨立 ML 訊號研究
+    participant U as 使用者
+    participant A as AI 代理
+    participant T as TradingDev
+    U->>A: 想做獨立訊號研究
+    A->>T: get_ml_contract
+    A->>T: ensure_data（明確下載）
+    A->>T: build_dataset／build_panel
+    A->>T: train_model
+    A->>T: predict
+    A->>T: evaluate_signal(record=true)
+    A->>T: leaderboard
+    A->>U: 評估與排名
+```
+
+ML 研究是同步獨立介面，不會自動轉成交易策略或建立一般回測 run。
+
+<!--
+來源：[UC-04](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例)
+來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/ml.py
+-->
 
 ---
 
@@ -601,471 +1064,50 @@ gpt-6.1-sol｜該輪最終回覆
 
 ---
 
-<!-- header: "01　系統架構" -->
+<!-- header: "04　工具語意與邊界" -->
 <!-- _class: chapter -->
 <!-- _header: "" -->
 
-## 01　系統架構
+## 04　工具語意與邊界
 
-TradingDev 提供 AI 可呼叫的策略研究後端，支援歷史回測、參數研究與結果追蹤。
+AI 代理能叫到哪些「種類」的工具，以及工具不能保證什麼。
 
 <!--
-TradingDev 的產品介面以標準 MCP 為主，後端不綁定特定 LLM 供應商。產品範圍不包含真實下單。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
+註解語意來自 mcp_types.ToolAnnotations；限制來自 requirements.md 與架構文件。
 -->
 
 ---
 
 <!-- _class: compact -->
 
-## 系統模組與責任
+## 工具註解告訴代理「這是哪一類工具」
 
-| 模組 | 主要責任 |
-| --- | --- |
-| MCP 工具 | 接收 AI 客戶端的請求，檢查輸入並整理回覆 |
-| Application services | 協調策略、資料、執行計畫、工作與結果查詢 |
-| Domain | 定義策略、行情、回測、驗證、績效、排名與 ML 研究邏輯 |
-| Adapters | 連接檔案、SQLite、外部資料、程序、報告、CLI 與 Dashboard |
-| Workspace | 保存策略版本、行情快取、工作索引及完整研究產物 |
+每個工具帶有四個 hint，協助代理決定呼叫時機與風險：
 
-<!--
-Application services 負責跨領域流程；MCP、CLI 與 Dashboard 以不同方式使用這些能力。SQLite 保存索引和摘要，檔案系統保存 revision、快取與完整產物。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
--->
+- **read_only_hint**：只讀取、不變更伺服器狀態（`list_*`、`get_*`）。
+- **destructive_hint**：可能建立、覆寫或刪除（`save_strategy`、`ensure_data`、`cleanup_strategy_drafts`）。
+- **idempotent_hint**：重複呼叫結果一致（`get_*`、`promote_strategy`、`generate_report`）。
+- **open_world_hint**：可能執行生成程式或存取外部資料（`validate_strategy`、`ensure_data`）。
 
----
+**hint 是對代理的提示，不代表後端已證明行為；權限仍由後端強制。**
 
-## 外部訊號流程：使用者、AI 與 TradingDev
-
-<!-- _class: compact -->
-
-```mermaid
-sequenceDiagram
-    accTitle: 使用者、AI 代理與 TradingDev 的外部訊號流程
-    participant U as 使用者
-    participant A as AI 代理
-    participant T as TradingDev
-
-    U->>A: 策略想法
-    A->>U: 追問必要條件
-    U->>A: 補齊研究設定
-    A->>T: 準備回測計畫
-    T->>A: 確認單與檢查摘要
-    A->>U: 顯示計畫、等待決定
-    U->>A: 明確決定
-    A->>T: 同意後提交
-    T->>A: 工作狀態與結果
-    A->>U: AI 解讀結果
-```
-
-準備前會補齊標的、期間、K 棒頻率等必要條件；計畫經同意後才執行。
-
-<!--
-準備工作會追問缺少的研究輸入；準備本身不執行正式回測。只有後續明確同意才會提交計畫。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/execution_plans.md
--->
-
----
-
-## 內部訊號流程：TradingDev 的主要模組
-
-<!-- _class: compact diagram-wide -->
-
-```mermaid
-sequenceDiagram
-    accTitle: TradingDev 內部模組的訊號流程
-    participant MCP
-    participant App
-    participant Plan
-    participant Worker
-    participant Store
-    participant Result
-
-    MCP->>App: prepare
-    App->>Plan: check
-    Plan->>App: receipt
-    App->>MCP: plan
-    MCP->>App: approve
-    App->>Worker: submit job
-    Worker->>Store: save run
-    MCP->>App: query
-    App->>Result: get / compare / rank
-    Result->>Store: read
-    Result->>App: metrics / rank
-    App->>MCP: reply
-```
-
-Plan 代表 ExecutionPlan／Preflight；Worker 使用資料與回測模組；Result 代表 Run、Ranking 與 Report services。
-
-<!--
-這是目前主線的概念流程。正式名稱可在 src/tradingdev/app、mcp/tools、mcp/workers 與 adapters 中查閱。準備與執行是不同階段；preflight 不下載正式歷史行情，也不產生績效結果。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/mcp/server.py
--->
+<!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/" -->
 
 ---
 
 <!-- _class: compact -->
 
-## MCP 工具覆蓋研究流程
+## 工具能做的與不能保證的
 
-| 工具群 | 研究用途 |
-| --- | --- |
-| Strategy | 建立、修訂、查詢與驗證策略 |
-| Execution | 準備回測、固定比較、Walk-forward 或最佳化計畫 |
-| Data 與 Jobs | 檢查資料、查詢工作狀態及管理執行流程 |
-| Runs 與 Artifacts | 查詢指標、交易紀錄、報告及已保存的產物 |
-| ML 與研究紀錄 | 建立資料集、訓練與評估訊號，保存研究筆記 |
+- TradingDev 研究歷史資料，**不提供真實下單**。
+- 生成程式的檢查在 Linux 容器中執行，**不是完整安全 sandbox**。
+- `prepare_*` 只做合成檢查，**不預測真實績效、不下載正式行情**。
+- 確認單的「初始請求」不代表同意；**只有明確同意才提交執行**。
+- 指標受資料頻率、成本假設限制；**缺失值不是零，也不重建歷史**。
 
 <!--
-MCP server 在建立服務時註冊 strategy、data、execution、jobs、runs、history、artifacts、research notes、feature requests 與 ML 等工具。這是按責任分組的簡報版，而非完整工具目錄。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/mcp/server.py
-來源：https://github.com/Kuan-Lun/tradingdev/tree/9e502ce/src/tradingdev/mcp/tools
--->
-
----
-
-## Application services 協調工作
-
-**Application services 接住用戶需求，組合 Domain 與 Adapters。**
-
-- `StrategyService` 管理策略版本與資格
-- `ExecutionPlanService` 準備確認計畫
-- `JobService` 與 `OptimizationService` 提交背景工作
-- `BacktestService` 協調策略訊號、行情與回測引擎
-- `RunService`、`ReportService` 與 `RankingService` 提供結果服務
-
-<!--
-MCP tools 主要負責協定與資料轉換；工作流程及狀態轉移由 application 層服務協調。部分流程仍由 worker 負責協調，例如最佳化搜尋與樣本外測試。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
--->
-
----
-
-<!-- header: "02　策略研究" -->
-<!-- _class: chapter -->
-<!-- _header: "" -->
-
-## 02　策略研究流程
-
-每次正式執行都先固定策略、研究條件與有效設定。
-
-<!--
-策略版本、執行 manifest、計畫、工作、run 與 artifact 各自有身分和責任，不能把它們當成同一筆資料。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
--->
-
----
-
-<!-- _class: compact -->
-
-## 研究輸入先補齊
-
-| 輸入 | 均線策略案例 |
-| --- | --- |
-| 策略構想 | 短均線高於長均線時買進 |
-| 標的與資料來源 | 交易標的及其行情來源 |
-| 回測期間與 K 棒頻率 | 起訖日期、日線或其他頻率 |
-| 策略細節 | 快慢均線長度、出場規則與持倉方式 |
-| 模擬假設 | 本金、交易成本與適用的年化政策 |
-
-<!--
-模型須取得策略構想、標的、期間與 K 棒頻率；缺項要追問。有效的本金、成本及年化假設由共用政策處理，不能從範例或其他市場暗中猜值。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/AGENTS.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md
--->
-
----
-
-<!-- _class: statement -->
-
-## StrategyService 管理策略版本
-
-> **每次修訂都建立新的 revision，並重新取得執行資格。**
-
-`draft` → `validated` → `runnable` → `promoted`
-
-<!--
-建立與修訂分開處理。revision 保存固定程式及基礎設定；修改版本不會沿用舊版執行資格，已保存的執行結果不會因後續策略變更而重新解讀。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md
--->
-
----
-
-<!-- _class: compact -->
-
-## 策略驗證檢查什麼
-
-- 靜態品質檢查與策略設定檢查
-- 訊號資料形狀、索引對齊及 `-1 / 0 / 1` 值域
-- 生成策略的合成資料驗證與 dry-run
-- 正式回測再次檢查策略資格及訊號契約
-
-**這些檢查不會證明程式完全符合自然語言構想，也不能單靠合成資料證明沒有前視偏誤。**
-
-<!--
-generated strategy 的合成資料檢查涵蓋固定 fixture 和訊號契約；它不代表真實行情可用、策略暖機充分或交易語意正確。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/execution_plans.md
--->
-
----
-
-## Execution plan 與確認
-
-**準備計畫。**
-
-固定研究條件、策略 revision、有效參數及檢查證據，產生可閱讀的確認文件。
-
-**使用者決策。**
-
-同意後才提交原計畫；修改或拒絕時不啟動該工作。
-
-<!--
-Preflight 是離線準備：不下載正式行情、不執行回測或訓練、不產生績效。修改要求需要重新準備與檢查，最初請求或沉默不代表同意。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/execution_plans.md
--->
-
----
-
-<!-- _class: compact -->
-
-## 行情資料與快取
-
-| 區塊 | 功能 |
-| --- | --- |
-| DataService | 依研究設定取得、檢查與取樣行情或特徵資料 |
-| Data identity | 以來源、市場與標的等條件區分資料集 |
-| Cache | 保存已取得行情，讓相同查詢可重用 |
-| FeatureData | 對齊時間戳與特徵欄位，檢查合併結果 |
-
-<!--
-行情報告會保留資料身分與檢查結果。缺值不會被當成零回報，特徵不會用未來觀測回填過去資料；快取發布採不可變版本與原子更新。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md
--->
-
----
-
-## Background jobs 與 workers
-
-- 背景 job 保存進度、程序身分及控制狀態
-- Supervisor 啟動 worker 並確認程序清理
-- Worker 使用已固定的 manifest 執行並保存成果
-- `done` 代表結果已保存；不等於所有程序狀態都相同
-
-<!--
-CLI 同步回測與 MCP 背景 job 的入口不同，但都使用共用的策略資格、manifest 與績效模型。Job 與 Run 分開描述：一個是執行流程，一個是保存結果。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/app/job_service.py
--->
-
----
-
-<!-- _class: compact -->
-
-## 回測引擎有不同執行模式
-
-| 模式 | 執行方式 | 結果解讀 |
-| --- | --- | --- |
-| Signal | VectorBT 計算策略訊號與資產曲線 | 可計算報酬與風險指標 |
-| Volume | 以模擬帳本記錄金額型損益與交易 | 沒有本金報酬基準時，不提供年化報酬或 Sharpe 等指標 |
-
-交易成本依已固定的設定套用；交易統計、報酬指標與其適用條件會分開保存。
-
-<!--
-Signal 與 volume 模式採不同的引擎和指標基礎。volume mode 無初始本金報酬基準，應以金額 PnL 及回撤解讀，不把缺失報酬當作零。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/domain/backtest/engines.py
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md
--->
-
----
-
-<!-- _class: compact -->
-
-## Walk-forward、固定比較與最佳化
-
-| 方法 | 問題 | 執行方式 |
-| --- | --- | --- |
-| Walk-forward | 規則在不同時間區段如何表現？ | 依序訓練並測試多個時間 fold |
-| 固定比較 | 已指定的候選策略誰表現較好？ | 在共用行情快照上獨立執行候選 |
-| 最佳化 | 哪些參數值得進一步評估？ | 搜尋訓練區間候選，再測試選定參數 |
-
-這些方法回答不同問題，不能把最佳化結果直接當成樣本外保證。
-
-<!--
-最佳化使用自己的日期切分，不同時套用 walk-forward。固定比較由父工作保存候選帳本，失敗或未執行的候選不會被默默省略。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md
--->
-
----
-
-## ML 訊號研究
-
-**資料集 → 特徵 → 模型 → 訊號評估 → 候選排名。**
-
-- 保存獨立版本的資料集、特徵快取與模型
-- 評估 IC、命中率、換手率及簡化持有期報酬
-- `record=true` 才會將候選寫入 ML leaderboard
-
-<!--
-ML 研究是同步的獨立介面，不會自動建立一般 backtest run，也尚未接入回測 Dashboard 或 CLI。簡化持有期統計不等同包含完整交易成本的交易回測。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/mcp/tools/ml.py
--->
-
----
-
-<!-- header: "03　結果與分析" -->
-<!-- _class: chapter -->
-<!-- _header: "" -->
-
-## 03　結果與分析
-
-回測結果保留設定來源、指標定義與查詢入口，供後續比較與報告使用。
-
-<!--
-保存的 performance artifacts 是計算結果的快照；歷史查詢不會用今日的 metric catalog 重新計算舊 run。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md
--->
-
----
-
-<!-- _class: compact -->
-
-## 一次研究包含多種身分
-
-| 身分 | 說明 |
-| --- | --- |
-| Strategy revision | 固定的策略程式、設定與驗證證據 |
-| Manifest | 一次執行使用的策略與有效設定 |
-| Job | 背景工作進度與程序控制紀錄 |
-| Run | 一次已保存的回測結果 |
-| Artifact | 結果檔案、索引及可讀取內容 |
-
-<!--
-一次 revision 可執行多次；每次執行都有自己的 manifest 與結果。ML dataset、model 和 ML leaderboard 有獨立身分，不可當成一般 run ID。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md
--->
-
----
-
-<!-- _class: compact -->
-
-## 主線已保存的績效指標
-
-- 報酬與風險：總報酬、年化報酬、Sharpe、Sortino、Calmar、波動度與回撤
-- 交易結果：交易數、勝率、profit factor、期望值與未平倉交易
-- 期間觀察：日／月損益與統計，適用時才計算
-
-**每個數字都應連同單位、資料頻率、成本及可用條件一起解讀。**
-
-<!--
-主線以 QuantStats 計算新 run 的報酬／風險統計，保留 VectorBT 的 closed-trade 統計。年化、daily drawdown 與日／月 PnL 需要每日或更細的宣告頻率；歷史指標會保留原始定義與 provider。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/domain/performance/catalog.py
--->
-
----
-
-<!-- _class: compact -->
-
-## `compare_runs` 與 `leaderboard` 做不同工作
-
-| 能力 | 主要用途 | 候選來源 |
-| --- | --- | --- |
-| `compare_runs` | 並列查看至少兩個 run／scope 的指標與差異 | 已保存的回測結果 |
-| `leaderboard` | 依指標宣告的方向替候選排序 | 已保存的 run scope 或 ML 訊號評估 |
-
-排行榜是可用的 MCP 工具；`compare_runs` 不是尚未使用的改名預留名稱。
-
-<!--
-RankingService 依 metric 前綴分派 run 與 signal 候選，兩者共用排序規則但使用不同資料模型。MCP leaderboard 工具已接上 RankingService；compare_runs 由 RunService 提供。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/app/ranking_service.py
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/app/run_service.py
--->
-
----
-
-<!-- _class: compact -->
-
-## 報告、Dashboard 與 CLI
-
-| 入口 | 主要用途 |
-| --- | --- |
-| MCP | 讓 AI 查詢策略、執行狀態、回測結果及排行榜 |
-| Dashboard | 顯示已保存回測結果的圖表與報告 |
-| CLI | 直接執行設定檔回測，或從已保存 run 產生報告 |
-| ReportService | 組裝 HTML、比較與可選的 ML 研究章節 |
-
-不同入口共享核心資料與服務；操作方式依入口而異。
-
-<!--
-CLI 的直接回測是同步入口，不使用 MCP 計畫確認或背景 supervisor。Dashboard 讀取已保存的 PipelineResult；回測報告透過 ReportService 組裝。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/README.md
--->
-
----
-
-## 研究紀錄與可追溯性
-
-- 研究說明與執行假設會綁定到計畫及 manifest
-- Run 保存策略、參數、行情與績效產物的身分資訊
-- 研究筆記、報告與 artifact 可由後續對話查詢
-
-<!--
-來源與設定會隨成果保存，避免只留下聊天結論。研究筆記與報告是獨立產物，不會覆寫已保存的 run 或 ML leaderboard 歷史內容。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/src/tradingdev/app/research_note_service.py
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/reports.md
--->
-
----
-
-<!-- header: "04　現況與邊界" -->
-<!-- _class: chapter -->
-<!-- _header: "" -->
-
-## 04　現況與邊界
-
-回測績效與排行榜使用已保存的結果；統計 API 提供獨立計算，尚未接入結果查詢。
-
----
-
-<!-- _class: compact -->
-
-## 績效管線與獨立統計 API
-
-| 範圍 | 已提供的內容與限制 |
-| --- | --- |
-| 績效管線 | 一般 run performance、年化報酬、Sharpe、日／月損益及 run leaderboard |
-| 獨立統計 API | `domain/statistics` 例如提供期間分析、原始資料績效摘要及 Sharpe 推論 |
-| 整合邊界 | 統計 API 尚未接入績效發布或 MCP 結果查詢，並非排行榜新增欄位 |
-
-<!-- _footer: "模組責任與統計慣例見 ARCHITECTURE.md 的績效計算與對話摘要。" -->
-
----
-
-<!-- _class: compact -->
-
-## 架構保證與限制
-
-- TradingDev 研究歷史資料，不提供真實下單
-- Preflight 驗證設定與訊號契約，不預測真實績效
-- 生成程式的隔離執行不等於完整安全 sandbox
-- 指標受資料頻率、成本假設及可用觀察值限制
-
-<!--
-策略檢查不能證明任意 Python 完全符合文字描述或不存在前視偏誤。生成程式的 Linux 執行單元是程序邊界，不應描述為完整安全沙箱。缺少的資料或不可用指標須保留原因，不能改成零。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md
+來源：[requirements.md 限制](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#10-限制與假設)
+來源：[架構保證與限制](https://github.com/Kuan-Lun/tradingdev/blob/main/ARCHITECTURE.md)
 -->
 
 ---
@@ -1073,14 +1115,14 @@ CLI 的直接回測是同步入口，不使用 MCP 計畫確認或背景 supervi
 <!-- _class: closing -->
 <!-- _header: "" -->
 
-## TradingDev 的核心設計
+## TradingDev 的工具設計
 
-把策略構想轉成可檢查、可執行、可追溯的研究流程，
-讓每次結果都能回到它使用的策略版本、設定與資料來源。
+把工具分成 **11 群、52 個 MCP 工具**，對應從構想到分享的 **三個分期、九個研究階段**；
+AI 代理依對話觸發對應工具，先以唯讀確認、再於明確同意後執行。
 
 <!--
-以明確輸入、確認計畫、固定 manifest 及保存的 artifacts 支援重現和後續比較；這不代表策略結果已被證明有效。
-來源：https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md
+以明確輸入、確認計畫、固定 manifest 及保存的 artifacts 支援重現與後續比較；
+這不代表策略結果已被證明有效。
 -->
 
 ---
@@ -1089,12 +1131,37 @@ CLI 的直接回測是同步入口，不使用 MCP 計畫確認或背景 supervi
 
 ## 參考資料
 
-- [README：安裝與使用流程](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/README.md)
-- [系統架構](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/ARCHITECTURE.md)
-- [策略契約與驗證](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/strategy_contract.md)
-- [執行計畫](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/execution_plans.md)
-- [執行產物與績效指標](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/run_artifacts.md) · [Performance artifacts](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/performance_artifacts.md)
-- [ML research](https://github.com/Kuan-Lun/tradingdev/blob/9e502ce/docs/ml_research.md) · [統計研究背景：PR #38](https://github.com/Kuan-Lun/tradingdev/pull/38)
+- [軟體需求規格（SRS）](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md)
+- [MCP server 註冊與服務組裝](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/server.py)
+- [工具模組（strategy / execution / data / jobs / runs / history / artifacts / research_notes / feature_requests / strategy_cleanup / ml）](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/)
+- [SERVER_INSTRUCTIONS 九步工作流](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)
+- [系統架構](https://github.com/Kuan-Lun/tradingdev/blob/main/ARCHITECTURE.md)
+
+<!--
+投影片版型參考 docs/talks/tradingdev-introduction/theme.css。本檔使用同一 Marp theme 名稱及 cover、chapter、compact、statement、closing、references class。
+-->
+
+---
+
+## 王冠倫的心得 (1/2)
+
+- 合作專案為完善原已發布的 TradingDev
+  - 經由定期會議可以讓我確認從前制定的暫時方案是否正確、業界比較常見的做法或特殊考量
+- 了解挑選 LLM 模型的性質
+  - 本專案開發期間會需要多次使用 LLM 來模擬使用者操作來完成整合測試，使用高階模型會錯估成功率 (使用者的 AI 代理模型品質不可控)
+  - 由提示詞驅動的文件檢查需要分流以此避免 Token 過度消耗
+  - 設定 AI 審查工具自動調用的參附資料範圍以此增加審查品質與降低 Token 消耗
+
+---
+
+## 王冠倫的心得 (2/2)
+
+- 學習新的 AI 自動開發流程：
+  - ISO/IEC/IEEE 29148:2018 確保了需求層級
+    - 「規格」可以由無 MCP 伺服器時的本地思考過程抽取
+    - 「需求」可以轉化成開發提示詞
+    - 「驗收」可以由有無 MCP 伺服器運行時的執行差異做為基準
+  - 自動發布 Issue -> 喚醒 LLM 開發後發布 PR -> 排序檢查後集中合併
 
 <!--
 投影片版型參考 docs/talks/tradingdev-introduction/theme.css。本檔使用同一 Marp theme 名稱及 cover、chapter、compact、statement、closing、references class。
