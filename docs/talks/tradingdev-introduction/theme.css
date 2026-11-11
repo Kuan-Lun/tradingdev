@@ -89,7 +89,7 @@ section.cover > p:has(> a > img) {
   position: absolute;
   right: 80px;
   bottom: 76px;
-  width: 180px;
+  width: 120px;
   margin: 0;
   line-height: 0;
 }
