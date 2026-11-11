@@ -85,6 +85,20 @@ section.cover h1, section.chapter h2, section.closing h2 { color: #f8f7f3; }
 section.cover strong, section.chapter strong, section.closing strong { color: #80d8c4; }
 section.cover h1 { margin-bottom: 20px; }
 section.cover p { font-size: 34px; }
+section.cover > p:has(> a > img) {
+  position: absolute;
+  right: 80px;
+  bottom: 76px;
+  width: 180px;
+  margin: 0;
+  line-height: 0;
+}
+section.cover > p > a > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
 section.cover p:has(> em:only-child), section.chapter p:has(> em:only-child), section.closing p:has(> em:only-child) { color: #b7cfcc; }
 section.cover::after, section.chapter::after, section.closing::after { color: #b7cfcc; }
 section.chapter header, section.closing header { color: #b7cfcc; }

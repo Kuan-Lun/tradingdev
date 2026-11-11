@@ -16,6 +16,8 @@ description: 產品介紹、使用場景、分類比較與後續開發方向
 
 **永豐 x CCNS** 合作專案
 
+[![簡報 QR code](assets/slides-qr.png)](https://slides.klwang.tw/tradingdev/)
+
 <!--
 _footer: |-
   GitHub: [TradingDev](https://github.com/Kuan-Lun/tradingdev)\
