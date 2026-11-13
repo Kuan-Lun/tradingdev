@@ -35,6 +35,7 @@ _TOOLING_FILES = frozenset(
         "tooling/marp/package-lock.json",
         "tooling/marp/build.mjs",
         "tooling/marp/render-diagrams.mjs",
+        "tooling/marp/presentation-url.mjs",
         "wrangler.jsonc",
         "tooling/review_docs.py",
         "tooling/review_evidence.py",

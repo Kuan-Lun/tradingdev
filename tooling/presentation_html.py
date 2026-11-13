@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING
 
-from tooling.presentation_bundle import check_image
+from tooling.presentation_bundle import check_image, is_image
 from tooling.presentation_errors import PresentationError
 
 if TYPE_CHECKING:
@@ -52,6 +54,18 @@ class _PresentationHTML(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
+        if (
+            tag == "img"
+            and "presentation-qr" in (attributes.get("class") or "").split()
+        ):
+            prefix = "data:image/png;base64,"
+            source = attributes.get("src") or ""
+            try:
+                image = base64.b64decode(source.removeprefix(prefix), validate=True)
+            except (binascii.Error, ValueError) as error:
+                raise PresentationError("Invalid embedded QR PNG.") from error
+            if not source.startswith(prefix) or not is_image(image, ".png"):
+                raise PresentationError("Invalid embedded QR PNG.")
         if tag in {"iframe", "object", "embed"}:
             raise PresentationError(f"Embedded active content is not allowed: {tag}")
         if tag == "section":

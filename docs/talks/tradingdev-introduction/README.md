@@ -27,6 +27,27 @@
 
 ## 圖片、證據與離線分享
 
+### 封面網址與 QR code
+
+要更改簡報網址，修改 `slides.md` 第一個非空白行的設定：
+
+```markdown
+<!-- presentation-url: https://slides.klwang.tw/tradingdev/ -->
+```
+
+網址須為完整 HTTP／HTTPS 位址，不接受帳號密碼、空白或反斜線，且只能設定一次。
+封面保留獨立一行的 `{{presentation-qr}}`，頁尾沿用 `_footer: |-` 區塊並保留 `{{presentation-link}}`；
+兩個標記各使用一次。建置會依設定產生可點擊的 QR code 與頁尾網址，
+不必另外製作或提交 QR 圖片。圖片直接嵌入 HTML，支援離線顯示。
+
+修改後執行 `scripts/presentations.sh build`，或在 `slides: watch` 執行中儲存來源，
+再重新整理瀏覽器。網址或標記無效、QR 產生失敗時，建置會報錯並保留上一份成功預覽。
+較長的網址會產生更密集的 QR code，變更後須以實際顯示尺寸確認可掃描；必要時在
+`theme.css` 調整封面圖片大小。線上簡報須等合併與部署成功才更新。
+這些標記由專案建置工具處理，直接使用一般 Markdown／Marp 預覽不會產生 QR code。
+
+### 圖片與完整分享包
+
 簡報來源及 HTML 以相對路徑引用 `assets/` 的圖片；可查閱的研究成果保存在
 `evidence/`。分享完整簡報時，請將 `index.html`、`assets/` 與 `evidence/`
 一起複製並保留相對位置；單獨複製 HTML 會缺少圖片、對話、報告與研究包。

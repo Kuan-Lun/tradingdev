@@ -310,8 +310,9 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 ```
 
 `setup` 會下載 npm 套件；命令列 build／watch 預設及 check 使用已安裝工具鏈。
-執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝鎖定的 npm 工具鏈
-（Marp CLI、Mermaid 與圖表字型），不會安裝 Node.js 或 npm 本身。若報錯提示
+執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝
+[package.json](../tooling/marp/package.json) 定義並由 lock 鎖定的 npm 工具鏈，
+不會安裝 Node.js 或 npm 本身。若報錯提示
 `Node.js is unavailable` 或 `Node.js and npm are required`，
 請先安裝 Node.js 與 npm，而不是執行 `setup`。
 依賴更新須同步 `tooling/marp/package-lock.json` 並重新初始化。
@@ -376,6 +377,10 @@ Cloudflare 使用 `scripts/build-presentations-site.sh` 先安裝鎖定的 npm �
 本機 Python 入口的程序監督器負責逾時清理。Cloudflare staging 直接呼叫 Node，
 沒有這層 Python 逾時監督。[build.mjs](../tooling/marp/build.mjs) 是本機與雲端共用的
 編譯入口。SVG 與所需字型嵌入 HTML，觀看端不需要建置工具。
+[presentation-url.mjs](../tooling/marp/presentation-url.mjs) 讀取簡報來源的網址設定，
+以鎖定的 QR 套件產生 PNG 並嵌入 HTML，同步填入圖片及頁尾連結。
+此步驟不呼叫外部圖片服務，也不需要瀏覽器；設定與編輯方式見
+[封面網址與 QR code](talks/tradingdev-introduction/README.md#封面網址與-qr-code)。
 替代工具鏈的套件宣告、lock 及渲染腳本都須與受查 snapshot 相符。
 瀏覽器版本仍可能影響 SVG 版面；須以瀏覽器確認本機與分支預覽的圖表。本機使用已安裝
 的 Chrome 或明示執行檔；渲染器在 `WORKERS_CI=1` 的建置環境選用鎖定的 Linux x64
