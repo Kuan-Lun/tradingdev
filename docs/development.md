@@ -310,8 +310,9 @@ SRS 的結構與引用由文件檢查驗證；需求與契約的一致性納入�
 ```
 
 `setup` 會下載 npm 套件；命令列 build／watch 預設及 check 使用已安裝工具鏈。
-執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝鎖定的 npm 工具鏈
-（Marp CLI、Mermaid 與圖表字型），不會安裝 Node.js 或 npm 本身。若報錯提示
+執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝
+[package.json](../tooling/marp/package.json) 定義並由 lock 鎖定的 npm 工具鏈，
+不會安裝 Node.js 或 npm 本身。若報錯提示
 `Node.js is unavailable` 或 `Node.js and npm are required`，
 請先安裝 Node.js 與 npm，而不是執行 `setup`。
 依賴更新須同步 `tooling/marp/package-lock.json` 並重新初始化。
