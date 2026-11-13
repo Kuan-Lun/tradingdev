@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import psutil
 import pytest
-from tests.tooling.test_presentations import _html
+from tests.tooling.test_presentations import _decode_qr, _html, _qr_source, _QRLinks
 from tooling.presentation_bundle import (
     check_bundle,
     evidence_content_allowed,
@@ -221,8 +221,9 @@ def test_cloudflare_stages_all_entries_and_removes_only_stale_output(
     shutil.copyfile(script, tmp_path / "scripts/stage-presentations.sh")
     source = _delivery(tmp_path / DECK)
     (source / "index.html").unlink()
+    url = "https://example.org/cloud/?x=1&y=2"
     (source / "slides.md").write_text(
-        "---\nmarp: true\npaginate: true\n---\n# Slides\n\n"
+        _qr_source(url) + "\n"
         "![Chart](assets/chart.png)\n\n"
         "[Report](evidence/report.html#result)\n\n---\n# End\n"
     )
@@ -263,8 +264,12 @@ def test_cloudflare_stages_all_entries_and_removes_only_stale_output(
     assert not (target / "stale.txt").exists()
     assert sibling.read_text() == "keep me"
     assert (target / "assets/chart.png").read_bytes() == PNG
+    output = target / "index.html"
+    assert _decode_qr(output, installed) == url
+    assert _QRLinks(output.read_text()).hrefs.count(url) == 2
     assert not list((tmp_path / "site-dist").glob(".tradingdev.*"))
-    shutil.rmtree(source / "assets")
+    previous = output.read_bytes()
+    (source / "slides.md").write_text(_qr_source("invalid-url"))
     failed = run_captured(
         ["bash", str(tmp_path / "scripts/stage-presentations.sh")],
         cwd=tmp_path,
@@ -272,7 +277,20 @@ def test_cloudflare_stages_all_entries_and_removes_only_stale_output(
         env=environment,
     )
     assert failed.returncode != 0
+    assert "absolute HTTP" in failed.stderr
+    assert output.read_bytes() == previous
     assert check_bundle(target) == 4
+    assert not list((tmp_path / "site-dist").glob(".tradingdev.*"))
+    shutil.rmtree(source / "assets")
+    missing = run_captured(
+        ["bash", str(tmp_path / "scripts/stage-presentations.sh")],
+        cwd=tmp_path,
+        timeout=30,
+        env=environment,
+    )
+    assert missing.returncode != 0
+    assert "Missing or linked presentation entry: assets" in missing.stderr
+    assert output.read_bytes() == previous
 
 
 @pytest.mark.parametrize("mode", ["failure", "timeout"])

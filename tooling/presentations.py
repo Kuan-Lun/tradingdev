@@ -54,6 +54,7 @@ TOOLCHAIN_FILES = (
     "package-lock.json",
     "build.mjs",
     "render-diagrams.mjs",
+    "presentation-url.mjs",
 )
 _TOOL_PATHS = frozenset(
     {

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from contextlib import suppress
+from html.parser import HTMLParser
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING
@@ -21,6 +22,7 @@ import pytest
 from filelock import FileLock, Timeout
 from tooling import presentation_html, presentations
 from tooling.environment import EnvironmentCheckError
+from tooling.presentation_bundle import check_bundle, write_bundle
 from tooling.presentation_errors import PresentationError
 from tooling.process_guard import (
     CLEANUP_UNVERIFIED_EXIT_CODE,
@@ -223,6 +225,17 @@ def test_static_html_accepts_embedded_resources_and_external_citations() -> None
 
 
 @pytest.mark.parametrize(
+    "source",
+    ["assets/qr.png", "data:image/png;base64,!!!", "data:image/png;base64,AA=="],
+)
+def test_generated_qr_requires_an_embedded_png(source: str) -> None:
+    with pytest.raises(PresentationError, match="Invalid embedded QR PNG"):
+        presentation_html.check_html(
+            _html(f'<img class="presentation-qr" src="{source}">')
+        )
+
+
+@pytest.mark.parametrize(
     "extra",
     [
         '<img src="https://external.invalid/a.png">',
@@ -287,7 +300,9 @@ def _fake_toolchain(root: Path) -> Path:
     identity = {"name": "tradingdev-presentations", "version": "1.0.0"}
     manifest = {**identity, "dependencies": {"@marp-team/marp-cli": "4.5.1"}}
     (toolchain / "package.json").write_text(json.dumps(manifest))
-    for name in ("build.mjs", "render-diagrams.mjs"):
+    for name in presentations.TOOLCHAIN_FILES:
+        if not name.endswith(".mjs"):
+            continue
         (toolchain / name).write_text("// test compiler\n")
     (toolchain / "package-lock.json").write_text(
         json.dumps(
@@ -660,6 +675,163 @@ def mermaid_deck(tmp_path: Path, monkeypatch: MonkeyPatch) -> Iterator[Path]:
     monkeypatch.setattr(presentations, "mkdtemp", make_space)
     yield deck
     assert spaces and all(not path.exists() for path in spaces)
+
+
+def _qr_source(url: str) -> str:
+    return (
+        f"<!-- presentation-url: {url} -->\n\n"
+        "<!--\nmarp: true\npaginate: true\n-->\n\n"
+        "<!-- _class: cover -->\n\n# Slides\n\n{{presentation-qr}}\n\n"
+        "<!--\n_footer: |-\n  簡報網址：{{presentation-link}}\n-->\n"
+    )
+
+
+class _QRLinks(HTMLParser):
+    def __init__(self, content: str) -> None:
+        super().__init__()
+        self.hrefs: list[str | None] = []
+        self.qr_sources: list[str | None] = []
+        self.footer_text: list[str] = []
+        self.in_footer = False
+        self.feed(content)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "a":
+            self.hrefs.append(attributes.get("href"))
+        if tag == "img" and attributes.get("class") == "presentation-qr":
+            self.qr_sources.append(attributes.get("src"))
+        if tag == "footer":
+            self.in_footer = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "footer":
+            self.in_footer = False
+
+    def handle_data(self, data: str) -> None:
+        if self.in_footer:
+            self.footer_text.append(data)
+
+
+def _decode_qr(html: Path, toolchain: Path) -> str:
+    sources = _QRLinks(html.read_text()).qr_sources
+    assert len(sources) == 1 and sources[0] is not None
+    result = run_captured(
+        [
+            presentations._node(),
+            "-e",
+            "const {PNG} = require('pngjs'); "
+            "const jsQR = require('jsqr'); "
+            "const uri = process.argv[1]; "
+            "const png = PNG.sync.read(Buffer.from(uri.split(',')[1], 'base64')); "
+            "const pixels = new Uint8ClampedArray(png.data); "
+            "const decoded = jsQR(pixels, png.width, png.height); "
+            "if (!decoded) throw new Error('QR image cannot be decoded'); "
+            "process.stdout.write(decoded.data);",
+            sources[0],
+        ],
+        cwd=toolchain,
+        env=dict(os.environ),
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_url_change_updates_scannable_qr_links_and_offline_bundle(
+    tmp_path: Path, mermaid_deck: Path
+) -> None:
+    source = mermaid_deck / "slides.md"
+    output = mermaid_deck / "index.html"
+    images: list[str | None] = []
+    urls = (
+        "https://slides.klwang.tw/tradingdev/",
+        "https://example.org/talk_(2027)/?topic=qr&lang=zh-Hant#cover",
+        "https://example.org/?a=1&copy;=2&#65;=3&quote=%22",
+        "https://example.org/?q[]=x&filter={a}|b",
+        "http://[::1]/?q[]=x",
+    )
+    for url in urls:
+        source.write_text(_qr_source(url))
+        presentations.build(tmp_path)
+        content = output.read_text()
+        parsed = _QRLinks(content)
+        assert parsed.hrefs == [url, url]
+        assert len(parsed.qr_sources) == 1
+        images.extend(parsed.qr_sources)
+        label = url.split("://", 1)[1]
+        assert "".join(parsed.footer_text) == f"簡報網址：{label}"
+        assert _decode_qr(output, presentations._toolchain(tmp_path)) == url
+        assert "{{presentation-" not in content
+        assert "presentation-url:" not in content
+        assert not list(mermaid_deck.glob("*.source-*"))
+    assert images[0] != images[1]
+    previous = output.read_bytes()
+    presentations.build(tmp_path)
+    assert output.read_bytes() == previous
+    archive = write_bundle(mermaid_deck, tmp_path / "delivery")
+    with ZipFile(archive) as package:
+        package.extractall(tmp_path / "unpacked")
+    delivered = tmp_path / "unpacked/delivery"
+    assert check_bundle(delivered) == 1
+    assert presentation_html.check_html((delivered / "index.html").read_text()) == 1
+    assert (
+        _decode_qr(delivered / "index.html", presentations._toolchain(tmp_path))
+        == urls[-1]
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (_qr_source("https://example.org/").split("\n", 1)[1], "Declare exactly one"),
+        (
+            "<!-- presentation-url: https://other.org/ -->\n"
+            + _qr_source("https://example.org/"),
+            "Declare exactly one",
+        ),
+        (_qr_source("/relative"), "absolute HTTP"),
+        (_qr_source("https://user:secret@example.org/"), "without credentials"),
+        (_qr_source("https://example.org/a b"), "without credentials"),
+        (_qr_source("https://example.org/\\path"), "without credentials"),
+        (
+            _qr_source("https://example.org/").replace(
+                "{{presentation-link}}", "old address"
+            ),
+            "once in a footer",
+        ),
+        (
+            _qr_source("https://example.org/").replace(
+                "_footer: |-\n  簡報網址：{{presentation-link}}",
+                "_footer: {{presentation-link}}",
+            ),
+            "rendered footer link",
+        ),
+        (
+            _qr_source("https://example.org/").replace(
+                "_footer: |-\n  簡報網址：{{presentation-link}}",
+                'description: "footer: {{presentation-link}}"',
+            ),
+            "once in a footer",
+        ),
+        (
+            _qr_source("https://example.org/").replace(
+                "{{presentation-qr}}", "QR {{presentation-qr}}"
+            ),
+            "own paragraph",
+        ),
+        (_qr_source("https://example.org/" + "x" * 5000), "too big"),
+    ],
+)
+def test_invalid_url_configuration_preserves_preview_and_cleans_temporary_files(
+    tmp_path: Path, mermaid_deck: Path, source: str, message: str
+) -> None:
+    output = mermaid_deck / "index.html"
+    original = output.read_bytes()
+    (mermaid_deck / "slides.md").write_text(source)
+    with pytest.raises(PresentationError, match=message):
+        presentations.build(tmp_path)
+    assert output.read_bytes() == original
 
 
 def test_mermaid_build_embeds_repeatable_svg_fonts_and_distinct_diagram_ids(
