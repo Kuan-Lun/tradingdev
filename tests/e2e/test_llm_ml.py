@@ -490,6 +490,7 @@ def test_natural_request_interprets_training_provenance(
         case = asyncio.run(prepare_training_provenance(workspace))
         turns: list[ModelTurn] = []
         readonly_tools: set[str] = set()
+        observed_calls: list[ToolCall] = []
 
         async def observe_final(turn: ModelTurn) -> None:
             turns.append(turn)
@@ -501,6 +502,7 @@ def test_natural_request_interprets_training_provenance(
                 "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
                 "max_tool_calls": 24,
+                "on_tool_call": observed_calls.append,
             }
             async with workspace.connect() as client:
                 product_tools = (await client.session.list_tools()).tools
@@ -522,7 +524,16 @@ def test_natural_request_interprets_training_provenance(
                     )
             return codex_calls(await run_codex(workspace.root, case.request, **options))
 
-        calls = asyncio.run(run())
+        try:
+            calls = asyncio.run(run())
+        except Exception as error:
+            error.add_note(
+                "ML training provenance calls before model failure:\n"
+                + json.dumps(
+                    [asdict(call) for call in observed_calls], ensure_ascii=False
+                )
+            )
+            raise
         print(
             json.dumps([asdict(call) for call in calls], ensure_ascii=False), flush=True
         )
