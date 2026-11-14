@@ -330,8 +330,14 @@ The payload and manifest both preserve the full `ml` block, including `entry_ids
 the ML renderer's `template_version`, and `source_sha256` over the ordered selected
 `LeaderboardEntry.to_record()` list (canonical sorted-key UTF-8 JSON plus newline).
 That hash identifies the content read for this report, not proof of external data
-provenance. The block contains all candidate metrics, parameters and context;
-subsequent re-recording or deletion does not change an existing report. A new
+provenance. The block contains all candidate metrics, parameters and context,
+including the saved `producer_source`. Candidate tables and details display that
+source so same-name evaluations from different origins remain distinguishable.
+Legacy origin stays unknown; report generation does not consult the current model
+registry to fill it in. Interpret the model's training dataset with the saved
+source under the [ML evaluation contract](ml_research.md#recorded-signal-evaluations).
+Source recording does not establish a held-out evaluation.
+Subsequent re-recording or deletion does not change an existing report. A new
 request selects the current stored version and obtains a new report ID when its
 evidence differs. The block does not persist prediction or IC time series.
 

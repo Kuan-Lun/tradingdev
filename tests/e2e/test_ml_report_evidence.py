@@ -180,6 +180,24 @@ def test_real_mcp_saved_ml_report_retains_unavailable_coordinate_and_delivery(
     assert manifest["ml"]["scopes"][1]["values"]["ic_mean"] is None
     assert manifest["ml"]["scopes"][1]["metadata"]["window"] == 24
     assert manifest["ml"]["scopes"][1]["parameters"]["window"] == 7
+    assert all(
+        scope["metadata"]["producer_source"] == "unknown"
+        for scope in manifest["ml"]["scopes"]
+    )
+
+
+@pytest.mark.parametrize("group", ["ranked", "skipped"])
+@pytest.mark.parametrize("source", [None, "backend_model"])
+def test_saved_ml_report_rejects_lost_or_inferred_producer_source(
+    report: MLReportWorkflow, group: str, source: str | None
+) -> None:
+    row = report.calls[1].result[group][0]
+    if source is None:
+        del row["producer_source"]
+    else:
+        row["producer_source"] = source
+    with pytest.raises(AssertionError, match="saved producer source"):
+        report.verify()
 
 
 def test_ml_report_cannot_leave_analysis_only_in_chat(report: MLReportWorkflow) -> None:
