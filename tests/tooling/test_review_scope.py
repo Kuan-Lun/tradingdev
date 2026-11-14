@@ -8,11 +8,14 @@ from pathlib import Path
 import pytest
 from tooling.review_scope import (
     SCOPES,
+    BehaviorContext,
+    behavior_context_for_path,
     markdown_sections,
     scope_for_path,
     sections_for_reference,
     sections_for_scope,
     selection_reason,
+    unknown_document_sections,
 )
 
 
@@ -254,6 +257,201 @@ def test_path_ownership_is_explicit_and_deterministic(path: str, expected: str) 
     assert scope_for_path(path) == expected
     assert expected in SCOPES
     assert SCOPES[expected]
+
+
+@pytest.mark.parametrize(
+    ("path", "owner", "requirements", "document_scopes"),
+    [
+        (
+            "src/tradingdev/mcp/tools/ml.py",
+            "interfaces",
+            {
+                "FR-ML-001",
+                "FR-ML-002",
+                "FR-ML-003",
+                "FR-ML-004",
+                "FR-RES-001",
+                "FR-RES-002",
+                "FR-RES-003",
+                "FR-RES-004",
+                "NFR-DATA-001",
+                "NFR-UX-001",
+            },
+            {"ml", "results"},
+        ),
+        (
+            "src/tradingdev/app/contracts/ml.py",
+            "ml",
+            {
+                "FR-ML-001",
+                "FR-ML-002",
+                "FR-ML-003",
+                "FR-ML-004",
+                "FR-RES-001",
+                "FR-RES-002",
+                "FR-RES-003",
+                "FR-RES-004",
+                "NFR-DATA-001",
+                "NFR-UX-001",
+            },
+            {"ml", "results"},
+        ),
+        (
+            "tests/app/test_ml_training_binding.py",
+            "ml",
+            {"FR-ML-002", "FR-ML-003", "FR-ML-004", "NFR-DATA-001"},
+            {"ml"},
+        ),
+        (
+            "src/tradingdev/domain/ml/registry/leaderboard_store.py",
+            "ml",
+            {"FR-ML-003", "FR-ML-004", "NFR-DATA-001"},
+            {"ml"},
+        ),
+        (
+            "src/tradingdev/adapters/reporting/ml.py",
+            "results",
+            {"FR-ML-004", "FR-RES-003", "FR-RES-004", "NFR-DATA-001", "NFR-UX-001"},
+            {"ml", "results"},
+        ),
+        (
+            "tests/e2e/test_llm_ml.py",
+            "interfaces",
+            {
+                "FR-EXEC-005",
+                "FR-ML-001",
+                "FR-ML-002",
+                "FR-ML-003",
+                "FR-ML-004",
+                "FR-RES-001",
+                "FR-RES-002",
+                "FR-RES-003",
+                "FR-RES-004",
+                "NFR-DATA-001",
+                "NFR-UX-001",
+            },
+            {"ml", "results"},
+        ),
+    ],
+)
+def test_behavior_context_selects_obligations_without_changing_owner(
+    path: str, owner: str, requirements: set[str], document_scopes: set[str]
+) -> None:
+    context = behavior_context_for_path(path)
+    assert context is not None
+    assert context == BehaviorContext(
+        frozenset(requirements), frozenset(document_scopes)
+    )
+    assert scope_for_path(path) == owner
+    assert "interfaces" not in context.document_scopes
+    # These are SRS identities, not a second copy of their contract URLs.
+    root = Path(__file__).resolve().parents[2]
+    recorded_ids = {
+        section.headings[-1].split()[0]
+        for source in (root / "docs/requirements").glob("*.md")
+        for section in markdown_sections(
+            source.name, source.read_text(encoding="utf-8")
+        )
+        if section.headings
+    }
+    assert context.requirement_ids <= recorded_ids
+
+
+@pytest.mark.parametrize(
+    ("paths", "additional_requirements"),
+    [
+        (
+            (
+                "src/tradingdev/app/ml_service.py",
+                "src/tradingdev/app/contracts/ml.py",
+                "src/tradingdev/mcp/tools/ml.py",
+                "tests/app/test_ml_service.py",
+                "tests/mcp/test_ml_tools.py",
+            ),
+            {"FR-RES-003", "FR-RES-004"},
+        ),
+        (("tests/mcp/test_ml_leaderboard_runs.py",), set()),
+        (("tests/adapters/test_ml_report_html.py",), {"FR-RES-003", "NFR-UX-001"}),
+        (
+            (
+                "tests/adapters/test_report_cli.py",
+                "tests/app/test_ml_report_service.py",
+                "tests/mcp/test_ml_report_tools.py",
+            ),
+            {"FR-EXEC-004", "FR-RES-003"},
+        ),
+        (("tests/e2e/test_llm_ml.py",), {"FR-EXEC-005", "FR-RES-004"}),
+    ],
+    ids=["discovery", "run-ranking", "mixed-html", "comparison-report", "rolling"],
+)
+def test_mixed_ml_entrypoints_retain_saved_run_obligations(
+    paths: tuple[str, ...], additional_requirements: set[str]
+) -> None:
+    # These modules also own run schemas, guidance, reads or report selections.
+    # An edit to that side must retain its obligations despite the ML filename.
+    required = {"FR-ML-004", "FR-RES-001", "FR-RES-002", "NFR-DATA-001"}
+    for path in paths:
+        context = behavior_context_for_path(path)
+        assert context is not None, path
+        assert required | additional_requirements <= context.requirement_ids, path
+        assert context.document_scopes == {"ml", "results"}, path
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/tradingdev/mcp/tools/new_ml.py",
+        "src/tradingdev/domain/ml/new_behavior.py",
+        "tests/e2e/test_ml_new_behavior.py",
+        "src/tradingdev/app/strategy_service.py",
+        "docs/ml_research.md",
+        "docs/reports.md",
+        "docs/requirements/ml.md",
+        "src/tradingdev/mcp/tools/../tools/ml.py",
+        "src//tradingdev/mcp/tools/ml.py",
+        "/src/tradingdev/mcp/tools/ml.py",
+    ],
+)
+def test_unregistered_or_noncanonical_behavior_keeps_conservative_fallback(
+    path: str,
+) -> None:
+    assert behavior_context_for_path(path) is None
+
+
+def test_unknown_context_preserves_original_subtree_and_actual_ancestors() -> None:
+    path = "README.md"
+    text = (
+        "Prelude.\r\n# TradingDev\r\nReader context.\r\n"
+        "## 研究機器學習訊號\r\nFirst occurrence.\r\n"
+        "## 使用 Docker 部署\r\nUnrelated deployment.\r\n"
+        "## 研究機器學習訊號\r\nActual parent.\r\n"
+        "### New provenance contract\r\nNew [evidence][source].\r\n"
+        "#### New child\r\nChild evidence.\r\n"
+        "## 常見問題\r\n[source]: ./ml_research.md\r\n"
+    )
+    selected = unknown_document_sections(path, text)
+    original = "".join(section.text for section in selected)
+    assert "Prelude.\r\n# TradingDev\r\nReader context." in original
+    assert "Actual parent.\r\n### New provenance contract" in original
+    assert "#### New child\r\nChild evidence." in original
+    assert "[source]: ./ml_research.md" in original
+    assert "First occurrence." not in original
+    assert "Unrelated deployment." not in original
+    assert set(selected) <= set(markdown_sections(path, text))
+
+
+@pytest.mark.parametrize("path", ["docs/new_contract.md", "README.md"])
+def test_unknown_or_unstructured_document_retains_complete_original(path: str) -> None:
+    text = "Unstructured original\r\nwith unchanged bytes.\r\n"
+    assert "".join(s.text for s in unknown_document_sections(path, text)) == text
+
+
+def test_known_document_does_not_expand_unrelated_registered_sections() -> None:
+    text = "# TradingDev\nIntro.\n## 使用 Docker 部署\nKnown unrelated content.\n"
+    assert unknown_document_sections("README.md", text) == ()
+    # Whole-document responsibilities are handled by their own selectors. SRS
+    # requirements must be parsed as records instead of all headings being unknown.
+    assert unknown_document_sections("docs/requirements/ml.md", "# New SRS\n") == ()
 
 
 @pytest.mark.parametrize(

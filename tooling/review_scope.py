@@ -8,7 +8,6 @@ responsibility registry cannot hide new content.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -16,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from markdown_it import MarkdownIt
 
 from tooling.documentation import markdown_heading_locations
-from tooling.requirements import DOCUMENT_SCOPES
+from tooling.requirements import DOCUMENT_SCOPES, markdown_lines
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -45,6 +44,18 @@ class MarkdownSection:
     end_line: int
     headings: tuple[str, ...]
     text: str
+
+
+@dataclass(frozen=True)
+class BehaviorContext:
+    """Known behavior obligations, independently of a file's review owner.
+
+    Requirement records own their contract references. Document scopes select
+    general reader context only; they do not expand all contracts of an owner.
+    """
+
+    requirement_ids: frozenset[str]
+    document_scopes: frozenset[str]
 
 
 _ALL = frozenset(SCOPES)
@@ -620,6 +631,133 @@ _STEM_SCOPES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+_ML_RESEARCH_CONTEXT = BehaviorContext(
+    frozenset({"FR-ML-001", "FR-ML-002", "FR-ML-003", "FR-ML-004", "NFR-DATA-001"}),
+    frozenset({"ml"}),
+)
+_ML_EVALUATION_CONTEXT = BehaviorContext(
+    frozenset({"FR-ML-002", "FR-ML-003", "FR-ML-004", "NFR-DATA-001"}),
+    frozenset({"ml"}),
+)
+_ML_RECORDS_CONTEXT = BehaviorContext(
+    frozenset({"FR-ML-003", "FR-ML-004", "NFR-DATA-001"}),
+    frozenset({"ml"}),
+)
+_ML_REPORT_CONTEXT = BehaviorContext(
+    frozenset({"FR-ML-004", "FR-RES-003", "FR-RES-004", "NFR-DATA-001", "NFR-UX-001"}),
+    frozenset({"ml", "results"}),
+)
+_ML_WORKFLOW_CONTEXT = BehaviorContext(
+    _ML_RESEARCH_CONTEXT.requirement_ids | _ML_REPORT_CONTEXT.requirement_ids,
+    frozenset({"ml", "results"}),
+)
+_RUN_RESULT_REQUIREMENTS = frozenset({"FR-RES-001", "FR-RES-002"})
+# The discovery response includes saved-run ranking and report guidance even
+# when its service executes only ML operations. Its schemas also carry run rows.
+_ML_DISCOVERY_CONTEXT = BehaviorContext(
+    _ML_WORKFLOW_CONTEXT.requirement_ids | _RUN_RESULT_REQUIREMENTS,
+    frozenset({"ml", "results"}),
+)
+_ML_RUN_RANKING_CONTEXT = BehaviorContext(
+    _ML_RECORDS_CONTEXT.requirement_ids | _RUN_RESULT_REQUIREMENTS,
+    frozenset({"ml", "results"}),
+)
+_ML_RUN_REPORT_CONTEXT = BehaviorContext(
+    _ML_REPORT_CONTEXT.requirement_ids | _RUN_RESULT_REQUIREMENTS,
+    frozenset({"ml", "results"}),
+)
+_ML_COMPARISON_REPORT_CONTEXT = BehaviorContext(
+    _ML_RUN_REPORT_CONTEXT.requirement_ids | {"FR-EXEC-004"},
+    frozenset({"ml", "results"}),
+)
+_ML_ROLLING_WORKFLOW_CONTEXT = BehaviorContext(
+    _ML_DISCOVERY_CONTEXT.requirement_ids | {"FR-EXEC-005"},
+    frozenset({"ml", "results"}),
+)
+
+# These modules have reviewed behavior responsibilities. Do not infer context
+# from a layer prefix or an ML-looking filename: an unregistered path retains
+# the conservative owner-based fallback. Changed Markdown is selected from its
+# actual changed sections, not assigned a whole-document behavior here.
+_BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/ml_service.py",
+            "src/tradingdev/app/contracts/ml.py",
+            "src/tradingdev/mcp/tools/ml.py",
+            "tests/app/test_ml_service.py",
+            "tests/mcp/test_ml_tools.py",
+        ),
+        _ML_DISCOVERY_CONTEXT,
+    ),
+    "tests/mcp/test_ml_integrity.py": _ML_RESEARCH_CONTEXT,
+    **dict.fromkeys(
+        (
+            "tests/app/test_ml_predict.py",
+            "tests/app/test_ml_training_binding.py",
+        ),
+        _ML_EVALUATION_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/domain/ml/leaderboard.py",
+            "src/tradingdev/domain/ml/registry/leaderboard_store.py",
+            "tests/app/test_ml_leaderboard.py",
+            "tests/app/test_ml_rule_evaluation.py",
+            "tests/domain/ml/test_leaderboard.py",
+            "tests/domain/ml/test_leaderboard_store.py",
+            "tests/domain/ml/test_leaderboard_training_binding.py",
+            "tests/domain/ml/test_leaderboard_atomicity.py",
+            "tests/domain/ml/test_leaderboard_method_families.py",
+            "tests/mcp/test_ml_leaderboard_tool.py",
+        ),
+        _ML_RECORDS_CONTEXT,
+    ),
+    "tests/mcp/test_ml_leaderboard_runs.py": _ML_RUN_RANKING_CONTEXT,
+    **dict.fromkeys(
+        (
+            "src/tradingdev/adapters/reporting/ml.py",
+            "src/tradingdev/app/report_ml.py",
+            "src/tradingdev/domain/ml/report.py",
+            "tests/domain/ml/test_ml_report.py",
+            "tests/e2e/ml_report_evidence.py",
+            "tests/e2e/test_ml_report_evidence.py",
+        ),
+        _ML_REPORT_CONTEXT,
+    ),
+    # These tests exercise the shared renderer/selection, including non-ML runs;
+    # the comparison cases also retain failed and unexecuted run candidates.
+    "tests/adapters/test_ml_report_html.py": _ML_RUN_REPORT_CONTEXT,
+    **dict.fromkeys(
+        (
+            "tests/adapters/test_report_cli.py",
+            "tests/app/test_ml_report_service.py",
+            "tests/mcp/test_ml_report_tools.py",
+        ),
+        _ML_COMPARISON_REPORT_CONTEXT,
+    ),
+    # This module also discovers and reads a saved walk-forward rolling trace.
+    "tests/e2e/test_llm_ml.py": _ML_ROLLING_WORKFLOW_CONTEXT,
+    "tests/e2e/test_ml_workflow_evidence.py": _ML_WORKFLOW_CONTEXT,
+}
+
+
+def behavior_context_for_path(path: str) -> BehaviorContext | None:
+    """Return a reviewed behavior, or None to retain conservative context.
+
+    This lookup does not change ownership, source/diff coverage or explicit
+    context. Only canonical repository paths can select a narrower behavior.
+    """
+    normalized = PurePosixPath(path)
+    if (
+        normalized.is_absolute()
+        or ".." in normalized.parts
+        or normalized.as_posix() != path
+    ):
+        return None
+    return _BEHAVIOR_CONTEXTS.get(path)
+
+
 def scope_for_path(path: str) -> str:
     """Return one owner; classification never filters a path out of evidence."""
     normalized = PurePosixPath(path)
@@ -660,14 +798,6 @@ def _heading_text(tokens: Iterable[Token]) -> str:
         else ""
         for token in tokens
     )
-
-
-def markdown_lines(text: str) -> list[str]:
-    """Split only CommonMark line endings, preserving every original character."""
-    lines = re.findall(r"[^\r\n]*(?:\r\n|\r|\n|$)", text)
-    if lines and lines[-1] == "":
-        lines.pop()
-    return lines
 
 
 def _parse_sections(
@@ -777,6 +907,12 @@ def sections_for_scope(scope: str, path: str, text: str) -> tuple[MarkdownSectio
             section.start_line <= line <= section.end_line for line in reference_lines
         )
     }
+    return _with_ancestor_sections(sections, selected)
+
+
+def _with_ancestor_sections(
+    sections: tuple[MarkdownSection, ...], selected: set[int]
+) -> tuple[MarkdownSection, ...]:
     # Find each actual nearest ancestor, rather than matching all equal heading
     # names: repeated headings can belong to different parts of the document.
     for index in tuple(selected):
@@ -787,6 +923,38 @@ def sections_for_scope(scope: str, path: str, text: str) -> tuple[MarkdownSectio
                     selected.add(previous)
                     break
     return tuple(section for index, section in enumerate(sections) if index in selected)
+
+
+def unknown_document_sections(path: str, text: str) -> tuple[MarkdownSection, ...]:
+    """Keep unfamiliar context when a known behavior selects precise contracts.
+
+    Unknown documents retain their complete original text. A registered heading
+    document retains unknown subtrees with ancestor prose and link definitions.
+    Whole-document responsibilities have no heading-level registry; their caller
+    selects those documents or, for SRS, resolves individual requirement records.
+    """
+    sections, reference_lines = _parse_sections(path, text)
+    if path in _WHOLE_DOC_SCOPES:
+        return ()
+    registry = _DOC_HEADINGS.get(path)
+    if registry is None or not any(section.headings for section in sections):
+        return sections
+    selected = {
+        index
+        for index, section in enumerate(sections)
+        if any(title not in registry for title in section.headings)
+    }
+    if not selected:
+        return ()
+    selected.update(
+        index
+        for index, section in enumerate(sections)
+        if not section.headings
+        or any(
+            section.start_line <= line <= section.end_line for line in reference_lines
+        )
+    )
+    return _with_ancestor_sections(sections, selected)
 
 
 def sections_for_reference(

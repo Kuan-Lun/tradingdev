@@ -6,7 +6,8 @@ import json
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 from tooling import review_docs
@@ -14,9 +15,6 @@ from tooling.presentations import DECK, PRESENTATION_PATHS
 from tooling.requirements import check_requirements
 from tooling.review_evidence import ReviewError, build_evidence
 from tooling.review_plan import build_review_plan
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 STRATEGY = "src/tradingdev/app/strategy_service.py"
 REPORT = "src/tradingdev/app/report_service.py"
@@ -831,7 +829,9 @@ def test_srs_explicit_contract_sections_come_from_candidate_git(
         repo,
         "docs/requirements/strategy.md",
         "# Strategy\n\n## FR-STR-001 Inputs\n\n"
-        "- **契約**：[cache](../run_artifacts.md#market-data-cache)\n",
+        "- **需求**：Use cached input.\n- **驗收**：Preserve its identity.\n"
+        "- **契約**：[cache](../run_artifacts.md#market-data-cache)\n"
+        "- **驗證**：人工驗收：inspect the preserved evidence.\n",
     )
     tree = _tree(repo)
     # Working tree changes must not replace immutable contract evidence.
@@ -867,7 +867,10 @@ def test_missing_or_nonregular_srs_contract_fails_before_review(
     _write(
         repo,
         "docs/requirements/strategy.md",
-        "# Strategy\n\n## FR-STR-001 Inputs\n\n- **契約**：[missing](../missing.md)\n",
+        "# Strategy\n\n## FR-STR-001 Inputs\n\n"
+        "- **需求**：Use cached input.\n- **驗收**：Preserve its identity.\n"
+        "- **契約**：[missing](../missing.md)\n"
+        "- **驗證**：人工驗收：inspect the preserved evidence.\n",
     )
     if mode == "symlink":
         (repo / "docs/missing.md").symlink_to("../README.md")
@@ -926,3 +929,346 @@ def test_cross_scope_keeps_srs_contract_when_presentation_owns_its_file(
             s["blob_oid"] == _git(repo, "rev-parse", f"{tree}:{contract}")
             for s in sections
         )
+
+
+def _behavior_requirement(identifier: str, href: str, obligation: str) -> str:
+    return (
+        f"## {identifier} Saved evidence\n\n"
+        f"- **需求**：{obligation}\n"
+        "- **驗收**：Keep the original source and identity.\n"
+        f"- **契約**：[original contract]({href})\n"
+        "- **驗證**：人工驗收：inspect the saved evidence.\n\n"
+    )
+
+
+@pytest.fixture
+def behavior_requirement_change(tmp_path: Path) -> tuple[Path, str, str, str]:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, "README.md", "# TradingDev\nReader context.\n")
+    _write(
+        tmp_path,
+        "docs/ml_research.md",
+        "# ML Research\nML reader context.\n\n## ML Research Artifacts\n"
+        "Preserved identities.\n\n### Recorded Signal Evaluations\n"
+        "FIRST_CONTRACT_ORIGINAL\n",
+    )
+    _write(
+        tmp_path,
+        "docs/reports.md",
+        "# Reports\nReport reader context.\n\n## Composable Offline Reports\n"
+        "SECOND_CONTRACT_ORIGINAL\n",
+    )
+    first = _behavior_requirement(
+        "FR-ML-003",
+        "../ml_research.md#recorded-signal-evaluations",
+        "Keep the original signal obligation.",
+    )
+    second = _behavior_requirement(
+        "FR-ML-004",
+        "../reports.md#composable-offline-reports",
+        "Keep the original report obligation.",
+    )
+    _write(
+        tmp_path, "docs/requirements/ml.md", "# ML requirements\n\n" + first + second
+    )
+    return tmp_path, _tree(tmp_path), first, second
+
+
+@pytest.mark.parametrize("change_second", [False, True])
+def test_changed_requirement_selects_its_contract_without_expanding_its_book(
+    behavior_requirement_change: tuple[Path, str, str, str], change_second: bool
+) -> None:
+    repo, base, first, second = behavior_requirement_change
+    first = first.replace("original signal obligation", "revised signal obligation")
+    if change_second:
+        second = second.replace(
+            "original report obligation", "revised report obligation"
+        )
+    path = "docs/requirements/ml.md"
+    current = "# ML requirements\n\n" + first + second
+    _write(repo, path, current)
+    tree = _tree(repo)
+    evidence = build_evidence(repo, base, tree)
+    original = json.loads(evidence)
+    plan = build_review_plan(evidence)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owner = next(batch for batch in batches if path in batch["assigned_paths"])
+    assert owner["candidate_files"][path] == current
+    assert owner["path_diffs"][path] == original["path_diffs"][path]
+    assert "FR-ML-004" in owner["candidate_files"][path]
+    context = "".join(
+        section["text"] for batch in batches for section in batch["document_sections"]
+    )
+    assert "FIRST_CONTRACT_ORIGINAL" in context
+    assert ("SECOND_CONTRACT_ORIGINAL" in context) is change_second
+    assert owner["behavior_contexts"][path]["requirement_ids"] == (
+        ["FR-ML-003", "FR-ML-004"] if change_second else ["FR-ML-003"]
+    )
+
+
+def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
+    behavior_requirement_change: tuple[Path, str, str, str],
+) -> None:
+    repo, _, first, second = behavior_requirement_change
+    _write(
+        repo,
+        "docs/run_artifacts.md",
+        "# Run Artifacts\n\n## Discovery Pages\nNEW_REFERENCE_CONTRACT\n",
+    )
+    second = second.replace(
+        "[original contract](../reports.md#composable-offline-reports)",
+        "[original contract][target]",
+    )
+    requirement = "docs/requirements/ml.md"
+    definition = "## Appendix\n\n[target]: ../reports.md#composable-offline-reports\n"
+    _write(repo, requirement, "# ML requirements\n\n" + first + second + definition)
+    base = _tree(repo)
+    _write(
+        repo,
+        requirement,
+        "# ML requirements\n\n"
+        + first.replace("original signal obligation", "revised signal obligation")
+        + second
+        + definition.replace(
+            "../reports.md#composable-offline-reports",
+            "../run_artifacts.md#discovery-pages",
+        ),
+    )
+    plan = build_review_plan(build_evidence(repo, base, _tree(repo)))
+    assert plan.manifest["behavior_contexts"][requirement]["requirement_ids"] == [
+        "FR-ML-003",
+        "FR-ML-004",
+    ]
+    text = "".join(
+        s["text"] for p in plan.prompts for s in _payload(p)["document_sections"]
+    )
+    assert "SECOND_CONTRACT_ORIGINAL" in text
+    assert "NEW_REFERENCE_CONTRACT" in text
+
+
+@pytest.mark.parametrize("ending", ["\n", "\r\n", "\r"])
+def test_contract_edits_map_git_lines_to_markdown_without_unicode_line_splitting(
+    behavior_requirement_change: tuple[Path, str, str, str],
+    ending: str,
+) -> None:
+    repo, _, first, second = behavior_requirement_change
+    contract = "docs/ml_research.md"
+    lines = [
+        "# ML Research",
+        "",
+        "## ML Research Artifacts",
+        "",
+        "### Recorded Signal Evaluations",
+        "prefix" + "\u2028 continuation" * 6,
+        "FIRST_OLD",
+        "",
+        "### Trained Models",
+        "SECOND_UNCHANGED",
+        "kept line",
+        "kept line",
+        "last line",
+        "",
+    ]
+    _write(repo, contract, ending.join(lines))
+    second = second.replace(
+        "../reports.md#composable-offline-reports", "../ml_research.md#trained-models"
+    )
+    _write(repo, "docs/requirements/ml.md", "# ML requirements\n\n" + first + second)
+    base = _tree(repo)
+    _write(repo, contract, ending.join(lines).replace("FIRST_OLD", "FIRST_NEW"))
+    evidence = build_evidence(repo, base, _tree(repo))
+    plan = build_review_plan(evidence)
+    identifiers = plan.manifest["behavior_contexts"][contract]["requirement_ids"]
+    assert "FR-ML-003" in identifiers
+    if ending != "\r":
+        assert identifiers == ["FR-ML-003"]
+    text = "".join(
+        s["text"] for p in plan.prompts for s in _payload(p)["document_sections"]
+    )
+    assert "Keep the original signal obligation." in text
+
+
+@pytest.mark.parametrize(
+    "operation", ["remove_requirement", "remove_contract", "rename_contract"]
+)
+def test_removed_or_renamed_contract_retains_base_obligation_and_complete_diff(
+    behavior_requirement_change: tuple[Path, str, str, str], operation: str
+) -> None:
+    repo, _, first, second = behavior_requirement_change
+    caller = "src/tradingdev/app/report_service.py"
+    _write(repo, caller, "USE_RETIRED_SCORE = True\n")
+    base = _tree(repo)
+    requirement = "docs/requirements/ml.md"
+    contract = "docs/ml_research.md"
+    contract_before = (repo / contract).read_text(encoding="utf-8")
+    if operation == "rename_contract":
+        renamed = "docs/renamed_ml_contract.md"
+        (repo / contract).rename(repo / renamed)
+        current = (
+            "# ML requirements\n\n"
+            + first.replace("ml_research.md", "renamed_ml_contract.md")
+            + second
+        )
+    else:
+        current = "# ML requirements\n\n" + second
+        if operation == "remove_contract":
+            (repo / contract).unlink()
+    _write(repo, requirement, current)
+    _write(repo, caller, "USE_RETIRED_SCORE = False\n")
+    tree = _tree(repo)
+    evidence = build_evidence(repo, base, tree)
+    original = json.loads(evidence)
+    batches = [_payload(prompt) for prompt in build_review_plan(evidence).prompts]
+    audit = next(batch for batch in batches if batch["phase"] == "cross_scope")
+    assert audit["path_diffs"] == original["path_diffs"]
+    assert audit["path_diffs"][requirement]
+    old_obligation = [
+        section
+        for section in audit["document_sections"]
+        if section["path"] == requirement and section["version"] == "base"
+    ]
+    assert old_obligation and "".join(s["text"] for s in old_obligation) == first
+    assert all(
+        s["blob_oid"] == _git(repo, "rev-parse", f"{base}:{requirement}")
+        for s in old_obligation
+    )
+    contract_sections = [
+        section for section in audit["document_sections"] if section["path"] == contract
+    ]
+    assert "".join(s["text"] for s in contract_sections) == contract_before
+    expected_version = "candidate" if operation == "remove_requirement" else "base"
+    assert {s["version"] for s in contract_sections} == {expected_version}
+    assert all(
+        s["blob_oid"] == _git(repo, "rev-parse", f"{base}:{contract}")
+        for s in contract_sections
+    )
+    if operation != "remove_requirement":
+        assert contract not in audit["candidate_tree_inventory"]
+        assert audit["path_diffs"][contract] == original["path_diffs"][contract]
+    for batch in batches:
+        for path in batch["assigned_paths"]:
+            assert batch["path_diffs"][path] == original["path_diffs"][path]
+            if path in original["candidate_files"]:
+                assert (
+                    batch["candidate_files"][path] == original["candidate_files"][path]
+                )
+
+
+@pytest.fixture
+def real_document_repository(tmp_path: Path) -> Path:
+    root = Path(__file__).resolve().parents[2]
+    _git(tmp_path, "init", "-q")
+    documents = [
+        root / name
+        for name in ("README.md", "ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md")
+    ]
+    documents.extend((root / "docs").rglob("*.md"))
+    for document in documents:
+        _write(
+            tmp_path,
+            document.relative_to(root).as_posix(),
+            document.read_text(encoding="utf-8"),
+        )
+    return tmp_path
+
+
+def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    known = "tests/app/test_ml_report_service.py"
+    unknown = "tests/app/test_ml_new_consumer.py"
+    for path in (known, unknown):
+        _write(repo, path, "VALUE = 'old'\n")
+    base = _tree(repo)
+    for path in (known, unknown):
+        _write(repo, path, "VALUE = 'new'\n")
+    plan = build_review_plan(
+        build_evidence(repo, base, _tree(repo)), max_prompt_bytes=450_000
+    )
+    batch = next(
+        _payload(p) for p in plan.prompts if known in _payload(p)["assigned_paths"]
+    )
+    assert unknown in batch["assigned_paths"]
+    assert batch["scope"] == "ml"
+    sections = batch["document_sections"]
+    assert any(
+        s["path"] == "docs/requirements/execution.md" and "FR-EXEC-004" in s["text"]
+        for s in sections
+    ), "Unknown paths must not erase a registered shared comparison obligation"
+    assert any(s["path"] == "docs/requirements/quality.md" for s in sections)
+
+
+@pytest.mark.parametrize(
+    ("source", "budget", "shared_runs"),
+    [
+        ("tests/mcp/test_ml_leaderboard_tool.py", 240_000, False),
+        ("src/tradingdev/mcp/tools/ml.py", 450_000, True),
+    ],
+)
+def test_real_document_corpus_keeps_ml_contracts_without_unrelated_interface_context(
+    real_document_repository: Path,
+    source: str,
+    budget: int,
+    shared_runs: bool,
+) -> None:
+    tmp_path = real_document_repository
+    _write(tmp_path, source, "PRODUCER_SOURCE = 'unknown'\n")
+    base = _tree(tmp_path)
+    current = "PRODUCER_SOURCE = 'backend_model'\n"
+    _write(tmp_path, source, current)
+    tree = _tree(tmp_path)
+    evidence = build_evidence(tmp_path, base, tree)
+    original = json.loads(evidence)
+    # The shared tool also owns run ranking and discovery. Preserve those
+    # contracts even when they require an explicit larger operational budget.
+    plan = (
+        build_review_plan(evidence)
+        if budget == 240_000
+        else build_review_plan(evidence, max_prompt_bytes=budget)
+    )
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owner = next(batch for batch in batches if source in batch["assigned_paths"])
+    assert owner["scope"] == "interfaces"
+    assert owner["candidate_files"][source] == current
+    assert owner["path_diffs"][source] == original["path_diffs"][source]
+    sections = owner["document_sections"]
+    selected = {
+        (section["path"], heading)
+        for section in sections
+        for heading in section["headings"]
+    }
+    assert {
+        ("docs/ml_research.md", heading)
+        for heading in (
+            "Fold Validation and Signal Interpretation",
+            "Recorded Signal Evaluations",
+        )
+    } <= selected
+    if shared_runs:
+        assert ("docs/ml_research.md", "Dataset and Model Inputs") in selected
+        assert ("docs/run_artifacts.md", "Ranking Saved Run Scopes") in selected
+        assert (
+            "docs/performance_artifacts.md",
+            "Performance Scopes and Provenance",
+        ) in selected
+    assert ("README.md", "使用 Docker 部署") not in selected
+    assert (
+        not {
+            ("docs/reports.md", heading)
+            for heading in (
+                "Research notebooks and archives",
+                "Recorded conversations",
+                "Codex CLI recording adapter",
+            )
+        }
+        & selected
+    )
+    for section in sections:
+        lines = original["candidate_files"][section["path"]].splitlines(keepends=True)
+        assert section["text"] == "".join(
+            lines[section["start_line"] - 1 : section["end_line"]]
+        )
+    assert all(
+        batch["prompt_utf8_bytes"] <= budget for batch in plan.manifest["batches"]
+    )
