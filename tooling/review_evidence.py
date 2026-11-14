@@ -367,6 +367,11 @@ def build_evidence(
         "base_file_modes": {
             path: base_entries[path][0] for path in relevant if path in base_entries
         },
+        "base_document_files": {
+            path: _text_blob(repo, base_tree, path, base_entries[path])
+            for path in relevant
+            if path.endswith(".md") and path in base_entries
+        },
         "presentation_context_paths": sorted(context),
         "additional_context_paths": sorted(set(review_context)),
         "automatic_document_paths": sorted(docs),

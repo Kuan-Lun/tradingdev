@@ -817,11 +817,18 @@ uv run --no-sync python -m tooling.review_docs \
 ```
 
 檢查規劃中的 `path_owners` 與 `selected_scopes`，確認程式與測試取得其負責文件。
+檔案 owner 與背景選取分開：已登錄模組依其行為責任取得需求原文，再沿該需求的
+正式契約引用取得章節，不因 MCP 或端到端測試歸屬 `interfaces` 就載入全部產品背景。
+同一模組同時負責不同流程時，登錄須涵蓋全部責任。`behavior_contexts` 與
+`requirement_contracts` 可核對變更路徑、需求及契約的選取關係；每批依實際指派的檔案
+取聯集。文件變更比對固定 base 與 candidate 的需求／契約章節；刪除需求或移除引用時
+保留必要的 base 原文。變更檔案及原始 diff 仍完整交付，背景切片不裁減其內容。
 新模組落入 `general` 時，先依實際使用端與契約判斷責任；已確認的歸屬由
 [review_scope.py](../tooling/review_scope.py) 登錄，並在
 [test_review_scope.py](../tests/tooling/test_review_scope.py) 與
 [test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證必要文件、完整來源與差異仍保留。
 未確認或跨責任的共用內容仍保守選取，不為降低容量任意改派範圍。
+沒有行為登錄的路徑沿用 owner 的保守背景；未知文件與章節仍保留。
 各批 `document_sections` 也列出選取原因；`unknown-sections-preserved` 或
 `unfamiliar-document-full-document` 表示尚未登錄的內容被保守保留。
 盤點時須核對章節讀者、契約及使用端，再更新同一責任登錄與原文保留測試；
@@ -829,6 +836,11 @@ uv run --no-sync python -m tooling.review_docs \
 預設容量是工具的操作上限。若 `--plan-only` 因預設上限中止，可在同一命令提供下表的
 容量選項以完成純規劃；這不呼叫模型，也不代表已核實模型容量。取得唯一證據、單批
 與總 prompt 大小後，再核對所選模型容量並預留輸出空間，明確設定當次檢查選項。
+`evidence_utf8_bytes` 量測本機候選證據池，包括供背景選取的文件及必要舊版本，
+不是單次模型輸入；實際送出的每批與合計大小另見 `batches` 及
+`total_prompt_utf8_bytes`。跨批審查保留全部原始 diff，文件索引列出實際交付的原文章節；
+完整候選路徑清單仍用於核對檔案存在性。分批不保證任意大小的完整單檔或交叉差異
+都能放入預設容量，超量時仍須依量測處理，不截斷或省略必要證據。
 UTF-8 bytes 與字元數不是 tokens。
 
 通常使用自動推導的範圍；需要調整時，`check-pr.sh` 支援：
@@ -838,7 +850,7 @@ UTF-8 bytes 與字元數不是 tokens。
 | `--review-scope SCOPE` | 明確增加審查責任範圍；不可漏掉變更所屬範圍，可重複。 |
 | `--review-context PATH` | 為所有批次補入候選 Git 中的完整文字檔，可重複。 |
 | `--review-context-for SCOPE:PATH` | 僅為指定責任範圍或 `cross_scope` 補入完整檔案，可重複。 |
-| `--max-evidence-bytes`、`--max-prompt-bytes`、`--max-total-prompt-bytes` | 分別限制唯一證據、單批 prompt 與總 prompt；先量測，再依模型容量明確設定。 |
+| `--max-evidence-bytes`、`--max-prompt-bytes`、`--max-total-prompt-bytes` | 分別限制本機候選證據池、單批 prompt 與總 prompt；先量測，再依資源與模型容量明確設定。 |
 | `--documentation-timeout-seconds` | 文件審查所有批次共用的期限。 |
 | `--snapshot-timeout-seconds` | 品質／測試 snapshot 的期限；不改變測試範圍或工具自身期限。 |
 
