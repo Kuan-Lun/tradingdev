@@ -429,24 +429,26 @@ def build_review_plan(
     ) -> tuple[set[str], set[str], bool]:
         profiles = [behavior_contexts.get(path) for path in paths]
         precise = bool(profiles) and all(profile is not None for profile in profiles)
+        identifiers = set().union(
+            *(p.requirement_ids for p in profiles if p is not None)
+        )
+        roles = set().union(*(p.document_scopes for p in profiles if p is not None))
         if precise:
-            return (
-                set().union(*(p.requirement_ids for p in profiles if p is not None)),
-                set().union(*(p.document_scopes for p in profiles if p is not None)),
-                True,
-            )
-        identifiers = {
+            return identifiers, roles, True
+        # A fallback widens this batch; it cannot erase obligations already
+        # identified for other assigned files, including cross-domain consumers.
+        identifiers.update(
             identifier
             for identifier, record in records.items()
             if sections_for_scope(scope, record.source, files[record.source])
-        }
+        )
         # Deletions must retain the old obligations as well as their exact diff.
         identifiers.update(
             identifier
             for identifier, record in old_records.items()
             if record.source in paths
         )
-        return identifiers, {scope}, False
+        return identifiers, roles | {scope}, False
 
     scope_selections = {
         scope: context_selection(
@@ -549,7 +551,11 @@ def build_review_plan(
                     )
                 )
             else:
-                chosen = role_sections(scope, path)
+                chosen = tuple(
+                    part
+                    for role in (roles if path in general_documents else {scope})
+                    for part in role_sections(role, path)
+                )
             for part in chosen:
                 add_section(
                     "candidate",
@@ -560,6 +566,8 @@ def build_review_plan(
                     part.text,
                     "behavior-context"
                     if precise
+                    else "behavior-and-owner-fallback"
+                    if roles != {scope}
                     else selection_reason(scope, path, files[path]),
                 )
 

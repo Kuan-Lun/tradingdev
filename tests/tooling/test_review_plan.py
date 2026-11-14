@@ -1154,19 +1154,8 @@ def test_removed_or_renamed_contract_retains_base_obligation_and_complete_diff(
                 )
 
 
-@pytest.mark.parametrize(
-    ("source", "budget", "shared_runs"),
-    [
-        ("tests/mcp/test_ml_leaderboard_tool.py", 240_000, False),
-        ("src/tradingdev/mcp/tools/ml.py", 450_000, True),
-    ],
-)
-def test_real_document_corpus_keeps_ml_contracts_without_unrelated_interface_context(
-    tmp_path: Path,
-    source: str,
-    budget: int,
-    shared_runs: bool,
-) -> None:
+@pytest.fixture
+def real_document_repository(tmp_path: Path) -> Path:
     root = Path(__file__).resolve().parents[2]
     _git(tmp_path, "init", "-q")
     documents = [
@@ -1180,6 +1169,50 @@ def test_real_document_corpus_keeps_ml_contracts_without_unrelated_interface_con
             document.relative_to(root).as_posix(),
             document.read_text(encoding="utf-8"),
         )
+    return tmp_path
+
+
+def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    known = "tests/app/test_ml_report_service.py"
+    unknown = "tests/app/test_ml_new_consumer.py"
+    for path in (known, unknown):
+        _write(repo, path, "VALUE = 'old'\n")
+    base = _tree(repo)
+    for path in (known, unknown):
+        _write(repo, path, "VALUE = 'new'\n")
+    plan = build_review_plan(
+        build_evidence(repo, base, _tree(repo)), max_prompt_bytes=450_000
+    )
+    batch = next(
+        _payload(p) for p in plan.prompts if known in _payload(p)["assigned_paths"]
+    )
+    assert unknown in batch["assigned_paths"]
+    assert batch["scope"] == "ml"
+    sections = batch["document_sections"]
+    assert any(
+        s["path"] == "docs/requirements/execution.md" and "FR-EXEC-004" in s["text"]
+        for s in sections
+    ), "Unknown paths must not erase a registered shared comparison obligation"
+    assert any(s["path"] == "docs/requirements/quality.md" for s in sections)
+
+
+@pytest.mark.parametrize(
+    ("source", "budget", "shared_runs"),
+    [
+        ("tests/mcp/test_ml_leaderboard_tool.py", 240_000, False),
+        ("src/tradingdev/mcp/tools/ml.py", 450_000, True),
+    ],
+)
+def test_real_document_corpus_keeps_ml_contracts_without_unrelated_interface_context(
+    real_document_repository: Path,
+    source: str,
+    budget: int,
+    shared_runs: bool,
+) -> None:
+    tmp_path = real_document_repository
     _write(tmp_path, source, "PRODUCER_SOURCE = 'unknown'\n")
     base = _tree(tmp_path)
     current = "PRODUCER_SOURCE = 'backend_model'\n"
