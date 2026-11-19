@@ -11,11 +11,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.adapters.test_evaluation_series_store import _bundle
 from tests.app.test_comparison_report import _fixture
 from tests.app.test_report_service import _payload, _save
 
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.ml_service import MLService
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
@@ -41,7 +44,7 @@ def _seed(workspace: WorkspacePaths) -> tuple[LeaderboardStore, LeaderboardEntry
             "BTC/USDT", "1d", "2024-01-01", "2024-12-31", 1, window=20
         ),
         metrics={"ic_mean": 0.2, "beta": 0.0},
-        n_observations=200,
+        n_observations=6,
         model_id="model-a",
         dataset_id="dataset-a",
         parameters={"window": 99},
@@ -67,6 +70,59 @@ def _read(result: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     assert payload["navigation_instructions"] == manifest["navigation_instructions"]
     assert payload["navigation_instructions"] == result["navigation_instructions"]
     return payload, manifest
+
+
+def test_report_publication_protects_its_series_reference(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    workspace, database, service = context
+    series = EvaluationSeriesStore(workspace.ml_evaluation_series)
+    artifact_id = series.save(
+        _bundle(
+            entry_id="first",
+            dataset_id="dataset-a",
+            signal_fingerprint="saved-signal",
+            producer_source="unknown",
+            method_family="ml_model",
+            settings={
+                "horizon": 1,
+                "window": 20,
+                "n_quantiles": 5,
+                "candidate": {
+                    "model_id": "model-a",
+                    "method_name": "",
+                    "parameters": {"window": 99},
+                },
+            },
+        )
+    )
+    board, entry = _seed(workspace)
+    board.record(replace(entry, series_artifact_id=artifact_id))
+
+    result = service.generate_report(ml_entry_ids=["first", "failed"])
+
+    assert result["success"], result
+    board.record(replace(entry, series_artifact_id="b" * 64))
+    removed = MLService(workspace=workspace).cleanup_evaluation_series()
+
+    assert artifact_id not in removed["removed"]
+    assert series.load(artifact_id).manifest.artifact_id == artifact_id
+
+
+def test_report_rejects_a_cited_series_from_another_scope(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    workspace, _, service = context
+    series = EvaluationSeriesStore(workspace.ml_evaluation_series)
+    artifact_id = series.save(_bundle(entry_id="other"))
+    board, entry = _seed(workspace)
+    board.record(replace(entry, series_artifact_id=artifact_id))
+
+    result = service.generate_report(ml_entry_ids=["first", "failed"])
+
+    assert not result["success"]
+    assert result["code"] == "report_generation_failed"
+    assert "does not match report scope" in result["error"]
 
 
 @pytest.mark.parametrize("has_run", [False, True])

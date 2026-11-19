@@ -51,6 +51,36 @@ state that condition rather than infer a training relationship from model or dat
 identities alone.
 By default, the report applies the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
+
+**ML series evidence.** Newly recorded candidates carry `series_artifact_id`, the
+stable reference to
+their [saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series).
+Historical leaderboard rows written before series publication may have no such
+field; the store reads it as an empty string and the series stays unavailable
+rather than being reconstructed. A report snapshot copies the reference only
+when one exists and records an empty reference otherwise. Report generation
+protects every cited series artifact before publication: the artifact must exist
+and verify, and its manifest must match the cited scope's entry, dataset,
+fingerprint, producer source, row count and checked scoring settings (horizon,
+window, quantile count, candidate model ID and method name). A missing, corrupt or
+scope-mismatched artifact raises an error so the report is not published, even
+when leaderboard metrics remain readable. Protection is not
+rolled back if a later artifact check or publication fails, so a failed request
+can leave some or all cited series protected without a published report.
+Generating a report does protect the artifacts it cites; MCP tools otherwise
+expose only discovery, row paging and export. Default cleanup protection,
+explicit protected sets, partial cleanup and lock behavior are in the
+[series lifecycle](ml_research.md#saved-pointwise-evaluation-series).
+
+Reports do not read the series to recompute metrics: generation verifies that a
+cited artifact exists and is intact, then snapshots only the leaderboard
+reference and its scope metadata. The artifact exists so a reader can later
+inspect the exact scored rows, their original coordinates and unavailable-value
+reasons without the model file. Missing or tampered series are reported
+unavailable or rejected by the row paging and export operations, never silently
+reconstructed.
+The selected candidates must satisfy the
+[ML comparison rules](ml_research.md#recorded-signal-evaluations).
 `generate_report` and `tradingdev-report` expose the following ranking options.
 
 | MCP argument | CLI flag | Purpose |

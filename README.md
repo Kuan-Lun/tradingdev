@@ -440,8 +440,20 @@ stdio 或無法使用 HTTP 交付時，須透過客戶端保存並核對完整�
 
 研究期間須已結束至少 7 天；行情缺漏及指標暖機等因素也可能減少可用資料，
 請依結果確認實際資料範圍與筆數。
+產生報告前會驗證所選候選引用的逐點序列；若引用序列缺失或損毀，報告不會出版，
+即使 leaderboard 指標仍可讀。限制見
+[ML series evidence](docs/reports.md#composable-offline-reports)。
 
 後續可以請助手「比較剛才保存的候選，列出排名與沒有分數的原因」。
+有保存序列的候選，也可以要求查看逐點評估列、原座標與缺值原因。歷史候選可能沒有
+序列，此時證據是 unavailable，不會事後重建。若訓練時要求 purged walk-forward
+驗證，也可要求查看各 fold 當時的預測、原座標，以及 train/eval 的起訖端點
+（第一筆與最後一筆 row／timestamp）。purged k-fold 的訓練列可能不連續；端點不是
+完整清單，不能視為該 fold 用到的所有列。工具、容量與
+復原限制見
+[已保存逐點評估序列](docs/ml_research.md#saved-pointwise-evaluation-series) 與
+[Fold prediction series](docs/ml_research.md#fold-prediction-series)。
+
 不同期間、資料或評估條件的結果預設不混合排名；若要比較不同預測長度或視窗，
 請在需求中說明，並留意報告列出的比較限制。
 
