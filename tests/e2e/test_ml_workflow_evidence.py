@@ -66,7 +66,9 @@ def ml_workflow() -> Iterator[tuple[MCPWorkspace, list[ToolCall]]]:
                     model_id=model_id,
                     dataset_id=dataset_id,
                 )
-                await call("leaderboard", metric="hit_rate", dataset_id=dataset_id)
+                await call(
+                    "rank_candidates", metric="signal.hit_rate", dataset_id=dataset_id
+                )
             return calls
 
         calls = asyncio.run(run())
@@ -102,7 +104,7 @@ def test_ml_rejects_lost_training_binding(calls: list[ToolCall], event: int) -> 
         assert_ml_workflow(calls)
 
 
-@pytest.mark.parametrize("projection", ["evaluation", "recorded", "leaderboard"])
+@pytest.mark.parametrize("projection", ["evaluation", "recorded", "rank_candidates"])
 @pytest.mark.parametrize("source", [None, "caller_array"])
 def test_ml_rejects_lost_or_changed_producer_source(
     calls: list[ToolCall], projection: str, source: str | None
@@ -110,7 +112,7 @@ def test_ml_rejects_lost_or_changed_producer_source(
     payload = {
         "evaluation": calls[4].result,
         "recorded": calls[4].result["recorded"],
-        "leaderboard": calls[5].result["ranked"][0],
+        "rank_candidates": calls[5].result["ranked"][0],
     }[projection]
     if source is None:
         del payload["producer_source"]
@@ -153,9 +155,9 @@ def provenance_workflow() -> Iterator[
                         )
                     ),
                     (
-                        "leaderboard",
+                        "rank_candidates",
                         {
-                            "metric": "hit_rate",
+                            "metric": "signal.hit_rate",
                             "allow_mixed": True,
                         },
                     ),

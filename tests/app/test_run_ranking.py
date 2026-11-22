@@ -565,8 +565,15 @@ class TestCandidateDispatch:
     def test_a_metric_without_a_source_prefix_is_refused(
         self, service: RankingService
     ) -> None:
-        with pytest.raises(ValueError, match="needs a 'signal.' or 'run.' prefix"):
+        with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
             service.rank_candidates("sharpe_ratio", runs=[("alpha", "full")])
+
+    @pytest.mark.parametrize("metric", ["", "signal.", "run.", "foo.ic_mean"])
+    def test_an_empty_or_unknown_source_prefix_is_refused(
+        self, service: RankingService, metric: str
+    ) -> None:
+        with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
+            service.rank_candidates(metric, runs=[("alpha", "full")])
 
     def test_run_selections_are_refused_on_the_signal_path(
         self, service: RankingService

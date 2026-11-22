@@ -373,7 +373,7 @@ def _ranking_pages(calls: list[ToolCall]) -> list[LeaderboardPageResponse]:
     return [
         LeaderboardPageResponse.model_validate(call.result)
         for call in calls
-        if call.name == "leaderboard"
+        if call.name == "rank_candidates"
         and isinstance(call.result, dict)
         and call.result.get("success") is True
     ]
@@ -419,11 +419,13 @@ def test_saved_ranking_evidence_and_operation_boundaries() -> None:
                     "metric": "run.sharpe_ratio",
                     "runs": [["ranking_study", "trial/0/train"]],
                 }
-                failed = await client.session.call_tool("leaderboard", bad_arguments)
+                failed = await client.session.call_tool(
+                    "rank_candidates", bad_arguments
+                )
                 assert failed.is_error
                 payload = tool_payload(failed.model_dump(mode="json", by_alias=True))
                 assert payload is None
-                calls.append(ToolCall("leaderboard", bad_arguments, payload))
+                calls.append(ToolCall("rank_candidates", bad_arguments, payload))
                 ranking_arguments = {
                     "metric": "run.sharpe_ratio",
                     "runs": [
@@ -431,8 +433,8 @@ def test_saved_ranking_evidence_and_operation_boundaries() -> None:
                         for index in range(3)
                     ],
                 }
-                ranked = await client.call("leaderboard", **ranking_arguments)
-                calls.append(ToolCall("leaderboard", ranking_arguments, ranked))
+                ranked = await client.call("rank_candidates", **ranking_arguments)
+                calls.append(ToolCall("rank_candidates", ranking_arguments, ranked))
                 return calls, read_only
 
         calls, read_only = asyncio.run(read())
@@ -523,6 +525,7 @@ def test_natural_saved_run_ranking(pytestconfig: pytest.Config) -> None:
         store = _seed_saved_ranking(workspace)
         request = (
             "請將已保存的 ranking_study 裡所有訓練候選按 Sharpe 排名，"
+            "這裡要的是含成交成本的回測 Sharpe，不是訊號評估的成本前模擬 Sharpe；"
             "保留無法排名的候選並說明原因，列出各組設定和比較限制。"
             "只查既有成果，不要重新執行研究。"
         )
@@ -548,6 +551,16 @@ def test_natural_saved_run_ranking(pytestconfig: pytest.Config) -> None:
             assert complete, "Discover a ranking containing every requested candidate"
             assert all(
                 board.direction == "maximize" and board.caveats for board in complete
+            )
+            signal_rankings = [
+                call
+                for call in calls
+                if call.name == "rank_candidates"
+                and str(call.arguments.get("metric", "")).startswith("signal.")
+            ]
+            assert not signal_rankings, (
+                "A cost-bearing backtest Sharpe request must not be answered "
+                "from cost-free signal metrics"
             )
             ranked = {
                 (row.run_id, row.scope): row

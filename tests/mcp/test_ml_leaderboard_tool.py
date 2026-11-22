@@ -22,6 +22,7 @@ from tradingdev.app.contracts.ml import (
     MlContractResponse,
 )
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
 from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
@@ -135,11 +136,65 @@ def recorded(mcp: MCPServer, workspace: WorkspacePaths) -> str:
     return str(dataset_id)
 
 
-def test_contract_lists_the_rankable_metrics(mcp: MCPServer) -> None:
+def test_contract_exposes_separate_ranking_sources(mcp: MCPServer) -> None:
+    """Discovery names one tool and points each source at its own definitions."""
     payload = _dispatch(mcp, "get_ml_contract", {})
     contract = MlContractResponse.model_validate(payload)
-    assert "rank_icir" in contract.leaderboard_metrics
-    assert "n_periods" not in contract.leaderboard_metrics
+    assert "leaderboard_metrics" not in payload
+    ranking = contract.ranking
+    assert ranking.tool == "rank_candidates"
+    sources = {source.source: source for source in ranking.sources}
+    assert set(sources) == {"signal", "run"}
+    signal = sources["signal"]
+    run = sources["run"]
+    assert signal.metric_prefix == "signal."
+    assert run.metric_prefix == "run."
+    assert signal.metrics is not None
+    expected = {
+        f"signal.{name}": definition.optimization_direction
+        for name, definition in SIGNAL_METRIC_CATALOG.items()
+        if definition.optimization_direction is not None
+    }
+    assert {option.id: option.direction for option in signal.metrics} == expected
+    assert {"signal.ic_mean": "fraction", "signal.ic_std": "fraction"}.items() <= {
+        (option.id, option.unit) for option in signal.metrics
+    }
+    # The backtest side deliberately does not duplicate the performance catalog.
+    assert run.metrics is None
+    assert run.metric_catalog_tool == "get_metric_catalog"
+    assert "runs" in run.candidate_selection
+    assert "dataset_id" in signal.candidate_selection
+    assert "rank_candidates" in contract.guidance["ranking"]
+    assert "get_metric_catalog" in contract.guidance["ranking"]
+
+
+def test_only_rank_candidates_is_registered(mcp: MCPServer) -> None:
+    """The old tool name is gone rather than kept as a second entry point."""
+
+    async def tools() -> list[Any]:
+        return list(await mcp.list_tools())
+
+    entries = {tool.name: tool for tool in asyncio.run(tools())}
+    assert "rank_candidates" in entries
+    assert "leaderboard" not in entries
+    tool = entries["rank_candidates"]
+    assert tool.input_schema["required"] == ["metric"]
+    assert tool.annotations is not None
+    assert tool.annotations.read_only_hint is True
+
+
+@pytest.mark.parametrize(
+    "metric", ["ic_mean", "", ".", "signal.", "run.", "foo.ic_mean"]
+)
+def test_rank_candidates_requires_an_explicit_known_source(
+    mcp: MCPServer, metric: str
+) -> None:
+    """A bare or unknown source is refused with an actionable correction."""
+    payload = _dispatch(mcp, "rank_candidates", {"metric": metric})
+    assert payload["success"] is False
+    assert payload["code"] == "invalid_rank_request"
+    for hint in ("signal.", "run.", "get_ml_contract", "get_metric_catalog"):
+        assert hint in payload["error"], hint
 
 
 def test_evaluate_signal_record_returns_the_stored_entry(
@@ -175,7 +230,11 @@ def test_evaluate_signal_record_returns_the_stored_entry(
     assert caller["recorded"]["replaced"] is False
     assert caller["recorded"]["n_candidates"] == 4
     board = LeaderboardPageResponse.model_validate(
-        _dispatch(mcp, "leaderboard", {"metric": "hit_rate", "dataset_id": recorded})
+        _dispatch(
+            mcp,
+            "rank_candidates",
+            {"metric": "signal.hit_rate", "dataset_id": recorded},
+        )
     )
     same_model = [
         row for row in _signal_rows(board) if row.model_id == pair["model_id"]
@@ -212,9 +271,9 @@ def test_leaderboard_pages_ranked_and_skipped_without_losing_total_counts(
         board = LeaderboardPageResponse.model_validate(
             _dispatch(
                 mcp,
-                "leaderboard",
+                "rank_candidates",
                 {
-                    "metric": "rank_icir",
+                    "metric": "signal.rank_icir",
                     "dataset_id": recorded,
                     "offset": offset,
                     "limit": 1,
@@ -246,8 +305,13 @@ def test_leaderboard_last_page_and_exact_end_keep_totals(
     board = LeaderboardPageResponse.model_validate(
         _dispatch(
             mcp,
-            "leaderboard",
-            {"metric": "ic_mean", "dataset_id": recorded, "offset": offset, "limit": 1},
+            "rank_candidates",
+            {
+                "metric": "signal.ic_mean",
+                "dataset_id": recorded,
+                "offset": offset,
+                "limit": 1,
+            },
         )
     )
     assert [row.model_id for row in _signal_rows(board)] == expected_models
@@ -265,11 +329,11 @@ def test_leaderboard_rejects_invalid_page_requests(
 ) -> None:
     payload = _dispatch(
         mcp,
-        "leaderboard",
-        {"metric": "ic_mean", "dataset_id": recorded, **page_options},
+        "rank_candidates",
+        {"metric": "signal.ic_mean", "dataset_id": recorded, **page_options},
     )
     assert payload["success"] is False
-    assert payload["code"] == "invalid_leaderboard_request"
+    assert payload["code"] == "invalid_rank_request"
     assert "ranked" not in payload and "skipped" not in payload
 
 
@@ -277,7 +341,7 @@ def test_leaderboard_ranks_the_recorded_candidates(
     mcp: MCPServer, recorded: str
 ) -> None:
     payload = _dispatch(
-        mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": recorded}
+        mcp, "rank_candidates", {"metric": "signal.ic_mean", "dataset_id": recorded}
     )
     board = LeaderboardPageResponse.model_validate(payload)
     assert board.n_candidates == 2
@@ -324,13 +388,15 @@ def test_leaderboard_can_query_old_and_rebuilt_dataset_versions(
         assert evaluated["success"] is True
         records[dataset_id] = evaluated["recorded"]["entry_id"]
     assert len(records) == 2
-    unfiltered = _dispatch(mcp, "leaderboard", {"metric": "ic_mean"})
+    unfiltered = _dispatch(mcp, "rank_candidates", {"metric": "signal.ic_mean"})
     assert unfiltered["success"] is False
-    assert unfiltered["code"] == "invalid_leaderboard_request"
+    assert unfiltered["code"] == "invalid_rank_request"
     for dataset_id, entry_id in records.items():
         board = LeaderboardPageResponse.model_validate(
             _dispatch(
-                mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": dataset_id}
+                mcp,
+                "rank_candidates",
+                {"metric": "signal.ic_mean", "dataset_id": dataset_id},
             )
         )
         assert board.n_candidates == board.n_ranked == 1
@@ -345,49 +411,49 @@ def test_leaderboard_dataset_filter_refuses_invalid_ids(
 ) -> None:
     payload = _dispatch(
         mcp,
-        "leaderboard",
-        {"metric": "ic_mean", "dataset_id": dataset_id, "allow_mixed": True},
+        "rank_candidates",
+        {"metric": "signal.ic_mean", "dataset_id": dataset_id, "allow_mixed": True},
     )
     assert payload["success"] is False
-    assert payload["code"] == "invalid_leaderboard_request"
+    assert payload["code"] == "invalid_rank_request"
     assert "dataset_id" in payload["error"]
 
 
 def test_leaderboard_refuses_a_metric_without_a_direction(
     mcp: MCPServer, recorded: str
 ) -> None:
-    payload = _dispatch(mcp, "leaderboard", {"metric": "n_periods"})
+    payload = _dispatch(mcp, "rank_candidates", {"metric": "signal.n_periods"})
     assert payload["success"] is False
     assert "no optimisation direction" in payload["error"]
 
 
 def test_leaderboard_reports_an_empty_store(mcp: MCPServer) -> None:
-    payload = _dispatch(mcp, "leaderboard", {"metric": "ic_mean"})
+    payload = _dispatch(mcp, "rank_candidates", {"metric": "signal.ic_mean"})
     assert payload["success"] is False
     assert "no recorded evaluations" in payload["error"]
 
 
-def test_a_source_qualified_metric_ranks_the_same_rows_as_a_bare_one(
+def test_a_qualified_metric_reports_the_source_it_read(
     mcp: MCPServer, recorded: str
 ) -> None:
-    """The prefix names the source; it does not change what is measured."""
-    bare = _dispatch(mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": recorded})
+    """The prefix is required, and the response repeats it verbatim."""
     qualified = _dispatch(
-        mcp, "leaderboard", {"metric": "signal.ic_mean", "dataset_id": recorded}
+        mcp, "rank_candidates", {"metric": "signal.ic_mean", "dataset_id": recorded}
     )
 
-    assert qualified["ranked"] == bare["ranked"]
-    assert qualified["skipped"] == bare["skipped"]
-    assert qualified["n_candidates"] == bare["n_candidates"]
-    # The answer names the source it read, whichever spelling was asked for.
-    assert qualified["metric"] == bare["metric"] == "signal.ic_mean"
+    assert qualified["success"] is True
+    assert qualified["metric"] == "signal.ic_mean"
+    assert qualified["source"] == "signal"
+    assert all(row["source"] == "signal" for row in qualified["ranked"])
 
 
 def test_every_row_states_the_source_it_was_measured_from(
     mcp: MCPServer, recorded: str
 ) -> None:
     board = LeaderboardPageResponse.model_validate(
-        _dispatch(mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": recorded})
+        _dispatch(
+            mcp, "rank_candidates", {"metric": "signal.ic_mean", "dataset_id": recorded}
+        )
     )
 
     assert board.source == "signal"
@@ -399,10 +465,10 @@ def test_leaderboard_is_advertised_read_only(mcp: MCPServer) -> None:
         return list(await mcp.list_tools())
 
     entries = {tool.name: tool for tool in asyncio.run(tools())}
-    assert entries["leaderboard"].annotations is not None
-    assert entries["leaderboard"].annotations.read_only_hint is True
-    assert "dataset_id" in entries["leaderboard"].input_schema["properties"]
-    assert "dataset_id" not in entries["leaderboard"].input_schema["required"]
+    assert entries["rank_candidates"].annotations is not None
+    assert entries["rank_candidates"].annotations.read_only_hint is True
+    assert "dataset_id" in entries["rank_candidates"].input_schema["properties"]
+    assert "dataset_id" not in entries["rank_candidates"].input_schema["required"]
 
 
 @pytest.mark.parametrize("n_contexts", [10, 100, 1000])
@@ -428,9 +494,11 @@ def test_large_mixed_leaderboard_bounds_success_and_rejection(
         "".join(json.dumps(entry.to_record()) + "\n" for entry in entries),
         encoding="utf-8",
     )
-    rejected = _dispatch(mcp, "leaderboard", {"metric": "ic_mean", "limit": 1})
+    rejected = _dispatch(
+        mcp, "rank_candidates", {"metric": "signal.ic_mean", "limit": 1}
+    )
     assert rejected["success"] is False
-    assert rejected["code"] == "invalid_leaderboard_request"
+    assert rejected["code"] == "invalid_rank_request"
     assert f"{n_contexts} distinct contexts" in rejected["error"]
     assert f"{n_contexts - 3} omitted" in rejected["error"]
     assert "showing 3 examples" in rejected["error"]
@@ -438,7 +506,9 @@ def test_large_mixed_leaderboard_bounds_success_and_rejection(
     assert len(json.dumps(rejected)) < 2000
 
     allowed = _dispatch(
-        mcp, "leaderboard", {"metric": "ic_mean", "limit": 1, "allow_mixed": True}
+        mcp,
+        "rank_candidates",
+        {"metric": "signal.ic_mean", "limit": 1, "allow_mixed": True},
     )
     board = LeaderboardPageResponse.model_validate(allowed)
     assert board.n_candidates == board.n_ranked == n_contexts
@@ -450,8 +520,8 @@ def test_large_mixed_leaderboard_bounds_success_and_rejection(
     filtered = LeaderboardPageResponse.model_validate(
         _dispatch(
             mcp,
-            "leaderboard",
-            {"metric": "ic_mean", "limit": 1, "symbol": "S0000/USDT"},
+            "rank_candidates",
+            {"metric": "signal.ic_mean", "limit": 1, "symbol": "S0000/USDT"},
         )
     )
     assert filtered.n_candidates == filtered.n_ranked == 1
@@ -473,10 +543,10 @@ def test_parameter_surface_opt_in_reaches_service_and_preserves_row_metadata(
         window=30,
         record=True,
     )
-    args = {"metric": "ic_mean", "dataset_id": recorded}
-    assert _dispatch(mcp, "leaderboard", args)["success"] is False
+    args = {"metric": "signal.ic_mean", "dataset_id": recorded}
+    assert _dispatch(mcp, "rank_candidates", args)["success"] is False
     board = LeaderboardPageResponse.model_validate(
-        _dispatch(mcp, "leaderboard", {**args, "allow_parameter_axes": True})
+        _dispatch(mcp, "rank_candidates", {**args, "allow_parameter_axes": True})
     )
     assert board.parameter_axes is not None
     assert board.parameter_axes["window"] == [20, 30]
@@ -490,12 +560,16 @@ def test_parameter_surface_opt_in_reaches_service_and_preserves_row_metadata(
 def test_leaderboard_family_filter_reaches_the_service(
     mcp: MCPServer, recorded: str
 ) -> None:
-    rejected = _dispatch(mcp, "leaderboard", {"metric": "icir", "family": "ensemble"})
+    rejected = _dispatch(
+        mcp, "rank_candidates", {"metric": "signal.icir", "family": "ensemble"}
+    )
     assert rejected["success"] is False
-    assert rejected["code"] == "invalid_leaderboard_request"
+    assert rejected["code"] == "invalid_rank_request"
 
     board = LeaderboardPageResponse.model_validate(
-        _dispatch(mcp, "leaderboard", {"metric": "icir", "family": "ml_model"})
+        _dispatch(
+            mcp, "rank_candidates", {"metric": "signal.icir", "family": "ml_model"}
+        )
     )
     assert board.families == {"ml_model": 2}
     assert {row.method_family for row in _signal_rows(board)} == {"ml_model"}
@@ -565,7 +639,7 @@ def test_leaderboard_rows_expose_the_training_dataset_field(
     What the value is when an artifact does exist is pinned by the service-level
     tests, not here.
     """
-    payload = _dispatch(mcp, "leaderboard", {"metric": "icir"})
+    payload = _dispatch(mcp, "rank_candidates", {"metric": "signal.icir"})
     rows = [row for group in ("ranked", "skipped") for row in payload[group]]
     assert rows, "fixture must rank at least one candidate"
     assert all(row["training_dataset_id"] == "" for row in rows)

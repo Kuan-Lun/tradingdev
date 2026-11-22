@@ -25,33 +25,17 @@ from tradingdev.app.contracts.ml import (
 # Runtime import on purpose: the MCP schema builder calls get_type_hints on each
 # tool, so a type-checking-only import would fail to resolve `runs` at registration.
 from tradingdev.app.contracts.research import RunScopeSelection  # noqa: TC001
-from tradingdev.app.ranking_service import RankingService
+from tradingdev.app.ranking_service import RankingService, qualify_metric
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer
 
     from tradingdev.app.ml_service import MLService
 
-_SIGNAL_PREFIX = "signal."
-_RUN_PREFIX = "run."
-
 
 def _qualify_metric(metric: str) -> str:
-    """Name the source a metric belongs to; a bare name means a signal.
-
-    ``signal.`` and ``run.`` pass through. Anything else without a dot is read
-    as a recorded signal metric, which is the only source the leaderboard had
-    before runs joined it. A dotted id with an unknown prefix is refused here
-    rather than prefixed into a name that does not exist, because the error
-    would then name a metric the caller never asked for.
-    """
-    if metric.startswith((_SIGNAL_PREFIX, _RUN_PREFIX)):
-        return metric
-    if "." in metric:
-        raise ValueError(
-            f"metric id needs a 'signal.' or 'run.' prefix, not {metric!r}"
-        )
-    return f"{_SIGNAL_PREFIX}{metric}"
+    """Require the caller to name the source; share the service's error rule."""
+    return qualify_metric(metric)
 
 
 def register(mcp: MCPServer, service: MLService) -> None:
@@ -290,7 +274,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
         return PredictionResponse.model_validate(result)
 
     @mcp.tool(annotations=read_only)
-    def leaderboard(
+    def rank_candidates(
         metric: str,
         runs: list[RunScopeSelection] | None = None,
         dataset_id: str | None = None,
@@ -305,14 +289,13 @@ def register(mcp: MCPServer, service: MLService) -> None:
         allow_parameter_axes: bool = False,
         require_verified_baseline: bool = False,
     ) -> LeaderboardPageResponse | ErrorResponse:
-        """Rank saved signal evaluations or run scopes on one metric.
+        """Rank one source of saved candidates on a directed metric.
 
-        Use bare/signal. metrics and signal options from get_ml_contract, or run.
-        metrics from get_metric_catalog with runs (null scope selects default).
-        Signal-only require_verified_baseline requires matching raw inputs.
-        Omit family for all methods. Follow next_offset; read caveats.
-        Read optimization trials via selection_evidence.reference with
-        get_selection_evidence.
+        Use metric='signal.<name>' with signal filters, or 'run.<name>' with
+        runs (null scope selects the default). Signal ids, directions and units
+        are in get_ml_contract.ranking.sources; run ids are in
+        get_metric_catalog. Bare or unknown prefixes are refused. Read only;
+        follow next_offset, keep caveats, and never recompute a saved result.
         """
         try:
             result = ranking.rank_candidates(
@@ -336,7 +319,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
             )
         except (ValueError, TypeError) as exc:
             return ErrorResponse(
-                success=False, error=str(exc), code="invalid_leaderboard_request"
+                success=False, error=str(exc), code="invalid_rank_request"
             )
         if result.get("success") is False:
             return ErrorResponse.model_validate(result)

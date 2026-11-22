@@ -121,7 +121,7 @@ def test_ml_annotations_disclose_replacement_and_cache_eviction(tmp_path: Path) 
     readers = {
         "get_ml_contract",
         "predict",
-        "leaderboard",
+        "rank_candidates",
         "get_evaluation_series_page",
         "export_evaluation_series",
     }

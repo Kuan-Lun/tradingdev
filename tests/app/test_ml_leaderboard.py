@@ -543,10 +543,23 @@ class TestComparability:
 
 
 class TestContract:
-    def test_rankable_metrics_are_advertised(self, service: MLService) -> None:
+    def test_rankable_signal_metrics_are_advertised(self, service: MLService) -> None:
         contract = service.get_contract()
-        assert "rank_icir" in contract["leaderboard_metrics"]
-        assert "n_periods" not in contract["leaderboard_metrics"]
+        signal = next(
+            source
+            for source in contract["ranking"]["sources"]
+            if source["source"] == "signal"
+        )
+        ids = {metric["id"] for metric in signal["metrics"]}
+        assert "signal.rank_icir" in ids
+        assert "signal.n_periods" not in ids
+        run = next(
+            source
+            for source in contract["ranking"]["sources"]
+            if source["source"] == "run"
+        )
+        assert run["metrics"] is None
+        assert run["metric_catalog_tool"] == "get_metric_catalog"
 
 
 class TestParameterSurface:

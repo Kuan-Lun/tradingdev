@@ -928,7 +928,7 @@ sequenceDiagram
 | --- | --- | --- |
 | 執行後 | 報告與交付 | `get_report_sections`、`generate_report`、`list_artifacts`、`get_artifact`(_download) |
 | 執行後 | 保存與分享 | `save_research_note`、`get_research_notes`、`export_research_note`、`get_research_archive`、`record_feature_request`、`list_feature_requests`、`cleanup_strategy_drafts` |
-| 獨立軌道 | ML 訊號研究 | `get_ml_contract`、`build_dataset` / `build_panel`、`train_model`、`predict`、`evaluate_signal`、`leaderboard` |
+| 獨立軌道 | ML 訊號研究 | `get_ml_contract`、`build_dataset` / `build_panel`、`train_model`、`predict`、`evaluate_signal`、`rank_candidates` |
 
 <!-- _footer: "來源：[requirements.md 使用案例](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例) · [SERVER_INSTRUCTIONS](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)" -->
 
@@ -969,7 +969,7 @@ sequenceDiagram
     A->>T: train_model
     A->>T: predict
     A->>T: evaluate_signal(record=true)
-    A->>T: leaderboard
+    A->>T: rank_candidates
     A->>U: 評估與排名
 ```
 
@@ -1326,7 +1326,7 @@ HTTP 模式用短效簽章網址下載，簽發與下載都核對檔案；stdio 
 
 ## 回測績效與排行榜用已保存的結果；統計 API 獨立計算，尚未接入查詢（2/2）
 
-- **AI 代理透過 MCP 拿得到**：已保存的 run 指標、比較結果與排行榜：get_run_metrics、compare_runs、leaderboard
+- **AI 代理透過 MCP 拿得到**：已保存的 run 指標、比較結果與排行榜：get_run_metrics、compare_runs、rank_candidates
 - **目前要在平台外處理**：Sharpe 區間、PSR／DSR、參數高原；實例二、三需要時都只能自己算或略過
 
 <!-- _footer: "來源：上游介紹簡報「績效管線與獨立統計 API」；模組責任與統計慣例見 ARCHITECTURE.md 的績效計算與對話摘要" -->

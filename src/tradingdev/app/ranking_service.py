@@ -42,6 +42,26 @@ _RUN_PREFIX = "run."
 _SIGNAL_PREFIX = "signal."
 
 
+def _source_metric_error(metric: str) -> ValueError:
+    """Tell the caller which source prefixes are valid and where to find ids."""
+    return ValueError(
+        "metric must be 'signal.<metric>' or 'run.<metric>'; got "
+        f"{metric!r}. Use signal.<metric> with filters for saved signal "
+        "evaluations (ids, directions and units in "
+        "get_ml_contract.ranking.sources), or run.<metric> with runs for saved "
+        "backtest scopes (ids in get_metric_catalog, prefixed with run.)."
+    )
+
+
+def qualify_metric(metric: str) -> str:
+    """Require an explicit, nonempty source prefix; never infer one."""
+    if isinstance(metric, str):
+        for prefix in (_SIGNAL_PREFIX, _RUN_PREFIX):
+            if metric.startswith(prefix) and metric[len(prefix) :]:
+                return metric
+    raise _source_metric_error(metric)
+
+
 def _duplicate_error(message: str) -> dict[str, Any]:
     """Refuse a selection that names the same measurement twice.
 
@@ -123,6 +143,7 @@ class RankingService:
         Both sources page with ``offset``/``limit``. A backtest selection is named
         explicitly and is usually small, so its page is normally the whole list.
         """
+        metric = qualify_metric(metric)
         if type(offset) is not int or offset < 0:
             raise ValueError("offset must be a non-negative integer")
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -192,9 +213,7 @@ class RankingService:
                 "skipped": [{**row, "source": "run"} for row in skipped[offset:end]],
                 "caveats": result["caveats"],
             }
-        raise ValueError(
-            f"metric id needs a 'signal.' or 'run.' prefix, not {metric!r}"
-        )
+        raise _source_metric_error(metric)
 
     def rank_run_scopes(
         self,

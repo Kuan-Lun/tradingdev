@@ -271,7 +271,7 @@ a held-out evaluation. Results expose `producer_source` separately from a
 caller-declared `model_id` label, including when no record is saved. Recording,
 legacy-source handling and candidate replacement are defined in the
 [artifact contract](ml_research.md#recorded-signal-evaluations).
-`leaderboard` ranks only a metric with a declared direction. A signal ranking also
+`rank_candidates` ranks only a metric with a declared direction. A signal ranking also
 requires, by default, only matching measurement contexts; its optional `dataset_id`
 filter selects a verified dataset version and checks that recorded data context
 matches its manifest; differences in evaluation settings still require compatible
@@ -283,15 +283,21 @@ incompatible contexts and must not be presented as a controlled comparison. Reta
 `caveats`, skipped entries and candidate counts when interpreting the winner;
 trying more candidates increases selection bias.
 
-The same tool ranks saved backtest scopes. The metric id selects the source: a
-bare name or `signal.<metric>` ranks recorded evaluations, while `run.<metric>`
+Discovery starts from `get_ml_contract.ranking`: `tool` names the only ranking
+entry point, and `sources` separates the two candidate kinds. Signal ids,
+directions and units are generated from the formal signal catalog; run ids are
+not copied into this menu, because `get_metric_catalog(mode=None)` is their
+source of truth and the caller prepends `run.`. A request must name its source:
+a bare, empty or unknown prefix is refused with both choices and their catalogs.
+
+The same tool ranks saved backtest scopes. `signal.<metric>` ranks recorded
+evaluations, while `run.<metric>`
 ranks saved scopes and requires `runs` as a list of selection objects, for example
 `runs=[{"run_id":"example","scope":"full"}]`. An omitted or null `scope` selects
 that run's default. The Python library uses tuples instead, as described in
 [the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
-The response reports the qualified id, so
-`metric="ic_mean"` comes back as `metric="signal.ic_mean"`; the submitted spelling
-is not echoed. The two argument sets are exclusive: a signal ranking refuses
+The response reports the same source-qualified id, so
+`metric="signal.ic_mean"` comes back unchanged. The two argument sets are exclusive: a signal ranking refuses
 `runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
 `feature_set`, `family`, and signal ranking options, including
 `require_verified_baseline=True`, because one call ranks one source. Selecting the same measurement twice is refused as `duplicate_selections`,
@@ -311,7 +317,7 @@ The run-ranking semantics — saved scope parameters and metadata, manifest-leve
 conditions, definition checks, optimization evidence and fold-summary skips — are in
 [the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
 
-MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
+MCP `rank_candidates` accepts `offset=0` and `limit=20` (1–100); it does not accept
 `top_k`. For recorded evaluations the complete filtered candidate set is compared
 and ranked before paging; to rank saved backtest scopes instead, pass
 `run.<metric>` with explicit `runs` selections, and those scopes are ordered by the
@@ -946,7 +952,7 @@ accept arbitrary method declarations or signal arrays.
 
 The family is identity, not a measurement condition, so it stays out of
 `EvaluationContext`: rules and models measured on one dataset remain comparable,
-which is the point of putting them in one table. `leaderboard` reports a
+which is the point of putting them in one table. `rank_candidates` reports a
 `families` count for the candidates its filters selected, including ones it could
 not rank, and appends a caveat when more than one family is present. Family
 labels do not establish selection history or out-of-sample validity.
@@ -1051,7 +1057,7 @@ leaderboard rows do not store definition snapshots; they are not historical
 producer definitions recovered from those rows. Report selection, presentation
 and snapshot publication are defined in [Reports](reports.md#composable-offline-reports).
 
-`leaderboard(dataset_id=...)` verifies and selects one immutable dataset
+`rank_candidates(metric="signal.ic_mean", dataset_id=...)` verifies and selects one immutable dataset
 version, so models on it can be compared separately from rebuilt versions.
 Records must match its manifest's data context and row count; unknown or invalid
 IDs fail. Other filters combine with this selector. Different IC windows or

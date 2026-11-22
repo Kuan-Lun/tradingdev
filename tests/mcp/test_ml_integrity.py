@@ -137,7 +137,7 @@ def test_record_rejects_modified_artifacts_without_overwriting_the_leaderboard(
     assert "tampered" in rejected.error or "hash mismatch" in rejected.error
     assert leaderboard_path.read_bytes() == before
     leaderboard = LeaderboardPageResponse.model_validate(
-        _dispatch(server, "leaderboard", {"metric": "rank_ic_mean"})
+        _dispatch(server, "rank_candidates", {"metric": "signal.rank_ic_mean"})
     )
     assert leaderboard.n_candidates == leaderboard.n_ranked == 1
     (placed,) = [row for row in leaderboard.ranked if isinstance(row, LeaderboardRow)]

@@ -303,9 +303,9 @@ def test_mcp_horizon_check_is_frozen_in_the_report(
 
     async def workflow() -> None:
         board = await server.call_tool(
-            "leaderboard",
+            "rank_candidates",
             {
-                "metric": "ic_mean",
+                "metric": "signal.ic_mean",
                 "allow_parameter_axes": True,
                 "require_verified_baseline": True,
                 "limit": 1,

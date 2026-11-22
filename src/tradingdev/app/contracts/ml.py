@@ -69,6 +69,36 @@ class EvaluationSeriesLimits(ContractModel):
     """Tool call to use when an artifact exceeds ``max_export_rows``."""
 
 
+class RankingMetricOption(ContractModel):
+    """One directed metric a ranking tool accepts, generated from its catalog."""
+
+    id: str
+    """Source-qualified id to send as the tool's ``metric`` argument."""
+    direction: str
+    unit: str
+
+
+class RankingSource(ContractModel):
+    """How one kind of candidate is selected and where its metrics are defined."""
+
+    source: Literal["signal", "run"]
+    metric_prefix: str
+    candidate_selection: str
+    definition_entry: str
+    """Where a client reads the full formal definition of these metrics."""
+    metrics: list[RankingMetricOption] | None = None
+    """Signal only: generated from the signal catalog, never hand-copied."""
+    metric_catalog_tool: str | None = None
+    """Run only: the discovery tool that remains the source of truth."""
+
+
+class RankingDiscovery(ContractModel):
+    """The single ranking tool and its two non-interchangeable sources."""
+
+    tool: Literal["rank_candidates"]
+    sources: list[RankingSource]
+
+
 class MlContractResponse(ContractModel):
     """The full enumerable ML vocabulary; the menu for LLM-driven selection."""
 
@@ -83,8 +113,8 @@ class MlContractResponse(ContractModel):
     n_quantiles_range: list[int]
     calendar_modes: list[str]
     missing_policies: list[str]
-    leaderboard_metrics: list[str]
-    """Metrics a leaderboard may rank on; each declares a direction."""
+    ranking: RankingDiscovery
+    """One ranking tool, with a separate metric source for each candidate kind."""
     method_families: list[str]
     """Kinds of method a candidate can declare, from fitted model to unnamed."""
     evaluation_series_limits: EvaluationSeriesLimits
@@ -385,7 +415,7 @@ class LeaderboardResponse(ContractModel):
 
 
 class LeaderboardPageResponse(LeaderboardResponse):
-    """A page from both ranked and unavailable candidates; counts are totals."""
+    """A `rank_candidates` page; ranked and skipped counts are full totals."""
 
     n_skipped: int
     offset: int

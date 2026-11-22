@@ -958,7 +958,7 @@ def test_llm_reads_ranked_optimization_search_without_rerun(
         "list_jobs",
         "get_metric_catalog",
         "get_ml_contract",
-        "leaderboard",
+        "rank_candidates",
         "get_selection_evidence",
         "get_optimization_trials",
         "list_artifacts",
@@ -1003,7 +1003,7 @@ def test_llm_reads_ranked_optimization_search_without_rerun(
         board = next(
             call.result["ranked"]
             for call in calls
-            if call.name == "leaderboard"
+            if call.name == "rank_candidates"
             and call.result.get("success")
             and call.result["metric"] == "run.sharpe_ratio"
             and {row["run_id"] for row in call.result["ranked"]} == {"narrow", "wide"}

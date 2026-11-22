@@ -43,7 +43,7 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
         "min_train_bars": TypeAdapter(int | None),
     },
     "predict": _PAGE,
-    "leaderboard": {
+    "rank_candidates": {
         **_PAGE,
         "horizon": TypeAdapter(int | None),
         "allow_mixed": TypeAdapter(bool),
