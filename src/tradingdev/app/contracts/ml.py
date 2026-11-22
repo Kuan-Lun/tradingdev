@@ -76,6 +76,8 @@ class RankingMetricOption(ContractModel):
     """Source-qualified id to send as the tool's ``metric`` argument."""
     direction: str
     unit: str
+    description: str
+    """Full formal definition from the catalog, readable by an MCP client."""
 
 
 class RankingSource(ContractModel):

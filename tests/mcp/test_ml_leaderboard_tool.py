@@ -159,6 +159,17 @@ def test_contract_exposes_separate_ranking_sources(mcp: MCPServer) -> None:
     assert {"signal.ic_mean": "fraction", "signal.ic_std": "fraction"}.items() <= {
         (option.id, option.unit) for option in signal.metrics
     }
+    # Full definitions must be MCP-readable, not hidden in a repository path.
+    definitions = {option.id: option.description for option in signal.metrics}
+    expected_definitions = {
+        f"signal.{name}": definition.description
+        for name, definition in SIGNAL_METRIC_CATALOG.items()
+        if definition.optimization_direction is not None
+    }
+    assert definitions == expected_definitions
+    assert all(option.description for option in signal.metrics)
+    assert "docs/" not in signal.definition_entry
+    assert "description" in contract.guidance["ranking"]
     # The backtest side deliberately does not duplicate the performance catalog.
     assert run.metrics is None
     assert run.metric_catalog_tool == "get_metric_catalog"

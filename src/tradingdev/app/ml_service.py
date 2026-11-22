@@ -278,8 +278,10 @@ _ML_GUIDANCE = {
         "feature_set and family, or metric='run.<name>' with "
         "runs=[{run_id, scope}] for saved backtest scopes; a null scope selects "
         "that run's default. Bare, empty and unknown prefixes are refused. "
-        "get_ml_contract.ranking.sources lists signal ids with direction and "
-        "unit from the signal catalog; get_metric_catalog is the source of "
+        "get_ml_contract.ranking.sources lists signal ids with direction, unit "
+        "and full definition text in description from the signal catalog; "
+        "get_metric_catalog "
+        "is the source of "
         "truth for run ids, directions and units - prefix a run id with run. "
         "instead of copying the catalog here. Direction decides order; never "
         "assume higher is better. signal.sharpe is a cost-free simulated book "
@@ -329,14 +331,15 @@ def _ranking_discovery() -> dict[str, Any]:
                     "timeframe, horizon, feature_set and family."
                 ),
                 "definition_entry": (
-                    "this menu's signal metrics; "
-                    "docs/ml_research.md#ml-research-contract"
+                    "this menu's signal metrics[].description, generated from "
+                    "the signal metric catalog"
                 ),
                 "metrics": [
                     {
                         "id": f"signal.{name}",
                         "direction": definition.optimization_direction,
                         "unit": definition.unit,
+                        "description": definition.description,
                     }
                     for name, definition in SIGNAL_METRIC_CATALOG.items()
                     if definition.optimization_direction is not None

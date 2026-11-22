@@ -285,10 +285,12 @@ trying more candidates increases selection bias.
 
 Discovery starts from `get_ml_contract.ranking`: `tool` names the only ranking
 entry point, and `sources` separates the two candidate kinds. Signal ids,
-directions and units are generated from the formal signal catalog; run ids are
-not copied into this menu, because `get_metric_catalog(mode=None)` is their
-source of truth and the caller prepends `run.`. A request must name its source:
-a bare, empty or unknown prefix is refused with both choices and their catalogs.
+directions, units and full definition text are generated from the formal signal
+catalog and travel in the MCP response, so a client needs no repository access
+to interpret them; run ids are not copied into this menu, because
+`get_metric_catalog(mode=None)` is their source of truth and the caller prepends
+`run.`. A request must name its source: a bare, empty or unknown prefix is
+refused with both choices and their catalogs.
 
 The same tool ranks saved backtest scopes. `signal.<metric>` ranks recorded
 evaluations, while `run.<metric>`
