@@ -59,7 +59,9 @@ def test_ranking_guidance_describes_the_training_dataset(service: MLService) -> 
     """MCP clients read the contract, not the docs, so the field must be there."""
     guidance = service.get_contract()["guidance"]["ranking"]
     assert "training_dataset_id" in guidance
+    assert "producer_source is backend_model" in guidance
     assert "equality with dataset_id means" in guidance
+    assert "caller array" in guidance
 
 
 def test_report_guidance_states_the_conditional_sample_rule(service: MLService) -> None:

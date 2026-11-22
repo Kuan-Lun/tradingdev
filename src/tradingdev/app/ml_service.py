@@ -293,8 +293,10 @@ _ML_GUIDANCE = {
         "scope's definition and evidence. A duplicate selection is refused and "
         "an aggregate fold summary is skipped. Stored values are never "
         "recomputed. Signal rows report method_family, saved settings and "
-        "training_dataset_id (empty when unknown): equality with dataset_id "
-        "means the model scored its training data; inequality proves nothing. "
+        "training_dataset_id (empty when unknown): when producer_source is "
+        "backend_model, equality with dataset_id means the model scored its "
+        "training data; a caller array with a model label is only a claim, and "
+        "inequality proves nothing. "
         "allow_mixed and allow_parameter_axes are signal-only opt-ins and do "
         "not establish comparability. A winner is not a profit guarantee."
     ),

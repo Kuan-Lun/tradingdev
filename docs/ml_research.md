@@ -289,7 +289,7 @@ directions, units and full definition text are generated from the formal signal
 catalog and travel in the MCP response, so a client needs no repository access
 to interpret them; run ids are not copied into this menu, because
 `get_metric_catalog(mode=None)` is their source of truth and the caller prepends
-`run.`. A request must name its source: a bare, empty or unknown prefix is
+`run.` to a run metric ID. A request must name its source: a bare, empty or unknown prefix is
 refused with both choices and their catalogs. The former `leaderboard` tool is
 removed with no compatibility alias; existing clients must call
 `rank_candidates` and qualify every metric id with `signal.` or `run.`.
