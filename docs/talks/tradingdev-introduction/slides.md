@@ -867,7 +867,7 @@ sequenceDiagram
 | UC-04 獨立 ML 訊號研究 | 合約 → 資料 → 資料集 → 訓練 → 評估 → 排名 | `build_dataset`、`train_model`、`evaluate_signal` |
 | UC-05 保存與分享 | 筆記 → 匯出 → 交付 | `save_research_note`、`export_research_note` |
 
-UC-01～UC-03 與 UC-05 遵循「先唯讀確認、再明確同意後寫入」；UC-03 不重跑回測。UC-04 是獨立 ML 軌道，直接建立資料集、訓練、評估與排名，不需執行計畫或核准。
+明確同意只針對執行計畫的提交（UC-03，且不重跑回測）；UC-01/02 的策略與研究證據保存、UC-05 筆記保存依各自契約直接寫入，不需執行核准。UC-04 是獨立 ML 軌道，直接建立資料集、訓練、評估與排名。
 
 <!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例" -->
 
