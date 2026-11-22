@@ -14,7 +14,7 @@ the test.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from tests.strategy_fixtures import GENERATED_PROGRAM
@@ -568,12 +568,22 @@ class TestCandidateDispatch:
         with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
             service.rank_candidates("sharpe_ratio", runs=[("alpha", "full")])
 
-    @pytest.mark.parametrize("metric", ["", "signal.", "run.", "foo.ic_mean"])
+    @pytest.mark.parametrize("metric", ["", "signal.", "run.", "foo.ic_mean", None])
     def test_an_empty_or_unknown_source_prefix_is_refused(
-        self, service: RankingService, metric: str
+        self, service: RankingService, metric: str | None
     ) -> None:
         with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
-            service.rank_candidates(metric, runs=[("alpha", "full")])
+            service.rank_candidates(cast("str", metric), runs=[("alpha", "full")])
+
+    def test_dispatch_keeps_its_own_source_guard(
+        self, service: RankingService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defence in depth: a bypassed prefix check still cannot mix sources."""
+        monkeypatch.setattr(
+            "tradingdev.app.ranking_service.qualify_metric", lambda metric: metric
+        )
+        with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
+            service.rank_candidates("foo.ic_mean", runs=[("alpha", "full")])
 
     def test_run_selections_are_refused_on_the_signal_path(
         self, service: RankingService

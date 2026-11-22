@@ -213,6 +213,7 @@ class RankingService:
                 "skipped": [{**row, "source": "run"} for row in skipped[offset:end]],
                 "caveats": result["caveats"],
             }
+        # Defensive: qualify_metric at the top already rejected everything else.
         raise _source_metric_error(metric)
 
     def rank_run_scopes(
