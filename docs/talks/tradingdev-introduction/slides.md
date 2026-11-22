@@ -867,7 +867,7 @@ sequenceDiagram
 | UC-04 獨立 ML 訊號研究 | 合約 → 資料 → 資料集 → 訓練 → 評估 → 排名 | `build_dataset`、`train_model`、`evaluate_signal` |
 | UC-05 保存與分享 | 筆記 → 匯出 → 交付 | `save_research_note`、`export_research_note` |
 
-五個案例都遵循「先唯讀確認、再明確同意後寫入」；UC-03 不重跑回測，UC-04 走獨立 ML 軌道。
+UC-01～UC-03 與 UC-05 遵循「先唯讀確認、再明確同意後寫入」；UC-03 不重跑回測。UC-04 是獨立 ML 軌道，直接建立資料集、訓練、評估與排名，不需執行計畫或核准。
 
 <!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例" -->
 
@@ -1038,7 +1038,7 @@ AI 代理能叫到哪些「種類」的工具，以及工具不能保證什麼�
 
 每個工具帶有四個 hint，協助代理決定呼叫時機與風險：
 
-- **read_only_hint**：只讀取、不變更伺服器狀態（`list_*`、`get_*`）。
+- **read_only_hint**：只讀取、不變更伺服器狀態（`list_*`、多數 `get_*`；`get_job_status` 例外，會整理消失的 worker 狀態）。
 - **destructive_hint**：可能建立、覆寫或刪除（`save_strategy`、`ensure_data`、`cleanup_strategy_drafts`）。
 - **idempotent_hint**：重複呼叫結果一致（`get_*`、`promote_strategy`、`generate_report`）。
 - **open_world_hint**：可能執行生成程式或存取外部資料（`validate_strategy`、`ensure_data`）。
