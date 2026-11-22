@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from tests.mcp.ml_fixtures import model_pair
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import (
+    EvaluationSeriesReadResponse,
     LeaderboardPageResponse,
     LeaderboardRow,
     LeaderboardSkipped,
@@ -177,6 +179,45 @@ def test_contract_exposes_separate_ranking_sources(mcp: MCPServer) -> None:
     assert "dataset_id" in signal.candidate_selection
     assert "rank_candidates" in contract.guidance["ranking"]
     assert "get_metric_catalog" in contract.guidance["ranking"]
+
+
+def test_contract_validators_refuse_mixed_sources_and_mixed_pages() -> None:
+    """The discriminators and page modes are enforced, not decorative."""
+    bad_rows = LeaderboardPageResponse.model_construct(
+        success=True,
+        metric="signal.x",
+        direction="maximize",
+        source="signal",
+        n_candidates=1,
+        n_ranked=1,
+        context=None,
+        families=None,
+        parameter_axes=None,
+        market_comparison=None,
+        ranked=cast("Any", [SimpleNamespace(source="run")]),
+        skipped=[],
+        caveats=[],
+        n_skipped=0,
+        offset=0,
+        limit=20,
+        next_offset=None,
+    )
+    validate_rows = cast("Any", LeaderboardPageResponse.validate_one_source)
+    with pytest.raises(ValueError, match="cannot appear in a signal ranking"):
+        validate_rows(bad_rows)
+
+    validate_page = cast("Any", EvaluationSeriesReadResponse.one_mode_only)
+    discovery_with_rows = SimpleNamespace(
+        mode="discovery", artifact_id="a" * 16, manifest=None, rows=[object()]
+    )
+    with pytest.raises(ValueError, match="discovery page cannot carry row data"):
+        validate_page(discovery_with_rows)
+
+    rows_without_manifest = SimpleNamespace(
+        mode="rows", artifact_id="a" * 16, manifest=None, items=[]
+    )
+    with pytest.raises(ValueError, match="row page needs its artifact and manifest"):
+        validate_page(rows_without_manifest)
 
 
 def test_only_rank_candidates_is_registered(mcp: MCPServer) -> None:

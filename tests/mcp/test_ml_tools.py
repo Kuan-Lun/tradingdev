@@ -38,6 +38,70 @@ def _dispatch(
     return asyncio.run(call())
 
 
+def test_tool_error_branches_are_reachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every service failure is surfaced as a typed error, never as a traceback."""
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = MLService(workspace=workspace)
+    failure = {"success": False, "error": "forced failure", "code": "forced"}
+    for name in (
+        "build_dataset",
+        "build_panel",
+        "train_model",
+        "predict_page",
+        "evaluate_prediction",
+        "get_contract",
+    ):
+        monkeypatch.setattr(service, name, lambda **_kwargs: dict(failure))
+
+    server = MCPServer("ml-error-branches")
+    ml.register(server, service)
+    assert _dispatch(server, "get_ml_contract", {})["success"] is False
+    dataset: dict[str, object] = {
+        "symbol": "BTC/USDT",
+        "timeframe": "1h",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-31",
+        "feature_set": "returns",
+    }
+    assert _dispatch(server, "build_dataset", dataset)["success"] is False
+    assert (
+        _dispatch(server, "build_panel", {**dataset, "symbols": ["BTC/USDT"]})[
+            "success"
+        ]
+        is False
+    )
+    assert (
+        _dispatch(
+            server,
+            "train_model",
+            {"dataset_id": "ds_" + "a" * 16, "model_kind": "xgboost_direction"},
+        )["success"]
+        is False
+    )
+    prediction: dict[str, object] = {
+        "model_id": "a" * 16,
+        "dataset_id": "ds_" + "a" * 16,
+    }
+    assert _dispatch(server, "predict", prediction)["success"] is False
+    assert (
+        _dispatch(
+            server,
+            "evaluate_signal",
+            {"dataset_id": prediction["dataset_id"], "model_id": "a" * 16},
+        )["success"]
+        is False
+    )
+    # No saved model and no declared rule is a caller error before the service.
+    assert (
+        _dispatch(server, "evaluate_signal", {"dataset_id": prediction["dataset_id"]})[
+            "code"
+        ]
+        == "invalid_signal"
+    )
+
+
 def test_get_ml_contract_lists_the_enumerable_vocabulary(tmp_path: Path) -> None:
     mcp = MCPServer("ml-contract-test")
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
