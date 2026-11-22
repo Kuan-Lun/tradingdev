@@ -775,7 +775,7 @@ sequenceDiagram
 | Execution | 固定研究條件並產生可確認的計畫 | 8 | 1 讀 / 7 寫 |
 | Data | 取得或確認行情與特徵資料 | 4 | 3 讀 / 1 寫 |
 | Jobs | 追蹤與管理背景工作 | 3 | 1 讀 / 2 寫 |
-| Runs | 查詢已保存的回測結果與指標 | 5 | 5 讀 |
+| Runs | 查詢已保存的回測結果與指標 | 7 | 7 讀 |
 | History | 讀取交易紀錄、診斷與組裝報告 | 8 | 7 讀 / 1 寫 |
 
 <!-- _footer: "數量依 @mcp.tool 裝飾函式統計；讀寫以 ToolAnnotations.read_only_hint 為準。" -->
@@ -792,8 +792,8 @@ sequenceDiagram
 | Research Notes | 留下可續讀的研究筆記 | 4 | 2 讀 / 2 寫 |
 | Feature Requests | 記錄暫不支援的能力 | 2 | 1 讀 / 1 寫 |
 | Strategy Cleanup | 預覽並清理未用草稿 | 1 | 1 寫 |
-| ML | 獨立訓練、評估訊號與排名 | 7 | 3 讀 / 4 寫 |
-| **合計** | — | **52** | **29 讀 / 23 寫** |
+| ML | 獨立訓練、評估訊號與排名 | 9 | 5 讀 / 4 寫 |
+| **合計** | — | **56** | **33 讀 / 23 寫** |
 
 <!-- _footer: "數量依 @mcp.tool 裝飾函式統計；讀寫以 ToolAnnotations.read_only_hint 為準。" -->
 
@@ -801,9 +801,9 @@ sequenceDiagram
 
 <!-- _class: statement -->
 
-## 目前共 52 個 MCP 工具
+## 目前共 56 個 MCP 工具
 
-> **29 個唯讀工具、23 個會建立或變更狀態的工具。**
+> **33 個唯讀工具、23 個會建立或變更狀態的工具。**
 
 工具依責任分成 11 群；同一群內同時有讀取與寫入，方便代理在對話中反覆查詢與遞進修改。
 
@@ -811,7 +811,7 @@ sequenceDiagram
 
 <!-- _class: compact -->
 
-## 這 52 個工具分在哪裡（1/2）
+## 這 56 個工具分在哪裡（1/2）
 
 | 模組 | 工具數 | 主要責任 |
 | --- | ---: | --- |
@@ -819,7 +819,7 @@ sequenceDiagram
 | `execution` | 8 | 準備回測、比較、Walk-forward、最佳化與確認 |
 | `data` | 4 | 探索、查詢與快取行情 |
 | `jobs` | 3 | 查詢與管理背景工作 |
-| `runs` | 5 | 查詢回測結果、指標與比較 |
+| `runs` | 7 | 查詢回測結果、指標與比較 |
 | `history` | 8 | 交易紀錄、診斷與報告 |
 
 <!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/" -->
@@ -828,7 +828,7 @@ sequenceDiagram
 
 <!-- _class: compact -->
 
-## 這 52 個工具分在哪裡（2/2）
+## 這 56 個工具分在哪裡（2/2）
 
 | 模組 | 工具數 | 主要責任 |
 | --- | ---: | --- |
@@ -836,9 +836,9 @@ sequenceDiagram
 | `research_notes` | 4 | 保存與匯出研究筆記 |
 | `feature_requests` | 2 | 記錄未支援能力 |
 | `strategy_cleanup` | 1 | 預覽與清理草稿 |
-| `ml` | 7 | 獨立資料集、模型、訊號評估與排名 |
+| `ml` | 9 | 獨立資料集、模型、訊號評估與排名 |
 
-前 6 群負責「把構想與研究條件變成可執行物件」；後 5 群負責「把結果留下並可分享」。共 11 群、52 個工具。
+前 6 群負責「把構想與研究條件變成可執行物件」；後 5 群負責「把結果留下並可分享」。共 11 群、56 個工具。
 
 <!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/" -->
 
