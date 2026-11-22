@@ -291,8 +291,10 @@ to interpret them; run ids are not copied into this menu, because
 `get_metric_catalog(mode=None)` is their source of truth and the caller prepends
 `run.` to a run metric ID. A request must name its source: a bare, empty or unknown prefix is
 refused with both choices and their catalogs. The former `leaderboard` tool is
-removed with no compatibility alias; existing clients must call
-`rank_candidates` and qualify every metric id with `signal.` or `run.`.
+removed with no compatibility alias, and `get_ml_contract.leaderboard_metrics`
+is replaced by `get_ml_contract.ranking.sources` (signal metrics) plus
+`get_metric_catalog` (run metrics); existing clients must call `rank_candidates`
+and qualify every metric id with `signal.` or `run.`.
 
 The same tool ranks saved backtest scopes. `signal.<metric>` ranks recorded
 evaluations, while `run.<metric>`
