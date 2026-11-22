@@ -73,6 +73,31 @@ def test_report_guidance_states_the_conditional_sample_rule(service: MLService) 
     assert "訓練與評估的關係仍未知" in guidance
 
 
+def test_evaluate_signal_rejects_an_out_of_range_quantile_count(
+    service: MLService,
+) -> None:
+    with pytest.raises(ValueError, match="n_quantiles must be between 2 and 10"):
+        service.evaluate_signal(_PERFECT, _PERFECT, window=10, n_quantiles=1)
+
+
+def test_ranking_page_rejects_an_out_of_range_limit(service: MLService) -> None:
+    with pytest.raises(ValueError, match="limit must be an integer between 1 and 100"):
+        service.leaderboard_page("ic_mean", limit=0)
+
+
+def test_evaluation_series_page_reports_a_missing_artifact(service: MLService) -> None:
+    with pytest.raises(ValueError, match="evaluation series .* is unavailable"):
+        service.evaluation_series_rows_page("a" * 16)
+
+
+def test_cleanup_evaluation_series_accepts_explicit_protection(
+    service: MLService,
+) -> None:
+    result = service.cleanup_evaluation_series(protected=["a" * 16])
+    assert result["success"] is True
+    assert result["removed"] == []
+
+
 def test_evaluate_signal_on_a_perfectly_monotonic_signal(service: MLService) -> None:
     signal = _PERFECT
     forward = [s * 0.01 for s in signal]
