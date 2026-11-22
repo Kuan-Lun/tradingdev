@@ -290,7 +290,9 @@ catalog and travel in the MCP response, so a client needs no repository access
 to interpret them; run ids are not copied into this menu, because
 `get_metric_catalog(mode=None)` is their source of truth and the caller prepends
 `run.`. A request must name its source: a bare, empty or unknown prefix is
-refused with both choices and their catalogs.
+refused with both choices and their catalogs. The former `leaderboard` tool is
+removed with no compatibility alias; existing clients must call
+`rank_candidates` and qualify every metric id with `signal.` or `run.`.
 
 The same tool ranks saved backtest scopes. `signal.<metric>` ranks recorded
 evaluations, while `run.<metric>`
