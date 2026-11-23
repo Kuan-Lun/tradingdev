@@ -290,7 +290,8 @@ catalog and travel in the MCP response, so a client needs no repository access
 to interpret them; run ids are not copied into this menu, because
 `get_metric_catalog(mode=None)` is their source of truth and the caller prepends
 `run.` to a run metric ID. A request must name its source: a bare, empty or unknown prefix is
-refused with both choices and their catalogs. The former `leaderboard` tool is
+refused with the two valid forms and pointers to `get_ml_contract.ranking.sources`
+for signal metrics and `get_metric_catalog` for run metrics. The former `leaderboard` tool is
 removed with no compatibility alias, and `get_ml_contract.leaderboard_metrics`
 is replaced by `get_ml_contract.ranking.sources` (signal metrics) plus
 `get_metric_catalog` (run metrics); existing clients must call `rank_candidates`
@@ -314,11 +315,12 @@ that cannot be loaded is skipped before that second comparison, so two spellings
 an unloadable scope appear as two skipped rows; neither is ranked. A run row carries
 `run_id`, `scope`, the trading conditions its manifest recorded, `metric_source`,
 the stored value and `selection_evidence` for applicable optimization runs.
-`context`, `families`, `parameter_axes` and `market_comparison` are `null` —
-present but not applicable, because a named selection has no evaluation context or
-method mix to report. An empty value would read as measured-and-nothing, which is a
-different claim. Every row reports `source`, and one response never mixes the two: a
-signal metric and a backtest metric share no definition, so they share no column.
+The response-level `context`, `families`, `parameter_axes` and `market_comparison`
+fields are `null` on a run ranking — present but not applicable, because a named
+selection has no evaluation context or method mix to report. An empty value would
+read as measured-and-nothing, which is a different claim. Every row reports
+`source`, and one response never mixes the two: a signal metric and a backtest
+metric share no definition, so they share no column.
 The run-ranking semantics — saved scope parameters and metadata, manifest-level
 conditions, definition checks, optimization evidence and fold-summary skips — are in
 [the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
