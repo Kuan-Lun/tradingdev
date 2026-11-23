@@ -1039,12 +1039,14 @@ caller-declared method settings, distinguished by `method_family`.
 without consulting the current model registry. The ML report block uses schema 2
 and records `metadata.raw_market_version`; `null` means the entry has no saved raw
 evidence binding. Non-finite scores become `null`, as in leaderboard storage,
-while absent metric keys remain absent. `RankingService.rank_signal_entries`
-loads one explicit, bounded `entry_id` selection and asks the application to
-assemble one complete ranking from those exact entries; `ml_report_block` only
-projects that result. The same application assembly serves the MCP filtered
-candidate set, so both consumers report the same order, skipped reasons and
-caveats. The report uses the whole selected set: MCP `offset`/`limit` are page
+while absent metric keys remain absent. The report calls
+`RankingService.rank_signal_entries`, which delegates to
+`MLService.rank_signal_entries`; the latter loads one explicit, bounded
+`entry_id` selection and assembles one complete ranking from those exact
+entries. `ml_report_block` only projects that result. The same application
+assembly serves the MCP filtered candidate set, so both consumers report the
+same order, skipped reasons and caveats. The report uses the whole selected
+set: MCP `offset`/`limit` are page
 controls and never change the report's candidate count, ranks or selection
 caveats. The block keeps every candidate that failed to rank, with block-level
 definitions, observed parameter axes, skipped rows and their coordinates, and
