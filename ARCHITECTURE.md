@@ -320,9 +320,12 @@ Leaderboard 保存候選參數、訊號指紋與評估條件，依 domain 指標
 特徵快取可淘汰，資料版本與模型有自己的保存規則。輸入、驗證解讀、身分、鎖與保存限制
 集中於[ML 研究契約](docs/ml_research.md)，避免在此重列欄位與演算法。
 
-`app/report_ml.py` 依明示候選 ID 讀取當前排行榜，交 `domain/ml/report.py` 投影並計算
-完整排名；保留缺值、評估座標及警語，不重新預測或訓練。`ReportService` 將選取內容固定
-於獨立 ML 報告，或附加到 run／固定比較報告；MCP 與 report CLI 共用此路徑。
+`app/report_ml.py` 依明示候選 ID 呼叫 `RankingService.rank_signal_entries`，後者委派
+`MLService.rank_signal_entries` 一次讀取所選候選並組裝完整排名；MCP 篩選後的候選也走
+同一 application 組裝。`domain/ml/report.py` 只投影該結果，不再自行排序；報告使用完整
+選定集合，不以 MCP 分頁取代。缺值、評估座標及警語一併保留，不重新預測或訓練。
+`ReportService` 將選取內容固定於獨立 ML 報告，或附加到 run／固定比較報告；MCP 與
+report CLI 共用此路徑。
 HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源關聯。排行榜後續替換不改變
 已發布報告；未選取 ML 時不加入 ML 區塊。新產生報告採用包含研究解讀與診斷的
 模板 24，報告身分會隨內容與模板更新；已保存報告不改寫。
