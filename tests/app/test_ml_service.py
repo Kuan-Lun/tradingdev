@@ -87,7 +87,7 @@ def test_ranking_page_rejects_an_out_of_range_limit(service: MLService) -> None:
 
 def test_evaluation_series_page_reports_a_missing_artifact(service: MLService) -> None:
     with pytest.raises(ValueError, match="evaluation series .* is unavailable"):
-        service.evaluation_series_rows_page("a" * 16)
+        service.evaluation_series_rows_page("0123456789abcdef" * 4)
 
 
 def test_cleanup_evaluation_series_accepts_explicit_protection(
