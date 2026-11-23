@@ -1046,14 +1046,15 @@ while absent metric keys remain absent. The report calls
 entries. `ml_report_block` only projects that result. The same application
 assembly serves the MCP filtered candidate set, so both consumers report the
 same order, skipped reasons and caveats. The report uses the whole selected
-set: MCP `offset`/`limit` are page
-controls and never change the report's candidate count, ranks or selection
-caveats. The block keeps every candidate that failed to rank, with block-level
-definitions, observed parameter axes, skipped rows and their coordinates, and
-ranking caveats. Duplicate selection IDs, unknown IDs, a selection above the
-report capacity and an incomparable set without an explicit opt-in fail.
-`alpha` sets the family-wise significance level. Comparability uses the
-leaderboard rules: settings must match by default; pass
+set: MCP `offset`/`limit` are page controls and never change the report's
+candidate count, ranks or selection caveats. The block keeps every candidate
+that failed to rank, with block-level definitions, observed parameter axes,
+skipped rows and their coordinates, and ranking caveats. Duplicate selection
+IDs, unknown IDs, a selection above the report capacity and an incomparable set
+without an explicit opt-in fail. Report ranking uses the fixed default `alpha`
+of 0.05; neither the report nor the MCP ranking entry point exposes a
+caller-controlled significance level. Comparability uses the leaderboard rules:
+settings must match by default; pass
 `allow_parameter_axes=True` for a surface, which still requires one research
 identity and one dataset version per horizon. `allow_mixed=True` permits
 otherwise incompatible candidates and adds a caveat when their settings fail
