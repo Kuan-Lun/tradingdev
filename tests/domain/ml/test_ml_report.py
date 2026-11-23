@@ -337,6 +337,13 @@ class TestReportBlock:
         block = ml_report_block(_ranking(entries, "ic_mean"))
         assert block["ranking"]["ranked_scope_ids"] == ["b", "a"]
 
+    def test_the_assembled_result_counts_ranked_and_skipped_rows(self) -> None:
+        ranking = _ranking(
+            [_entry("failed", ic_mean=None), _entry("valid", ic_mean=0.1)],
+            "ic_mean",
+        )
+        assert (ranking.n_candidates, ranking.n_ranked, ranking.n_skipped) == (2, 1, 1)
+
     @pytest.mark.parametrize("updated", [0.9, None])
     def test_mutated_scores_are_ranked_with_current_evidence(
         self, updated: float | None

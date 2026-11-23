@@ -20,7 +20,7 @@ from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.ml_service import MLService
-from tradingdev.app.ranking_service import RankingService
+from tradingdev.app.ranking_service import RankingSelectionError, RankingService
 from tradingdev.app.report_ml import load_ml_report
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.ml.leaderboard import (
@@ -573,3 +573,53 @@ def test_report_ranking_cannot_drift_from_the_application_result(
     assert report["ranking"]["ranked_scope_ids"] == [
         row["entry_id"] for row in mcp["ranked"]
     ]
+
+
+def test_signal_entry_selection_is_validated_inside_the_service(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    ml = MLService(workspace=workspace)
+    with pytest.raises(RankingSelectionError) as duplicate:
+        ml.rank_signal_entries(["first", "first"], "ic_mean")
+    assert duplicate.value.code == "invalid_signal_selection"
+
+
+def test_signal_assembly_refuses_duplicate_saved_entries(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    _, entry = _seed(workspace)
+    ml = MLService(workspace=workspace)
+    with pytest.raises(ValueError, match="unique entry IDs"):
+        ml._assemble_signal_ranking(
+            (entry, entry),
+            "ic_mean",
+            allow_parameter_axes=False,
+            allow_mixed=False,
+        )
+
+
+def test_leaderboard_page_rejects_invalid_offset_before_reading(
+    tmp_path: Path,
+) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    with pytest.raises(ValueError, match="offset must be a non-negative integer"):
+        ml.leaderboard_page("ic_mean", offset=-1)
+
+
+def test_protect_evaluation_series_counts_distinct_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    protected: list[str] = []
+    monkeypatch.setattr(
+        EvaluationSeriesStore,
+        "protect",
+        lambda _self, artifact_id: protected.append(artifact_id),
+    )
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    assert ml.protect_evaluation_series(["a", "a", "b"]) == 2
+    assert protected == ["a", "a", "b"]
+
+
+def test_panel_symbols_requires_a_nonempty_name() -> None:
+    with pytest.raises(ValueError, match="at least one symbol is required"):
+        MLService._panel_symbols([])

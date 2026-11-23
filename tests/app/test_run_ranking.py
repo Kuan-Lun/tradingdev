@@ -14,6 +14,7 @@ the test.
 from __future__ import annotations
 
 from dataclasses import asdict
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -822,3 +823,110 @@ def test_scope_defaults_and_fitted_parameters_keep_their_saved_meaning(
     row = result["ranked"][0]
     assert row["parameters"] == {"window": 30}
     assert row["metadata"] == scope.metadata
+
+
+class TestServiceEntryGuards:
+    """Guard paths that keep a page or a stored measurement from being misread."""
+
+    def test_signal_entry_points_require_an_ml_service(
+        self, service: RankingService
+    ) -> None:
+        with pytest.raises(RuntimeError, match="requires an ML service"):
+            service.rank_candidates("signal.ic_mean")
+        with pytest.raises(RuntimeError, match="requires an ML service"):
+            service.rank_signal_entries(["first"], "ic_mean")
+
+    def test_page_offset_above_the_full_row_count_is_refused(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+        with pytest.raises(ValueError, match="offset exceeds ranked row count"):
+            RankingService(workspace=workspace, store=store).rank_candidates(
+                "run.sharpe_ratio", runs=[("alpha", "full")], offset=5
+            )
+
+    def test_an_unknown_scope_is_skipped_with_its_reason(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+        result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+            "run.sharpe_ratio", [("alpha", "absent")]
+        )
+        assert "Unknown metric scope: absent" in result["skipped"][0]["reason"]
+
+    def test_a_run_without_a_manifest_hash_is_skipped(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        workspace, store = storage
+        _publish_run(workspace, store, "legacy", record_manifest_hash=False)
+        result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+            "run.sharpe_ratio", [("legacy", "full")]
+        )
+        assert "no execution manifest recorded" in result["skipped"][0]["reason"]
+
+    def test_a_manifest_without_required_sections_is_skipped(
+        self,
+        storage: tuple[WorkspacePaths, SQLiteStore],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+        monkeypatch.setattr(
+            ExecutionManifestStore,
+            "load",
+            lambda _self, _run_id, expected_hash: SimpleNamespace(
+                config={"strategy": {}}
+            ),
+        )
+        result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+            "run.sharpe_ratio", [("alpha", "full")]
+        )
+        assert "lacks backtest or strategy settings" in result["skipped"][0]["reason"]
+
+    def test_an_invalid_backtest_section_is_skipped(
+        self,
+        storage: tuple[WorkspacePaths, SQLiteStore],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+        monkeypatch.setattr(
+            ExecutionManifestStore,
+            "load",
+            lambda _self, _run_id, expected_hash: SimpleNamespace(
+                config={"strategy": {}, "backtest": {"start_date": "not-a-date"}}
+            ),
+        )
+        result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+            "run.sharpe_ratio", [("alpha", "full")]
+        )
+        assert "no usable backtest conditions" in result["skipped"][0]["reason"]
+
+    def test_an_unfinished_optimization_is_skipped(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        workspace, store = storage
+        store.upsert_job(
+            {
+                "job_id": "job-opt",
+                "job_type": "optimization",
+                "status": "running",
+                "strategy_name": "fixture",
+                "symbol": "BTC/USDT",
+                "timeframe": "1d",
+                "start_date": "2024-01-01",
+                "end_date": "2024-03-01",
+                "config_path": "",
+                "pid": 0,
+                "created_at": "2026-01-01T00:00:00Z",
+                "started_at": None,
+                "ended_at": None,
+                "error": None,
+            }
+        )
+        result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+            "run.sharpe_ratio", [("opt", None)]
+        )
+        assert "optimization status running" in result["skipped"][0]["reason"]
