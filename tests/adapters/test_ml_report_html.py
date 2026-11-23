@@ -15,13 +15,29 @@ import pytest
 from tradingdev.adapters.presentation.html import escape, json_text
 from tradingdev.adapters.reporting.html import render_report
 from tradingdev.adapters.reporting.ml import ML_REPORT_SCRIPT, render_ml_report
-from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
+from tradingdev.domain.ml.evaluation.catalog import (
+    SIGNAL_METRIC_CATALOG,
+    definition_snapshot,
+    report_visibility,
+)
 from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
     ProducerSource,
+    comparability_error,
+    family_counts,
+    parameter_axes,
+    rank_entries,
+    surface_caveats,
 )
-from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE, ml_report_block
+from tradingdev.domain.ml.report import (
+    ML_SAMPLE_PROVENANCE_NOTE,
+    RankedSignal,
+    SignalRanking,
+    SkippedSignal,
+    ml_report_block,
+    source_hash,
+)
 from tradingdev.domain.presentation.reports import REPORT_TEMPLATE_VERSION
 
 _CONTEXT = EvaluationContext(
@@ -52,13 +68,47 @@ def _entry(entry_id: str = "candidate-a", **metrics: float | None) -> Leaderboar
     )
 
 
+def _ranking(entries: tuple[LeaderboardEntry, ...]) -> SignalRanking:
+    ordered = tuple(entries)
+    mismatch = comparability_error(ordered, allow_parameter_axes=True)
+    result = rank_entries(ordered, "ic_mean")
+    axes = parameter_axes(ordered)
+    caveats = list(result.caveats)
+    caveats.extend(surface_caveats(axes, incompatible_contexts=mismatch is not None))
+    metric_ids = sorted({key for entry in ordered for key in entry.metrics})
+    contexts = sorted({entry.context.describe() for entry in ordered})
+    return SignalRanking(
+        metric=result.metric,
+        direction=result.direction,
+        ranked=tuple(
+            RankedSignal(
+                rank=item.rank, entry=item.entry, value=item.value, tied=item.tied
+            )
+            for item in result.ranked
+        ),
+        skipped=tuple(
+            SkippedSignal(entry=item.entry, reason=item.reason)
+            for item in result.skipped
+        ),
+        caveats=tuple(caveats),
+        parameter_axes=axes,
+        definitions={key: definition_snapshot(key) for key in metric_ids},
+        visible_metrics=tuple(key for key in metric_ids if report_visibility(key)),
+        hidden_metrics=tuple(key for key in metric_ids if not report_visibility(key)),
+        context=contexts[0] if len(contexts) == 1 else "mixed",
+        families=family_counts(ordered),
+        entries=ordered,
+        source_sha256=source_hash(ordered),
+    )
+
+
 def _payload(*entries: LeaderboardEntry) -> dict[str, Any]:
     return {
         "runs": [],
         "sections": ["ml"],
         "commentary": [],
         "ml": {
-            **ml_report_block(entries, "ic_mean", allow_parameter_axes=True),
+            **ml_report_block(_ranking(entries)),
             "source_sha256": "leaderboard-source-digest",
             "entry_ids": [entry.entry_id for entry in entries],
             "template_version": "1",

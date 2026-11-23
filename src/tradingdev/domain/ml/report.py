@@ -17,22 +17,12 @@ Two conventions are copied deliberately from the portfolio side:
 
 from __future__ import annotations
 
+import hashlib
+import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from tradingdev.domain.ml.evaluation.catalog import (
-    definition_snapshot,
-    report_visibility,
-)
-from tradingdev.domain.ml.leaderboard import (
-    comparability_error,
-    parameter_axes,
-    rank_entries,
-    surface_caveats,
-)
-
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from tradingdev.domain.ml.leaderboard import LeaderboardEntry
 
 ML_REPORT_SCHEMA_VERSION = 2
@@ -48,6 +38,77 @@ ML_SAMPLE_PROVENANCE_NOTE = (
     "呼叫端自備、歷史未知來源或未保存訓練欄位時，"
     "訓練與評估的關係仍未知。來源確認本身不是樣本外證明。"
 )
+
+
+@dataclass(frozen=True)
+class RankedSignal:
+    """One placed candidate plus the entry that produced its score."""
+
+    rank: int
+    entry: LeaderboardEntry
+    value: float
+    tied: int
+
+
+@dataclass(frozen=True)
+class SkippedSignal:
+    """One candidate with no usable score, and the recorded reason."""
+
+    entry: LeaderboardEntry
+    reason: str
+
+
+@dataclass(frozen=True)
+class SignalRanking:
+    """One complete, immutable ranking bound to the entries it ranked.
+
+    The ranked rows and the evidence are assembled together so a report cannot
+    pair an old order with newer candidate content. ``market_comparison`` is
+    filled by the application service, which reads the saved datasets; the
+    domain projection never fetches or recomputes anything.
+    """
+
+    metric: str
+    direction: str
+    ranked: tuple[RankedSignal, ...]
+    skipped: tuple[SkippedSignal, ...]
+    caveats: tuple[str, ...]
+    parameter_axes: dict[str, list[int]]
+    definitions: dict[str, dict[str, Any]]
+    visible_metrics: tuple[str, ...]
+    hidden_metrics: tuple[str, ...]
+    context: str
+    families: dict[str, int]
+    entries: tuple[LeaderboardEntry, ...]
+    source_sha256: str
+    market_comparison: Any | None = None
+
+    @property
+    def n_candidates(self) -> int:
+        return len(self.entries)
+
+    @property
+    def n_ranked(self) -> int:
+        return len(self.ranked)
+
+    @property
+    def n_skipped(self) -> int:
+        return len(self.skipped)
+
+
+def source_hash(entries: tuple[LeaderboardEntry, ...]) -> str:
+    """Hash the exact selected records, not the mutable store around them."""
+    source = (
+        json.dumps(
+            [entry.to_record() for entry in entries],
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    return hashlib.sha256(source).hexdigest()
 
 
 def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
@@ -98,52 +159,29 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
     }
 
 
-def ml_report_block(
-    entries: Sequence[LeaderboardEntry],
-    metric: str,
-    *,
-    alpha: float = 0.05,
-    allow_parameter_axes: bool = False,
-    allow_mixed: bool = False,
-) -> dict[str, Any]:
-    """The whole signal-evidence block: every candidate, ranked or failed.
+def ml_report_block(ranking: SignalRanking) -> dict[str, Any]:
+    """Project one application ranking into the report payload.
 
-    Compute a complete ranking from these candidates, so an independent stale
-    or truncated result cannot be paired with different evidence. Parameter
-    surfaces require an explicit opt-in, with the same comparability rules as
-    the leaderboard.
+    No ordering, comparability or caveat is recomputed here. The service that
+    produced ``ranking`` owns those decisions, so the report cannot drift from
+    the MCP answer for the same selected candidates.
     """
-    ordered = tuple(entries)
-    if len({entry.entry_id for entry in ordered}) != len(ordered):
-        raise ValueError("Report candidates must have unique entry IDs")
-    mismatch = comparability_error(ordered, allow_parameter_axes=allow_parameter_axes)
-    if mismatch and not allow_mixed:
-        raise ValueError(mismatch)
-    result = rank_entries(ordered, metric, alpha=alpha)
-    metric_ids = sorted({key for entry in ordered for key in entry.metrics})
-    axes = parameter_axes(ordered)
-    caveats = list(result.caveats)
-    caveats.extend(surface_caveats(axes, incompatible_contexts=mismatch is not None))
-    return {
+    block: dict[str, Any] = {
         "schema_version": ML_REPORT_SCHEMA_VERSION,
         "kind": ML_SIGNAL_KIND,
-        "scopes": [ml_signal_scope(entry) for entry in ordered],
-        "definitions": {
-            metric_id: definition_snapshot(metric_id) for metric_id in metric_ids
-        },
+        "scopes": [ml_signal_scope(entry) for entry in ranking.entries],
+        "definitions": {key: dict(value) for key, value in ranking.definitions.items()},
         # The visibility policy travels with the data so a consumer other than
         # the HTML renderer applies the same rule instead of inventing one.
-        "visible_metrics": [
-            metric_id for metric_id in metric_ids if report_visibility(metric_id)
-        ],
-        "hidden_metrics": [
-            metric_id for metric_id in metric_ids if not report_visibility(metric_id)
-        ],
-        "parameter_axes": axes,
+        "visible_metrics": list(ranking.visible_metrics),
+        "hidden_metrics": list(ranking.hidden_metrics),
+        "parameter_axes": {
+            key: list(value) for key, value in ranking.parameter_axes.items()
+        },
         "ranking": {
-            "metric": result.metric,
-            "direction": result.direction,
-            "ranked_scope_ids": [item.entry.entry_id for item in result.ranked],
+            "metric": ranking.metric,
+            "direction": ranking.direction,
+            "ranked_scope_ids": [item.entry.entry_id for item in ranking.ranked],
             "skipped": [
                 {
                     "scope_id": item.entry.entry_id,
@@ -153,8 +191,11 @@ def ml_report_block(
                     "window": item.entry.context.window,
                     "n_quantiles": item.entry.context.n_quantiles,
                 }
-                for item in result.skipped
+                for item in ranking.skipped
             ],
         },
-        "caveats": caveats,
+        "caveats": list(ranking.caveats),
     }
+    if ranking.market_comparison is not None:
+        block["market_comparison"] = ranking.market_comparison
+    return block

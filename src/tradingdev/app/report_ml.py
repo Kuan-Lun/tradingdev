@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import TYPE_CHECKING, Any
 
-from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
-from tradingdev.app.ml_surface import compare_market_evidence
-from tradingdev.domain.ml.registry import LeaderboardStore
+from tradingdev.app.ml_service import MLService
+from tradingdev.app.ranking_service import (
+    MAX_SIGNAL_SELECTION,
+    RankingSelectionError,
+    RankingService,
+)
 from tradingdev.domain.ml.report import ml_report_block
 
 if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
 
-ML_REPORT_MAX_CANDIDATES = 50
+ML_REPORT_MAX_CANDIDATES = MAX_SIGNAL_SELECTION
+_RANKING_ERROR_CODES = {
+    "invalid_signal_selection": "invalid_report_ml_selection",
+    "signal_entry_not_found": "ml_entry_not_found",
+    "signal_store_invalid": "report_ml_evidence_invalid",
+}
 ML_REPORT_TEMPLATE_VERSION = "9"
 
 
@@ -90,45 +96,25 @@ def load_ml_report(
         require_verified_baseline=require_verified_baseline,
     )
     try:
-        stored = LeaderboardStore(workspace.ml_leaderboard).entries()
-        indexed = {entry.entry_id: entry for entry in stored}
-        if len(indexed) != len(stored):
-            raise ValueError("Saved leaderboard contains duplicate entry IDs")
-        missing = [key for key in entry_ids if key not in indexed]
-        if missing:
-            raise MLReportError(
-                "ml_entry_not_found",
-                "Saved ML entries were not found: " + ", ".join(missing),
-            )
-        entries = [indexed[key] for key in entry_ids]
-        block = ml_report_block(
-            entries,
+        service = RankingService(
+            workspace=workspace, ml_service=MLService(workspace=workspace)
+        )
+        ranking = service.rank_signal_entries(
+            entry_ids,
             metric,
             allow_parameter_axes=allow_parameter_axes,
             allow_mixed=allow_mixed,
-        )
-        block["market_comparison"] = compare_market_evidence(
-            entries,
-            MLDatasetStore(workspace.ml_datasets),
             require_verified_baseline=require_verified_baseline,
         )
-        source = (
-            json.dumps(
-                [entry.to_record() for entry in entries],
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode("utf-8")
-    except MLReportError:
-        raise
+        block = ml_report_block(ranking)
+    except RankingSelectionError as exc:
+        code = _RANKING_ERROR_CODES.get(exc.code, "report_ml_evidence_invalid")
+        raise MLReportError(code, str(exc)) from exc
     except (OSError, ValueError, TypeError, KeyError, OverflowError) as exc:
         raise MLReportError("report_ml_evidence_invalid", str(exc)) from exc
     return {
         **block,
         "entry_ids": list(entry_ids),
-        "source_sha256": hashlib.sha256(source).hexdigest(),
+        "source_sha256": ranking.source_sha256,
         "template_version": ML_REPORT_TEMPLATE_VERSION,
     }

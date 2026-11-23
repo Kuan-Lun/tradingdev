@@ -27,6 +27,7 @@ from tradingdev.app.ml_surface import (
     validate_dataset_context,
 )
 from tradingdev.app.ml_training import MLTrainingService
+from tradingdev.app.ranking_service import MAX_SIGNAL_SELECTION, RankingSelectionError
 from tradingdev.domain.data.cache import DataIdentity
 from tradingdev.domain.data.crawlers.registry import describe_sources
 from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
@@ -45,6 +46,8 @@ from tradingdev.domain.ml.evaluation import (
 from tradingdev.domain.ml.evaluation.artifacts import strata_records
 from tradingdev.domain.ml.evaluation.catalog import (
     SIGNAL_METRIC_CATALOG,
+    definition_snapshot,
+    report_visibility,
     summarize_signal_metrics,
 )
 from tradingdev.domain.ml.evaluation.performance import (
@@ -99,7 +102,13 @@ from tradingdev.domain.ml.registry import (
     LeaderboardStore,
     ModelArtifactStore,
 )
-from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
+from tradingdev.domain.ml.report import (
+    ML_SAMPLE_PROVENANCE_NOTE,
+    RankedSignal,
+    SignalRanking,
+    SkippedSignal,
+    source_hash,
+)
 from tradingdev.domain.ml.rolling_gen import (
     get_rolling_scheme,
     rolling_scheme_names,
@@ -912,6 +921,112 @@ class MLService:
             artifact.training_dataset_id,
         )
 
+    def _assemble_signal_ranking(
+        self,
+        entries: Sequence[LeaderboardEntry],
+        metric: str,
+        *,
+        allow_parameter_axes: bool,
+        allow_mixed: bool,
+        manifest: dict[str, Any] | None = None,
+        require_verified_baseline: bool = False,
+    ) -> SignalRanking:
+        """Build one complete ranking and bind it to the exact entries read.
+
+        Both the MCP leaderboard and an explicitly selected report call this
+        once. No caller receives a page of rows and a different set of evidence.
+        """
+        ordered = tuple(entries)
+        if len({entry.entry_id for entry in ordered}) != len(ordered):
+            raise ValueError("Signal candidates must have unique entry IDs")
+        mismatch = comparability_error(
+            ordered, allow_parameter_axes=allow_parameter_axes
+        )
+        if mismatch and not allow_mixed:
+            raise ValueError(mismatch)
+        comparison = compare_market_evidence(
+            ordered,
+            MLDatasetStore(self._workspace.ml_datasets),
+            require_verified_baseline=require_verified_baseline,
+            manifest=manifest,
+        )
+        result = rank_entries(ordered, metric)
+        metric_ids = sorted({key for entry in ordered for key in entry.metrics})
+        axes = parameter_axes(ordered)
+        caveats = list(result.caveats)
+        caveats.extend(
+            surface_caveats(axes, incompatible_contexts=mismatch is not None)
+        )
+        contexts = sorted({entry.context.describe() for entry in ordered})
+        return SignalRanking(
+            metric=result.metric,
+            direction=result.direction,
+            ranked=tuple(
+                RankedSignal(
+                    rank=item.rank, entry=item.entry, value=item.value, tied=item.tied
+                )
+                for item in result.ranked
+            ),
+            skipped=tuple(
+                SkippedSignal(entry=item.entry, reason=item.reason)
+                for item in result.skipped
+            ),
+            caveats=tuple(caveats),
+            parameter_axes=axes,
+            definitions={key: definition_snapshot(key) for key in metric_ids},
+            visible_metrics=tuple(key for key in metric_ids if report_visibility(key)),
+            hidden_metrics=tuple(
+                key for key in metric_ids if not report_visibility(key)
+            ),
+            context=contexts[0] if len(contexts) == 1 else "mixed",
+            families=family_counts(ordered),
+            entries=ordered,
+            source_sha256=source_hash(ordered),
+            market_comparison=comparison,
+        )
+
+    def rank_signal_entries(
+        self,
+        entry_ids: Sequence[str],
+        metric: str,
+        *,
+        allow_parameter_axes: bool = False,
+        allow_mixed: bool = False,
+        require_verified_baseline: bool = False,
+    ) -> SignalRanking:
+        """Load one explicit, bounded selection and rank the whole set once."""
+        if (
+            not isinstance(entry_ids, (list, tuple))
+            or not 1 <= len(entry_ids) <= MAX_SIGNAL_SELECTION
+            or any(not isinstance(key, str) or not key.strip() for key in entry_ids)
+            or len(set(entry_ids)) != len(entry_ids)
+        ):
+            raise RankingSelectionError(
+                "invalid_signal_selection",
+                f"Provide one to {MAX_SIGNAL_SELECTION} distinct saved ML entry IDs",
+            )
+        stored = LeaderboardStore(self._workspace.ml_leaderboard).entries()
+        indexed = {entry.entry_id: entry for entry in stored}
+        if len(indexed) != len(stored):
+            raise RankingSelectionError(
+                "signal_store_invalid",
+                "Saved leaderboard contains duplicate entry IDs",
+            )
+        missing = [key for key in entry_ids if key not in indexed]
+        if missing:
+            raise RankingSelectionError(
+                "signal_entry_not_found",
+                "Saved ML entries were not found: " + ", ".join(missing),
+            )
+        entries = [indexed[key] for key in entry_ids]
+        return self._assemble_signal_ranking(
+            entries,
+            metric,
+            allow_parameter_axes=allow_parameter_axes,
+            allow_mixed=allow_mixed,
+            require_verified_baseline=require_verified_baseline,
+        )
+
     def leaderboard(
         self,
         metric: str,
@@ -966,68 +1081,57 @@ class MLService:
             raise ValueError(
                 "no recorded evaluations; call evaluate_signal with record=True first"
             )
-        axes = parameter_axes(entries)
-        mismatch = comparability_error(
-            entries, allow_parameter_axes=allow_parameter_axes
-        )
-        if mismatch and not allow_mixed:
-            raise ValueError(mismatch)
-
-        market_comparison = compare_market_evidence(
+        ranking = self._assemble_signal_ranking(
             entries,
-            MLDatasetStore(self._workspace.ml_datasets),
-            require_verified_baseline=require_verified_baseline,
+            metric,
+            allow_parameter_axes=allow_parameter_axes,
+            allow_mixed=allow_mixed,
             manifest=manifest,
+            require_verified_baseline=require_verified_baseline,
         )
-        result = rank_entries(entries, metric, top_k=top_k)
-        ranked = [
-            {
-                "source": "signal",
-                "rank": item.rank,
-                "entry_id": item.entry.entry_id,
-                "series_artifact_id": item.entry.series_artifact_id,
-                "label": item.entry.label,
-                "model_id": item.entry.model_id,
-                "dataset_id": item.entry.dataset_id,
-                "method_family": item.entry.family,
-                "method_name": item.entry.method_name,
-                "training_dataset_id": item.entry.training_dataset_id,
-                "producer_source": item.entry.producer_source.value,
-                "horizon": item.entry.context.horizon,
-                "window": item.entry.context.window,
-                "n_quantiles": item.entry.context.n_quantiles,
-                "parameters": dict(item.entry.parameters),
-                "signal_fingerprint": item.entry.signal_fingerprint,
-                "value": item.value,
-                "tied": item.tied,
-                "n_observations": item.entry.n_observations,
-                "summary": {
-                    key: None if value is None else float(value)
-                    for key, value in summarize_signal_metrics(
-                        dict(item.entry.metrics)
-                    ).items()
-                    if value is None or isinstance(value, (int, float))
-                },
-            }
-            for item in result.ranked
-        ]
-        contexts = sorted({entry.context.describe() for entry in entries})
-        caveats = list(result.caveats)
-        caveats.extend(
-            surface_caveats(axes, incompatible_contexts=mismatch is not None)
-        )
+        ranked_rows = ranking.ranked[:top_k] if top_k is not None else ranking.ranked
         return {
             "success": True,
             "source": "signal",
-            "metric": result.metric,
-            "direction": result.direction,
-            "n_candidates": len(entries),
-            "n_ranked": len(result.ranked),
-            "context": contexts[0] if len(contexts) == 1 else "mixed",
-            "families": family_counts(entries),
-            "parameter_axes": axes,
-            "market_comparison": market_comparison,
-            "ranked": ranked,
+            "metric": ranking.metric,
+            "direction": ranking.direction,
+            "n_candidates": ranking.n_candidates,
+            "n_ranked": len(ranked_rows),
+            "context": ranking.context,
+            "families": ranking.families,
+            "parameter_axes": ranking.parameter_axes,
+            "market_comparison": ranking.market_comparison,
+            "ranked": [
+                {
+                    "source": "signal",
+                    "rank": item.rank,
+                    "entry_id": item.entry.entry_id,
+                    "series_artifact_id": item.entry.series_artifact_id,
+                    "label": item.entry.label,
+                    "model_id": item.entry.model_id,
+                    "dataset_id": item.entry.dataset_id,
+                    "method_family": item.entry.family,
+                    "method_name": item.entry.method_name,
+                    "training_dataset_id": item.entry.training_dataset_id,
+                    "producer_source": item.entry.producer_source.value,
+                    "horizon": item.entry.context.horizon,
+                    "window": item.entry.context.window,
+                    "n_quantiles": item.entry.context.n_quantiles,
+                    "parameters": dict(item.entry.parameters),
+                    "signal_fingerprint": item.entry.signal_fingerprint,
+                    "value": item.value,
+                    "tied": item.tied,
+                    "n_observations": item.entry.n_observations,
+                    "summary": {
+                        key: None if value is None else float(value)
+                        for key, value in summarize_signal_metrics(
+                            dict(item.entry.metrics)
+                        ).items()
+                        if value is None or isinstance(value, (int, float))
+                    },
+                }
+                for item in ranked_rows
+            ],
             "skipped": [
                 {
                     "source": "signal",
@@ -1046,9 +1150,9 @@ class MLService:
                     "window": item.entry.context.window,
                     "n_quantiles": item.entry.context.n_quantiles,
                 }
-                for item in result.skipped
+                for item in ranking.skipped
             ],
-            "caveats": caveats,
+            "caveats": list(ranking.caveats),
         }
 
     def leaderboard_page(

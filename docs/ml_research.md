@@ -1039,19 +1039,24 @@ caller-declared method settings, distinguished by `method_family`.
 without consulting the current model registry. The ML report block uses schema 2
 and records `metadata.raw_market_version`; `null` means the entry has no saved raw
 evidence binding. Non-finite scores become `null`, as in leaderboard storage,
-while absent metric keys remain absent. `ml_report_block` collects the whole candidate set,
-including candidates that failed to rank, with block-level definitions, the
-observed parameter axes, the skipped rows and their coordinates, and the ranking
-caveats. It accepts the complete candidate list and a ranking metric, computing
-the ranking and selection caveats together from those candidates rather than
-accepting an independent or truncated ranking. `alpha` sets the family-wise
-significance level. Duplicate entry IDs raise `ValueError`. Comparability uses
-the leaderboard rules: settings must match by default; pass
+while absent metric keys remain absent. `RankingService.rank_signal_entries`
+loads one explicit, bounded `entry_id` selection and asks the application to
+assemble one complete ranking from those exact entries; `ml_report_block` only
+projects that result. The same application assembly serves the MCP filtered
+candidate set, so both consumers report the same order, skipped reasons and
+caveats. The report uses the whole selected set: MCP `offset`/`limit` are page
+controls and never change the report's candidate count, ranks or selection
+caveats. The block keeps every candidate that failed to rank, with block-level
+definitions, observed parameter axes, skipped rows and their coordinates, and
+ranking caveats. Duplicate selection IDs, unknown IDs, a selection above the
+report capacity and an incomparable set without an explicit opt-in fail.
+`alpha` sets the family-wise significance level. Comparability uses the
+leaderboard rules: settings must match by default; pass
 `allow_parameter_axes=True` for a surface, which still requires one research
 identity and one dataset version per horizon. `allow_mixed=True` permits
 otherwise incompatible candidates and adds a caveat when their settings fail
 the comparison rules. The application freezes the separate `market_comparison`
-verdict in the report and renders both checks.
+verdict in the result and the projection carries it into the saved report.
 
 Signal metric definitions now carry the two fields a portfolio metric definition
 already had, `modes` and `requires_annualization`, so one definition shape
