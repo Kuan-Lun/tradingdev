@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from tradingdev.domain.optimization.selection import SelectionEvidence
+    from tradingdev.domain.representatives import RepresentativeBinding
 
 MetricSource = Literal["bundle", "legacy_summary"]
 """Where a candidate's metric values came from.
@@ -78,6 +79,7 @@ class RunCandidate:
     conditions: TradingConditions
     metric_source: MetricSource
     selection_evidence: SelectionEvidence | None = None
+    representative: RepresentativeBinding | None = None
 
 
 def build_run_candidate(
@@ -96,6 +98,7 @@ def build_run_candidate(
     slippage: float,
     metric_source: MetricSource,
     selection_evidence: SelectionEvidence | None = None,
+    representative: RepresentativeBinding | None = None,
 ) -> RunCandidate:
     """Assemble a candidate, refusing a missing identity or trading condition.
 
@@ -145,6 +148,7 @@ def build_run_candidate(
         ),
         metric_source=metric_source,
         selection_evidence=selection_evidence,
+        representative=representative,
     )
 
 

@@ -9,8 +9,11 @@ reported as skipped with the reason, never re-run and never zero-filled.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
+
+from pydantic import TypeAdapter
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -19,6 +22,10 @@ from tradingdev.adapters.storage.performance import (
     PerformanceStore,
 )
 from tradingdev.adapters.storage.sqlite import get_sqlite_store
+from tradingdev.app.representative_service import (
+    RepresentativeService,
+    RepresentativeSourceError,
+)
 from tradingdev.app.rolling_trace_summary import query_metadata
 from tradingdev.app.selection_evidence import PublishedSelectionEvidence
 from tradingdev.domain.backtest.schemas import BacktestConfig
@@ -26,6 +33,12 @@ from tradingdev.domain.execution import ManifestError
 from tradingdev.domain.performance.artifacts import MetricDefinitionSnapshot
 from tradingdev.domain.performance.catalog import METRIC_CATALOG
 from tradingdev.domain.ranking import Candidate, MetricDefinition, rank_candidates
+from tradingdev.domain.representatives import (
+    RepresentativeBinding,
+    RepresentativeRecord,
+    RepresentativeRef,
+    RepresentativeSelections,
+)
 from tradingdev.domain.run_candidates import (
     RunCandidate,
     build_run_candidate,
@@ -38,6 +51,42 @@ if TYPE_CHECKING:
     from tradingdev.adapters.storage.sqlite import SQLiteStore
     from tradingdev.app.ml_service import MLService
     from tradingdev.domain.ml.report import SignalRanking
+    from tradingdev.domain.optimization.selection import SelectionEvidence
+
+
+def _run_details(candidate: RunCandidate) -> dict[str, Any]:
+    result = {
+        "run_id": candidate.run_id,
+        "scope": candidate.scope,
+        "strategy_id": candidate.strategy_id,
+        "revision_id": candidate.revision_id,
+        "parameters": dict(candidate.parameters),
+        "metadata": dict(candidate.metadata),
+        "conditions": asdict(candidate.conditions),
+        "metric_source": candidate.metric_source,
+        "selection_evidence": candidate.selection_evidence.model_dump(mode="json")
+        if candidate.selection_evidence is not None
+        else None,
+    }
+    if candidate.representative is not None:
+        result["representative"] = candidate.representative.model_dump(mode="json")
+    return result
+
+
+def _check_definition(
+    run_id: str, scope: str, name: str, recorded: MetricDefinitionSnapshot
+) -> None:
+    current = MetricDefinitionSnapshot.model_validate(
+        asdict(METRIC_CATALOG[name])
+    ).model_dump()
+    original = recorded.model_dump()
+    differences = [key for key, value in current.items() if original.get(key) != value]
+    if differences:
+        raise ValueError(
+            f"{run_id} {scope}: recorded metric definition differs "
+            f"from the current catalog: {', '.join(differences)}"
+        )
+
 
 _RUN_PREFIX = "run."
 _SIGNAL_PREFIX = "signal."
@@ -128,6 +177,7 @@ class RankingService:
         self._store = store or get_sqlite_store(self._workspace)
         self._performance = PerformanceStore(self._workspace, self._store)
         self._selection = PublishedSelectionEvidence(self._workspace, self._store)
+        self._representatives = RepresentativeService(self._workspace, self._store)
         self._ml = ml_service
 
     def rank_candidates(
@@ -135,6 +185,7 @@ class RankingService:
         metric: str,
         *,
         runs: Sequence[tuple[str, str | None]] | None = None,
+        representatives: Sequence[RepresentativeRef] | None = None,
         dataset_id: str | None = None,
         symbol: str | None = None,
         timeframe: str | None = None,
@@ -165,7 +216,7 @@ class RankingService:
             raise ValueError("limit must be an integer between 1 and 100")
         filters = (dataset_id, symbol, timeframe, horizon, feature_set, family)
         if metric.startswith(_SIGNAL_PREFIX):
-            if runs is not None:
+            if runs is not None or representatives is not None:
                 raise ValueError(
                     "signal ranking selects recorded evaluations with filters, "
                     "not run selections"
@@ -202,9 +253,15 @@ class RankingService:
                     "backtest ranking selects saved scopes with runs, "
                     "not signal filters"
                 )
-            if not runs:
+            if runs is not None and representatives is not None:
+                raise ValueError(
+                    "Use either unsaved runs or representative versions, not both"
+                )
+            if not runs and representatives is None:
                 raise ValueError("backtest ranking requires at least one run selection")
-            result = self.rank_run_scopes(metric, runs)
+            result = self.rank_run_scopes(
+                metric, runs or (), representatives=representatives
+            )
             if result.get("success") is False:
                 return result
             ranked = result["ranked"]
@@ -262,8 +319,9 @@ class RankingService:
     def rank_run_scopes(
         self,
         metric: str,
-        selections: Sequence[tuple[str, str | None]],
+        selections: Sequence[tuple[str, str | None]] = (),
         *,
+        representatives: Sequence[RepresentativeRef] | None = None,
         top_k: int | None = None,
     ) -> dict[str, Any]:
         """Rank ``(run_id, scope)`` pairs by one stored backtest metric.
@@ -274,6 +332,17 @@ class RankingService:
         that reason; the rest are ranked.
         """
         definition = resolve_metric(metric)
+        if representatives is not None and selections:
+            raise ValueError(
+                "Use either unsaved runs or representative versions, not both"
+            )
+        refs = (
+            TypeAdapter(RepresentativeSelections).validate_python(representatives)
+            if representatives is not None
+            else []
+        )
+        if len({(r.representative_id, r.version) for r in refs}) != len(refs):
+            return _duplicate_error("duplicate representative version selection")
         requested: set[tuple[str, str | None]] = set()
         for run_id, scope in selections:
             if (run_id, scope) in requested:
@@ -282,7 +351,7 @@ class RankingService:
                 )
             requested.add((run_id, scope))
         candidates = []
-        skipped: list[dict[str, str]] = []
+        skipped: list[dict[str, Any]] = []
         for run_id, scope in selections:
             try:
                 candidate = self._load_candidate(run_id, scope, metric)
@@ -295,6 +364,55 @@ class RankingService:
                 )
                 continue
             candidates.append(candidate)
+
+        for ref in refs:
+            record = None
+            source_available = False
+            try:
+                resolved = self._representatives.resolve(
+                    ref.representative_id, ref.version
+                )
+                record = resolved.record
+                source_available = True
+                selected = record.snapshot.performance
+                name = metric[len(_RUN_PREFIX) :]
+                if name in selected.values:
+                    _check_definition(
+                        record.snapshot.run_id,
+                        record.snapshot.scope,
+                        name,
+                        record.snapshot.definitions[name],
+                    )
+                evidence = self._selection.describe(
+                    record.snapshot.manifest,
+                    resolved.performance,
+                    record.snapshot.performance_sha256,
+                    record.snapshot.scope,
+                )
+                payload = self._representative_candidate(record, evidence)
+                candidates.append(
+                    to_ranking_candidate(
+                        payload, selected.model_dump(mode="json")["values"]
+                    )
+                )
+            except (ValueError, OSError, sqlite3.Error) as exc:
+                if isinstance(exc, RepresentativeSourceError):
+                    record = exc.record
+                details = (
+                    _run_details(self._representative_candidate(record))
+                    if record is not None
+                    else {"representative": ref.model_dump(mode="json")}
+                )
+                skipped.append(
+                    {
+                        "candidate_id": (
+                            f"representative:{ref.representative_id}@{ref.version}"
+                        ),
+                        **details,
+                        "source_available": source_available,
+                        "reason": str(exc),
+                    }
+                )
 
         # An omitted scope is resolved by the run itself, so (alpha, None) and
         # (alpha, "full") can be the same measurement while looking different.
@@ -320,25 +438,7 @@ class RankingService:
                     "rank": item.rank,
                     "tied": item.tied,
                     "value": item.value,
-                    "run_id": item.candidate.payload.run_id,
-                    "scope": item.candidate.payload.scope,
-                    "strategy_id": item.candidate.payload.strategy_id,
-                    "revision_id": item.candidate.payload.revision_id,
-                    "parameters": dict(item.candidate.payload.parameters),
-                    "metadata": dict(item.candidate.payload.metadata),
-                    "conditions": {
-                        "symbol": item.candidate.payload.conditions.symbol,
-                        "timeframe": item.candidate.payload.conditions.timeframe,
-                        "start_date": item.candidate.payload.conditions.start_date,
-                        "end_date": item.candidate.payload.conditions.end_date,
-                        "fees": item.candidate.payload.conditions.fees,
-                        "slippage": item.candidate.payload.conditions.slippage,
-                    },
-                    "metric_source": item.candidate.payload.metric_source,
-                    "selection_evidence": evidence.model_dump(mode="json")
-                    if (evidence := item.candidate.payload.selection_evidence)
-                    is not None
-                    else None,
+                    **_run_details(item.candidate.payload),
                 }
                 for item in result.ranked
             ],
@@ -348,6 +448,7 @@ class RankingService:
                     "run_id": item.candidate.payload.run_id,
                     "scope": item.candidate.payload.scope,
                     "reason": item.reason,
+                    **self._skipped_representative(item.candidate.payload, metric),
                 }
                 for item in result.skipped
             ]
@@ -358,7 +459,59 @@ class RankingService:
                 "provider versions, settings and observation periods; it does not "
                 "establish a controlled comparison. Conditions describe the run's "
                 "submitted period, not each scope's observed period.",
+                *(
+                    [
+                        "Representative selection records inclusion in comparison, not "
+                        "verified holdout status or evidence of strategy validity. "
+                        "Newer or higher-scoring experiments never replace "
+                        "a selected version."
+                    ]
+                    if refs
+                    else []
+                ),
             ],
+        }
+
+    @staticmethod
+    def _representative_candidate(
+        record: RepresentativeRecord, evidence: SelectionEvidence | None = None
+    ) -> RunCandidate:
+        snapshot = record.snapshot
+        backtest = BacktestConfig.model_validate(snapshot.manifest.config["backtest"])
+        return build_run_candidate(
+            run_id=snapshot.run_id,
+            scope=snapshot.scope,
+            strategy_id=snapshot.strategy_id,
+            revision_id=snapshot.revision_id or "",
+            parameters=snapshot.effective_parameters,
+            metadata=snapshot.performance.metadata,
+            symbol=backtest.symbol,
+            timeframe=backtest.timeframe,
+            start_date=backtest.start_date.isoformat(),
+            end_date=backtest.end_date.isoformat(),
+            fees=backtest.fees,
+            slippage=backtest.slippage,
+            metric_source="bundle",
+            selection_evidence=evidence,
+            representative=RepresentativeBinding.from_record(record),
+        )
+
+    @staticmethod
+    def _skipped_representative(candidate: RunCandidate, metric: str) -> dict[str, Any]:
+        if candidate.representative is None:
+            return {}
+        unavailable = candidate.metadata.get("unavailable")
+        reason = (
+            unavailable.get(metric[len(_RUN_PREFIX) :])
+            if isinstance(unavailable, dict)
+            else None
+        )
+        return {
+            **_run_details(candidate),
+            "source_available": True,
+            "metric_unavailable_reason": reason
+            if isinstance(reason, str) and reason
+            else "reason_not_recorded",
         }
 
     def _load_candidate(
@@ -395,18 +548,7 @@ class RankingService:
             )
         name = metric[len(_RUN_PREFIX) :]
         if name in selected.values:
-            recorded = bundle.definitions[name].model_dump()
-            current = MetricDefinitionSnapshot.model_validate(
-                asdict(METRIC_CATALOG[name])
-            ).model_dump()
-            differences = [
-                key for key, value in current.items() if recorded.get(key) != value
-            ]
-            if differences:
-                raise ValueError(
-                    f"{run_id} {resolved_scope}: recorded metric definition differs "
-                    f"from the current catalog: {', '.join(differences)}"
-                )
+            _check_definition(run_id, resolved_scope, name, bundle.definitions[name])
         manifest_hash = run.get("manifest_hash")
         if not manifest_hash:
             raise ValueError(f"{run_id}: no execution manifest recorded")

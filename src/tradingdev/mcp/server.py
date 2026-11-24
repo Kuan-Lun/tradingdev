@@ -20,6 +20,7 @@ from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.ml_service import MLService
 from tradingdev.app.report_service import ReportService
+from tradingdev.app.representative_service import RepresentativeService
 from tradingdev.app.research_note_service import ResearchNoteService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
@@ -36,6 +37,7 @@ from tradingdev.mcp.tools import (
     history,
     jobs,
     ml,
+    representatives,
     research_notes,
     runs,
     strategy,
@@ -148,6 +150,7 @@ def create_server(
         mcp, artifact_service, public_base_url=public_base_url
     )
     research_notes.register(mcp, ResearchNoteService(workspace, store), downloads)
+    representatives.register(mcp, RepresentativeService(workspace, store))
     feature_requests.register(mcp, feature_request_service)
     ml.register(mcp, MLService(workspace=workspace, data_service=data_service))
     return mcp

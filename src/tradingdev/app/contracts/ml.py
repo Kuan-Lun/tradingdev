@@ -14,6 +14,7 @@ from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.ml.leaderboard import ProducerSource
 from tradingdev.domain.ml.market_evidence import MarketComparison, RawMarketEvidence
 from tradingdev.domain.optimization.selection import SelectionEvidence
+from tradingdev.domain.representatives import RepresentativeBinding, RepresentativeRef
 
 
 class FeatureSetSummary(ContractModel):
@@ -99,6 +100,7 @@ class RankingDiscovery(ContractModel):
 
     tool: Literal["rank_candidates"]
     sources: list[RankingSource]
+    representatives: dict[str, str | int]
 
 
 class MlContractResponse(ContractModel):
@@ -334,6 +336,7 @@ class RankedRunRow(ContractModel):
     metric_source: Literal["bundle", "legacy_summary"]
     """Whether the value came from the performance bundle or a legacy summary."""
     selection_evidence: SelectionEvidence | None = None
+    representative: RepresentativeBinding | None = None
     """Training-search context for an optimization, with a saved evidence reference."""
 
 
@@ -345,6 +348,16 @@ class SkippedRunRow(ContractModel):
     run_id: str | None = None
     scope: str | None = None
     reason: str
+    representative: RepresentativeBinding | RepresentativeRef | None = None
+    strategy_id: str | None = None
+    revision_id: str | None = None
+    parameters: dict[str, JsonValue] | None = None
+    metadata: dict[str, JsonValue] | None = None
+    conditions: RunConditions | None = None
+    metric_source: Literal["bundle", "legacy_summary"] | None = None
+    selection_evidence: SelectionEvidence | None = None
+    source_available: bool | None = None
+    metric_unavailable_reason: str | None = None
 
 
 type RankedRow = Annotated[LeaderboardRow | RankedRunRow, Field(discriminator="source")]

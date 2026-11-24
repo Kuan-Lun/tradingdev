@@ -12,6 +12,7 @@ import yaml
 
 from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
+from tradingdev.adapters.storage.representatives import RepresentativeStore
 from tradingdev.adapters.storage.strategy_revisions import (
     StrategyRevisionIntegrityError,
 )
@@ -59,6 +60,14 @@ def referenced_revisions(
                 f"Invalid stored revision reference: {reason}"
             )
         references.setdefault(revision_id, []).append(reason)
+
+    for representative in RepresentativeStore(store).revisions(strategy_id):
+        if representative.snapshot.manifest.strategy_execution.kind == "generated":
+            retain(
+                representative.snapshot.revision_id,
+                f"representative:{representative.representative_id}"
+                f"@{representative.version}",
+            )
 
     # list_jobs is a user-facing projection that omits non-object payloads.
     # Cleanup must instead validate every raw row against its indexed identity.

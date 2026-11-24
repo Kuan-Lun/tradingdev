@@ -42,6 +42,7 @@ _READ_ONLY_TOOLS = {
     "get_run_account_history",
     "get_report_sections",
     "get_research_notes",
+    "get_strategy_representatives",
     "get_research_archive",
     "get_run_diagnostics",
     "compare_runs",
@@ -76,6 +77,8 @@ _MUTATING_HINTS = {
     "record_feature_request": (False, False, False, False),
     "generate_report": (False, False, True, False),
     "save_research_note": (False, True, False, False),
+    "create_strategy_representative": (False, False, False, False),
+    "revise_strategy_representative": (False, True, False, False),
     "export_research_note": (False, False, True, False),
     # Recording can replace an evaluation; dataset/panel builds can evict
     # feature caches, and training rewrites stored model artifacts. Stable

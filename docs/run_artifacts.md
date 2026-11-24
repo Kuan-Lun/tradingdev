@@ -20,6 +20,7 @@ schemas through `tools/list` and use the [lookup tools](#mcp-lookup).
 | Runtime table columns and record updates | [SQLiteStore](../src/tradingdev/adapters/storage/sqlite.py), [ExecutionPlanStore](../src/tradingdev/adapters/storage/execution_plans.py) and [ResearchNoteStore](../src/tradingdev/adapters/storage/research_notes.py) |
 | Publishing run files and registering artifact types | [RunPublisher](../src/tradingdev/app/run_publisher.py) and [PerformanceStore](../src/tradingdev/adapters/storage/performance.py) |
 | Saved metrics, observations and reporting | [Performance Artifacts](performance_artifacts.md) and [Reports](reports.md) |
+| Representative record fields, size and version constraints | [RepresentativeRecord and RepresentativeSnapshot](../src/tradingdev/domain/representatives.py); [RepresentativeStore](../src/tradingdev/adapters/storage/representatives.py) owns their indexed SQLite versions |
 
 The following sections retain cross-file meaning and failure behavior; they are
 not a second field-by-field schema. A digest detects inconsistency only while its
@@ -863,10 +864,73 @@ aligned to their original bar indices after filtering and paging.
 
 ## Ranking Saved Run Scopes
 
+**Explicit strategy representatives.**
+
+`RepresentativeService.create(group_id, run_id, scope, reason)` creates a new
+selection for one research group and strategy. `revise` requires its stable ID
+and expected current version; it preserves the group and strategy and atomically
+adds a version. Duplicate creation or reselecting the current run/scope fails.
+Current reads, lists, writes and cleanup reject an inconsistent owner/current index
+or a gap in the history beginning at version one. An explicit historical read can
+tolerate a stale head version or damaged other history only while the head row
+remains available and the selected version's snapshot and indexed identity verify.
+Concurrent revisions from the same version have one winner; stale writers must
+reread. `get` reads the current choice or an explicit historical version after a
+restart. `get(group_id=...)` pages current representatives;
+`get(run_id=...)` pages every version referencing that run, including superseded
+choices. The formal models above define bounds; over-capacity snapshots fail
+without publishing a selection.
+
+MCP exposes these operations as `create_strategy_representative`,
+`revise_strategy_representative` and `get_strategy_representatives`, with input
+and output schemas in `tools/list`. `get_ml_contract.ranking.representatives` and
+`guidance.representatives` are the client-readable discovery and workflow entry.
+MCP does not accept caller-authored parameters or revision labels when selecting.
+
+The immutable SQLite versions contain the actual run/scope, generated revision
+or bundled source digest, execution manifest, complete effective constructor
+parameters, saved scalar metrics/definitions and metadata, and the digests of
+performance and observations. Constructor defaults come from that execution's
+manifest, with the same recursive trial overlay as execution. Today's registry
+never fills historical identity. Creation verifies the run row against the
+manifest, the registered historical strategy source, both performance artifacts,
+and the complete manifest/scope relationship. Creation and revision also require
+an owning optimization job to be `done` when its record exists. Fold summaries are refused; a
+numbered scalar fold can be selected, without claiming it is a concatenated
+walk-forward path. New experiments and higher scores never change a choice.
+
+Reads retain the snapshot when its original source disappears or changes, and
+report `source_available: false` with `unavailable_reason`. These snapshots allow
+historical interpretation; they are not raw observations or recomputation inputs.
+The retention policy permits source removal with explicit unavailability on
+subsequent reads, never automatic retargeting. Before removing run artifacts,
+inspect all pages of the run-reference query. Generated draft cleanup also retains
+revisions referenced by any representative version, even after run sources vanish.
+Selecting a representative means inclusion in comparison, not verified holdout
+status or evidence that a strategy is valid. These operations save representative
+records; they do not execute strategies or publish runs/results.
+
+For ranking, pass `representatives=[{representative_id, version}]` to
+`rank_candidates` with `run.<metric>`, or to `RankingService.rank_run_scopes`.
+Use explicit versions, separately from unsaved `runs`/tuple selections and signal
+filters. The domain representative-selection definition limits each request.
+Every ranked representative has a `representative` binding containing its group,
+version and saved content identities; its parameters are complete effective
+values. Ranked and skipped representatives retain run/scope, trading conditions
+and source identity whenever the stored record is readable. A lost or changed
+source is skipped with `source_available: false`; a verified source with an
+unusable metric retains `metric_unavailable_reason`, never zero. Corrupt or
+unknown representative records retain the requested ID/version and failure reason.
+Duplicate references and distinct references to the same verified run/scope are
+refused. Saved definition compatibility, optimization search evidence, paging
+and conditional-comparison caveats use the same application ranking path as
+temporary run selections. Historical snapshot metrics cannot substitute for
+unverifiable original sources.
+
 `RankingService.rank_run_scopes` orders saved scopes by one metric a run already
 recorded. The MCP `rank_candidates` tool exposes it through
 `RankingService.rank_candidates`: a `run.<metric>` id with explicit `runs`
-selections is the public form of this contract, and
+or representative-version selections is the public form of this contract, and
 [the ML research contract](ml_research.md) documents the shared response shape,
 source selection and paging. The Python library accepts `(run_id, scope)` tuples
 and `top_k`; MCP accepts selection objects and pages with `offset`/`limit`.
@@ -897,10 +961,11 @@ such as `test_summary` are skipped with a reason directing the caller to a numbe
 fold; their descriptive statistics are not scalar backtest measurements. Other
 valid selections still rank normally.
 
-Each row's `parameters` is the selected scope's saved mapping: simple and
+For temporary run selections, each row's `parameters` is the scope's saved mapping: simple and
 walk-forward runs store constructor parameters including captured defaults;
 optimization scopes store trial overrides, not the fully merged constructor.
-Ranking does not reconstruct or merge these settings. Its `metadata` preserves the scope's
+That path does not reconstruct or merge these settings. Representative rows use
+the complete parameters captured when the selection was created. Each row's `metadata` preserves the scope's
 provenance and settings; fitted values remain separately identified by
 `metadata.strategy_parameters` when recorded. Growing rolling traces retain the
 summary and artifact references supplied by `get_run_metrics`.

@@ -26,6 +26,7 @@ from tradingdev.app.contracts.ml import (
 # tool, so a type-checking-only import would fail to resolve `runs` at registration.
 from tradingdev.app.contracts.research import RunScopeSelection  # noqa: TC001
 from tradingdev.app.ranking_service import RankingService, qualify_metric
+from tradingdev.domain.representatives import RepresentativeSelections  # noqa: TC001
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer
@@ -277,6 +278,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
     def rank_candidates(
         metric: str,
         runs: list[RunScopeSelection] | None = None,
+        representatives: RepresentativeSelections | None = None,
         dataset_id: str | None = None,
         symbol: str | None = None,
         timeframe: str | None = None,
@@ -292,7 +294,9 @@ def register(mcp: MCPServer, service: MLService) -> None:
         """Rank one source of saved candidates on a directed metric.
 
         Use metric='signal.<name>' with signal filters, or 'run.<name>' with
-        runs (null scope selects the default). Signal ids, directions and units
+        runs (null scope selects the default), OR representatives=[{representative_id,
+        version}] from get_strategy_representatives. No automatic reselection.
+        Signal ids, directions and units
         are in get_ml_contract.ranking.sources; run ids are in
         get_metric_catalog. Bare or unknown prefixes are refused. Read only;
         follow next_offset, keep caveats, and never recompute a saved result.
@@ -305,6 +309,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
                     if runs is None
                     else [(item.run_id, item.scope) for item in runs]
                 ),
+                representatives=representatives,
                 dataset_id=dataset_id,
                 symbol=symbol,
                 timeframe=timeframe,

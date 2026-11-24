@@ -346,6 +346,21 @@ class PerformanceStore:
         """Read original observations and verify their complete scope mapping."""
         return self._load_observations(run_id)
 
+    def load_observations_with_hash(
+        self, run_id: str
+    ) -> tuple[ObservationsBundle, str]:
+        """Bind original observations to the digest of exactly the validated bytes."""
+        performance = self._load(run_id)
+        content, _, digest = self._read(run_id, "observations")
+        try:
+            observations = ObservationsBundle.model_validate_json(content)
+            PerformanceArtifacts(performance=performance, observations=observations)
+            return observations, digest
+        except ValueError as exc:
+            raise PerformanceArtifactError(
+                "performance_artifact_invalid", str(exc)
+            ) from exc
+
     def _load_observations(
         self, run_id: str, *, allow_pending: bool = False
     ) -> ObservationsBundle:

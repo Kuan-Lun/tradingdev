@@ -296,16 +296,23 @@ removed with no compatibility alias, and `get_ml_contract.leaderboard_metrics`
 is replaced by `get_ml_contract.ranking.sources` (signal metrics) plus
 `get_metric_catalog` (run metrics); existing clients must call `rank_candidates`
 and qualify every metric id with `signal.` or `run.`.
+`ranking.representatives` supplies the create/read/revise tools and capacity bounds;
+`guidance.representatives` explains explicit choice, historical versions and recovery
+without requiring repository access. The complete persistence and source contract
+is [strategy representatives](run_artifacts.md#ranking-saved-run-scopes).
 
 The same tool ranks saved backtest scopes. `signal.<metric>` ranks recorded
 evaluations, while `run.<metric>`
-ranks saved scopes and requires `runs` as a list of selection objects, for example
+ranks saved scopes using `runs` as a list of selection objects, for example
 `runs=[{"run_id":"example","scope":"full"}]`. An omitted or null `scope` selects
 that run's default. The Python library uses tuples instead, as described in
 [the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+Alternatively, pass `representatives=[{"representative_id":"...","version":1}]`
+from `get_strategy_representatives`. Each version is fixed explicitly; it never
+means latest or highest scoring. `runs` and `representatives` cannot be combined.
 The response reports the same source-qualified id, so
 `metric="signal.ic_mean"` comes back unchanged. The two argument sets are exclusive: a signal ranking refuses
-`runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
+`runs` or `representatives`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
 `feature_set`, `family`, and signal ranking options, including
 `require_verified_baseline=True`, because one call ranks one source. Selecting the same measurement twice is refused as `duplicate_selections`,
 in two layers. Identical requested pairs are refused before anything is loaded;
@@ -328,7 +335,7 @@ conditions, definition checks, optimization evidence and fold-summary skips — 
 MCP `rank_candidates` accepts `offset=0` and `limit=20` (1–100); it does not accept
 `top_k`. For recorded evaluations the complete filtered candidate set is compared
 and ranked before paging; to rank saved backtest scopes instead, pass
-`run.<metric>` with explicit `runs` selections, and those scopes are ordered by the
+`run.<metric>` with explicit `runs` or representative-version selections, and those scopes are ordered by the
 same rules. `ranked` and `skipped` each return at most `limit` entries at the same
 offset; `n_ranked` and `n_skipped` describe their complete counts. Follow the
 shared `next_offset` until `null`, even if one list has no entries on a page. A run
