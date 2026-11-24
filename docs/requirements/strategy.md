@@ -33,6 +33,6 @@
 ## FR-STR-005 草稿清理
 
 - **需求**：清理生成策略預設提供預覽；實際刪除須明確指定版本並取得授權，只處理符合條件且無引用的非 current 草稿。
-- **驗收**：目前版本、非草稿、被工作或結果引用，以及引用損壞或不明的版本均保留；失敗回報原因，不宣稱跨檔案交易。關閉 server 不等於授權清除研究成果。
+- **驗收**：目前版本、非草稿、被工作、結果或代表歷史引用，以及引用損壞或不明的版本均保留；失敗回報原因，不宣稱跨檔案交易。關閉 server 不等於授權清除研究成果。
 - **契約**：[草稿清理](../strategy_contract.md#draft-cleanup)。
-- **驗證**：[清理 service](../../tests/app/test_strategy_cleanup_service.py) 驗證保護條件；[真實模型清理情境](../../tests/e2e/test_llm_cleanup.py) 檢查預覽、授權與結果，須另啟模型測試。
+- **驗證**：[清理 service](../../tests/app/test_strategy_cleanup_service.py) 驗證保護條件；[代表引用保護](../../tests/app/test_representatives.py) 檢查歷史引用與損壞拒絕；[真實模型清理情境](../../tests/e2e/test_llm_cleanup.py) 檢查預覽、授權與結果，須另啟模型測試。
