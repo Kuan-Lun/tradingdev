@@ -910,7 +910,7 @@ class TestServiceEntryGuards:
         workspace, store = storage
         store.upsert_job(
             {
-                "job_id": "job-opt",
+                "job_id": "opt",
                 "job_type": "optimization",
                 "status": "running",
                 "strategy_name": "fixture",

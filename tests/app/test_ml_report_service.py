@@ -27,6 +27,7 @@ from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
     ProducerSource,
+    resolve_method,
 )
 from tradingdev.domain.ml.registry import LeaderboardStore, ModelArtifactStore
 
@@ -623,3 +624,64 @@ def test_protect_evaluation_series_counts_distinct_ids(
 def test_panel_symbols_requires_a_nonempty_name() -> None:
     with pytest.raises(ValueError, match="at least one symbol is required"):
         MLService._panel_symbols([])
+
+
+def test_panel_symbols_rejects_a_trimmed_duplicate() -> None:
+    with pytest.raises(ValueError, match="duplicate symbols"):
+        MLService._panel_symbols(["BTC/USDT", " BTC/USDT "])
+
+
+def test_panel_symbols_needs_two_distinct_symbols() -> None:
+    with pytest.raises(ValueError, match="at least two distinct symbols"):
+        MLService._panel_symbols(["BTC/USDT"])
+
+
+def _record_arguments(
+    identity: Any, *, dataset_id: str, manifest: dict[str, Any] | None
+) -> dict[str, Any]:
+    return {
+        "signal": [1.0],
+        "forward_returns": [1.0],
+        "pearson_ic": None,
+        "spearman_ic": None,
+        "evaluation_id": "evaluation",
+        "fingerprint": "fingerprint",
+        "manifest": manifest,
+        "n_observations": 1,
+        "horizon": 1,
+        "window": 2,
+        "n_quantiles": 5,
+        "model_id": None,
+        "dataset_id": dataset_id,
+        "identity": identity,
+        "producer_source": ProducerSource.CALLER_ARRAY,
+    }
+
+
+def test_recording_evaluation_requires_a_dataset_id(tmp_path: Path) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    identity = resolve_method(
+        model_id=None,
+        method_family="rule",
+        method_name="threshold",
+        method_parameters={},
+    )
+    with pytest.raises(ValueError, match="requires dataset_id"):
+        ml._record_evaluation(
+            {}, **_record_arguments(identity, dataset_id="", manifest=None)
+        )
+
+
+def test_recording_evaluation_requires_the_dataset_manifest(tmp_path: Path) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    identity = resolve_method(
+        model_id=None,
+        method_family="rule",
+        method_name="threshold",
+        method_parameters={},
+    )
+    with pytest.raises(ValueError, match="requires the dataset manifest"):
+        ml._record_evaluation(
+            {},
+            **_record_arguments(identity, dataset_id="dataset", manifest=None),
+        )
