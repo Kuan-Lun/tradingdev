@@ -54,6 +54,7 @@ flowchart LR
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
+| `domain/representatives.py`、`app/representative_service.py` | 明確選定的策略代表及歷史版本；service 從保存的 manifest、scope 與來源解析完整有效參數，儲存及來源讀取由 `adapters/storage/representatives.py` 負責；研究群組與策略各保留一個現行版本，修訂使用預期版本控制。完整語意見[保存結果排名](docs/run_artifacts.md#ranking-saved-run-scopes) |
 | `domain/statistics/` | 由呼叫端提供觀察值或試驗資料的獨立統計計算與推論；入口見「績效計算與對話摘要」 |
 | `domain/ranking.py` | 候選無關的排序核心：依指標宣告方向排序、同分名次、缺值原因與比較群組。兩個呼叫端共用同一套規則而不共用資料模型：`domain/ml/leaderboard.py` 的訊號排名，以及 `app/ranking_service.py` 的 `RankingService.rank_candidates`（依 metric 前綴分派：`signal.` 讀已記錄評估、`run.` 讀已保存 scope 的 run 記錄與 manifest）。MCP 的 `rank_candidates` 工具經由 `RankingService` 提供這個共用入口，兩種來源共用同一頁面形狀；CLI 仍未接上 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 依資產類別固定的基準定義、買進持有計算與基準行情取得 |

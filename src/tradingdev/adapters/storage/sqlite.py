@@ -125,6 +125,20 @@ class SQLiteStore:
                     primary key(job_id, position)
                 );
 
+                create table if not exists representative_heads (
+                    representative_id text primary key, group_id text not null,
+                    strategy_id text not null, version integer not null,
+                    unique(group_id, strategy_id)
+                );
+                create table if not exists representative_versions (
+                    representative_id text not null, version integer not null,
+                    run_id text not null, scope text not null, revision_id text,
+                    document text not null, sha256 text not null,
+                    primary key(representative_id, version)
+                );
+                create index if not exists representative_run_references
+                    on representative_versions(run_id);
+
                 create table if not exists events (
                     event_id integer primary key autoincrement,
                     job_id text not null,
