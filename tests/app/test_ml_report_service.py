@@ -685,3 +685,17 @@ def test_recording_evaluation_requires_the_dataset_manifest(tmp_path: Path) -> N
             {},
             **_record_arguments(identity, dataset_id="dataset", manifest=None),
         )
+
+
+def test_evaluate_signal_rejects_a_window_below_two(tmp_path: Path) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    values = [0.1] * 10
+    with pytest.raises(ValueError, match="window must be at least 2"):
+        ml.evaluate_signal(values, values, window=1, n_quantiles=5)
+
+
+def test_evaluate_signal_rejects_a_nonpositive_horizon(tmp_path: Path) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    values = [0.1] * 10
+    with pytest.raises(ValueError, match="horizon must be at least 1"):
+        ml.evaluate_signal(values, values, horizon=0, window=2, n_quantiles=5)
