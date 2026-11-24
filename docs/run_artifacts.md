@@ -871,9 +871,9 @@ selection for one research group and strategy. `revise` requires its stable ID
 and expected current version; it preserves the group and strategy and atomically
 adds a version. Duplicate creation or reselecting the current run/scope fails.
 Current reads, lists, writes and cleanup reject an inconsistent owner/current index
-or a gap in the history beginning at version one. An explicitly selected surviving
-version remains readable when only the current version pointer/history is damaged;
-that version's own snapshot and indexed identity must still verify.
+or a gap in the history beginning at version one. An explicit historical read can
+tolerate a stale head version or damaged other history only while the head row
+remains available and the selected version's snapshot and indexed identity verify.
 Concurrent revisions from the same version have one winner; stale writers must
 reread. `get` reads the current choice or an explicit historical version after a
 restart. `get(group_id=...)` pages current representatives;
