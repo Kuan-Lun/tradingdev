@@ -366,8 +366,12 @@ def test_damaged_owner_index_cannot_hide_a_choice_or_allow_duplicate_creation(
         )
 
 
+@pytest.mark.parametrize(
+    "damage", ["missing", "fractional-version", "extra-fractional-version"]
+)
 def test_missing_interior_history_blocks_current_operations_and_draft_cleanup(
     tmp_path: Path,
+    damage: str,
 ) -> None:
     workspace, store, revisions, cleanup = _setup(tmp_path)
     drafts = [_draft(revisions) for _ in range(4)]
@@ -385,7 +389,32 @@ def test_missing_interior_history_blocks_current_operations_and_draft_cleanup(
     assert service.revise(identity, 1, "B", "full")["version"] == 2
     assert service.revise(identity, 2, "C", "full")["version"] == 3
     with closing(store.connect()) as conn, conn:
-        conn.execute("delete from representative_versions where version=2")
+        if damage == "missing":
+            conn.execute("delete from representative_versions where version=2")
+        elif damage == "fractional-version":
+            conn.execute(
+                "update representative_versions set version=1.5 where version=2"
+            )
+            # Count and integer endpoints alone do not prove a complete version grid.
+            assert tuple(
+                conn.execute(
+                    "select min(version),max(version),count(*) "
+                    "from representative_versions"
+                ).fetchone()
+            ) == (1, 3, 3)
+        else:
+            conn.execute(
+                "insert into representative_versions select representative_id,1.5,"
+                "run_id,scope,revision_id,document,sha256 from representative_versions "
+                "where version=2"
+            )
+            # Counting only integers hides an extra fractional version.
+            assert tuple(
+                conn.execute(
+                    "select min(version),max(version),count(*),"
+                    "sum(typeof(version)='integer') from representative_versions"
+                ).fetchone()
+            ) == (1, 3, 4, 3)
         conn.execute("delete from runs")
         conn.execute("delete from artifacts")
     for name in ("A", "B", "C"):
