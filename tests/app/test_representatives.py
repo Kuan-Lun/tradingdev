@@ -8,7 +8,8 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
-from typing import Any
+from threading import Barrier
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from tests.app.test_strategy_cleanup_service import _draft, _setup
@@ -19,6 +20,9 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.adapters.storage.strategy_references import referenced_revisions
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.representative_service import RepresentativeService
+
+if TYPE_CHECKING:
+    from tradingdev.domain.representatives import RepresentativeSnapshot
 
 
 @pytest.fixture
@@ -81,11 +85,24 @@ def test_unique_group_strategy_and_explicit_duplicate_refusals(
 
 def test_concurrent_revision_has_one_winner_and_one_conflict(
     storage: tuple[WorkspacePaths, SQLiteStore, RepresentativeService],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace, store, service = storage
     for name, window in (("A", 10), ("B", 20), ("C", 30)):
         publish_representative_run(workspace, store, name, window=window)
     identity = service.create("group", "A", "full")["representative_id"]
+    # Both writers have read v1 before either can enter the publishing transaction.
+    barrier = Barrier(2)
+    capture = RepresentativeService.capture
+
+    def synchronized_capture(
+        instance: RepresentativeService, run_id: str, scope: str
+    ) -> RepresentativeSnapshot:
+        snapshot = capture(instance, run_id, scope)
+        barrier.wait(timeout=10)
+        return snapshot
+
+    monkeypatch.setattr(RepresentativeService, "capture", synchronized_capture)
 
     def revise(run: str) -> dict[str, Any]:
         return RepresentativeService(workspace, SQLiteStore(workspace)).revise(

@@ -13,6 +13,7 @@ from tradingdev.domain.performance.artifacts import (
 )
 
 MAX_REPRESENTATIVE_BYTES = 131072
+MAX_REPRESENTATIVE_SELECTIONS = 100
 type RepresentativeId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 type RepresentativeVersion = Annotated[int, Field(strict=True, ge=1)]
 type ResearchGroup = Annotated[
@@ -37,6 +38,12 @@ class RepresentativeRef(RepresentativeModel):
     version: RepresentativeVersion
 
 
+type RepresentativeSelections = Annotated[
+    list[RepresentativeRef],
+    Field(min_length=1, max_length=MAX_REPRESENTATIVE_SELECTIONS),
+]
+
+
 class RepresentativeSnapshot(RepresentativeModel):
     run_id: SavedRunId
     scope: SavedScope
@@ -58,6 +65,26 @@ class RepresentativeRecord(RepresentativeRef):
     selected_at: str
     reason: SelectionReason = ""
     snapshot: RepresentativeSnapshot
+
+
+class RepresentativeBinding(RepresentativeRef):
+    group_id: ResearchGroup
+    manifest_hash: Digest
+    performance_sha256: Digest
+    observations_sha256: Digest
+    source_hash: Digest
+
+    @classmethod
+    def from_record(cls, record: RepresentativeRecord) -> RepresentativeBinding:
+        return cls(
+            representative_id=record.representative_id,
+            version=record.version,
+            group_id=record.group_id,
+            manifest_hash=record.snapshot.manifest.manifest_hash,
+            performance_sha256=record.snapshot.performance_sha256,
+            observations_sha256=record.snapshot.observations_sha256,
+            source_hash=record.snapshot.source_hash,
+        )
 
 
 class RepresentativeConflictError(ValueError):

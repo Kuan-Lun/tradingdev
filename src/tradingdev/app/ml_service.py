@@ -119,6 +119,10 @@ from tradingdev.domain.ml.validation import (
     validation_scheme_names,
 )
 from tradingdev.domain.performance.sampling import bar_duration_ns
+from tradingdev.domain.representatives import (
+    MAX_REPRESENTATIVE_BYTES,
+    MAX_REPRESENTATIVE_SELECTIONS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -309,6 +313,27 @@ _ML_GUIDANCE = {
         "allow_mixed and allow_parameter_axes are signal-only opt-ins and do "
         "not establish comparability. A winner is not a profit guarantee."
     ),
+    "representatives": (
+        "For an explicit user choice, create_strategy_representative saves one "
+        "actual run/scope per research group and strategy. Parameters, revision, "
+        "source and effective settings are verified from original artifacts, "
+        "never supplied as labels. get_strategy_representatives(group_id=...) "
+        "pages current choices; an ID reads current or explicit historical version. "
+        "revise_strategy_representative requires that ID, expected_version and "
+        "an explicit replacement run/scope, preserving old versions. A conflict "
+        "requires rereading and a new explicit user choice; never silently retry. "
+        "Mentioning latest or highest score does not authorize reselection. "
+        "Rank with representatives=[{representative_id, version}] and run.<metric>, "
+        "exclusively of runs or signal filters. The source is reverified; lost or "
+        "changed artifacts keep the historical snapshot with an unavailable reason "
+        "and cannot rank. Snapshots contain metrics/definitions, not raw observations "
+        "or recomputation inputs. No execution or automatic publication occurs. "
+        "A fold summary is not a tradable path; choose an original scalar scope. "
+        "Selection proves neither holdout nor strategy validity. Before removing "
+        "run sources, page get_strategy_representatives(run_id=...) through all "
+        "historical references. Source removal leaves explicit unavailability; "
+        "draft cleanup protects generated revisions referenced by every version."
+    ),
     "reports": (
         "After inspecting saved leaderboard candidates, discover report sections "
         "with get_report_sections and select their entry IDs with generate_report. "
@@ -333,6 +358,15 @@ def _ranking_discovery() -> dict[str, Any]:
     """
     return {
         "tool": "rank_candidates",
+        "representatives": {
+            "create_tool": "create_strategy_representative",
+            "read_tool": "get_strategy_representatives",
+            "revise_tool": "revise_strategy_representative",
+            "ranking_argument": "representatives",
+            "max_selection": MAX_REPRESENTATIVE_SELECTIONS,
+            "max_snapshot_bytes": MAX_REPRESENTATIVE_BYTES,
+            "scope": "research_group_and_strategy",
+        },
         "sources": [
             {
                 "source": "signal",
@@ -362,7 +396,9 @@ def _ranking_discovery() -> dict[str, Any]:
                 "metric_prefix": "run.",
                 "candidate_selection": (
                     "Pass runs=[{run_id, scope}] for saved backtest scopes; "
-                    "a null scope selects that run's default."
+                    "a null scope selects that run's default. Alternatively use "
+                    "explicit representatives=[{representative_id, version}] "
+                    "from get_strategy_representatives."
                 ),
                 "definition_entry": "get_metric_catalog(mode=None)",
                 "metrics": None,

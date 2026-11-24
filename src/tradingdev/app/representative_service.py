@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
@@ -32,6 +33,21 @@ from tradingdev.domain.research_scope import (
 if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
     from tradingdev.adapters.storage.sqlite import SQLiteStore
+    from tradingdev.domain.performance.artifacts import PerformanceBundle
+
+
+@dataclass(frozen=True)
+class ResolvedRepresentative:
+    record: RepresentativeRecord
+    performance: PerformanceBundle
+
+
+class RepresentativeSourceError(ValueError):
+    """An intact historical choice whose original result cannot be verified."""
+
+    def __init__(self, record: RepresentativeRecord, reason: str) -> None:
+        super().__init__(reason)
+        self.record = record
 
 
 def _error(exc: Exception) -> dict[str, Any]:
@@ -50,6 +66,11 @@ class RepresentativeService:
         self.sources = RepresentativeSources(workspace, store)
 
     def capture(self, run_id: str, scope: str) -> RepresentativeSnapshot:
+        return self._capture(run_id, scope)[0]
+
+    def _capture(
+        self, run_id: str, scope: str
+    ) -> tuple[RepresentativeSnapshot, PerformanceBundle]:
         run_id = TypeAdapter(SavedRunId).validate_python(run_id)
         scope = TypeAdapter(SavedScope).validate_python(scope)
         run, manifest, performance, digest, observations, observations_digest = (
@@ -74,7 +95,7 @@ class RepresentativeService:
             raise ValueError(
                 "Generated representative requires its fixed revision/source identity"
             )
-        return RepresentativeSnapshot.model_validate(
+        snapshot = RepresentativeSnapshot.model_validate(
             {
                 "run_id": run_id,
                 "scope": scope,
@@ -95,6 +116,7 @@ class RepresentativeService:
                 "definitions": performance.definitions,
             }
         )
+        return snapshot, performance
 
     def create(
         self, group_id: str, run_id: str, scope: str, reason: str = ""
@@ -150,21 +172,32 @@ class RepresentativeService:
             return _error(exc)
 
     def verified(self, representative_id: str, version: int) -> RepresentativeRecord:
+        return self.resolve(representative_id, version).record
+
+    def resolve(self, representative_id: str, version: int) -> ResolvedRepresentative:
         representative_id = TypeAdapter(RepresentativeId).validate_python(
             representative_id
         )
         version = TypeAdapter(RepresentativeVersion).validate_python(version)
         record = self.records.load(representative_id, version)
-        if (
-            self.capture(record.snapshot.run_id, record.snapshot.scope)
-            != record.snapshot
-        ):
-            raise ValueError("Representative source differs from its saved snapshot")
-        return record
+        return self._resolve(record)
+
+    def _resolve(self, record: RepresentativeRecord) -> ResolvedRepresentative:
+        try:
+            snapshot, performance = self._capture(
+                record.snapshot.run_id, record.snapshot.scope
+            )
+            if snapshot != record.snapshot:
+                raise ValueError(
+                    "Representative source differs from its saved snapshot"
+                )
+            return ResolvedRepresentative(record, performance)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            raise RepresentativeSourceError(record, str(exc)) from exc
 
     def _availability(self, record: RepresentativeRecord) -> dict[str, Any]:
         try:
-            self.verified(record.representative_id, record.version)
+            self._resolve(record)
             return {"source_available": True, "unavailable_reason": None}
         except (ValueError, OSError, sqlite3.Error) as exc:
             return {"source_available": False, "unavailable_reason": str(exc)}

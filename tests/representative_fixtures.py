@@ -40,6 +40,8 @@ def publish_representative_run(
     walk_forward: bool = False,
     fees: float = 0.001,
     timeframe: str = "1d",
+    start_date: str = "2024-01-01",
+    end_date: str = "2024-03-01",
     source: bytes = SOURCE,
 ) -> ExecutionManifest:
     source_hash = hashlib.sha256(source).hexdigest()
@@ -53,8 +55,8 @@ def publish_representative_run(
         "backtest": {
             "symbol": "BTC/USDT",
             "timeframe": timeframe,
-            "start_date": "2024-01-01",
-            "end_date": "2024-03-01",
+            "start_date": start_date,
+            "end_date": end_date,
             "init_cash": 1000.0,
             "fees": fees,
             "slippage": 0.0,
@@ -116,7 +118,7 @@ def publish_representative_run(
             if optimization
             else manifest.config_copy()["backtest"]
         )
-        start = "2024-02-01" if split == "test" else "2024-01-01"
+        start = "2024-02-01" if split == "test" else start_date
         parameters = (
             {"window": 10 if index == 0 else 20}
             if optimization
