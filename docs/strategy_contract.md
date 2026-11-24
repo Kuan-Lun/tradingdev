@@ -703,7 +703,9 @@ manual YAML edits and missing origins.
 revision IDs and authorization for those deletions. Only intact, non-current,
 unreferenced drafts are eligible; validated/runnable/promoted revisions remain.
 All jobs, including failed/cancelled jobs, runs and orphaned manifests protect
-referenced sources. Malformed or ambiguous history blocks cleanup; an old record
+referenced sources. References from representative history also protect generated
+revisions; see the [representative retention policy](run_artifacts.md#ranking-saved-run-scopes).
+Malformed or ambiguous history blocks cleanup; an old record
 without a revision blocks unless its config establishes this strategy's flat
 legacy source. No background cleanup, deduplication or migration occurs.
 

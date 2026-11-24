@@ -894,7 +894,8 @@ performance and observations. Constructor defaults come from that execution's
 manifest, with the same recursive trial overlay as execution. Today's registry
 never fills historical identity. Creation verifies the run row against the
 manifest, the registered historical strategy source, both performance artifacts,
-and the complete manifest/scope relationship. Fold summaries are refused; a
+and the complete manifest/scope relationship. Creation and revision also require
+an owning optimization job to be `done` when its record exists. Fold summaries are refused; a
 numbered scalar fold can be selected, without claiming it is a concatenated
 walk-forward path. New experiments and higher scores never change a choice.
 
