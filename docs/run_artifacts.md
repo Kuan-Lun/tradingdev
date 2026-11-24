@@ -906,8 +906,8 @@ subsequent reads, never automatic retargeting. Before removing run artifacts,
 inspect all pages of the run-reference query. Generated draft cleanup also retains
 revisions referenced by any representative version, even after run sources vanish.
 Selecting a representative means inclusion in comparison, not verified holdout
-status or evidence that a strategy is valid. These operations perform no execution
-or publication.
+status or evidence that a strategy is valid. These operations save representative
+records; they do not execute strategies or publish runs/results.
 
 For ranking, pass `representatives=[{representative_id, version}]` to
 `rank_candidates` with `run.<metric>`, or to `RankingService.rank_run_scopes`.
