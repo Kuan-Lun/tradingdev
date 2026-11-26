@@ -34,14 +34,14 @@ def note_bytes(record: ResearchNoteRecord) -> bytes:
 class ResearchNoteStore:
     def __init__(self, store: SQLiteStore) -> None:
         self.store = store
-        with store.connect() as conn:
+        with store.connection() as conn:
             conn.execute("""create table if not exists research_notes (
                 note_id text primary key, version integer not null,
                 title text not null, updated_at text not null, document text not null
             )""")
 
     def load(self, note_id: str) -> ResearchNoteRecord:
-        with self.store.connect() as conn:
+        with self.store.connection() as conn:
             row = conn.execute(
                 "select * from research_notes where note_id = ?", (note_id,)
             ).fetchone()
@@ -80,7 +80,7 @@ class ResearchNoteStore:
             draft=draft,
         )
         content = note_bytes(record).decode("utf-8")
-        with self.store.connect() as conn:
+        with self.store.connection() as conn:
             if previous is None:
                 conn.execute(
                     "insert into research_notes values (?, ?, ?, ?, ?)",
@@ -104,7 +104,7 @@ class ResearchNoteStore:
         return record
 
     def list(self, offset: int, limit: int) -> tuple[list[dict[str, str | int]], int]:
-        with self.store.connect() as conn:
+        with self.store.connection() as conn:
             # One read transaction keeps count and page on the same snapshot.
             conn.execute("begin")
             total = int(

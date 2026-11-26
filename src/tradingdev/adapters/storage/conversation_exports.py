@@ -78,7 +78,7 @@ class ConversationExports:
                         self.files.safe_path(directory)
                         staged.rename(directory)
                         created = True
-                with self.store.connect() as conn:
+                with self.store.connection() as conn:
                     existing = conn.execute(
                         "select * from artifacts where artifact_id=?", (artifact_id,)
                     ).fetchone()

@@ -28,7 +28,7 @@ class ExecutionPlanStore:
     def __init__(self, workspace: WorkspacePaths, store: SQLiteStore) -> None:
         self.workspace = workspace
         self.store = store
-        with store.connect() as conn:
+        with store.connection() as conn:
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS execution_plans (
                 plan_id TEXT PRIMARY KEY, payload TEXT NOT NULL,
@@ -59,7 +59,7 @@ class ExecutionPlanStore:
             (directory / "confirmation.txt").write_text(text, encoding="utf-8")
             html_hash = hashlib.sha256(html.encode()).hexdigest()
             text_hash = hashlib.sha256(text.encode()).hexdigest()
-            with self.store.connect() as conn:
+            with self.store.connection() as conn:
                 conn.execute(
                     "INSERT INTO execution_plans "
                     "(plan_id,payload,state,html_hash,text_hash) VALUES (?,?,?,?,?)",
@@ -93,7 +93,7 @@ class ExecutionPlanStore:
 
     def get(self, plan_id: str) -> tuple[ExecutionPlan, dict[str, Any]]:
         directory = self.directory(plan_id)
-        with self.store.connect() as conn:
+        with self.store.connection() as conn:
             row = conn.execute(
                 "SELECT * FROM execution_plans WHERE plan_id=?", (plan_id,)
             ).fetchone()
@@ -135,7 +135,7 @@ class ExecutionPlanStore:
         error: str | None = None,
     ) -> None:
         """Call under lock; compare state again before committing the transition."""
-        with self.store.connect() as conn:
+        with self.store.connection() as conn:
             changed = conn.execute(
                 "UPDATE execution_plans SET state=?,confirmation_token=?,"
                 "job_id=?,error=? "

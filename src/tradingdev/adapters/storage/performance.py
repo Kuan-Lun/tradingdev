@@ -140,7 +140,7 @@ class PerformanceStore:
                         now_iso(),
                     )
                 )
-            with self._store.connect() as connection:
+            with self._store.connection() as connection:
                 for record in records:
                     existing = connection.execute(
                         "select run_id, artifact_type, path, sha256 from artifacts "
@@ -233,7 +233,7 @@ class PerformanceStore:
             except BaseException as exc:
                 failures: list[BaseException] = []
                 try:
-                    with self._store.connect() as connection:
+                    with self._store.connection() as connection:
                         connection.execute(
                             "delete from artifacts where run_id = ?", (run_id,)
                         )
