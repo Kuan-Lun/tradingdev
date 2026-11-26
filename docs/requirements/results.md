@@ -26,7 +26,7 @@
 ## FR-RES-004 研究解讀與最終交付
 
 - **需求**：要求完成研究並解讀績效時，助手須提供結果、證據限制及報告連結，除非使用者明確拒絕報告或只要摘要；建議不自動授權下一次實驗。
-- **驗收**：最終回覆識別所選結果及明細查看方式，確認交付檔案存在可讀。只回報工作啟動或中途貼連結不算完成；報告失敗可沿用已保存結果重試。HTTP 可提供綁定已保存確認單、報告或研究封存的短效連結；檔案變動或連結失效須明示，重新取得不重跑研究。無 HTTP 交付時由客戶端適當交付，遠端主機路徑不冒充下載網址。
+- **驗收**：最終回覆識別所選結果及明細查看方式，確認交付檔案存在可讀。只回報工作啟動或中途貼連結不算完成；報告失敗可沿用已保存結果重試。HTTP 可提供綁定已保存確認單、報告、研究封存或參數平臺 JSON 的短效連結；檔案變動或連結失效須明示，重新取得不重跑研究。無 HTTP 交付時由客戶端適當交付，遠端主機路徑不冒充下載網址；平臺固定集合語意見 [FR-RES-009](#fr-res-009-保存集合的參數平臺分析)，下載限制由下列產物交付契約維護。
 - **契約**：[研究解讀與診斷](../reports.md#research-interpretation-and-diagnostic-providers)、[報告交付](../reports.md#composable-offline-reports)、[產物下載與交付限制](../run_artifacts.md#reading-artifact-delivery)。
 - **驗證**：[交付證據檢查](../../tests/e2e/test_report_delivery.py) 為離線驗證器測試；[真實模型成果交付](../../tests/e2e/test_llm_research_delivery.py) 及 [HTTP 模型交付](../../tests/e2e/test_llm_http_delivery.py) 驗證受測流程，須另啟模型測試。
 
@@ -50,6 +50,13 @@
 - **驗收**：排名分頁維持原搜尋的計畫、實際嘗試、完成及 objective 可用數。透過固定引用續讀實際 trial 參數、訓練指標、設定及缺值原因，引用不符時拒絕。未發布完整結果的工作沒有排名候選，無法驗證的歷史搜尋回傳不可用原因。原始嘗試數不代表有效獨立樣本數，訓練搜尋與測試績效分開解讀。
 - **契約**：[保存結果排名](../run_artifacts.md#ranking-saved-run-scopes)、[搜尋證據](../performance_artifacts.md#optimization-selection-evidence)。
 - **驗證**：[排序與證據續讀](../../tests/app/test_selection_evidence.py) 核對搜尋規模、分頁及歷史證據，[最佳化 MCP 流程](../../tests/integration/test_mcp_optimization.py) 核對 worker 發布及部分結果的排名行為。
+
+## FR-RES-009 保存集合的參數平臺分析
+
+- **需求**：對明確選定的保存最佳化或訊號候選集合，依指標方向、數值搜尋軸與鄰域設定提供平臺摘要及有容量限制的網格明細／artifact，不啟動新實驗或改寫排名。
+- **驗收**：保留中間缺值及整層 undefined 格點，區分無有效指標、選定集合沒有紀錄與不完整搜尋；來源條件不相容或歷史證據不足時說明原因。跨 horizon 核對行情與評估列證據；重複座標不靜默聚合。最小化保留原始值與單位，算法 score 分開呈現；摘要、分頁與 artifact 綁定同一固定集合，平臺穩定不冒充樣本外或獲利證明。
+- **契約**：[保存的參數平臺分析](../parameter_plateau.md)。
+- **驗證**：[保存集合與缺值回歸](../../tests/app/test_parameter_plateau.py)、[MCP 合約](../../tests/mcp/test_plateau_tools.py)、[自然需求驗收](../../tests/e2e/test_llm_plateau.py)；自然需求須另啟模型測試，入口不代表已通過。
 
 ## NFR-DATA-001 保存完整性與可追溯性
 
