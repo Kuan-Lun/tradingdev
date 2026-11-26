@@ -64,6 +64,20 @@ def test_ranking_guidance_describes_the_training_dataset(service: MLService) -> 
     assert "caller array" in guidance
 
 
+def test_ranking_guidance_preserves_baseline_verification_semantics(
+    service: MLService,
+) -> None:
+    """MCP clients need the baseline contract, not only the repository docs."""
+    guidance = service.get_contract()["guidance"]["ranking"]
+    assert "market_comparison" in guidance
+    assert "raw_baseline" in guidance
+    assert "evaluation_rows" in guidance
+    assert "require_verified_baseline=True" in guidance
+    assert "verified raw_baseline even with allow_mixed=True" in guidance
+    assert "evaluation_rows may differ" in guidance
+    assert "verified, mismatch or unknown" in guidance
+
+
 def test_report_guidance_states_the_conditional_sample_rule(service: MLService) -> None:
     guidance = service.get_contract()["guidance"]["reports"]
     assert ML_SAMPLE_PROVENANCE_NOTE in guidance

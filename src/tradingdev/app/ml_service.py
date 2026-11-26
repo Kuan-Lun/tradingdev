@@ -298,7 +298,13 @@ _ML_GUIDANCE = {
         "training data; a caller array with a model label is only a claim, and "
         "inequality proves nothing. "
         "allow_mixed and allow_parameter_axes are signal-only opt-ins and do "
-        "not establish comparability. A winner is not a profit guarantee."
+        "not establish comparability. market_comparison reports raw_baseline "
+        "and evaluation_rows separately with verified, mismatch or unknown "
+        "and reasons; require_verified_baseline=True requires a verified "
+        "raw_baseline even with allow_mixed=True, while evaluation_rows may "
+        "differ because allow_mixed only relaxes ranking context. A verified "
+        "baseline confirms saved input identity and alignment, not holdout "
+        "or causal evidence. A winner is not a profit guarantee."
     ),
     "reports": (
         "After inspecting saved leaderboard candidates, discover report sections "
