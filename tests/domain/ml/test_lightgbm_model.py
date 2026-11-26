@@ -36,6 +36,10 @@ class TestLightGBMDirectionModel:
         row_sums = proba.sum(axis=1)
         assert (abs(row_sums - 1.0) < 0.01).all()
 
+    @pytest.mark.filterwarnings(
+        "error:The argument 'eval_set' is deprecated:"
+        "lightgbm.basic.LGBMDeprecationWarning"
+    )
     def test_early_stopping_with_eval(self) -> None:
         train_feat = pd.DataFrame({"feature": [-1.0, 1.0] * 50, "target": [-1, 1] * 50})
         # Each tree can improve training, but worsens the inverted validation
