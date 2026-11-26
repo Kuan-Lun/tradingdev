@@ -258,6 +258,7 @@ MCP runtime target 含 Docker CLI，Compose 只把本機 socket 掛給可信控�
 | [執行產物](run_artifacts.md) | Workspace、身分、保存格式及歷史查詢入口。 |
 | [ML 研究](ml_research.md)、[執行計畫](execution_plans.md) | 各自的輸入、驗證、保存及執行邊界。 |
 | [績效產物](performance_artifacts.md)、[報告](reports.md) | 保存數值及觀察值的語意、報告呈現與交付。 |
+| [統計分析](statistics_analysis.md) | 單一已保存 run/scope 的摘要、推論限制與衍生分析檔。 |
 | [簡報編輯指南](talks/tradingdev-introduction/README.md) | 編輯者的內容與版型維護、預覽、打包及日常發布。 |
 | 本指南 | 工具入口、負責範圍、操作方式與測試維護位置。 |
 | [AGENTS.md](../AGENTS.md) | 唯一代理開發政策來源。 |
@@ -608,6 +609,7 @@ Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順�
 | 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究與已保存序列 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py)、[test_llm_evaluation_series.py](../tests/e2e/test_llm_evaluation_series.py)（序列情境用 `-k evaluation_series`） |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
+| 單一已保存 run/scope 統計分析 | [test_llm_statistics.py](../tests/e2e/test_llm_statistics.py) |
 | HTTP 確認單可讀／不可讀、使用者拒絕執行、既有報告與封存網址交付 | [test_llm_http_delivery.py](../tests/e2e/test_llm_http_delivery.py)（`-k http_delivery`） |
 | 授權後的草稿清理 | [test_llm_cleanup.py](../tests/e2e/test_llm_cleanup.py) |
 
@@ -638,7 +640,9 @@ uv run --no-sync python -m tooling.prompt_contracts
 
 兩者使用可清理的臨時工作區，不呼叫模型、下載行情或執行回測。Bytes 不是 tokens；
 指定工具集合的量測也不能當成完整產品成本。預算集中於 `prompt_contracts.py`，
-超量須檢查內容歸屬，不以截斷內容通過檢查。
+超量須檢查內容歸屬，不以截斷內容通過檢查。新增工具時先以
+[context_budget](../tooling/context_budget.py) 量測其 input projection，
+再依量測結果明確維護預算。
 Local 真實模型測試另記錄 request 增量與峰值；Codex 完整上下文及內部壓縮不在此量測範圍。
 
 ## 開發階段的程式碼審查

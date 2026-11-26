@@ -484,6 +484,7 @@ HTML 報告，方便交給同仁閱讀。自動診斷依固定規則提供提示
 | 追蹤或停止工作 | 「剛才的回測進行到哪裡？」或「取消剛才的回測。」 |
 | 查摘要以外的指標 | 「查詢這次回測的其他可用指標，說明定義、單位與無法計算的原因。」 |
 | 比較兩次實驗 | 「比較這兩次回測的損益與回撤，說明差異與比較限制。」 |
+| 分析單一保存結果 | 「用已保存的這組結果做統計分析，告訴我哪些推論不可用及原因。」 |
 | 檢查實際設定 | 「這次回測用了哪個策略版本、參數與成本？」 |
 | 找指定參數的交易 | 「找出短均線 12 期、長均線 29 期的歷史結果，查看每筆進出場、數量與費用。」 |
 | 開啟完整報告 | 「為這兩次回測產生離線 HTML 報告，保留完整交易表並加入你的研究評語。」 |
@@ -503,6 +504,12 @@ HTML 報告，方便交給同仁閱讀。自動診斷依固定規則提供提示
   週線、月線等粗於日頻的資料不提供年化及日／月損益統計。
 - Volume 模式沒有初始資金基準，應查看金額損益、成交量與回撤金額。
   交易數、勝率等交易統計只計算已平倉交易。
+- 統計分析使用該次執行已保存且完整性核驗的證據與設定，包括績效 bundle、
+  原始 observations；DSR 另使用保存的 optimization selection 與 trial evidence。
+  它使用該次執行的本金、頻率、年化與無風險利率，不會重新回測或下載行情。
+  描述摘要可能可用而推論不可用；缺少設定、時間缺口、粗於日頻、樣本過短或缺少
+  可驗證的搜尋履歷時，會說明原因，不會補零。可另存獨立的衍生分析檔，
+  原結果與舊報告保持不變。
 - Walk-forward 摘要是各測試區間的統計分布，不能當成整段期間的單一績效；
   比較時可要求逐區間查看。最佳化則應確認查看的是訓練或樣本外測試結果。
 
@@ -708,7 +715,7 @@ HTML 報告位於 `reports/`，可分享的研究 ZIP 位於 `research_archives/
 只使用可信來源的工作區與模型檔案。升級 Python 或 ML 套件後，舊模型可能無法載入，
 請在新環境重新訓練；相容性與保存方式見[ML 研究產物](docs/ml_research.md#ml-research-artifacts)。
 
-MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
+MCP、`tradingdev-report` 與 `tradingdev-statistics` 的 `--workspace` 優先於環境變數
 `TRADINGDEV_WORKSPACE`；兩者都未設定時，使用啟動目錄下的 `workspace/`。
 回測 CLI 與 Dashboard 使用同一環境變數及預設目錄，但沒有 `--workspace` 參數。
 每次開新終端機時，請重新設定環境變數，或在自己的 shell 設定中保存它。
@@ -805,6 +812,27 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
 候選，可加 `--ml-allow-mixed`，報告會標明限制。用 `--ml-require-verified-baseline`
 要求原始行情基線通過驗證，混合展示時也適用。評估列一致性可另看報告的核對結果。
 詳見[報告選項與比較規則](docs/reports.md#composable-offline-reports)。
+
+### 分析已保存的單一結果
+
+不透過助手也可對一個已保存的 run/scope 做統計分析：
+
+```bash
+uv run --locked tradingdev-statistics \
+  --workspace /absolute/path/to/tradingdev-workspace \
+  --run-id YOUR_RUN_ID \
+  --save-artifact
+```
+
+`--run-id` 必要；省略 `--scope` 時使用該 run 的預設 scope；
+若要分析 optimization 的特定 trial，可加 `--scope trial/1/train`（前提是該 run 有此 scope）。
+`--save-artifact` 會另外保存一份衍生分析檔。命令在終端機輸出 JSON，
+讀取並核驗該 run 已保存的證據與設定：績效 bundle、原始 observations、
+run／manifest 資料與凍結設定；DSR 另使用已保存的 trial observations 與
+optimization selection。它不重跑策略或下載行情。
+最外層 `success: false` 時 process 以狀態 1 結束；個別分析 unavailable 而整體
+`success: true` 仍以狀態 0 結束，腳本應同時檢查 JSON 內容。
+結果欄位、限制與不可用原因見[統計分析契約](docs/statistics_analysis.md)。
 
 ### 從終端機操作研究筆記
 
