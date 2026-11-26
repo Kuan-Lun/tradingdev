@@ -276,7 +276,12 @@ def test_utc_daily_compounding_preserves_first_return_and_missing_days(
         ("observations", "equity_curve", [1.0], "unaligned_observations"),
         ("observations", "equity_curve", [1.0, 0.0, 1.0], "nonpositive_capital"),
         ("observations", "init_cash", 0, "nonpositive_capital"),
-        ("observations", "timestamps", ["invalid"] * 3, "invalid_timestamps"),
+        (
+            "observations",
+            "timestamps",
+            ["2024-01-01", "2024-01-02", "invalid"],
+            "invalid_timestamps",
+        ),
         ("observations", "timestamps", ["2024-01-01"] * 3, "invalid_timestamps"),
         ("settings", "frequency", None, "unknown_bar_frequency"),
         ("settings", "frequency", "1W", "unsupported_daily_sampling"),
