@@ -375,7 +375,7 @@ def test_old_json_without_optional_ledger_fields_is_not_reconstructed(
     del payload["scopes"]["trial/0/train"]["execution_records"]
     del payload["scopes"]["trial/0/train"]["account_history"]
     path.write_text(json.dumps(payload))
-    with store.connect() as connection:
+    with store.connection() as connection:
         connection.execute(
             "update artifacts set sha256 = ? where artifact_id = ?",
             (sha256_file(path), "run:observations_json"),
@@ -465,7 +465,7 @@ def test_both_queries_enforce_saved_artifact_integrity(
     path.write_text(json.dumps(payload))
     if damage == "alignment":
         # With matching file digest, semantic validation must still reject shifted data.
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "update artifacts set sha256 = ? where artifact_id = ?",
                 (

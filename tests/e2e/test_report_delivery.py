@@ -363,7 +363,7 @@ def test_report_delivery_rejects_broken_artifacts(
     elif damage == "changed":
         report.path.write_text("different report", encoding="utf-8")
     else:
-        with report.store.connect() as connection:
+        with report.store.connection() as connection:
             connection.execute(
                 "DELETE FROM artifacts WHERE artifact_id = ?",
                 (report.result["artifact_id"],),
@@ -390,7 +390,7 @@ def test_report_delivery_rejects_another_runs_report(
     elif changed == "response":
         report.result["run_ids"] = ["other"]
     else:
-        with report.store.connect() as connection:
+        with report.store.connection() as connection:
             connection.execute(
                 "UPDATE artifacts SET metadata = ? WHERE artifact_id = ?",
                 (json.dumps({"run_ids": ["other"]}), report.result["artifact_id"]),
@@ -423,7 +423,7 @@ def test_report_delivery_requires_the_linked_reports_intact_manifest(
     elif damage == "changed":
         path.write_text("{}", encoding="utf-8")
     else:
-        with report.store.connect() as connection:
+        with report.store.connection() as connection:
             connection.execute(
                 "DELETE FROM artifacts WHERE artifact_id = ?",
                 (report.result["manifest_artifact_id"],),
@@ -451,7 +451,7 @@ def test_report_delivery_rejects_manifest_identity_and_requirement_mismatches(
     manifest[field] = value
     content = json.dumps(manifest).encode()
     path.write_bytes(content)
-    with report.store.connect() as connection:
+    with report.store.connection() as connection:
         connection.execute(
             "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
             (

@@ -361,7 +361,7 @@ def test_export_rejects_tampering_and_symlinks(tmp_path: Path) -> None:
 def test_export_registration_failure_cleans_only_new_snapshot(tmp_path: Path) -> None:
     service = service_at(tmp_path)
     record = finish(service, running(service))
-    with service.records.store.connect() as conn:
+    with service.records.store.connection() as conn:
         conn.execute(
             "create trigger reject_conversation before insert on artifacts "
             "begin select raise(abort,'rejected'); end"

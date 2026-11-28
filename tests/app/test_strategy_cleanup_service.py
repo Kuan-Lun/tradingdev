@@ -592,7 +592,7 @@ def test_invalid_raw_job_history_blocks_cleanup_before_any_deletion(
         payload["revision_id"] = "not_a_revision"
     else:
         payload[corruption] = "different_identity"
-    with store.connect() as connection:
+    with store.connection() as connection:
         connection.execute(
             "update jobs set payload = ? where job_id = ?",
             (json.dumps(payload), "historical_job"),

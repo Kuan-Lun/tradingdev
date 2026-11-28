@@ -29,12 +29,13 @@ from tests.integration.mcp_harness import (
     MCPWorkspace,
     temporary_mcp_workspace,
 )
+from tests.quantstats_warnings import native_plot_warnings
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.report_service import ReportService
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 _SMA_CODE = '''\
 """Deterministic SMA direction fixture for workflow verification."""
@@ -223,6 +224,7 @@ def test_workflow_verifier_accepts_completed_backtest(
 @pytest.fixture
 def workflow_report(
     completed_workflow: CompletedWorkflow,
+    verified_quantstats_versions: Callable[[], bool],
 ) -> Iterator[tuple[dict[str, Any], SQLiteStore]]:
     """Add a report temporarily without changing the shared completed run."""
     workspace = WorkspacePaths(completed_workflow.workspace.workspace)
@@ -232,11 +234,14 @@ def workflow_report(
     reports = workspace.root / "reports"
     reports_existed = reports.exists()
     original_files = set(reports.rglob("*"))
-    result = ReportService(workspace=workspace, store=store).generate_report(
-        [completed_workflow.run_id],
-        sections=["trades", "metrics"],
-        commentary=[{"title": "Workflow review", "text": "Review saved observations."}],
-    )
+    with native_plot_warnings(verified_quantstats_versions()):
+        result = ReportService(workspace=workspace, store=store).generate_report(
+            [completed_workflow.run_id],
+            sections=["trades", "metrics"],
+            commentary=[
+                {"title": "Workflow review", "text": "Review saved observations."}
+            ],
+        )
     assert result["success"], result
     report_ids = [result["artifact_id"], result["manifest_artifact_id"]]
     new_ids = [
@@ -245,7 +250,7 @@ def workflow_report(
     try:
         yield result, store
     finally:
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.executemany(
                 "DELETE FROM artifacts WHERE artifact_id = ?",
                 [(artifact_id,) for artifact_id in new_ids],
@@ -287,7 +292,7 @@ def test_workflow_verifier_rejects_report_registration_corruption(
     unrelated = completed_workflow.workspace.workspace / "unrelated_report.html"
     assert not unrelated.exists()
     try:
-        with store.connect() as connection:
+        with store.connection() as connection:
             if field == "path":
                 unrelated.write_bytes(Path(result["path"]).read_bytes())
                 connection.execute(
@@ -303,7 +308,7 @@ def test_workflow_verifier_rejects_report_registration_corruption(
         with pytest.raises(AssertionError, match="Report (path|ID)"):
             completed_workflow.verify()
     finally:
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "UPDATE artifacts SET path = ?, metadata = ? WHERE artifact_id = ?",
                 (artifact["path"], json.dumps(artifact["metadata"]), artifact_id),
@@ -333,7 +338,7 @@ def test_workflow_verifier_rejects_report_manifest_corruption(
     try:
         path.write_text(json.dumps(manifest), encoding="utf-8")
         # Keep the registry SHA valid: semantic linkage must independently fail.
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
                 (hashlib.sha256(path.read_bytes()).hexdigest(), artifact_id),
@@ -342,7 +347,7 @@ def test_workflow_verifier_rejects_report_manifest_corruption(
             completed_workflow.verify()
     finally:
         path.write_bytes(original)
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
                 (artifact["sha256"], artifact_id),

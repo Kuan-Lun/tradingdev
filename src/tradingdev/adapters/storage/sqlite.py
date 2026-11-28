@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, now_iso
 from tradingdev.shared.utils.json_values import normalize_json_object
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 _STORE_CACHE: dict[str, SQLiteStore] = {}
@@ -78,13 +78,20 @@ class SQLiteStore:
         return self._db_path
 
     def connect(self) -> sqlite3.Connection:
+        """Return a raw connection that the caller must close."""
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """Commit on success or roll back on error, then close the connection."""
+        with closing(self.connect()) as connection, connection:
+            yield connection
+
     def initialize(self) -> None:
         """Create metadata tables if they do not exist."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.executescript(
                 _CREATE_JOBS_TABLE_SQL
                 + """
@@ -148,7 +155,7 @@ class SQLiteStore:
     def upsert_job(self, record: dict[str, Any]) -> None:
         """Insert or replace a job record."""
         payload = json.dumps(record, ensure_ascii=False, sort_keys=True)
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 insert into jobs (
@@ -202,7 +209,7 @@ class SQLiteStore:
         BEGIN IMMEDIATE serializes writers across connections/processes before
         reading the payload. The callback must perform only in-memory validation.
         """
-        with closing(self.connect()) as conn, conn:
+        with self.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "select payload from jobs where job_id = ?", (job_id,)
@@ -230,7 +237,7 @@ class SQLiteStore:
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         """Return a job payload by id."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 "select payload from jobs where job_id = ?",
                 (job_id,),
@@ -242,7 +249,7 @@ class SQLiteStore:
 
     def list_jobs(self) -> list[dict[str, Any]]:
         """Return all job payloads newest-first."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 "select payload from jobs order by created_at desc",
             ).fetchall()
@@ -275,7 +282,7 @@ class SQLiteStore:
             sort_keys=True,
             allow_nan=False,
         )
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 insert into runs (
@@ -322,7 +329,7 @@ class SQLiteStore:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or replace artifact metadata."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 insert into artifacts (
@@ -355,13 +362,13 @@ class SQLiteStore:
             query += " where run_id = ?"
             params = (run_id,)
         query += " order by created_at desc"
-        with self.connect() as conn:
+        with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         """Return one artifact metadata row."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 "select * from artifacts where artifact_id = ?",
                 (artifact_id,),
@@ -377,7 +384,7 @@ class SQLiteStore:
         payload: dict[str, Any] | None = None,
     ) -> None:
         """Record a job event."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 insert into events (job_id, timestamp, level, message, payload)
@@ -394,7 +401,7 @@ class SQLiteStore:
 
     def list_events(self, job_id: str) -> list[dict[str, Any]]:
         """Return events for a job in chronological order."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 "select * from events where job_id = ? order by timestamp asc",
                 (job_id,),
@@ -403,7 +410,7 @@ class SQLiteStore:
 
     def list_runs(self) -> list[dict[str, Any]]:
         """Return completed runs newest-first."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 "select * from runs order by created_at desc",
             ).fetchall()
@@ -411,7 +418,7 @@ class SQLiteStore:
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         """Return one run."""
-        with self.connect() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 "select * from runs where run_id = ?",
                 (run_id,),

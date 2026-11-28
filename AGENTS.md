@@ -138,7 +138,7 @@
   建置工具與初始化方式見開發指南；瀏覽器操作及視覺排版仍須另行驗證。
 - `scripts/check-fast.sh` 執行唯讀 Ruff、格式、strict Mypy、上述文件檢查及
   MCP 契約探索／上下文預算檢查。
-  手動執行 `scripts/check-full.sh` 一律執行快速檢查及完整離線 pytest，
+  手動執行 `scripts/check-full.sh` 一律執行快速檢查及完整預設 pytest 套件，
   不因工作樹只有文件變更而縮減範圍。乾淨 checkout 透過不可變 snapshot
   執行並自動保存本機檢查證據；未提交內容仍會檢查，但不產生可重用證據。
 - `scripts/check-tooling.sh` 執行快速檢查及完整 `tests/tooling`，不執行產品
@@ -149,10 +149,15 @@
 
 ## 測試與清理
 
-- `pytest`／`uv run pytest` 預設執行完整離線套件，不呼叫模型。真實模型測試
+- `pytest`／`uv run pytest` 的預設套件可離線執行，不連行情服務或呼叫模型。真實模型測試
   由 `scripts/check-llm.sh codex|local` 明確啟用；共用策略生成、修復、回測與
   結果查詢情境。選擇後若缺少 CLI、登入、模型服務或模型能力須失敗，不得
   默默略過或退回另一個 provider。離線通過不代表真實模型相容性已驗證。
+- 僅在實際執行原生 QuantStats 圖表的特定測試時，允許向 PyPI 查詢 QuantStats、
+  Seaborn、Matplotlib 的最新發布版本，每個 pytest 程序最多查一輪，不安裝或更新套件。
+  三個套件的本機版本都須各自與已驗證版本及 PyPI 最新版本一致，才可在該測試內
+  略過熱圖與箱形圖的兩條已知棄用警告。任一版本不符或查不到時，保留原警告與
+  維護提醒，繼續驗證報告，不因離線而略過測試。
 - 行為變更更新相關測試；bug fix 加入能重現問題的 regression test。驗證
   正常、邊界與失敗路徑，避免只重述實作的測試。
 - 設計、修改、刪減測試或審查其品質前，先讀
