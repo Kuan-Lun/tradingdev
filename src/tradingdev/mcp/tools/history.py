@@ -229,8 +229,10 @@ def register(
         """Render saved evidence: run_ids (1..8), comparison_job_id, or ML entries.
 
         run_ids and comparison_job_id are mutually exclusive. ML can stand alone or
-        accompany either: select 1..50 distinct ml_entry_ids from leaderboard or
-        recorded evaluate_signal results; never infer model/run associations.
+        accompany either: select 1..50 distinct ml_entry_ids from rank_candidates
+        with a signal.<metric> or from recorded evaluate_signal results. For the
+        same score, pass the bare name as ml_ranking_metric. Never infer model/run
+        associations.
         ML is cost-free signal research, not a backtest;
         unsaved series stay unavailable.
         Read get_ml_contract for ml_ comparison options and frozen market checks.

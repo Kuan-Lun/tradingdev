@@ -43,7 +43,10 @@ from tradingdev.domain.ml.evaluation import (
     strata_statistics,
 )
 from tradingdev.domain.ml.evaluation.artifacts import strata_records
-from tradingdev.domain.ml.evaluation.catalog import summarize_signal_metrics
+from tradingdev.domain.ml.evaluation.catalog import (
+    SIGNAL_METRIC_CATALOG,
+    summarize_signal_metrics,
+)
 from tradingdev.domain.ml.evaluation.performance import (
     periods_per_year,
     return_metrics,
@@ -271,76 +274,103 @@ _ML_GUIDANCE = {
         "n_quantiles, so a rule sweep is not reported as a parameter surface."
     ),
     "ranking": (
-        "The metric id selects the source. A bare name or signal.<metric> "
-        "ranks recorded evaluations; run.<metric> ranks saved backtest scopes "
-        "and requires runs as a list of objects with run_id and scope; "
-        "an omitted or null scope means "
-        "that run's default. A run row carries run_id, scope, the trading "
-        "conditions its manifest recorded, metric_source and the stored value; "
-        "context, families and parameter_axes are null, because a named "
-        "selection has no evaluation context or method mix to report. "
-        "Run rows retain the selected scope's saved parameters and metadata: "
-        "simple and walk-forward scopes contain constructor parameters including "
-        "captured defaults; optimization scopes contain trial overrides, not a "
-        "reconstructed constructor. Recorded fitted values stay in "
-        "metadata.strategy_parameters. Conditions describe the run's submitted "
-        "manifest, while metadata.observations describes the scope's observed "
-        "period. Saved metric definitions must match the current catalog or the "
-        "candidate is skipped. Provider package versions and settings can still "
-        "differ, so ordering is conditional, not a controlled comparison. Read "
-        "get_run_metrics for full scope evidence and saved definitions, and "
-        "get_metric_catalog for run metric names and directions (this contract "
-        "lists signal metrics only). An aggregate fold summary cannot be ranked, "
-        "so a walk-forward run's default test_summary is skipped; name a numbered "
-        "fold. "
-        "record=True replaces the same candidate/settings/dataset/context only "
-        "within its producer_source. Different sources coexist, count as separate "
-        "candidates and never upgrade old unknown records. "
-        "leaderboard metrics have declared directions; never assume higher is "
-        "better. On a signal ranking, filter by dataset_id to compare one "
-        "verified dataset version; the other filters, allow_mixed and "
-        "allow_parameter_axes apply only there. A run ranking refuses those "
-        "arguments and a signal "
-        "ranking refuses runs, because one call ranks one source. "
-        "On a signal ranking, each row reports its declared method_family: "
-        "ml_model (fitted, "
-        "parameters copied from the artifact), rule (hand-set, parameters "
-        "declared by the caller) or other (other/unknown construction). A table "
-        "may mix them and counts each family; labels alone do not establish "
-        "equal evidence. Inspect provenance and pass family to "
-        "rank one kind. It also reports the window, horizon and n_quantiles it "
-        "was measured under, the candidate's saved settings and its "
-        "signal_fingerprint; "
-        "comparing that fingerprint with a fresh signal shows whether a re-run "
-        "reproduced the recorded signal. A model row also carries "
-        "training_dataset_id, empty when unknown: equality with dataset_id means "
-        "the score is in-sample when the model produced the signal, and inequality "
-        "proves nothing. allow_mixed permits incompatible "
-        "contexts but does not make them comparable; allow_parameter_axes "
-        "relaxes window, horizon and n_quantiles within the saved identity. "
-        "Cross-horizon market_comparison checks the saved raw baseline and "
-        "evaluation rows separately. Each reports verified, mismatch or unknown "
-        "with reasons. require_verified_baseline=True requires verified raw "
-        "evidence, even with allow_mixed=True. Equal inputs can still produce "
-        "different evaluation rows or label endpoints. A candidate with no finite "
-        "score is still recorded, and "
-        "its skipped row carries its window, horizon and n_quantiles, so the "
-        "grid keeps the point where it failed instead of joining its "
-        "neighbours. Ranking and selection caveats cover all candidates, even "
-        "when only one page is returned; a winner is not a profit guarantee."
+        "Use rank_candidates with metric='signal.<name>' for saved signal "
+        "evaluations selected by dataset_id, symbol, timeframe, horizon, "
+        "feature_set and family, or metric='run.<name>' with "
+        "runs=[{run_id, scope}] for saved backtest scopes; a null scope selects "
+        "that run's default. Bare, empty and unknown prefixes are refused. "
+        "get_ml_contract.ranking.sources lists signal ids with direction, unit "
+        "and full definition text in description from the signal catalog; "
+        "get_metric_catalog "
+        "is the source of "
+        "truth for run ids, directions and units - prefix a run id with run. "
+        "instead of copying the catalog here. Direction decides order; never "
+        "assume higher is better. signal.sharpe is a cost-free simulated book "
+        "over holding intervals, not the cost-bearing backtest "
+        "run.sharpe_ratio; never read one as the other. One call ranks one "
+        "source: signal filters and run selections are exclusive. A response "
+        "states its source and full totals; follow next_offset, keep caveats, "
+        "skipped reasons and conditions, and read get_run_metrics for a saved "
+        "scope's definition and evidence. A duplicate selection is refused and "
+        "an aggregate fold summary is skipped. Stored values are never "
+        "recomputed. Signal rows report method_family, saved settings and "
+        "training_dataset_id (empty when unknown): when producer_source is "
+        "backend_model, equality with dataset_id means the model scored its "
+        "training data; a caller array with a model label is only a claim, and "
+        "inequality proves nothing. "
+        "allow_mixed and allow_parameter_axes are signal-only opt-ins and do "
+        "not establish comparability. market_comparison reports raw_baseline "
+        "and evaluation_rows separately with verified, mismatch or unknown "
+        "and reasons; require_verified_baseline=True requires a verified "
+        "raw_baseline even with allow_mixed=True, while evaluation_rows may "
+        "differ because allow_mixed only relaxes ranking context. A verified "
+        "baseline confirms saved input identity and alignment, not holdout "
+        "or causal evidence. A winner is not a profit guarantee."
     ),
     "reports": (
-        "After inspecting saved leaderboard candidates, discover report sections "
-        "with get_report_sections and select their entry IDs with generate_report. "
+        "After inspecting saved signal candidates with rank_candidates, discover "
+        "report sections with get_report_sections and select their entry IDs "
+        "with generate_report. To keep the score used for ranking, pass the "
+        "bare signal name as ml_ranking_metric (signal.rank_ic_mean becomes "
+        "rank_ic_mean). "
         "ML reports snapshot the selected evidence without rerunning predictions "
         "or training. Keep unavailable candidates and comparison caveats; "
         "including runs does not prove a model-to-run relationship. "
-        "generate_report applies the corresponding leaderboard options through "
+        "generate_report applies the signal ranking options through "
         "ml_allow_parameter_axes, ml_allow_mixed and ml_require_verified_baseline, "
         "and freezes market_comparison in the report. "
         f"{ML_SAMPLE_PROVENANCE_NOTE}"
     ),
 }
+
+
+def _ranking_discovery() -> dict[str, Any]:
+    """Describe the one ranking tool from the catalogs that define its metrics.
+
+    Signal ids come from the formal signal catalog, so a new directed metric
+    becomes discoverable without editing this menu. Backtest ids stay in the
+    performance catalog: copying them here would create a second list that can
+    drift, and would put two different Sharpe definitions in one field.
+    """
+    definitions = (SIGNAL_METRIC_CATALOG[name] for name in rankable_metrics())
+    return {
+        "tool": "rank_candidates",
+        "sources": [
+            {
+                "source": "signal",
+                "metric_prefix": "signal.",
+                "candidate_selection": (
+                    "Filter saved signal evaluations with dataset_id, symbol, "
+                    "timeframe, horizon, feature_set and family."
+                ),
+                "definition_entry": (
+                    "this menu's signal metrics[].description, generated from "
+                    "the signal metric catalog"
+                ),
+                "metrics": [
+                    {
+                        "id": f"signal.{definition.id}",
+                        "direction": definition.optimization_direction,
+                        "unit": definition.unit,
+                        "description": definition.description,
+                    }
+                    for definition in definitions
+                ],
+                "metric_catalog_tool": None,
+            },
+            {
+                "source": "run",
+                "metric_prefix": "run.",
+                "candidate_selection": (
+                    "Pass runs=[{run_id, scope}] for saved backtest scopes; "
+                    "a null scope selects that run's default."
+                ),
+                "definition_entry": "get_metric_catalog(mode=None)",
+                "metrics": None,
+                "metric_catalog_tool": "get_metric_catalog",
+            },
+        ],
+    }
 
 
 class MLService:
@@ -426,7 +456,7 @@ class MLService:
             "n_quantiles_range": [2, 10],
             "calendar_modes": [mode.value for mode in CalendarMode],
             "missing_policies": [policy.value for policy in MissingPolicy],
-            "leaderboard_metrics": list(rankable_metrics()),
+            "ranking": _ranking_discovery(),
             "method_families": list(METHOD_FAMILIES),
             "evaluation_series_limits": {
                 "default_page_size": 50,
@@ -1031,7 +1061,7 @@ class MLService:
             "caveats": caveats,
         }
 
-    def leaderboard_page(
+    def rank_signal_candidates(
         self,
         metric: str,
         *,
@@ -1047,7 +1077,7 @@ class MLService:
         allow_parameter_axes: bool = False,
         require_verified_baseline: bool = False,
     ) -> dict[str, Any]:
-        """Page output only after ranking and comparing the full candidate set."""
+        """Page recorded evaluations after comparing the full set on a signal metric."""
         if type(offset) is not int or offset < 0:
             raise ValueError("offset must be a non-negative integer")
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -1067,7 +1097,7 @@ class MLService:
         ranked, skipped = result["ranked"], result["skipped"]
         total = max(len(ranked), len(skipped))
         if offset > total:
-            raise ValueError(f"offset exceeds leaderboard row count ({total})")
+            raise ValueError(f"offset exceeds ranked row count ({total})")
         end = min(offset + limit, total)
         return {
             **result,
@@ -1160,50 +1190,6 @@ class MLService:
         for artifact_id in artifact_ids:
             self.series_store.protect(artifact_id)
         return len(set(artifact_ids))
-
-    def rank_signal_candidates(
-        self,
-        metric: str,
-        *,
-        dataset_id: str | None = None,
-        symbol: str | None = None,
-        timeframe: str | None = None,
-        horizon: int | None = None,
-        feature_set: str | None = None,
-        family: str | None = None,
-        offset: int = 0,
-        limit: int = 20,
-        allow_mixed: bool = False,
-        allow_parameter_axes: bool = False,
-        require_verified_baseline: bool = False,
-    ) -> dict[str, Any]:
-        """Return the shared ranking shape for recorded signal evaluations.
-
-        ``metric`` is the bare signal metric; the caller owns the ``signal.``
-        prefix that identifies the source. Ordering, caveats, refusal rules and
-        paging are exactly the ones :meth:`leaderboard_page` applies, so the two
-        surfaces cannot disagree about what was measured.
-        """
-        payload = self.leaderboard_page(
-            metric,
-            dataset_id=dataset_id,
-            symbol=symbol,
-            timeframe=timeframe,
-            horizon=horizon,
-            feature_set=feature_set,
-            family=family,
-            offset=offset,
-            limit=limit,
-            allow_mixed=allow_mixed,
-            allow_parameter_axes=allow_parameter_axes,
-            require_verified_baseline=require_verified_baseline,
-        )
-        return {
-            **payload,
-            "source": "signal",
-            "ranked": [{**row, "source": "signal"} for row in payload["ranked"]],
-            "skipped": [{**row, "source": "signal"} for row in payload["skipped"]],
-        }
 
     def build_dataset(
         self,

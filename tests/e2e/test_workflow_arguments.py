@@ -105,7 +105,7 @@ def _samples() -> list[tuple[str, dict[str, Any]]]:
             },
         ),
         (
-            "leaderboard",
+            "rank_candidates",
             {
                 "metric": "ic_mean",
                 "allow_parameter_axes": "true",

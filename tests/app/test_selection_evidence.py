@@ -165,7 +165,9 @@ def test_ranking_and_detail_pages_keep_each_search_size(
         (0, "wide", 500, "trial_ledger"),
         (1, "narrow", 5, "verified_historical_bundle"),
     ):
-        board = _dispatch(server, "leaderboard", {**args, "offset": offset, "limit": 1})
+        board = _dispatch(
+            server, "rank_candidates", {**args, "offset": offset, "limit": 1}
+        )
         (row,) = board["ranked"]
         assert row["run_id"] == run_id and row["scope"] == "test"
         evidence = row["selection_evidence"]

@@ -543,10 +543,23 @@ class TestComparability:
 
 
 class TestContract:
-    def test_rankable_metrics_are_advertised(self, service: MLService) -> None:
+    def test_rankable_signal_metrics_are_advertised(self, service: MLService) -> None:
         contract = service.get_contract()
-        assert "rank_icir" in contract["leaderboard_metrics"]
-        assert "n_periods" not in contract["leaderboard_metrics"]
+        signal = next(
+            source
+            for source in contract["ranking"]["sources"]
+            if source["source"] == "signal"
+        )
+        ids = {metric["id"] for metric in signal["metrics"]}
+        assert "signal.rank_icir" in ids
+        assert "signal.n_periods" not in ids
+        run = next(
+            source
+            for source in contract["ranking"]["sources"]
+            if source["source"] == "run"
+        )
+        assert run["metrics"] is None
+        assert run["metric_catalog_tool"] == "get_metric_catalog"
 
 
 class TestParameterSurface:
@@ -764,7 +777,7 @@ class TestParameterSurface:
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
         dataset_id = self._sweep(service, workspace, (20, 30, 40))
-        page = service.leaderboard_page(
+        page = service.rank_signal_candidates(
             "ic_mean", dataset_id=dataset_id, limit=1, allow_parameter_axes=True
         )
         assert page["n_candidates"] == 3
@@ -1075,7 +1088,7 @@ def test_horizon_surface_retains_rankings_with_unverified_sources(
         realized, realized, window=20, record=True, dataset_id=second
     )
 
-    board = service.leaderboard_page(
+    board = service.rank_signal_candidates(
         "ic_mean", limit=1, allow_parameter_axes=True, allow_mixed=change == "symbol"
     )
     assert board["n_candidates"] == 2

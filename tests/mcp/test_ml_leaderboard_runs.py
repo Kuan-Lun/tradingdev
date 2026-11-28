@@ -1,4 +1,4 @@
-"""The leaderboard tool's second source: saved run scopes ranked by a run. metric.
+"""Rank saved run scopes through rank_candidates with a run.<metric>.
 
 The signal path is covered in ``test_ml_leaderboard_tool.py``. This module checks
 the run dispatch through real saved artifacts and the typed MCP response.
@@ -85,7 +85,7 @@ def test_a_run_metric_ranks_the_selected_scopes(
     mcp: MCPServer, published: list[dict[str, str]]
 ) -> None:
     payload = _dispatch(
-        mcp, "leaderboard", {"metric": "run.sharpe_ratio", "runs": published}
+        mcp, "rank_candidates", {"metric": "run.sharpe_ratio", "runs": published}
     )
 
     board = LeaderboardPageResponse.model_validate(payload)
@@ -117,7 +117,7 @@ def test_scope_parameters_and_observation_metadata_survive_the_tool(
     _publish_run(workspace, store, "trials", scope_models=scopes, window=99)
     payload = _dispatch(
         mcp,
-        "leaderboard",
+        "rank_candidates",
         {
             "metric": "run.sharpe_ratio",
             "runs": [{"run_id": "trials", "scope": name} for name in scopes],
@@ -144,7 +144,7 @@ def test_a_run_ranking_carries_no_signal_only_fields(
     answer was nothing", which is a different claim from "not applicable".
     """
     payload = _dispatch(
-        mcp, "leaderboard", {"metric": "run.sharpe_ratio", "runs": published}
+        mcp, "rank_candidates", {"metric": "run.sharpe_ratio", "runs": published}
     )
 
     assert payload["context"] is None
@@ -162,7 +162,7 @@ def test_a_run_selection_pages_like_a_signal_ranking(
     first = LeaderboardPageResponse.model_validate(
         _dispatch(
             mcp,
-            "leaderboard",
+            "rank_candidates",
             {"metric": "run.sharpe_ratio", "runs": published, "limit": 1},
         )
     )
@@ -172,7 +172,7 @@ def test_a_run_selection_pages_like_a_signal_ranking(
     second = LeaderboardPageResponse.model_validate(
         _dispatch(
             mcp,
-            "leaderboard",
+            "rank_candidates",
             {"metric": "run.sharpe_ratio", "runs": published, "offset": 1, "limit": 1},
         )
     )
@@ -185,7 +185,7 @@ def test_an_unreadable_scope_is_reported_as_a_skipped_run_row(
 ) -> None:
     payload = _dispatch(
         mcp,
-        "leaderboard",
+        "rank_candidates",
         {
             "metric": "run.sharpe_ratio",
             "runs": [{"run_id": "missing", "scope": "full"}],
@@ -210,17 +210,17 @@ def test_an_unreadable_scope_is_reported_as_a_skipped_run_row(
             "not signal filters",
         ),
         ("signal.ic_mean", {"runs": [{"run_id": "a"}]}, "not run selections"),
-        ("backtest.sharpe_ratio", {}, "needs a 'signal.' or 'run.' prefix"),
+        ("backtest.sharpe_ratio", {}, "metric must be 'signal.<metric>'"),
     ],
 )
 def test_the_tool_refuses_a_request_that_mixes_the_two_sources(
     mcp: MCPServer, metric: str, extra: dict[str, Any], expected: str
 ) -> None:
     """A half-filled table would look like a ranking of two things."""
-    payload = _dispatch(mcp, "leaderboard", {"metric": metric, **extra})
+    payload = _dispatch(mcp, "rank_candidates", {"metric": metric, **extra})
 
     assert payload["success"] is False
-    assert payload["code"] == "invalid_leaderboard_request"
+    assert payload["code"] == "invalid_rank_request"
     assert expected in payload["error"]
 
 
@@ -229,11 +229,11 @@ def test_run_ranking_refuses_the_signal_context_override(
 ) -> None:
     payload = _dispatch(
         mcp,
-        "leaderboard",
+        "rank_candidates",
         {"metric": "run.sharpe_ratio", "runs": published, "allow_mixed": True},
     )
     assert payload["success"] is False
-    assert payload["code"] == "invalid_leaderboard_request"
+    assert payload["code"] == "invalid_rank_request"
     assert "not signal filters" in payload["error"]
 
 
@@ -244,9 +244,9 @@ def test_the_advertised_schema_offers_runs_and_a_metric(
         return list(await mcp.list_tools())
 
     entries = {tool.name: tool for tool in asyncio.run(tools())}
-    properties = entries["leaderboard"].input_schema["properties"]
+    properties = entries["rank_candidates"].input_schema["properties"]
     assert "runs" in properties and "metric" in properties
-    assert entries["leaderboard"].input_schema["required"] == ["metric"]
+    assert entries["rank_candidates"].input_schema["required"] == ["metric"]
 
 
 def test_a_duplicate_selection_is_refused_through_the_tool(
@@ -255,7 +255,7 @@ def test_a_duplicate_selection_is_refused_through_the_tool(
     """Two names for one measurement must not become a two-row ranking."""
     payload = _dispatch(
         mcp,
-        "leaderboard",
+        "rank_candidates",
         {"metric": "run.sharpe_ratio", "runs": [published[0], published[0]]},
     )
 
@@ -270,7 +270,7 @@ def test_an_omitted_scope_that_resolves_to_a_selected_one_is_refused(
     """The inputs differ; the resolved measurement does not."""
     payload = _dispatch(
         mcp,
-        "leaderboard",
+        "rank_candidates",
         {
             "metric": "run.sharpe_ratio",
             "runs": [{"run_id": "alpha"}, {"run_id": "alpha", "scope": "full"}],

@@ -111,7 +111,10 @@ def test_ml_report_schema_discovers_selection_and_limits(
             {"ml_entry_ids": ["candidate"], "sections": ["ml"]}
         )
         assert tool.description is not None
-        assert "leaderboard" in tool.description
+        assert "rank_candidates" in tool.description
+        assert "signal." in tool.description
+        assert "bare name as ml_ranking_metric" in tool.description
+        assert "leaderboard" not in tool.description
         assert "evaluate_signal" in tool.description
         assert "1..50 distinct" in tool.description
         assert "not a backtest" in tool.description
@@ -303,9 +306,9 @@ def test_mcp_horizon_check_is_frozen_in_the_report(
 
     async def workflow() -> None:
         board = await server.call_tool(
-            "leaderboard",
+            "rank_candidates",
             {
-                "metric": "ic_mean",
+                "metric": "signal.ic_mean",
                 "allow_parameter_axes": True,
                 "require_verified_baseline": True,
                 "limit": 1,

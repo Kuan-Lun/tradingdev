@@ -14,7 +14,7 @@ the test.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from tests.strategy_fixtures import GENERATED_PROGRAM
@@ -565,8 +565,15 @@ class TestCandidateDispatch:
     def test_a_metric_without_a_source_prefix_is_refused(
         self, service: RankingService
     ) -> None:
-        with pytest.raises(ValueError, match="needs a 'signal.' or 'run.' prefix"):
+        with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
             service.rank_candidates("sharpe_ratio", runs=[("alpha", "full")])
+
+    @pytest.mark.parametrize("metric", ["", "signal.", "run.", "foo.ic_mean", None])
+    def test_an_empty_or_unknown_source_prefix_is_refused(
+        self, service: RankingService, metric: str | None
+    ) -> None:
+        with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
+            service.rank_candidates(cast("str", metric), runs=[("alpha", "full")])
 
     def test_run_selections_are_refused_on_the_signal_path(
         self, service: RankingService

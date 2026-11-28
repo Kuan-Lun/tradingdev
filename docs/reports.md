@@ -92,7 +92,7 @@ The selected candidates must satisfy the
 
 | MCP argument | CLI flag | Purpose |
 | --- | --- | --- |
-| `ml_ranking_metric` | `--ml-ranking-metric` | Choose the score. The default is `ic_mean`. |
+| `ml_ranking_metric` | `--ml-ranking-metric` | Use the bare signal metric name. For a ranking on `signal.rank_ic_mean`, pass `rank_ic_mean`. The default is `ic_mean`. |
 | `ml_allow_parameter_axes` | `--ml-allow-parameter-axes` | Allow a parameter sweep under the ML comparison rules. |
 | `ml_allow_mixed` | `--ml-allow-mixed` | Include otherwise incompatible evaluation contexts with a caveat to interpret their ranks as display order only. |
 | `ml_require_verified_baseline` | `--ml-require-verified-baseline` | Require valid saved raw evidence and matching baselines across the selected datasets. |

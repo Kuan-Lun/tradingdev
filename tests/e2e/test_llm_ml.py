@@ -49,7 +49,7 @@ ML_TOOLS = [
     "train_model",
     "predict",
     "evaluate_signal",
-    "leaderboard",
+    "rank_candidates",
 ]
 DATASET_ARGUMENTS = {
     "symbol": "BTC/USDT",
@@ -76,7 +76,7 @@ VALIDATION_STATEMENT = (
     "validation 衡量訓練流程的樣本外表現，不是此 artifact 的樣本外預測。"
 )
 ML_PROMPT = f"""請透過 TradingDev MCP 完成一個小型 ML 研究流程。
-先 get_ml_contract，確認以下 feature set、model kind、validation、leaderboard metric
+先 get_ml_contract，確認以下 feature set、model kind、validation、ranking metric
 皆由契約提供。再 build_dataset，參數為 {json.dumps(DATASET_ARGUMENTS)}。
 行情已預先放入後端快取；不要下載行情或寫入策略，也不必啟動回測確認單。
 接著 train_model，dataset_id 使用剛回傳的 ID，其餘參數為
@@ -86,7 +86,7 @@ ML_PROMPT = f"""請透過 TradingDev MCP 完成一個小型 ML 研究流程。
 再 evaluate_signal，使用同一 model_id、dataset_id，設 window=12、n_quantiles=2、
 record=true，讓後端評估全部資料列；不需把預覽陣列傳入或讀完每一頁。
 若工具回報錯誤，讀取原因再修正。
-最後 leaderboard(metric="hit_rate", dataset_id=同一資料集ID)，
+最後 rank_candidates(metric="signal.hit_rate", dataset_id=同一資料集ID)，
 確認排名中包含這次 recorded.entry_id，
 與相同 model_id、dataset_id。讀取 caveats，不要把最高排名當作獲利保證。
 完成後回覆 dataset_id、model_id、entry_id，並逐字附上以下兩句以區分證據：
@@ -151,7 +151,14 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
         ("validation_schemes", "purged_walk_forward"),
     ):
         assert expected in {entry["name"] for entry in contract.result[key]}
-    assert "hit_rate" in contract.result["leaderboard_metrics"]
+    signal_sources = [
+        source
+        for source in contract.result["ranking"]["sources"]
+        if source["source"] == "signal"
+    ]
+    assert "signal.hit_rate" in {
+        metric["id"] for metric in signal_sources[0]["metrics"]
+    }
     for key, value in DATASET_ARGUMENTS.items():
         assert built.arguments.get(key) == value, f"Dataset request mismatch: {key}"
         assert built.result["dataset"][key] == value, f"Dataset result mismatch: {key}"
@@ -202,7 +209,7 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert evaluation.get("producer_source") == "backend_model"
     assert evaluation["recorded"].get("producer_source") == "backend_model"
     assert evaluation["recorded"]["training_dataset_id"] == dataset_id
-    assert ranked.arguments.get("metric") == "hit_rate"
+    assert ranked.arguments.get("metric") == "signal.hit_rate"
     assert ranked.arguments.get("dataset_id") == dataset_id
     leaderboard = ranked.result
     # The echo is source-qualified: one tool ranks two sources now, so the
@@ -406,7 +413,7 @@ def assert_training_provenance(
     discovered = {
         row["entry_id"]
         for call in successful
-        if call.name == "leaderboard"
+        if call.name == "rank_candidates"
         for group in ("ranked", "skipped")
         for row in call.result[group]
     }
@@ -432,7 +439,7 @@ def assert_training_provenance(
     expected_ids.extend(entry.entry_id for entry in case.historical)
     assert len(stored) == len(expected_ids), "Cross-source candidates must coexist"
     for call in successful:
-        if call.name == "leaderboard":
+        if call.name == "rank_candidates":
             for row in [*call.result["ranked"], *call.result["skipped"]]:
                 if row["entry_id"] in expected_ids:
                     assert (
@@ -720,7 +727,7 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
         ranked = [
             call
             for call in calls
-            if call.name == "leaderboard"
+            if call.name == "rank_candidates"
             and call.arguments.get("family") == "rule"
             and call.result.get("success")
         ]

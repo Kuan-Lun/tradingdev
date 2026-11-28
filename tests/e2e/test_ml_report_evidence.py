@@ -65,7 +65,11 @@ def saved_report() -> Iterator[MLReportWorkflow]:
                     return result
 
                 await call("get_ml_contract")
-                await call("leaderboard", metric="ic_mean", allow_parameter_axes=True)
+                await call(
+                    "rank_candidates",
+                    metric="signal.ic_mean",
+                    allow_parameter_axes=True,
+                )
                 await call("get_report_sections")
                 await call(
                     "generate_report",

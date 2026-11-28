@@ -52,7 +52,7 @@ _READ_ONLY_TOOLS = {
     "get_evaluation_series_page",
     "export_evaluation_series",
     "predict",
-    "leaderboard",
+    "rank_candidates",
 }
 
 # readOnly, destructive, idempotent, openWorld: expected public behavior,

@@ -775,7 +775,7 @@ sequenceDiagram
 | Execution | 固定研究條件並產生可確認的計畫 | 8 | 1 讀 / 7 寫 |
 | Data | 取得或確認行情與特徵資料 | 4 | 3 讀 / 1 寫 |
 | Jobs | 追蹤與管理背景工作 | 3 | 1 讀 / 2 寫 |
-| Runs | 查詢已保存的回測結果與指標 | 5 | 5 讀 |
+| Runs | 查詢已保存的回測結果與指標 | 7 | 7 讀 |
 | History | 讀取交易紀錄、診斷與組裝報告 | 8 | 7 讀 / 1 寫 |
 
 <!-- _footer: "數量依 @mcp.tool 裝飾函式統計；讀寫以 ToolAnnotations.read_only_hint 為準。" -->
@@ -792,8 +792,8 @@ sequenceDiagram
 | Research Notes | 留下可續讀的研究筆記 | 4 | 2 讀 / 2 寫 |
 | Feature Requests | 記錄暫不支援的能力 | 2 | 1 讀 / 1 寫 |
 | Strategy Cleanup | 預覽並清理未用草稿 | 1 | 1 寫 |
-| ML | 獨立訓練與評估訊號 | 7 | 3 讀 / 4 寫 |
-| **合計** | — | **52** | **29 讀 / 23 寫** |
+| ML | 獨立訓練、評估訊號與排名 | 9 | 5 讀 / 4 寫 |
+| **合計** | — | **56** | **33 讀 / 23 寫** |
 
 <!-- _footer: "數量依 @mcp.tool 裝飾函式統計；讀寫以 ToolAnnotations.read_only_hint 為準。" -->
 
@@ -801,9 +801,9 @@ sequenceDiagram
 
 <!-- _class: statement -->
 
-## 目前共 52 個 MCP 工具
+## 目前共 56 個 MCP 工具
 
-> **29 個唯讀工具、23 個會建立或變更狀態的工具。**
+> **33 個唯讀工具、23 個會建立或變更狀態的工具。**
 
 工具依責任分成 11 群；同一群內同時有讀取與寫入，方便代理在對話中反覆查詢與遞進修改。
 
@@ -811,7 +811,7 @@ sequenceDiagram
 
 <!-- _class: compact -->
 
-## 這 52 個工具分在哪裡（1/2）
+## 這 56 個工具分在哪裡（1/2）
 
 | 模組 | 工具數 | 主要責任 |
 | --- | ---: | --- |
@@ -819,7 +819,7 @@ sequenceDiagram
 | `execution` | 8 | 準備回測、比較、Walk-forward、最佳化與確認 |
 | `data` | 4 | 探索、查詢與快取行情 |
 | `jobs` | 3 | 查詢與管理背景工作 |
-| `runs` | 5 | 查詢回測結果、指標與比較 |
+| `runs` | 7 | 查詢回測結果、指標與比較 |
 | `history` | 8 | 交易紀錄、診斷與報告 |
 
 <!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/" -->
@@ -828,7 +828,7 @@ sequenceDiagram
 
 <!-- _class: compact -->
 
-## 這 52 個工具分在哪裡（2/2）
+## 這 56 個工具分在哪裡（2/2）
 
 | 模組 | 工具數 | 主要責任 |
 | --- | ---: | --- |
@@ -836,9 +836,9 @@ sequenceDiagram
 | `research_notes` | 4 | 保存與匯出研究筆記 |
 | `feature_requests` | 2 | 記錄未支援能力 |
 | `strategy_cleanup` | 1 | 預覽與清理草稿 |
-| `ml` | 7 | 獨立資料集、模型、訊號評估與排名 |
+| `ml` | 9 | 獨立資料集、模型、訊號評估與排名 |
 
-前 6 群負責「把構想與研究條件變成可執行物件」；後 5 群負責「把結果留下並可分享」。共 11 群、52 個工具。
+前 6 群負責「把構想與研究條件變成可執行物件」；後 5 群負責「把結果留下並可分享」。共 11 群、56 個工具。
 
 <!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/tools/" -->
 
@@ -867,7 +867,7 @@ sequenceDiagram
 | UC-04 獨立 ML 訊號研究 | 合約 → 資料 → 資料集 → 訓練 → 評估 → 排名 | `build_dataset`、`train_model`、`evaluate_signal` |
 | UC-05 保存與分享 | 筆記 → 匯出 → 交付 | `save_research_note`、`export_research_note` |
 
-五個案例都遵循「先唯讀確認、再明確同意後寫入」；UC-03 不重跑回測，UC-04 走獨立 ML 軌道。
+UC-01/02 的執行提交須明確同意；UC-03 只查詢保存結果，不重跑回測。策略、研究證據與筆記保存及 UC-04 的 ML 操作依各自契約執行，不需執行核准。
 
 <!-- _footer: "來源：https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例" -->
 
@@ -928,7 +928,7 @@ sequenceDiagram
 | --- | --- | --- |
 | 執行後 | 報告與交付 | `get_report_sections`、`generate_report`、`list_artifacts`、`get_artifact`(_download) |
 | 執行後 | 保存與分享 | `save_research_note`、`get_research_notes`、`export_research_note`、`get_research_archive`、`record_feature_request`、`list_feature_requests`、`cleanup_strategy_drafts` |
-| 獨立軌道 | ML 訊號研究 | `get_ml_contract`、`build_dataset` / `build_panel`、`train_model`、`predict`、`evaluate_signal`、`leaderboard` |
+| 獨立軌道 | ML 訊號研究 | `get_ml_contract`、`build_dataset` / `build_panel`、`train_model`、`predict`、`evaluate_signal`、`rank_candidates` |
 
 <!-- _footer: "來源：[requirements.md 使用案例](https://github.com/Kuan-Lun/tradingdev/blob/main/docs/requirements.md#5-使用案例) · [SERVER_INSTRUCTIONS](https://github.com/Kuan-Lun/tradingdev/blob/main/src/tradingdev/mcp/prompts.py)" -->
 
@@ -969,7 +969,7 @@ sequenceDiagram
     A->>T: train_model
     A->>T: predict
     A->>T: evaluate_signal(record=true)
-    A->>T: leaderboard
+    A->>T: rank_candidates
     A->>U: 評估與排名
 ```
 
@@ -1038,7 +1038,7 @@ AI 代理能叫到哪些「種類」的工具，以及工具不能保證什麼�
 
 每個工具帶有四個 hint，協助代理決定呼叫時機與風險：
 
-- **read_only_hint**：只讀取、不變更伺服器狀態（`list_*`、`get_*`）。
+- **read_only_hint**：只讀取、不變更伺服器狀態（`list_*`、多數 `get_*`；`get_job_status` 例外，會整理消失的 worker 狀態）。
 - **destructive_hint**：可能建立、覆寫或刪除（`save_strategy`、`ensure_data`、`cleanup_strategy_drafts`）。
 - **idempotent_hint**：重複呼叫結果一致（`get_*`、`promote_strategy`、`generate_report`）。
 - **open_world_hint**：可能執行生成程式或存取外部資料（`validate_strategy`、`ensure_data`）。
@@ -1204,12 +1204,11 @@ AI 代理能叫到哪些「種類」的工具，以及工具不能保證什麼�
 
 ## ML 訓練不偷看答案，排名只比能比的（2/2）
 
-**排名：只比能比的：**
-
-- ML 訊號和回測結果用同一套規則排名
-- 算不出的數字不當 0，條件不同不混排
-- 越大越好或越小越好事先定好，同分同名次
-- 只有一個候選時會註明：單一筆不能證明比較好
+- 訊號與回測共用排名工具，各自選取候選、定義指標。
+- 訊號 Sharpe 採成本前模擬報酬，回測 Sharpe 納入成交成本。
+- 訊號預設只比條件一致的候選。回測列出各組條件，由讀者判斷可比性。
+- 缺值保留原因，排序方向依指標定義，同分同名次。
+- 僅一個候選可排名時，結果會提醒讀者缺少比較對象。
 
 > **要記得：** ML 評估是不含交易成本的簡化統計，排名靠前不代表已經是能交易的策略。
 
@@ -1326,7 +1325,7 @@ HTTP 模式用短效簽章網址下載，簽發與下載都核對檔案；stdio 
 
 ## 回測績效與排行榜用已保存的結果；統計 API 獨立計算，尚未接入查詢（2/2）
 
-- **AI 代理透過 MCP 拿得到**：已保存的 run 指標、比較結果與排行榜：get_run_metrics、compare_runs、leaderboard
+- **AI 代理透過 MCP 拿得到**：已保存的 run 指標、比較結果與排行榜：get_run_metrics、compare_runs、rank_candidates
 - **目前要在平台外處理**：Sharpe 區間、PSR／DSR、參數高原；實例二、三需要時都只能自己算或略過
 
 <!-- _footer: "來源：上游介紹簡報「績效管線與獨立統計 API」；模組責任與統計慣例見 ARCHITECTURE.md 的績效計算與對話摘要" -->

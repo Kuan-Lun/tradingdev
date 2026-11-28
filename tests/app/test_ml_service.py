@@ -59,16 +59,60 @@ def test_ranking_guidance_describes_the_training_dataset(service: MLService) -> 
     """MCP clients read the contract, not the docs, so the field must be there."""
     guidance = service.get_contract()["guidance"]["ranking"]
     assert "training_dataset_id" in guidance
+    assert "producer_source is backend_model" in guidance
     assert "equality with dataset_id means" in guidance
+    assert "caller array" in guidance
 
 
-def test_report_guidance_states_the_conditional_sample_rule(service: MLService) -> None:
+def test_ranking_guidance_preserves_baseline_verification_semantics(
+    service: MLService,
+) -> None:
+    """MCP clients need the baseline contract, not only the repository docs."""
+    guidance = service.get_contract()["guidance"]["ranking"]
+    assert "market_comparison" in guidance
+    assert "raw_baseline" in guidance
+    assert "evaluation_rows" in guidance
+    assert "require_verified_baseline=True" in guidance
+    assert "verified raw_baseline even with allow_mixed=True" in guidance
+    assert "evaluation_rows may differ" in guidance
+    assert "verified, mismatch or unknown" in guidance
+
+
+def test_report_guidance_describes_metric_and_sample_interpretation(
+    service: MLService,
+) -> None:
     guidance = service.get_contract()["guidance"]["reports"]
+    assert "ml_ranking_metric (signal.rank_ic_mean becomes rank_ic_mean)" in guidance
     assert ML_SAMPLE_PROVENANCE_NOTE in guidance
     assert "若已記錄為後端模型產生，且模型訓練資料集與評估資料集相同" in guidance
     assert "只描述被命名的模型，不證明它產生了訊號" in guidance
     assert "來源確認本身不是樣本外證明" in guidance
     assert "訓練與評估的關係仍未知" in guidance
+
+
+def test_evaluate_signal_rejects_an_out_of_range_quantile_count(
+    service: MLService,
+) -> None:
+    with pytest.raises(ValueError, match="n_quantiles must be between 2 and 10"):
+        service.evaluate_signal(_PERFECT, _PERFECT, window=10, n_quantiles=1)
+
+
+def test_ranking_page_rejects_an_out_of_range_limit(service: MLService) -> None:
+    with pytest.raises(ValueError, match="limit must be an integer between 1 and 100"):
+        service.rank_signal_candidates("ic_mean", limit=0)
+
+
+def test_evaluation_series_page_reports_a_missing_artifact(service: MLService) -> None:
+    with pytest.raises(ValueError, match="evaluation series .* is unavailable"):
+        service.evaluation_series_rows_page("0123456789abcdef" * 4)
+
+
+def test_cleanup_evaluation_series_accepts_explicit_protection(
+    service: MLService,
+) -> None:
+    result = service.cleanup_evaluation_series(protected=["a" * 16])
+    assert result["success"] is True
+    assert result["removed"] == []
 
 
 def test_evaluate_signal_on_a_perfectly_monotonic_signal(service: MLService) -> None:

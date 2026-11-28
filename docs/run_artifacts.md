@@ -864,7 +864,7 @@ aligned to their original bar indices after filtering and paging.
 ## Ranking Saved Run Scopes
 
 `RankingService.rank_run_scopes` orders saved scopes by one metric a run already
-recorded. The MCP `leaderboard` tool exposes it through
+recorded. The MCP `rank_candidates` tool exposes it through
 `RankingService.rank_candidates`: a `run.<metric>` id with explicit `runs`
 selections is the public form of this contract, and
 [the ML research contract](ml_research.md) documents the shared response shape,
@@ -889,7 +889,7 @@ run can be ranked in one result. The metric id is source-qualified (`run.<name>`
 and must exist in [the metric catalog](../src/tradingdev/domain/performance/catalog.py)
 with a declared optimization direction; a `signal.` id is refused here because
 recorded signal evaluations are a different measurement, ranked through the
-leaderboard's signal path; an id without a direction cannot order candidates.
+the ranking tool's signal path; an id without a direction cannot order candidates.
 
 A scope must hold scalar values. Scalar backtest scopes, including numbered
 walk-forward folds such as `fold/0/test`, are rankable. Aggregate fold summaries

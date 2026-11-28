@@ -433,7 +433,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         )
         assert reloaded_trial == losing
         board = await client.call(
-            "leaderboard", metric="run.total_return", runs=[{"run_id": job_id}]
+            "rank_candidates", metric="run.total_return", runs=[{"run_id": job_id}]
         )
         (ranked,) = board["ranked"]
         assert ranked["scope"] == "test" and ranked["value"] == pytest.approx(
@@ -540,7 +540,7 @@ async def test_parallel_candidate_exception_retains_partial_trials(
         missing = await client.call("get_run_metrics", run_id=job_id, scope="test")
         assert missing["code"] == "optimization_scope_unavailable"
         board = await client.call(
-            "leaderboard",
+            "rank_candidates",
             metric="run.total_return",
             runs=[{"run_id": job_id, "scope": "trial/0/train"}],
         )

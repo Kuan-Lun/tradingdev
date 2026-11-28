@@ -133,7 +133,7 @@ def verify_ml_report_outcome(
     discovered: set[str] = set()
     for call in effective:
         if (
-            call.name == "leaderboard"
+            call.name == "rank_candidates"
             and isinstance(call.result, dict)
             and call.result.get("success") is True
         ):
