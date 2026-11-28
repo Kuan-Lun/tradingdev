@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -222,7 +223,7 @@ def test_legacy_result_remains_readable_without_becoming_resumable(
 def test_migration_adds_nullable_manifest_hash_to_existing_runs(tmp_path: Path) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     workspace.ensure()
-    with sqlite3.connect(workspace.root / "tradingdev.sqlite") as conn:
+    with closing(sqlite3.connect(workspace.root / "tradingdev.sqlite")) as conn, conn:
         conn.executescript("""
             create table runs (
                 run_id text primary key,

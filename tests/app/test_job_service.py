@@ -492,7 +492,7 @@ def test_identity_writer_and_worker_merge_inside_one_sqlite_transaction(
     assert record is not None
     assert record["status"] == "done" and record["pid"] == 12345
     assert record["ended_at"] and record["error"] is None
-    with first.store.connect() as connection:
+    with first.store.connection() as connection:
         row = connection.execute("select * from jobs where job_id='race'").fetchone()
         assert json.loads(row["payload"]) == record
         for key in ("status", "pid", "started_at", "ended_at", "error"):

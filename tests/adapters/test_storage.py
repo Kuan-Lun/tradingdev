@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING
+
+import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -25,12 +28,37 @@ def test_workspace_paths_create_expected_directories(tmp_path: Path) -> None:
     assert workspace.configs.exists()
 
 
+def test_sqlite_store_managed_connection_lifecycle(tmp_path: Path) -> None:
+    store = SQLiteStore(WorkspacePaths(tmp_path))
+    with closing(store.connect()) as observer:
+        assert isinstance(observer, sqlite3.Connection)
+        with observer:
+            observer.execute("create table entries (value text primary key)")
+
+        with store.connection() as committed:
+            committed.execute("insert into entries values ('kept')")
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            committed.execute("select 1")
+
+        with (
+            pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"),
+            store.connection() as failed,
+        ):
+            failed.execute("insert into entries values ('discarded')")
+            failed.execute("insert into entries values ('kept')")
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            failed.execute("select 1")
+
+        rows = observer.execute("select value from entries").fetchall()
+        assert [row["value"] for row in rows] == ["kept"]
+
+
 def test_sqlite_store_auto_initializes_metadata_schema(tmp_path: Path) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
 
     assert store.db_path.exists()
-    with store.connect() as conn:
+    with store.connection() as conn:
         tables = {
             str(row["name"])
             for row in conn.execute(
@@ -93,7 +121,7 @@ def test_sqlite_store_relaxes_existing_backtest_job_columns(
     workspace = WorkspacePaths(tmp_path / "workspace")
     workspace.ensure()
     db_path = workspace.root / "tradingdev.sqlite"
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         conn.executescript("""
             create table jobs (
                 job_id text primary key,
@@ -124,7 +152,7 @@ def test_sqlite_store_relaxes_existing_backtest_job_columns(
 
     store = SQLiteStore(workspace)
 
-    with store.connect() as conn:
+    with store.connection() as conn:
         info = {
             str(row["name"]): row
             for row in conn.execute("pragma table_info(jobs)").fetchall()
@@ -192,7 +220,7 @@ def test_sqlite_store_persists_job_run_and_artifact_lookup(tmp_path: Path) -> No
 def test_sqlite_store_adds_nullable_revision_to_existing_runs(tmp_path: Path) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     workspace.ensure()
-    with sqlite3.connect(workspace.root / "tradingdev.sqlite") as conn:
+    with closing(sqlite3.connect(workspace.root / "tradingdev.sqlite")) as conn, conn:
         conn.executescript("""
             create table runs (
                 run_id text primary key,

@@ -250,7 +250,7 @@ def workflow_report(
     try:
         yield result, store
     finally:
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.executemany(
                 "DELETE FROM artifacts WHERE artifact_id = ?",
                 [(artifact_id,) for artifact_id in new_ids],
@@ -292,7 +292,7 @@ def test_workflow_verifier_rejects_report_registration_corruption(
     unrelated = completed_workflow.workspace.workspace / "unrelated_report.html"
     assert not unrelated.exists()
     try:
-        with store.connect() as connection:
+        with store.connection() as connection:
             if field == "path":
                 unrelated.write_bytes(Path(result["path"]).read_bytes())
                 connection.execute(
@@ -308,7 +308,7 @@ def test_workflow_verifier_rejects_report_registration_corruption(
         with pytest.raises(AssertionError, match="Report (path|ID)"):
             completed_workflow.verify()
     finally:
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "UPDATE artifacts SET path = ?, metadata = ? WHERE artifact_id = ?",
                 (artifact["path"], json.dumps(artifact["metadata"]), artifact_id),
@@ -338,7 +338,7 @@ def test_workflow_verifier_rejects_report_manifest_corruption(
     try:
         path.write_text(json.dumps(manifest), encoding="utf-8")
         # Keep the registry SHA valid: semantic linkage must independently fail.
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
                 (hashlib.sha256(path.read_bytes()).hexdigest(), artifact_id),
@@ -347,7 +347,7 @@ def test_workflow_verifier_rejects_report_manifest_corruption(
             completed_workflow.verify()
     finally:
         path.write_bytes(original)
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
                 (artifact["sha256"], artifact_id),

@@ -33,7 +33,7 @@ def conversation_bytes(record: ConversationRecord) -> bytes:
 class ConversationStore:
     def __init__(self, store: SQLiteStore) -> None:
         self.store = store
-        with store.connect() as conn:
+        with store.connection() as conn:
             conn.execute("""create table if not exists conversations (
                 conversation_id text primary key, version integer not null,
                 updated_at text not null, document text not null
@@ -41,7 +41,7 @@ class ConversationStore:
 
     def load(self, conversation_id: str) -> ConversationRecord:
         TypeAdapter(ConversationId).validate_python(conversation_id)
-        with self.store.connect() as conn:
+        with self.store.connection() as conn:
             row = conn.execute(
                 "select * from conversations where conversation_id=?",
                 (conversation_id,),
@@ -61,7 +61,7 @@ class ConversationStore:
     def save(self, record: ConversationRecord, expected_version: int | None) -> None:
         record = ConversationRecord.model_validate(record)
         document = conversation_bytes(record).decode("utf-8")
-        with self.store.connect() as conn:
+        with self.store.connection() as conn:
             conn.execute("begin immediate")
             row = conn.execute(
                 "select document from conversations where conversation_id=?",
@@ -149,7 +149,7 @@ class ConversationStore:
                     )
 
     def list(self, offset: int, limit: int) -> tuple[list[ConversationSummary], int]:
-        with self.store.connect() as conn:
+        with self.store.connection() as conn:
             conn.execute("begin")
             total = int(
                 conn.execute("select count(*) from conversations").fetchone()[0]

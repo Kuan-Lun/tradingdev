@@ -200,7 +200,7 @@ def test_removed_market_sample_inputs_fail_before_validation_or_plan_creation(
     assert context.service.jobs.list_runs() == []
     assert not list(context.service.workspace.runs.iterdir())
     assert not (context.service.workspace.root / "execution_plans").exists()
-    with context.service.jobs.store.connect() as connection:
+    with context.service.jobs.store.connection() as connection:
         assert (
             connection.execute("SELECT COUNT(*) FROM execution_plans").fetchone()[0]
             == 0

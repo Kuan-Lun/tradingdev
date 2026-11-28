@@ -174,7 +174,7 @@ def publish_report(
                     now_iso(),
                 )
             )
-        with store.connect() as connection:
+        with store.connection() as connection:
             for record in records:
                 existing = connection.execute(
                     "select run_id, artifact_type, path, sha256, metadata "

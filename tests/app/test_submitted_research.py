@@ -125,7 +125,7 @@ def test_declared_run_evidence_cannot_downgrade_to_legacy(
     elif change == "tamper":
         path.write_bytes(path.read_bytes() + b" ")
     elif change == "artifact_missing":
-        with jobs.store.connect() as connection:
+        with jobs.store.connection() as connection:
             connection.execute(
                 "DELETE FROM artifacts WHERE artifact_id = ?",
                 ("job:research_evidence",),

@@ -77,7 +77,7 @@ def _seed(
                 artifact_dir=workspace.root,
                 metrics={"large": _LARGE},
             )
-            with store.connect() as conn:
+            with store.connection() as conn:
                 conn.execute(
                     "update runs set created_at = ? where run_id = ?",
                     (created_at, identity),
@@ -98,7 +98,7 @@ def _seed(
                 path=artifact_path,
                 metadata={"large": _LARGE},
             )
-            with store.connect() as conn:
+            with store.connection() as conn:
                 conn.execute(
                     "update artifacts set created_at = ? where artifact_id = ?",
                     (created_at, identity),
