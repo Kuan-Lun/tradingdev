@@ -3,6 +3,7 @@
 import os
 import shutil
 from datetime import UTC
+from functools import cache
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from typing import TYPE_CHECKING
@@ -14,7 +15,7 @@ import pytest
 from tests.runtime_cleanup import recover_test_strategy_units
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
 pytest_plugins = ["tests.llm_plugin", "tests.parallel_plugin"]
 
@@ -26,6 +27,13 @@ def pytest_configure(config: pytest.Config) -> None:
     environment = pytest.MonkeyPatch()
     config.add_cleanup(environment.undo)
     environment.setenv("MPLCONFIGDIR", directory.name)
+
+
+@pytest.fixture(scope="session")
+def verified_quantstats_versions() -> Callable[[], bool]:
+    from tests.quantstats_warnings import run_plot_version_check
+
+    return cache(run_plot_version_check)
 
 
 @pytest.fixture

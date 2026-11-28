@@ -20,8 +20,8 @@ uv sync --locked --all-extras --python 3.14
 只有工具鏈需要安裝或修復時才需要 npm。
 Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check／package 與離線測試，
 均要求工具鏈已初始化，執行時不呼叫 npm。Cloudflare 發布入口會先執行 `npm ci`。
-完整離線 pytest 與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器；
-離線表示執行時不呼叫模型或下載依賴。
+完整 pytest 套件與 `tests/tooling` 包含真實圖表渲染測試，需要 Node.js、已初始化的工具鏈與瀏覽器。
+備妥環境後可離線測試，不呼叫模型或下載依賴；唯一的外部版本查詢見[執行離線測試](#執行離線測試)。
 初始化操作與替代瀏覽器設定見[簡報的編輯與輸出](#簡報的編輯與輸出)。
 安裝器調整的 Git 設定及
 執行環境限制見[注意事項](#注意事項)。
@@ -33,7 +33,7 @@ Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check
 | `scripts/check-docs.sh` | Markdown、連結及 SRS 結構與追溯引用。 | 改檢查器時維護 `tests/tooling/test_documentation.py`、`test_srs_requirements.py`；不執行引用的測試。 |
 | `scripts/check-presentations.sh` | 文件品質、簡報來源建置、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；打包與發布 staging 維護 `tests/tooling/test_presentation_bundle.py`；視覺與瀏覽器操作另行確認。 |
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
-| `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
+| `scripts/check-full.sh` | 快速品質檢查與完整預設 pytest 套件；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
 | `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 修改已登錄工具或其 Markdown 指引時，依[分流表](#2-在-github-建立-pr交由審閱者檢查)確認適用範圍。 |
 | `uv run --no-sync python -m tooling.sharpe_calibration --output /tmp/tradingdev-sharpe-calibration.json` | 離線執行固定 Sharpe 推論校準矩陣，輸出 JSON 至 checkout 外。 | 改程序生成公式、seed、block size 或判讀規則時維護 `tests/domain/statistics/test_statistics_sharpe_calibration.py`。 |
 | `scripts/check-llm.sh codex\|local` | 模型實際使用 MCP 的探索、互動、確認及成果交付。 | 改模型可見契約或流程時維護受影響的 `tests/e2e/` 情境。 |
@@ -102,8 +102,20 @@ stub 的 `Any` 預設值，使不存在的方法或錯誤輸入失去檢查。
 ### 執行離線測試
 
 離線測試可直接使用 `uv run --all-extras pytest`，加檔案路徑或 `-k` 執行相關範圍。
-手動執行 `check-full.sh` 一律跑完整離線套件。`check-tooling.sh` 執行開發工具套件；
+手動執行 `check-full.sh` 一律跑完整預設套件。`check-tooling.sh` 執行開發工具套件；
 交付時先[產生整個任務差異的檢查計畫](#1-分階段提交並推送)，依 `delivery_profile` 執行相應命令。
+
+只有實際跑到原生 QuantStats 圖表的特定測試時，才會向 PyPI 查詢版本；每個 pytest
+程序最多查一輪，沿用檢查證據時不重新查詢。查詢不會安裝或更新套件。若有新版、
+版本與已驗證組合不符，或離線查不到版本，測試仍驗證報告，並保留原警告與維護提醒。
+
+看到提醒時，可手動檢視鎖定版本是否落後上游：
+
+```bash
+uv tree --locked --outdated --depth 0 --package quantstats --package seaborn --package matplotlib
+```
+
+複驗原生圖表相容性後，視需要更新 `pyproject.toml` 或 `uv.lock`，並重新驗證仍需保留的警告例外，移除已過時的例外。
 
 ### 平行執行離線測試
 
@@ -761,7 +773,7 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 | 一般文件 | 文件格式、連結與 SRS 結構；涉及 SRS 時再執行 Codex 一致性審查。 |
 | 已登錄簡報 | 文件與簡報專項；混合 SRS 時再執行 Codex 審查；視覺操作仍須人工確認。 |
 | 開發政策／已登錄開發工具及其已登錄的 Markdown 指引／已登錄工具專用測試支援檔案 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
-| 產品／依賴／產品共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
+| 產品／依賴／產品共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整預設 pytest 套件。 |
 
 查詢 PR 與本機候選的分流規則時，參閱 [change_scope.py](../tooling/git/change_scope.py) 的
 `classify_changes` 與 `ChangeScope`。

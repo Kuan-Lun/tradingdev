@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from quantstats import reports, stats, utils
+from tests.quantstats_warnings import native_plot_warnings
 
 from tradingdev.adapters.reporting import quantstats_report
 from tradingdev.adapters.reporting.quantstats_report import (
@@ -68,7 +69,9 @@ def _native_metric(html: str, label: str) -> str:
 
 @pytest.mark.parametrize("periods", [365.0, 3.5])
 def test_native_html_is_deterministic_offline_and_restores_plot_state(
-    monkeypatch: pytest.MonkeyPatch, periods: float
+    monkeypatch: pytest.MonkeyPatch,
+    periods: float,
+    verified_quantstats_versions: Callable[[], bool],
 ) -> None:
     def forbid_network(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("Native report must not fetch remote data")
@@ -84,13 +87,16 @@ def test_native_html_is_deterministic_offline_and_restores_plot_state(
     existing = plt.figure()
     before_figures = set(plt.get_fignums())
     try:
-        with mpl.rc_context({"axes.facecolor": "red", "svg.hashsalt": "caller"}):
-            first = build_quantstats_report(scope)
-            assert mpl.rcParams["axes.facecolor"] == "red"
-            assert mpl.rcParams["svg.hashsalt"] == "caller"
-        with mpl.rc_context({"axes.facecolor": "green", "svg.hashsalt": "different"}):
-            second = build_quantstats_report(scope)
-            assert mpl.rcParams["axes.facecolor"] == "green"
+        with native_plot_warnings(verified_quantstats_versions()):
+            with mpl.rc_context({"axes.facecolor": "red", "svg.hashsalt": "caller"}):
+                first = build_quantstats_report(scope)
+                assert mpl.rcParams["axes.facecolor"] == "red"
+                assert mpl.rcParams["svg.hashsalt"] == "caller"
+            with mpl.rc_context(
+                {"axes.facecolor": "green", "svg.hashsalt": "different"}
+            ):
+                second = build_quantstats_report(scope)
+                assert mpl.rcParams["axes.facecolor"] == "green"
         assert first == second
         assert first["available"] is True
         html = first["html"]

@@ -29,12 +29,13 @@ from tests.integration.mcp_harness import (
     MCPWorkspace,
     temporary_mcp_workspace,
 )
+from tests.quantstats_warnings import native_plot_warnings
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.report_service import ReportService
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 _SMA_CODE = '''\
 """Deterministic SMA direction fixture for workflow verification."""
@@ -223,6 +224,7 @@ def test_workflow_verifier_accepts_completed_backtest(
 @pytest.fixture
 def workflow_report(
     completed_workflow: CompletedWorkflow,
+    verified_quantstats_versions: Callable[[], bool],
 ) -> Iterator[tuple[dict[str, Any], SQLiteStore]]:
     """Add a report temporarily without changing the shared completed run."""
     workspace = WorkspacePaths(completed_workflow.workspace.workspace)
@@ -232,11 +234,14 @@ def workflow_report(
     reports = workspace.root / "reports"
     reports_existed = reports.exists()
     original_files = set(reports.rglob("*"))
-    result = ReportService(workspace=workspace, store=store).generate_report(
-        [completed_workflow.run_id],
-        sections=["trades", "metrics"],
-        commentary=[{"title": "Workflow review", "text": "Review saved observations."}],
-    )
+    with native_plot_warnings(verified_quantstats_versions()):
+        result = ReportService(workspace=workspace, store=store).generate_report(
+            [completed_workflow.run_id],
+            sections=["trades", "metrics"],
+            commentary=[
+                {"title": "Workflow review", "text": "Review saved observations."}
+            ],
+        )
     assert result["success"], result
     report_ids = [result["artifact_id"], result["manifest_artifact_id"]]
     new_ids = [
