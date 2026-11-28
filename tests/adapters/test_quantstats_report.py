@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from quantstats import reports, stats, utils
+from tests.quantstats_warnings import native_plot_warnings
 
 from tradingdev.adapters.reporting import quantstats_report
 from tradingdev.adapters.reporting.quantstats_report import (
@@ -68,7 +69,9 @@ def _native_metric(html: str, label: str) -> str:
 
 @pytest.mark.parametrize("periods", [365.0, 3.5])
 def test_native_html_is_deterministic_offline_and_restores_plot_state(
-    monkeypatch: pytest.MonkeyPatch, periods: float
+    monkeypatch: pytest.MonkeyPatch,
+    periods: float,
+    verified_quantstats_versions: Callable[[], bool],
 ) -> None:
     def forbid_network(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("Native report must not fetch remote data")
@@ -84,13 +87,16 @@ def test_native_html_is_deterministic_offline_and_restores_plot_state(
     existing = plt.figure()
     before_figures = set(plt.get_fignums())
     try:
-        with mpl.rc_context({"axes.facecolor": "red", "svg.hashsalt": "caller"}):
-            first = build_quantstats_report(scope)
-            assert mpl.rcParams["axes.facecolor"] == "red"
-            assert mpl.rcParams["svg.hashsalt"] == "caller"
-        with mpl.rc_context({"axes.facecolor": "green", "svg.hashsalt": "different"}):
-            second = build_quantstats_report(scope)
-            assert mpl.rcParams["axes.facecolor"] == "green"
+        with native_plot_warnings(verified_quantstats_versions()):
+            with mpl.rc_context({"axes.facecolor": "red", "svg.hashsalt": "caller"}):
+                first = build_quantstats_report(scope)
+                assert mpl.rcParams["axes.facecolor"] == "red"
+                assert mpl.rcParams["svg.hashsalt"] == "caller"
+            with mpl.rc_context(
+                {"axes.facecolor": "green", "svg.hashsalt": "different"}
+            ):
+                second = build_quantstats_report(scope)
+                assert mpl.rcParams["axes.facecolor"] == "green"
         assert first == second
         assert first["available"] is True
         html = first["html"]
@@ -276,7 +282,12 @@ def test_utc_daily_compounding_preserves_first_return_and_missing_days(
         ("observations", "equity_curve", [1.0], "unaligned_observations"),
         ("observations", "equity_curve", [1.0, 0.0, 1.0], "nonpositive_capital"),
         ("observations", "init_cash", 0, "nonpositive_capital"),
-        ("observations", "timestamps", ["invalid"] * 3, "invalid_timestamps"),
+        (
+            "observations",
+            "timestamps",
+            ["2024-01-01", "2024-01-02", "invalid"],
+            "invalid_timestamps",
+        ),
         ("observations", "timestamps", ["2024-01-01"] * 3, "invalid_timestamps"),
         ("settings", "frequency", None, "unknown_bar_frequency"),
         ("settings", "frequency", "1W", "unsupported_daily_sampling"),

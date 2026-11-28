@@ -218,8 +218,13 @@ def test_build_signal_series_rejects_mismatched_and_short_inputs() -> None:
         build_signal_series([1.0] * 6, [0.1] * 6, _TIMESTAMPS, window=1)
     with pytest.raises(ValueError, match="not enough rows"):
         build_signal_series([1.0, 2.0], [0.1, 0.2], _TIMESTAMPS[:2], window=3)
-    with pytest.raises(ValueError):
-        build_signal_series([1.0] * 6, [0.1] * 6, ["not-a-date"] * 6, window=3)
+    with pytest.raises(ValueError, match="not-a-date"):
+        build_signal_series(
+            [1.0, 2.0, 3.0],
+            [0.1, 0.3, 0.2],
+            ["2024-01-01", "2024-01-02", "not-a-date"],
+            window=3,
+        )
 
 
 def test_non_finite_correlation_keeps_a_reason(monkeypatch: pytest.MonkeyPatch) -> None:

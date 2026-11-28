@@ -59,9 +59,8 @@ class LightGBMDirectionModel(BaseModel):
 
         fit_kwargs: dict[str, Any] = {}
         if eval_df is not None:
-            x_val = eval_df[feature_cols]
-            y_val = encoder.transform(eval_df["target"])
-            fit_kwargs["eval_set"] = [(x_val, y_val)]
+            fit_kwargs["eval_X"] = eval_df[feature_cols]
+            fit_kwargs["eval_y"] = encoder.transform(eval_df["target"])
             fit_kwargs["callbacks"] = [
                 lgb.early_stopping(self._config.early_stopping_rounds)
             ]
