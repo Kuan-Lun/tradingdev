@@ -115,7 +115,9 @@ stub 的 `Any` 預設值，使不存在的方法或錯誤輸入失去檢查。
 uv tree --locked --outdated --depth 0 --package quantstats --package seaborn --package matplotlib
 ```
 
-複驗原生圖表相容性後，視需要更新 `pyproject.toml` 或 `uv.lock`，並重新驗證仍需保留的警告例外，移除已過時的例外。
+有新版時，視需要更新 `pyproject.toml` 與 `uv.lock`，以新版執行原生圖表測試並保留原始警告。
+移除上游已修正的警告所對應的例外；只有測試確認已知警告仍會出現時，才將實測的依賴版本組合記入
+[tests/quantstats_warnings.py](../tests/quantstats_warnings.py) 的 `_VERIFIED`。
 
 ### 平行執行離線測試
 
