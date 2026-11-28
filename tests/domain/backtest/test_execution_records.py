@@ -416,7 +416,7 @@ def test_saved_observations_reject_different_execution_mark_with_valid_sha(
     _change_valuation_price(record, record["requested_price"] * 2.0)
     path.write_text(json.dumps(payload), encoding="utf-8")
     # A matching registry digest must not substitute for semantic validation.
-    with store.connect() as connection:
+    with store.connection() as connection:
         connection.execute(
             "UPDATE artifacts SET sha256 = ? WHERE artifact_id = ?",
             (sha256_file(path), "ledger:observations_json"),

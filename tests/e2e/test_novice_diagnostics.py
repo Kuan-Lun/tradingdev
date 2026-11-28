@@ -275,7 +275,7 @@ def test_ambiguous_or_missing_run_does_not_select_other_history(
 ) -> None:
     fixture = evidence_fixture
     if count == 0:
-        with fixture.store.connect() as connection:
+        with fixture.store.connection() as connection:
             connection.execute("UPDATE runs SET revision_id = 'different'")
     else:
         fixture.publish("duplicate-run")
@@ -354,7 +354,7 @@ def test_missing_saved_hash_does_not_claim_a_verified_snapshot(
     filename: str,
 ) -> None:
     fixture = evidence_fixture
-    with fixture.store.connect() as connection:
+    with fixture.store.connection() as connection:
         # Column names are the two fixed fixture values above, never external input.
         connection.execute(f"UPDATE runs SET {hash_key} = NULL")
     evidence = novice_failure_evidence(fixture.workspace, fixture.user, [])

@@ -1417,7 +1417,7 @@ def test_report_download_checks_registration_and_original_expected_hash(
     _, store, service = context
     _save(context)
     report = service.generate_report(["run"])
-    with store.connect() as connection:
+    with store.connection() as connection:
         if field == "deleted":
             connection.execute(
                 "delete from artifacts where artifact_id = ?", (report["artifact_id"],)
@@ -1505,7 +1505,7 @@ def test_database_failure_rolls_back_pair_and_cleans_files(
     workspace, store, service = context
     _save(context)
     before = store.list_artifacts()
-    with store.connect() as connection:
+    with store.connection() as connection:
         connection.execute(
             "create trigger reject_report before insert on artifacts "
             "when NEW.artifact_type = 'research_report_manifest' "
@@ -1617,7 +1617,7 @@ def test_registered_manifest_identity_and_byte_hash_are_checked_before_reporting
             "artifact_type": "unrelated",
             "run_id": "other",
         }
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 f"update artifacts set {corruption} = ? where artifact_id = ?",
                 (bad_values[corruption], "run:execution_manifest"),

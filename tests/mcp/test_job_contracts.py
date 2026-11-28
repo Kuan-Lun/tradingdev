@@ -244,7 +244,7 @@ def test_missing_created_timestamp_does_not_break_job_inventory(
     record = store.create_job(job_id="legacy")
     record.update(status="failed", ended_at="2024-01-01T00:00:10+00:00")
     del record["created_at"]
-    with store.store.connect() as connection:
+    with store.store.connection() as connection:
         connection.execute(
             "update jobs set payload = ? where job_id = ?",
             (json.dumps(record), "legacy"),

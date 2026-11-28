@@ -64,7 +64,7 @@ def _challenge(context: PlanContext, plan_id: str) -> ConfirmationChallenge:
 def _rewrite_payload(
     context: PlanContext, plan_id: str, payload: dict[str, Any]
 ) -> None:
-    with context.service.jobs.store.connect() as conn:
+    with context.service.jobs.store.connection() as conn:
         conn.execute(
             "UPDATE execution_plans SET payload=? WHERE plan_id=?",
             (json.dumps(payload), plan_id),
@@ -237,7 +237,7 @@ def test_failed_validation_never_publishes_a_plan(
     monkeypatch.setattr(context.preflight, "prepare", fail)
     with pytest.raises(AssertionError, match="preflight_timeout"):
         _prepare(context)
-    with context.service.jobs.store.connect() as conn:
+    with context.service.jobs.store.connection() as conn:
         assert conn.execute("SELECT count(*) FROM execution_plans").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM artifacts").fetchone()[0] == 0
     assert not (context.service.workspace.root / "execution_plans").exists()
@@ -248,14 +248,14 @@ def test_artifact_registration_failure_rolls_back_plan_and_files(
     tmp_path: Path,
 ) -> None:
     context = plan_context(tmp_path)
-    with context.service.jobs.store.connect() as conn:
+    with context.service.jobs.store.connection() as conn:
         conn.execute(
             "CREATE TRIGGER reject_confirmation BEFORE INSERT ON artifacts "
             "BEGIN SELECT RAISE(ABORT, 'artifact failure'); END"
         )
     with pytest.raises(AssertionError, match="artifact failure"):
         _prepare(context)
-    with context.service.jobs.store.connect() as conn:
+    with context.service.jobs.store.connection() as conn:
         assert conn.execute("SELECT count(*) FROM execution_plans").fetchone()[0] == 0
     directory = context.service.workspace.root / "execution_plans"
     assert list(directory.iterdir()) == []
@@ -268,7 +268,7 @@ def test_final_state_write_failure_retains_and_recovers_the_started_job(
     context = plan_context(tmp_path)
     prepared = _prepare(context)
     challenge = _challenge(context, prepared.plan_id)
-    with context.service.jobs.store.connect() as conn:
+    with context.service.jobs.store.connection() as conn:
         conn.execute(
             "CREATE TRIGGER reject_submitted BEFORE UPDATE ON execution_plans "
             "WHEN NEW.state='submitted' "
@@ -284,7 +284,7 @@ def test_final_state_write_failure_retains_and_recovers_the_started_job(
     repeated = context.service.begin_confirmation(prepared.plan_id)
     assert isinstance(repeated, PlanStarted) and repeated.job_id == result.job_id
     assert len(context.runner.calls) == 1
-    with context.service.jobs.store.connect() as conn:
+    with context.service.jobs.store.connection() as conn:
         conn.execute("DROP TRIGGER reject_submitted")
     recovered = context.service.begin_confirmation(prepared.plan_id)
     assert isinstance(recovered, PlanStarted) and recovered.job_id == result.job_id

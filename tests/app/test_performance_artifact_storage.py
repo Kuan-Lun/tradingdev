@@ -342,7 +342,7 @@ def test_reads_reject_corruption_identity_and_unknown_schema(
         payload["manifest_hash"] = "a" * 64
     path.write_text(json.dumps(payload))
     if corruption != "checksum":
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "update artifacts set sha256 = ? where artifact_id = ?",
                 (sha256_file(path), f"{run_id}:performance_json"),

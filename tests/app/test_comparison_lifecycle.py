@@ -409,7 +409,7 @@ def test_recovery_does_not_promote_corrupt_or_foreign_published_results(
     else:
         column = "job_id" if damage == "parent" else "manifest_hash"
         value = "another_parent" if damage == "parent" else "0" * 64
-        with fixture.jobs.store.connect() as connection:
+        with fixture.jobs.store.connection() as connection:
             connection.execute(
                 f"update runs set {column} = ? where run_id = ?", (value, run_id)
             )

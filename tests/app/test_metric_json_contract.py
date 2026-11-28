@@ -182,7 +182,7 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
     assert run is not None
     assert run["metrics"] == expected
     assert store.list_runs()[0]["metrics"] == expected
-    with store.connect() as connection:
+    with store.connection() as connection:
         row = connection.execute(
             "select metrics from runs where run_id = ?", (run_id,)
         ).fetchone()
@@ -215,7 +215,7 @@ def test_legacy_metrics_are_normalized_without_rewriting(
             artifact_dir=tmp_path,
             metrics={},
         )
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "update runs set metrics = ? where run_id = ?", (original, "legacy")
             )
@@ -224,7 +224,7 @@ def test_legacy_metrics_are_normalized_without_rewriting(
         assert run["metrics"] == expected
         assert store.list_runs()[0]["metrics"] == expected
         json.dumps(run, allow_nan=False)
-        with store.connect() as connection:
+        with store.connection() as connection:
             row = connection.execute(
                 "select metrics from runs where run_id = ?", ("legacy",)
             ).fetchone()

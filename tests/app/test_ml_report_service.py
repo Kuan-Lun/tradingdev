@@ -436,7 +436,7 @@ def test_no_ml_request_report_bytes_are_pinned(
     # renderer must still be absent from a request that never asks for it.
     _, store, service = context
     _save(context)
-    with store.connect() as connection:
+    with store.connection() as connection:
         connection.execute("update runs set created_at=?", ("2026-01-01T00:00:00Z",))
     result = service.generate_report(["run"], sections=[])
     payload, manifest = _read(result)

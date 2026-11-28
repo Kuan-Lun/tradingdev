@@ -358,7 +358,7 @@ def test_changed_or_missing_evidence_is_rejected(tmp_path: Path, change: str) ->
             "child_dataset": ("dataset_id", "sha256:" + "0" * 64),
             "child_metrics": ("metrics", '{"total_return":9}'),
         }[change]
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 f"update runs set {column}=? where run_id=?",
                 (value, "comparison_candidate_1"),
@@ -378,7 +378,7 @@ def test_changed_or_missing_evidence_is_rejected(tmp_path: Path, change: str) ->
         else:
             scope["metadata"]["execution_context"]["fees"] = 0.5
         path.write_text(json.dumps(value))
-        with store.connect() as connection:
+        with store.connection() as connection:
             connection.execute(
                 "update artifacts set sha256=? where artifact_id=?",
                 (sha256_file(path), artifact_id),
