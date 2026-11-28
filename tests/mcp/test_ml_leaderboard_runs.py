@@ -1,4 +1,4 @@
-"""The leaderboard tool's second source: saved run scopes ranked by a run. metric.
+"""Rank saved run scopes through rank_candidates with a run.<metric>.
 
 The signal path is covered in ``test_ml_leaderboard_tool.py``. This module checks
 the run dispatch through real saved artifacts and the typed MCP response.

@@ -25,17 +25,12 @@ from tradingdev.app.contracts.ml import (
 # Runtime import on purpose: the MCP schema builder calls get_type_hints on each
 # tool, so a type-checking-only import would fail to resolve `runs` at registration.
 from tradingdev.app.contracts.research import RunScopeSelection  # noqa: TC001
-from tradingdev.app.ranking_service import RankingService, qualify_metric
+from tradingdev.app.ranking_service import RankingService
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer
 
     from tradingdev.app.ml_service import MLService
-
-
-def _qualify_metric(metric: str) -> str:
-    """Require the caller to name the source; share the service's error rule."""
-    return qualify_metric(metric)
 
 
 def register(mcp: MCPServer, service: MLService) -> None:
@@ -299,7 +294,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
         """
         try:
             result = ranking.rank_candidates(
-                _qualify_metric(metric),
+                metric,
                 runs=(
                     None
                     if runs is None

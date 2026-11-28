@@ -39,27 +39,21 @@ if TYPE_CHECKING:
     from tradingdev.app.ml_service import MLService
 
 _RUN_PREFIX = "run."
-_SIGNAL_PREFIX = "signal."
 
 
-def _source_metric_error(metric: str) -> ValueError:
-    """Tell the caller which source prefixes are valid and where to find ids."""
-    return ValueError(
+def _split_metric(metric: str) -> tuple[str, str]:
+    """Return the caller's explicit source and nonempty catalogue ID."""
+    if isinstance(metric, str):
+        source, _, name = metric.partition(".")
+        if source in {"signal", "run"} and name:
+            return source, name
+    raise ValueError(
         "metric must be 'signal.<metric>' or 'run.<metric>'; got "
         f"{metric!r}. Use signal.<metric> with filters for saved signal "
         "evaluations (ids, directions and units in "
         "get_ml_contract.ranking.sources), or run.<metric> with runs for saved "
         "backtest scopes (ids in get_metric_catalog, prefixed with run.)."
     )
-
-
-def qualify_metric(metric: str) -> str:
-    """Require an explicit, nonempty source prefix; never infer one."""
-    if isinstance(metric, str):
-        for prefix in (_SIGNAL_PREFIX, _RUN_PREFIX):
-            if metric.startswith(prefix) and metric[len(prefix) :]:
-                return metric
-    raise _source_metric_error(metric)
 
 
 def _duplicate_error(message: str) -> dict[str, Any]:
@@ -75,13 +69,12 @@ def _duplicate_error(message: str) -> dict[str, Any]:
 def resolve_metric(metric: str) -> MetricDefinition:
     """Resolve a source-qualified backtest metric id to its direction and unit.
 
-    Signal metrics are rejected here: they are ranked through the leaderboard, and
-    a signal id can never equal a backtest id because both are source-qualified.
+    Signal evaluations and saved backtests have separate metric catalogues.
     """
     if not metric.startswith(_RUN_PREFIX):
         raise ValueError(
             f"backtest ranking needs a 'run.' metric id, not {metric!r}; "
-            "signal metrics are ranked through the leaderboard"
+            "use rank_candidates with a signal.<metric> for recorded evaluations"
         )
     name = metric[len(_RUN_PREFIX) :]
     definition = METRIC_CATALOG.get(name)
@@ -143,13 +136,13 @@ class RankingService:
         Both sources page with ``offset``/``limit``. A backtest selection is named
         explicitly and is usually small, so its page is normally the whole list.
         """
-        metric = qualify_metric(metric)
+        source, name = _split_metric(metric)
         if type(offset) is not int or offset < 0:
             raise ValueError("offset must be a non-negative integer")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer between 1 and 100")
         filters = (dataset_id, symbol, timeframe, horizon, feature_set, family)
-        if metric.startswith(_SIGNAL_PREFIX):
+        if source == "signal":
             if runs is not None:
                 raise ValueError(
                     "signal ranking selects recorded evaluations with filters, "
@@ -161,7 +154,7 @@ class RankingService:
                     "with ml_service="
                 )
             result = self._ml.rank_signal_candidates(
-                metric[len(_SIGNAL_PREFIX) :],
+                name,
                 dataset_id=dataset_id,
                 symbol=symbol,
                 timeframe=timeframe,
@@ -176,45 +169,41 @@ class RankingService:
             )
             result["metric"] = metric
             return result
-        if metric.startswith(_RUN_PREFIX):
-            if (
-                any(value is not None for value in filters)
-                or allow_parameter_axes
-                or allow_mixed
-                or require_verified_baseline
-            ):
-                raise ValueError(
-                    "backtest ranking selects saved scopes with runs, "
-                    "not signal filters"
-                )
-            if not runs:
-                raise ValueError("backtest ranking requires at least one run selection")
-            result = self.rank_run_scopes(metric, runs)
-            if result.get("success") is False:
-                return result
-            ranked = result["ranked"]
-            skipped = result["skipped"]
-            total = max(len(ranked), len(skipped))
-            if offset > total:
-                raise ValueError(f"offset exceeds ranked row count ({total})")
-            end = min(offset + limit, total)
-            return {
-                "success": True,
-                "metric": result["metric"],
-                "direction": result["direction"],
-                "source": "run",
-                "n_candidates": len(ranked) + len(skipped),
-                "n_ranked": len(ranked),
-                "n_skipped": len(skipped),
-                "offset": offset,
-                "limit": limit,
-                "next_offset": end if end < total else None,
-                "ranked": [{**row, "source": "run"} for row in ranked[offset:end]],
-                "skipped": [{**row, "source": "run"} for row in skipped[offset:end]],
-                "caveats": result["caveats"],
-            }
-        # Defensive: qualify_metric at the top already rejected everything else.
-        raise _source_metric_error(metric)
+        if (
+            any(value is not None for value in filters)
+            or allow_parameter_axes
+            or allow_mixed
+            or require_verified_baseline
+        ):
+            raise ValueError(
+                "backtest ranking selects saved scopes with runs, not signal filters"
+            )
+        if not runs:
+            raise ValueError("backtest ranking requires at least one run selection")
+        result = self.rank_run_scopes(metric, runs)
+        if result.get("success") is False:
+            return result
+        ranked = result["ranked"]
+        skipped = result["skipped"]
+        total = max(len(ranked), len(skipped))
+        if offset > total:
+            raise ValueError(f"offset exceeds ranked row count ({total})")
+        end = min(offset + limit, total)
+        return {
+            "success": True,
+            "metric": result["metric"],
+            "direction": result["direction"],
+            "source": "run",
+            "n_candidates": len(ranked) + len(skipped),
+            "n_ranked": len(ranked),
+            "n_skipped": len(skipped),
+            "offset": offset,
+            "limit": limit,
+            "next_offset": end if end < total else None,
+            "ranked": [{**row, "source": "run"} for row in ranked[offset:end]],
+            "skipped": [{**row, "source": "run"} for row in skipped[offset:end]],
+            "caveats": result["caveats"],
+        }
 
     def rank_run_scopes(
         self,

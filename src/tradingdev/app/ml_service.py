@@ -72,6 +72,7 @@ from tradingdev.domain.ml.leaderboard import (
     family_counts,
     parameter_axes,
     rank_entries,
+    rankable_metrics,
     resolve_method,
     signal_fingerprint,
     surface_caveats,
@@ -307,12 +308,15 @@ _ML_GUIDANCE = {
         "or causal evidence. A winner is not a profit guarantee."
     ),
     "reports": (
-        "After inspecting saved leaderboard candidates, discover report sections "
-        "with get_report_sections and select their entry IDs with generate_report. "
+        "After inspecting saved signal candidates with rank_candidates, discover "
+        "report sections with get_report_sections and select their entry IDs "
+        "with generate_report. To keep the score used for ranking, pass the "
+        "bare signal name as ml_ranking_metric (signal.rank_ic_mean becomes "
+        "rank_ic_mean). "
         "ML reports snapshot the selected evidence without rerunning predictions "
         "or training. Keep unavailable candidates and comparison caveats; "
         "including runs does not prove a model-to-run relationship. "
-        "generate_report applies the corresponding leaderboard options through "
+        "generate_report applies the signal ranking options through "
         "ml_allow_parameter_axes, ml_allow_mixed and ml_require_verified_baseline, "
         "and freezes market_comparison in the report. "
         f"{ML_SAMPLE_PROVENANCE_NOTE}"
@@ -328,6 +332,7 @@ def _ranking_discovery() -> dict[str, Any]:
     performance catalog: copying them here would create a second list that can
     drift, and would put two different Sharpe definitions in one field.
     """
+    definitions = (SIGNAL_METRIC_CATALOG[name] for name in rankable_metrics())
     return {
         "tool": "rank_candidates",
         "sources": [
@@ -344,13 +349,12 @@ def _ranking_discovery() -> dict[str, Any]:
                 ),
                 "metrics": [
                     {
-                        "id": f"signal.{name}",
+                        "id": f"signal.{definition.id}",
                         "direction": definition.optimization_direction,
                         "unit": definition.unit,
                         "description": definition.description,
                     }
-                    for name, definition in SIGNAL_METRIC_CATALOG.items()
-                    if definition.optimization_direction is not None
+                    for definition in definitions
                 ],
                 "metric_catalog_tool": None,
             },
@@ -1057,7 +1061,7 @@ class MLService:
             "caveats": caveats,
         }
 
-    def leaderboard_page(
+    def rank_signal_candidates(
         self,
         metric: str,
         *,
@@ -1073,7 +1077,7 @@ class MLService:
         allow_parameter_axes: bool = False,
         require_verified_baseline: bool = False,
     ) -> dict[str, Any]:
-        """Page output only after ranking and comparing the full candidate set."""
+        """Page recorded evaluations after comparing the full set on a signal metric."""
         if type(offset) is not int or offset < 0:
             raise ValueError("offset must be a non-negative integer")
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -1093,7 +1097,7 @@ class MLService:
         ranked, skipped = result["ranked"], result["skipped"]
         total = max(len(ranked), len(skipped))
         if offset > total:
-            raise ValueError(f"offset exceeds leaderboard row count ({total})")
+            raise ValueError(f"offset exceeds ranked row count ({total})")
         end = min(offset + limit, total)
         return {
             **result,
@@ -1186,50 +1190,6 @@ class MLService:
         for artifact_id in artifact_ids:
             self.series_store.protect(artifact_id)
         return len(set(artifact_ids))
-
-    def rank_signal_candidates(
-        self,
-        metric: str,
-        *,
-        dataset_id: str | None = None,
-        symbol: str | None = None,
-        timeframe: str | None = None,
-        horizon: int | None = None,
-        feature_set: str | None = None,
-        family: str | None = None,
-        offset: int = 0,
-        limit: int = 20,
-        allow_mixed: bool = False,
-        allow_parameter_axes: bool = False,
-        require_verified_baseline: bool = False,
-    ) -> dict[str, Any]:
-        """Return the shared ranking shape for recorded signal evaluations.
-
-        ``metric`` is the bare signal metric; the caller owns the ``signal.``
-        prefix that identifies the source. Ordering, caveats, refusal rules and
-        paging are exactly the ones :meth:`leaderboard_page` applies, so the two
-        surfaces cannot disagree about what was measured.
-        """
-        payload = self.leaderboard_page(
-            metric,
-            dataset_id=dataset_id,
-            symbol=symbol,
-            timeframe=timeframe,
-            horizon=horizon,
-            feature_set=feature_set,
-            family=family,
-            offset=offset,
-            limit=limit,
-            allow_mixed=allow_mixed,
-            allow_parameter_axes=allow_parameter_axes,
-            require_verified_baseline=require_verified_baseline,
-        )
-        return {
-            **payload,
-            "source": "signal",
-            "ranked": [{**row, "source": "signal"} for row in payload["ranked"]],
-            "skipped": [{**row, "source": "signal"} for row in payload["skipped"]],
-        }
 
     def build_dataset(
         self,

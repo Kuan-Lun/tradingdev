@@ -777,7 +777,7 @@ class TestParameterSurface:
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
         dataset_id = self._sweep(service, workspace, (20, 30, 40))
-        page = service.leaderboard_page(
+        page = service.rank_signal_candidates(
             "ic_mean", dataset_id=dataset_id, limit=1, allow_parameter_axes=True
         )
         assert page["n_candidates"] == 3
@@ -1088,7 +1088,7 @@ def test_horizon_surface_retains_rankings_with_unverified_sources(
         realized, realized, window=20, record=True, dataset_id=second
     )
 
-    board = service.leaderboard_page(
+    board = service.rank_signal_candidates(
         "ic_mean", limit=1, allow_parameter_axes=True, allow_mixed=change == "symbol"
     )
     assert board["n_candidates"] == 2

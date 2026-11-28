@@ -78,8 +78,11 @@ def test_ranking_guidance_preserves_baseline_verification_semantics(
     assert "verified, mismatch or unknown" in guidance
 
 
-def test_report_guidance_states_the_conditional_sample_rule(service: MLService) -> None:
+def test_report_guidance_describes_metric_and_sample_interpretation(
+    service: MLService,
+) -> None:
     guidance = service.get_contract()["guidance"]["reports"]
+    assert "ml_ranking_metric (signal.rank_ic_mean becomes rank_ic_mean)" in guidance
     assert ML_SAMPLE_PROVENANCE_NOTE in guidance
     assert "若已記錄為後端模型產生，且模型訓練資料集與評估資料集相同" in guidance
     assert "只描述被命名的模型，不證明它產生了訊號" in guidance
@@ -96,7 +99,7 @@ def test_evaluate_signal_rejects_an_out_of_range_quantile_count(
 
 def test_ranking_page_rejects_an_out_of_range_limit(service: MLService) -> None:
     with pytest.raises(ValueError, match="limit must be an integer between 1 and 100"):
-        service.leaderboard_page("ic_mean", limit=0)
+        service.rank_signal_candidates("ic_mean", limit=0)
 
 
 def test_evaluation_series_page_reports_a_missing_artifact(service: MLService) -> None:

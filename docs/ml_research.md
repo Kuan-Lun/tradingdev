@@ -296,6 +296,9 @@ removed with no compatibility alias, and `get_ml_contract.leaderboard_metrics`
 is replaced by `get_ml_contract.ranking.sources` (signal metrics) plus
 `get_metric_catalog` (run metrics); existing clients must call `rank_candidates`
 and qualify every metric id with `signal.` or `run.`.
+Python callers that used `MLService.leaderboard_page` can page recorded signal
+evaluations with `MLService.rank_signal_candidates("ic_mean", ...)`.
+This signal-only method takes the bare metric name.
 
 The same tool ranks saved backtest scopes. `signal.<metric>` ranks recorded
 evaluations, while `run.<metric>`

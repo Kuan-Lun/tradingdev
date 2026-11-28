@@ -1,4 +1,4 @@
-"""leaderboard and record=True through in-process MCP dispatch with MCPServer."""
+"""Discover and rank recorded evaluations through in-process MCP dispatch."""
 
 from __future__ import annotations
 

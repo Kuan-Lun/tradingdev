@@ -575,16 +575,6 @@ class TestCandidateDispatch:
         with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
             service.rank_candidates(cast("str", metric), runs=[("alpha", "full")])
 
-    def test_dispatch_keeps_its_own_source_guard(
-        self, service: RankingService, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Defence in depth: a bypassed prefix check still cannot mix sources."""
-        monkeypatch.setattr(
-            "tradingdev.app.ranking_service.qualify_metric", lambda metric: metric
-        )
-        with pytest.raises(ValueError, match="metric must be 'signal.<metric>'"):
-            service.rank_candidates("foo.ic_mean", runs=[("alpha", "full")])
-
     def test_run_selections_are_refused_on_the_signal_path(
         self, service: RankingService
     ) -> None:
