@@ -44,6 +44,7 @@ result exists. Standard roots are resolved by
 | `research_evidence/`, `submitted_research/` | Draft explanations and approved job snapshots, described below. |
 | `execution_plans/<plan_id>/` | Saved confirmation text/HTML and approval lock; see [Execution Plans](execution_plans.md). |
 | `ml_datasets/`, `ml_feature_cache/`, `models/`, `ml_leaderboard/` | Independent [ML stores](ml_research.md#ml-research-artifacts). Under `ml_leaderboard/evaluation_series/`, `artifacts/<artifact_id>/` holds immutable Parquet series and manifests, `protected/` holds permanent cleanup markers, and `.evaluation-series.lock` serializes publication, protection and cleanup; see [Saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series). |
+| `paired_comparisons/` | Content-addressed Markdown and self-contained HTML from explicitly requested paired comparisons; see [Paired Comparison](paired_comparison.md). |
 | `reports/`, `research_archives/`, `feature_requests/` | Derived reports, notebook exports and recorded unsupported requests; see [Reports](reports.md). |
 | `conversations/<export_id>/` | Fixed-version conversation HTML, JSON and manifest; see [recorded conversations](reports.md#recorded-conversations). |
 | `.conversation-clients/<conversation_id>/` | Native client state and logs used for live conversation resume, not sharing artifacts; see [Codex recording](reports.md#codex-cli-recording-adapter). The original Codex profile is also required for resume. |
@@ -598,8 +599,10 @@ A plan fixes the manifest; preparing it does not start a formal job or backtest.
 
 ## MCP Lookup
 
-Choose queries by purpose; exact arguments, bounds and output fields come from
-the registered MCP schemas. Tool definitions and response models are maintained in
+Choose queries by purpose; arguments, bounds and output fields come from the
+registered MCP schemas and tool descriptions. Some paired-comparison bounds
+are enforced by the service rather than the JSON schema and appear in the tool
+descriptions. Tool definitions and response models are maintained in
 [`mcp/tools/`](../src/tradingdev/mcp/tools/) and
 [`app/contracts/`](../src/tradingdev/app/contracts/).
 
@@ -611,6 +614,7 @@ the registered MCP schemas. Tool definitions and response models are maintained 
 | Training trials behind a ranked optimization | `get_selection_evidence` with the [ranking reference](#ranking-saved-run-scopes) |
 | Current metric definitions or saved values/comparisons | `get_metric_catalog`, `get_run_metrics`, `compare_runs` |
 | Selected saved observations | `get_run_trades`, `get_run_equity`, `get_run_executions`, `get_run_account_history` |
+| Paired difference between two saved series | `compare_saved_series`, `compare_signal_series`; see [Paired Comparison](paired_comparison.md) |
 | Artifact metadata or original file text | `list_artifacts`, `get_artifact` |
 
 ### Discovery Pages
@@ -998,6 +1002,10 @@ for schemas, capacity, publication integrity and HTTP/stdio download behavior.
 See [Reports](reports.md) for section selection, detail navigation, complete exports
 and immutable HTML publication. Report delivery includes the link and instructions
 for opening the selected results; tool success alone does not establish delivery.
+
+Requested paired comparisons store Markdown and self-contained HTML under
+`paired_comparisons/`. They are derived files. See [Paired Comparison](paired_comparison.md)
+for publication, hashes, paging and interpretation rules.
 
 ## JSON Values
 

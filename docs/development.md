@@ -606,6 +606,7 @@ Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順�
 | 執行計畫、使用者決策、訓練、已保存結果查詢與生成策略隔離／資源限制／清理復原指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
 | 自動 walk-forward 設定、尾端覆蓋與結果交付 | [test_llm_automatic_walk_forward.py](../tests/e2e/test_llm_automatic_walk_forward.py)（`-k automatic_walk_forward`） |
 | 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
+| 保存序列配對比較 | [test_llm_paired_comparison.py](../tests/e2e/test_llm_paired_comparison.py)（`live_llm`） |
 | ML 研究與已保存序列 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py)、[test_llm_evaluation_series.py](../tests/e2e/test_llm_evaluation_series.py)（序列情境用 `-k evaluation_series`） |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
 | HTTP 確認單可讀／不可讀、使用者拒絕執行、既有報告與封存網址交付 | [test_llm_http_delivery.py](../tests/e2e/test_llm_http_delivery.py)（`-k http_delivery`） |
@@ -634,7 +635,7 @@ uv run --no-sync python -m tooling.prompt_contracts
 | 工具 | 負責範圍與維護入口 |
 | --- | --- |
 | [context_budget](../tooling/context_budget.py) | 量測實際註冊的指引、工具投影及 MCP wire metadata；修改量測時維護 `tests/tooling/test_context_budget.py`。 |
-| [prompt_contracts](../tooling/prompt_contracts.py) | 機械檢查契約探索、schema、明示章節引用與 UTF-8 預算；已納入 `check-fast.sh`，修改時維護 `tests/tooling/test_prompt_contracts.py`。 |
+| [prompt_contracts](../tooling/prompt_contracts.py) | 機械檢查契約探索、schema、明示章節引用與 UTF-8 預算；已納入 `check-fast.sh`，修改時維護 `tests/tooling/test_prompt_contracts.py` 與 `tests/tooling/test_prompt_contracts_edges.py`。 |
 
 兩者使用可清理的臨時工作區，不呼叫模型、下載行情或執行回測。Bytes 不是 tokens；
 指定工具集合的量測也不能當成完整產品成本。預算集中於 `prompt_contracts.py`，

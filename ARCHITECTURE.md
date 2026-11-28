@@ -17,6 +17,7 @@ MCP 是主要產品介面；CLI 與 dashboard 共用 application services 的執
 | [ML 研究](docs/ml_research.md) | 資料、模型、驗證解讀與獨立保存契約 |
 | [執行計畫](docs/execution_plans.md) | 確認文件、使用者決策與提交狀態 |
 | [績效產物](docs/performance_artifacts.md)、[報告](docs/reports.md) | 指標與觀察值、離線呈現及匯出契約 |
+| [配對比較](docs/paired_comparison.md) | 保存序列的來源選擇、對齊／cadence、推論資格與 Markdown／HTML 成果契約 |
 | [開發指南](docs/development.md) | 開發環境、品質檢查、測試及 Git／PR 流程 |
 | [代理開發政策](AGENTS.md) | 代理修改 repository 時遵循的政策 |
 
@@ -345,8 +346,11 @@ HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源
 | `domain/performance/artifacts.py`、`adapters/storage/performance.py` | 具型別的結果範圍、定義快照與觀察值保存／核驗 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 資產類別對應的固定基準、買進持有計算與基準行情取得；報告只讀已保存基準 |
 | `domain/statistics/plateau.py` | `trials_from_metrics` 將呼叫端提供的全部參數試驗列轉為網格與有效試驗，`plateau_summary` 比較最佳試驗與鄰域平台；輸入、失敗列及缺失網格語意見模組與函式 docstring。獨立計算，不讀取 jobs／runs，尚未接入績效發布或 MCP 查詢 |
-| `domain/statistics/comparison.py` | 對齊呼叫端提供的報酬序列，以 stationary bootstrap 提供配對統計量差值推論與各序列統計量的個別區間；公開入口為 `align_returns`、`difference_interval`、`difference_interval_outcome`、`interval_table` 與 `interval_table_outcome`。各入口的回傳契約、不可用結果、區塊長度、輸入邊界與解讀限制見 `domain/statistics/comparison.py` 的模組與函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
-| `domain/statistics/benchmark.py` | 由呼叫端提供的價格序列產生買進持有報酬並對其做策略迴歸比較；公開入口為 `buy_and_hold_returns` 與 `compare_to_benchmark`，結果欄位型別為 `BenchmarkComparison`。屬研究用序列分析，與 `domain/benchmark.py` 的產品基準分屬不同職責。欄位定義、與產品基準的數值差異及解讀限制見 `domain/statistics/benchmark.py` 的模組與函式 docstring。獨立計算，尚未接入績效發布或 MCP 查詢 |
+| `domain/statistics/comparison.py` | 對齊呼叫端提供的報酬序列，以 stationary bootstrap 提供配對統計量差值推論與各序列統計量的個別區間；公開入口為 `align_returns`、`difference_interval`、`difference_interval_outcome`、`interval_table` 與 `interval_table_outcome`。各入口的回傳契約、不可用結果、區塊長度、輸入邊界與解讀限制見 `domain/statistics/comparison.py` 的模組與函式 docstring。模組本身仍不讀取 runs；配對比較 service 負責接入保存序列 |
+| `domain/statistics/benchmark.py` | 由呼叫端提供的價格序列產生買進持有報酬並對其做策略迴歸比較；公開入口為 `buy_and_hold_returns` 與 `compare_to_benchmark`，結果欄位型別為 `BenchmarkComparison`。屬研究用序列分析，與 `domain/benchmark.py` 的產品基準分屬不同職責。欄位定義、與產品基準的數值差異及解讀限制見 `domain/statistics/benchmark.py` 的模組與函式 docstring。模組本身不讀取保存資料；零成本基準只有在 service 找到核驗過的原始價格 artifact 時才會呼叫 |
+| `domain/statistics/alignment.py` | 保留兩側原始 UTC 座標，區分前段 warm-up 與中途缺值，產生共同有效遮罩與排除明細；描述性對齊接受任意精確 UTC 時間戳；只有日頻／小時頻能取得推論資格，不規則
+cadence 標為 unsupported。不填值，只提供 cadence／缺口證據；推論模式的拒絕由 paired_comparison_service 決定，描述模式保留缺口稽核 |
+| `app/paired_comparison_service.py`、`app/contracts/paired_comparison.py` | 從已核驗 snapshot 選取兩側序列、檢查定義與設定相容、呼叫既有配對統計函式，出版內容定址的 Markdown 與自含 HTML 分析；MCP 的 `compare_saved_series` 與 `compare_signal_series` 共用此入口 |
 | RunService／JobService | 摘要、探索與詳細查詢；摘要大小不決定保存哪些指標 |
 
 QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，專案負責成本記帳與資料轉換。
@@ -370,8 +374,10 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 `return_information_ratio` 欄位另保留未扣無風險報酬的比率；底層
 `sharpe.sharpe_ratio` 只計算傳入的報酬序列，不自行扣除無風險報酬。
 已平倉與包含未平倉市值的交易統計分組提供，不將未發生成交的出場費假設為已扣除。
-這些計算不讀取 run／artifact，也未接入績效發佈或 MCP 結果查詢；不能自行證明呼叫端
-提供的原始資料完整或來自同次執行。保存結果仍由上述績效產物流程負責。
+這些純函式不讀取 run／artifact，也不能自行證明呼叫端提供的原始資料完整或來自
+同次執行；儲存與查詢責任在 `app/paired_comparison_service.py` 等服務層。配對比較
+經由該服務接入保存序列與 MCP，但其餘獨立計算未因此成為績效發布入口。保存結果
+仍由上述績效產物流程負責。
 
 ### 診斷擴充與替換
 
@@ -455,7 +461,8 @@ Manifest 是 worker 的執行設定來源，`config.yaml` 僅為檢視副本；�
 ### MCP 回覆契約
 
 `mcp/prompts.py` 保留階段流程、契約探索、授權與成果交付；詳細契約由標準 MCP tools
-按需提供。Schema、模擬政策、指標及靜態規則取自正式定義，不整份載入 Markdown，
+按需提供；配對比較工具描述已帶來源、對齊、資格與出版限制的必要語意，完整契約供
+維護者使用。Schema、模擬政策、指標及靜態規則取自正式定義，不整份載入 Markdown，
 也不假設客戶端可讀 server 檔案或自動載入 resources。量測與機械檢查入口見
 [開發指南](docs/development.md#量測模型上下文)。
 

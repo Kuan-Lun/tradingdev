@@ -21,6 +21,10 @@ from tradingdev.app.contracts.ml import (
     RuleEvaluationResponse,
     TrainModelResponse,
 )
+from tradingdev.app.contracts.paired_comparison import (  # noqa: TC001
+    ComparisonColumn,
+    PairedComparisonResponse,
+)
 
 # Runtime import on purpose: the MCP schema builder calls get_type_hints on each
 # tool, so a type-checking-only import would fail to resolve `runs` at registration.
@@ -31,6 +35,7 @@ if TYPE_CHECKING:
     from mcp.server import MCPServer
 
     from tradingdev.app.ml_service import MLService
+    from tradingdev.app.paired_comparison_service import PairedComparisonService
 
 _SIGNAL_PREFIX = "signal."
 _RUN_PREFIX = "run."
@@ -54,8 +59,12 @@ def _qualify_metric(metric: str) -> str:
     return f"{_SIGNAL_PREFIX}{metric}"
 
 
-def register(mcp: MCPServer, service: MLService) -> None:
-    """Register the ML tools against a shared service instance."""
+def register(
+    mcp: MCPServer,
+    service: MLService,
+    paired: PairedComparisonService | None = None,
+) -> None:
+    """Register the ML tools against shared service instances."""
 
     read_only = ToolAnnotations(
         read_only_hint=True,
@@ -391,3 +400,69 @@ def register(mcp: MCPServer, service: MLService) -> None:
         return EvaluationSeriesExportResponse.model_validate(
             {"success": True, **result}
         )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+    )
+    def compare_signal_series(
+        artifact_id_a: str,
+        column_a: ComparisonColumn,
+        artifact_id_b: str,
+        column_b: ComparisonColumn,
+        mode: Literal["descriptive", "inferential"] = "descriptive",
+        reps: int = 1000,
+        seed: int = 20261127,
+        block_size: int | None = None,
+        confidence: float = 0.95,
+        save_artifact: bool = False,
+    ) -> PairedComparisonResponse | ErrorResponse:
+        """Compare two already saved pointwise signal or IC series.
+
+        This is the same shared service as compare_saved_series; it never
+        predicts again or drops warm-up rows before pairing. Different dataset
+        or model IDs do not establish holdout status. IC is never mixed with
+        returns, and cost-free signal simulation is never trade performance.
+        IC pairs require full saved manifest settings to match, including
+        candidate model_id, method_name and parameters. Fewer than 20 jointly valid
+        observations return insufficient_observations.
+        The response records a bounded alignment summary; the full valid mask
+        and excluded coordinates are in the optional artifact. Inference needs
+        an exact UTC daily/hourly calendar and a recorded producer; it does not
+        provide nominal bootstrap coverage or a multiple-comparison correction.
+        Different dataset or model IDs alone never prove out-of-sample validity.
+        Descriptive pairs may share unsupported cadence labels; resampling
+        treats jointly valid observations as adjacent.
+        Any fold_range comes from the first saved fold row only. Service-enforced
+        bounds apply here too: reps 100..10000, seed nonnegative, block_size
+        positive and confidence a float strictly between 0 and 1.
+        """
+        from tradingdev.app.contracts.paired_comparison import SeriesSelection
+        from tradingdev.app.paired_comparison_service import (
+            PairedComparisonError,
+            PairedComparisonService,
+        )
+
+        paired_service = paired or PairedComparisonService()
+        try:
+            payload = paired_service.compare(
+                SeriesSelection(
+                    kind="signal", artifact_id=artifact_id_a, column=column_a
+                ),
+                SeriesSelection(
+                    kind="signal", artifact_id=artifact_id_b, column=column_b
+                ),
+                mode=mode,
+                reps=reps,
+                seed=seed,
+                block_size=block_size,
+                confidence=confidence,
+                save_artifact=save_artifact,
+            )
+        except PairedComparisonError as exc:
+            return ErrorResponse(success=False, code=exc.code, error=str(exc))
+        return PairedComparisonResponse.model_validate(payload)
