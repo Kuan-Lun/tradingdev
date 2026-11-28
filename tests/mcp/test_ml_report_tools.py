@@ -346,3 +346,36 @@ def test_mcp_horizon_check_is_frozen_in_the_report(
         assert json.loads(manifest_path.read_text()) == manifest
 
     asyncio.run(workflow())
+
+
+def test_rank_candidates_and_report_agree_on_the_same_saved_set(
+    context: tuple[WorkspacePaths, SQLiteStore, MCPServer, ReportService],
+) -> None:
+    workspace, _, server, _ = context
+    entry_ids = _record(workspace)
+    ml.register(server, MLService(workspace))
+
+    async def workflow() -> None:
+        board = await server.call_tool(
+            "rank_candidates", {"metric": "signal.ic_mean", "limit": 50}
+        )
+        assert isinstance(board, CallToolResult)
+        assert isinstance(board.structured_content, dict)
+        ranking = board.structured_content.get("result", board.structured_content)
+        assert ranking["success"], ranking
+        report = await _call(server, {"ml_entry_ids": entry_ids})
+        assert report["success"], report
+        manifest = json.loads(
+            (Path(report["path"]).parent / "manifest.json").read_text(encoding="utf-8")
+        )
+        block = manifest["ml"]
+        assert [row["entry_id"] for row in ranking["ranked"]] == block["ranking"][
+            "ranked_scope_ids"
+        ]
+        assert [(row["entry_id"], row["reason"]) for row in ranking["skipped"]] == [
+            (row["scope_id"], row["reason"]) for row in block["ranking"]["skipped"]
+        ]
+        assert ranking["caveats"] == block["caveats"]
+        assert ranking["n_candidates"] == len(block["scopes"])
+
+    asyncio.run(workflow())

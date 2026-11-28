@@ -37,8 +37,23 @@ if TYPE_CHECKING:
 
     from tradingdev.adapters.storage.sqlite import SQLiteStore
     from tradingdev.app.ml_service import MLService
+    from tradingdev.domain.ml.report import SignalRanking
 
 _RUN_PREFIX = "run."
+
+MAX_SIGNAL_SELECTION = 50
+
+
+class RankingSelectionError(ValueError):
+    """An explicit candidate selection cannot be ranked.
+
+    ``code`` is stable enough for a caller to translate into its own public
+    error contract; the message stays safe to show to a client.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _split_metric(metric: str) -> tuple[str, str]:
@@ -204,6 +219,34 @@ class RankingService:
             "skipped": [{**row, "source": "run"} for row in skipped[offset:end]],
             "caveats": result["caveats"],
         }
+
+    def rank_signal_entries(
+        self,
+        entry_ids: Sequence[str],
+        metric: str,
+        *,
+        allow_parameter_axes: bool = False,
+        allow_mixed: bool = False,
+        require_verified_baseline: bool = False,
+    ) -> SignalRanking:
+        """Rank one explicitly selected, complete set of saved signal entries.
+
+        This is the report-facing entry point. The selection is loaded and
+        ranked in one service call, so the returned rows and their evidence
+        come from the same read. Pages belong to the MCP surface only.
+        """
+        if self._ml is None:
+            raise RuntimeError(
+                "signal ranking requires an ML service; construct RankingService "
+                "with ml_service="
+            )
+        return self._ml.rank_signal_entries(
+            entry_ids,
+            metric,
+            allow_parameter_axes=allow_parameter_axes,
+            allow_mixed=allow_mixed,
+            require_verified_baseline=require_verified_baseline,
+        )
 
     def rank_run_scopes(
         self,

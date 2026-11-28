@@ -15,15 +15,19 @@ from tests.adapters.test_evaluation_series_store import _bundle
 from tests.app.test_comparison_report import _fixture
 from tests.app.test_report_service import _payload, _save
 
+import tradingdev.domain.ml.report as report_module
 from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.ml_service import MLService
+from tradingdev.app.ranking_service import RankingSelectionError, RankingService
+from tradingdev.app.report_ml import load_ml_report
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
     ProducerSource,
+    resolve_method,
 )
 from tradingdev.domain.ml.registry import LeaderboardStore, ModelArtifactStore
 
@@ -453,3 +457,245 @@ def test_no_ml_request_report_bytes_are_pinned(
         "b768b19434280d02a7657d2142de50dadc289aae70926fd7a75dbb13471677f9",
         "8727f7b052fa975f2588e7e13d0aa8bbbaa4bd4d68119e07a83003b2a5951ce4",
     )
+
+
+def _seed_ranking_set(workspace: WorkspacePaths) -> list[str]:
+    """Three saved candidates: two rankable, one unavailable, mixed methods."""
+    board = LeaderboardStore(workspace.ml_leaderboard)
+    base = LeaderboardEntry(
+        entry_id="rule-a",
+        label="rule a",
+        context=EvaluationContext(
+            "BTC/USDT", "1d", "2024-01-01", "2024-12-31", 1, window=20
+        ),
+        metrics={"ic_mean": 0.4, "beta": 1.0},
+        n_observations=6,
+        dataset_id="dataset-a",
+        parameters={"threshold": 3},
+        signal_fingerprint="signal-a",
+        method_family="rule",
+        method_name="threshold-3",
+        producer_source=ProducerSource.CALLER_ARRAY,
+    )
+    entries = [
+        base,
+        replace(
+            base,
+            entry_id="model-b",
+            label="model b",
+            model_id="model-b",
+            method_family="ml_model",
+            method_name="",
+            parameters={"depth": 2},
+            context=replace(base.context, window=30),
+            metrics={"ic_mean": 0.2, "beta": 0.5},
+            signal_fingerprint="signal-b",
+        ),
+        replace(
+            base,
+            entry_id="missing-c",
+            label="missing c",
+            metrics={"ic_mean": None, "beta": 0.0},
+            signal_fingerprint="signal-c",
+        ),
+    ]
+    for entry in entries:
+        board.record(entry)
+    return [entry.entry_id for entry in entries]
+
+
+def test_report_and_mcp_share_the_full_candidate_ranking(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    workspace, _, _ = context
+    entry_ids = _seed_ranking_set(workspace)
+    ml = MLService(workspace=workspace)
+    ranking = RankingService(workspace=workspace, ml_service=ml)
+
+    mcp = ml.rank_signal_candidates("ic_mean", allow_parameter_axes=True, limit=100)
+    report = load_ml_report(
+        workspace,
+        entry_ids,
+        metric="ic_mean",
+        allow_parameter_axes=True,
+    )
+    page = ranking.rank_candidates(
+        "signal.ic_mean", allow_parameter_axes=True, offset=0, limit=1
+    )
+
+    assert mcp["n_candidates"] == 3
+    assert mcp["n_ranked"] == 2 and mcp["n_skipped"] == 1
+    assert report["ranking"]["ranked_scope_ids"] == [
+        row["entry_id"] for row in mcp["ranked"]
+    ]
+    assert [
+        (row["scope_id"], row["reason"]) for row in report["ranking"]["skipped"]
+    ] == [(row["entry_id"], row["reason"]) for row in mcp["skipped"]]
+    assert report["caveats"] == mcp["caveats"]
+    assert report["parameter_axes"] == mcp["parameter_axes"]
+    values = {row["entry_id"]: row["value"] for row in mcp["ranked"]}
+    assert [
+        next(
+            scope["values"]["ic_mean"]
+            for scope in report["scopes"]
+            if scope["scope_id"] == scope_id
+        )
+        for scope_id in report["ranking"]["ranked_scope_ids"]
+    ] == [values[scope_id] for scope_id in report["ranking"]["ranked_scope_ids"]]
+    # A one-row MCP page must not become the report's candidate set.
+    assert page["ranked"] == mcp["ranked"][:1]
+    assert len(report["scopes"]) == 3
+    assert any("more than one evaluation setting" in text for text in report["caveats"])
+
+
+def test_report_ranking_cannot_drift_from_the_application_result(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second ranker inside the report must not be able to disagree with MCP."""
+    workspace, _, _ = context
+    entry_ids = _seed_ranking_set(workspace)
+    original = getattr(report_module, "rank_entries", None)
+    if original is not None:
+
+        def reversed_ranking(entries: Any, metric: str, **options: Any) -> Any:
+            result = original(entries, metric, **options)
+            return replace(result, ranked=tuple(reversed(result.ranked)))
+
+        monkeypatch.setattr(
+            report_module, "rank_entries", reversed_ranking, raising=False
+        )
+    mcp = MLService(workspace=workspace).rank_signal_candidates(
+        "ic_mean", allow_parameter_axes=True, limit=100
+    )
+    report = load_ml_report(
+        workspace, entry_ids, metric="ic_mean", allow_parameter_axes=True
+    )
+    assert report["ranking"]["ranked_scope_ids"] == [
+        row["entry_id"] for row in mcp["ranked"]
+    ]
+
+
+def test_signal_entry_selection_is_validated_inside_the_service(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    ml = MLService(workspace=workspace)
+    with pytest.raises(RankingSelectionError) as duplicate:
+        ml.rank_signal_entries(["first", "first"], "ic_mean")
+    assert duplicate.value.code == "invalid_signal_selection"
+
+
+def test_signal_assembly_refuses_duplicate_saved_entries(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    _, entry = _seed(workspace)
+    ml = MLService(workspace=workspace)
+    with pytest.raises(ValueError, match="unique entry IDs"):
+        ml._assemble_signal_ranking(
+            (entry, entry),
+            "ic_mean",
+            allow_parameter_axes=False,
+            allow_mixed=False,
+        )
+
+
+def test_leaderboard_page_rejects_invalid_offset_before_reading(
+    tmp_path: Path,
+) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    with pytest.raises(ValueError, match="offset must be a non-negative integer"):
+        ml.leaderboard_page("ic_mean", offset=-1)
+
+
+def test_protect_evaluation_series_counts_distinct_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    protected: list[str] = []
+    monkeypatch.setattr(
+        EvaluationSeriesStore,
+        "protect",
+        lambda _self, artifact_id: protected.append(artifact_id),
+    )
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    assert ml.protect_evaluation_series(["a", "a", "b"]) == 2
+    assert protected == ["a", "a", "b"]
+
+
+def test_panel_symbols_requires_a_nonempty_name() -> None:
+    with pytest.raises(ValueError, match="at least one symbol is required"):
+        MLService._panel_symbols([])
+
+
+def test_panel_symbols_rejects_a_trimmed_duplicate() -> None:
+    with pytest.raises(ValueError, match="duplicate symbols"):
+        MLService._panel_symbols(["BTC/USDT", " BTC/USDT "])
+
+
+def test_panel_symbols_needs_two_distinct_symbols() -> None:
+    with pytest.raises(ValueError, match="at least two distinct symbols"):
+        MLService._panel_symbols(["BTC/USDT"])
+
+
+def _record_arguments(
+    identity: Any, *, dataset_id: str, manifest: dict[str, Any] | None
+) -> dict[str, Any]:
+    return {
+        "signal": [1.0],
+        "forward_returns": [1.0],
+        "pearson_ic": None,
+        "spearman_ic": None,
+        "evaluation_id": "evaluation",
+        "fingerprint": "fingerprint",
+        "manifest": manifest,
+        "n_observations": 1,
+        "horizon": 1,
+        "window": 2,
+        "n_quantiles": 5,
+        "model_id": None,
+        "dataset_id": dataset_id,
+        "identity": identity,
+        "producer_source": ProducerSource.CALLER_ARRAY,
+    }
+
+
+def test_recording_evaluation_requires_a_dataset_id(tmp_path: Path) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    identity = resolve_method(
+        model_id=None,
+        method_family="rule",
+        method_name="threshold",
+        method_parameters={},
+    )
+    with pytest.raises(ValueError, match="requires dataset_id"):
+        ml._record_evaluation(
+            {}, **_record_arguments(identity, dataset_id="", manifest=None)
+        )
+
+
+def test_recording_evaluation_requires_the_dataset_manifest(tmp_path: Path) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    identity = resolve_method(
+        model_id=None,
+        method_family="rule",
+        method_name="threshold",
+        method_parameters={},
+    )
+    with pytest.raises(ValueError, match="requires the dataset manifest"):
+        ml._record_evaluation(
+            {},
+            **_record_arguments(identity, dataset_id="dataset", manifest=None),
+        )
+
+
+def test_evaluate_signal_rejects_a_window_below_two(tmp_path: Path) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    values = [0.1] * 10
+    with pytest.raises(ValueError, match="window must be at least 2"):
+        ml.evaluate_signal(values, values, window=1, n_quantiles=5)
+
+
+def test_evaluate_signal_rejects_a_nonpositive_horizon(tmp_path: Path) -> None:
+    ml = MLService(workspace=WorkspacePaths(tmp_path / "workspace"))
+    values = [0.1] * 10
+    with pytest.raises(ValueError, match="horizon must be at least 1"):
+        ml.evaluate_signal(values, values, horizon=0, window=2, n_quantiles=5)

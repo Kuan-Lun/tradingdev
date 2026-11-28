@@ -26,13 +26,22 @@ from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
     ProducerSource,
+    comparability_error,
+    family_counts,
+    parameter_axes,
+    rank_entries,
+    surface_caveats,
 )
 from tradingdev.domain.ml.report import (
     ML_REPORT_SCHEMA_VERSION,
     ML_SIGNAL_KIND,
     ML_SIGNAL_MODE,
+    RankedSignal,
+    SignalRanking,
+    SkippedSignal,
     ml_report_block,
     ml_signal_scope,
+    source_hash,
 )
 
 _CONTEXT = EvaluationContext(
@@ -255,13 +264,61 @@ class TestScope:
         self, source: ProducerSource
     ) -> None:
         entry = replace(_entry("source", ic_mean=0.05), producer_source=source)
-        payload = json.loads(json.dumps(ml_report_block([entry], "ic_mean")))
+        payload = json.loads(json.dumps(ml_report_block(_ranking([entry], "ic_mean"))))
         assert payload["scopes"][0]["metadata"]["producer_source"] == source.value
+
+
+def _ranking(
+    entries: list[LeaderboardEntry],
+    metric: str,
+    *,
+    alpha: float = 0.05,
+    allow_parameter_axes: bool = False,
+    allow_mixed: bool = False,
+) -> SignalRanking:
+    """Build the application result shape from saved entries in the test."""
+    ordered = tuple(entries)
+    if len({entry.entry_id for entry in ordered}) != len(ordered):
+        raise ValueError("Report candidates must have unique entry IDs")
+    mismatch = comparability_error(ordered, allow_parameter_axes=allow_parameter_axes)
+    if mismatch and not allow_mixed:
+        raise ValueError(mismatch)
+    result = rank_entries(ordered, metric, alpha=alpha)
+    axes = parameter_axes(ordered)
+    caveats = list(result.caveats)
+    caveats.extend(surface_caveats(axes, incompatible_contexts=mismatch is not None))
+    metric_ids = sorted({key for entry in ordered for key in entry.metrics})
+    contexts = sorted({entry.context.describe() for entry in ordered})
+    return SignalRanking(
+        metric=result.metric,
+        direction=result.direction,
+        ranked=tuple(
+            RankedSignal(
+                rank=item.rank, entry=item.entry, value=item.value, tied=item.tied
+            )
+            for item in result.ranked
+        ),
+        skipped=tuple(
+            SkippedSignal(entry=item.entry, reason=item.reason)
+            for item in result.skipped
+        ),
+        caveats=tuple(caveats),
+        parameter_axes=axes,
+        definitions={key: definition_snapshot(key) for key in metric_ids},
+        visible_metrics=tuple(key for key in metric_ids if report_visibility(key)),
+        hidden_metrics=tuple(key for key in metric_ids if not report_visibility(key)),
+        context=contexts[0] if len(contexts) == 1 else "mixed",
+        families=family_counts(ordered),
+        entries=ordered,
+        source_sha256=source_hash(ordered),
+    )
 
 
 class TestReportBlock:
     def _block(self, *entries: LeaderboardEntry) -> dict[str, Any]:
-        return ml_report_block(entries, "ic_mean", allow_parameter_axes=True)
+        return ml_report_block(
+            _ranking(list(entries), "ic_mean", allow_parameter_axes=True)
+        )
 
     @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
     def test_nonfinite_metrics_remain_json_null(self, value: float) -> None:
@@ -277,8 +334,15 @@ class TestReportBlock:
 
     def test_the_ranking_covers_every_candidate(self) -> None:
         entries = [_entry("a", ic_mean=0.1), _entry("b", ic_mean=0.2)]
-        block = ml_report_block(entries, "ic_mean")
+        block = ml_report_block(_ranking(entries, "ic_mean"))
         assert block["ranking"]["ranked_scope_ids"] == ["b", "a"]
+
+    def test_the_assembled_result_counts_ranked_and_skipped_rows(self) -> None:
+        ranking = _ranking(
+            [_entry("failed", ic_mean=None), _entry("valid", ic_mean=0.1)],
+            "ic_mean",
+        )
+        assert (ranking.n_candidates, ranking.n_ranked, ranking.n_skipped) == (2, 1, 1)
 
     @pytest.mark.parametrize("updated", [0.9, None])
     def test_mutated_scores_are_ranked_with_current_evidence(
@@ -287,9 +351,9 @@ class TestReportBlock:
         metrics: dict[str, float | None] = {"ic_mean": 0.1}
         a = replace(_entry("a"), metrics=metrics)
         b = _entry("b", ic_mean=0.2)
-        first = ml_report_block([a, b], "ic_mean")
+        first = ml_report_block(_ranking([a, b], "ic_mean"))
         metrics["ic_mean"] = updated
-        block = ml_report_block([a, b], "ic_mean")
+        block = ml_report_block(_ranking([a, b], "ic_mean"))
         assert first["ranking"]["ranked_scope_ids"] == ["b", "a"]
         assert first["scopes"][0]["values"]["ic_mean"] == 0.1
         assert block["ranking"]["ranked_scope_ids"] == (
@@ -302,9 +366,9 @@ class TestReportBlock:
         metrics: dict[str, float | None] = {"ic_mean": 0.9, "ic_t_stat": 0.1}
         a = replace(_entry("a"), metrics=metrics)
         b = _entry("b", ic_mean=0.2)
-        first = ml_report_block([a, b], "ic_mean")
+        first = ml_report_block(_ranking([a, b], "ic_mean"))
         metrics["ic_t_stat"] = 10.0
-        block = ml_report_block([a, b], "ic_mean")
+        block = ml_report_block(_ranking([a, b], "ic_mean"))
         assert any("is below" in text for text in first["caveats"])
         assert any("clears" in text for text in block["caveats"])
 
@@ -313,18 +377,16 @@ class TestReportBlock:
             _entry("a", ic_mean=0.9, ic_t_stat=2.4, max_drawdown=0.2),
             _entry("b", ic_mean=0.2, max_drawdown=0.1),
         ]
-        block = ml_report_block(entries, "max_drawdown")
+        block = ml_report_block(_ranking(entries, "max_drawdown"))
         assert block["ranking"]["direction"] == "minimize"
         assert block["ranking"]["ranked_scope_ids"] == ["b", "a"]
-        assert any(
-            "is below" in text
-            for text in ml_report_block(entries, "ic_mean", alpha=0.01)["caveats"]
-        )
+        stricter = ml_report_block(_ranking(entries, "ic_mean", alpha=0.01))
+        assert any("is below" in text for text in stricter["caveats"])
 
     def test_parameter_surfaces_require_opt_in(self) -> None:
         entries = [_entry("a", window=10, ic_mean=0.1), _entry("b", ic_mean=0.2)]
         with pytest.raises(ValueError, match="same conditions"):
-            ml_report_block(entries, "ic_mean")
+            ml_report_block(_ranking(entries, "ic_mean"))
 
     def test_parameter_surfaces_reject_incompatible_dataset_versions(self) -> None:
         entries = [
@@ -332,13 +394,18 @@ class TestReportBlock:
             replace(_entry("b", ic_mean=0.2), dataset_id="rebuilt"),
         ]
         with pytest.raises(ValueError, match="different dataset versions"):
-            ml_report_block(entries, "ic_mean", allow_parameter_axes=True)
+            ml_report_block(_ranking(entries, "ic_mean", allow_parameter_axes=True))
 
     def test_mixed_display_preserves_the_comparability_caveat_on_one_axis(self) -> None:
         first = _entry("a", ic_mean=0.1)
         second = replace(_entry("b", ic_mean=0.2), dataset_id="rebuilt")
         block = ml_report_block(
-            [first, second], "ic_mean", allow_parameter_axes=True, allow_mixed=True
+            _ranking(
+                [first, second],
+                "ic_mean",
+                allow_parameter_axes=True,
+                allow_mixed=True,
+            )
         )
         assert block["ranking"]["ranked_scope_ids"] == ["b", "a"]
         assert any(
@@ -353,8 +420,8 @@ class TestReportBlock:
     def test_round_tripped_entries_keep_the_same_evidence(self) -> None:
         entries = [_entry("a", ic_mean=float("nan")), _entry("b", ic_mean=0.1)]
         restored = [LeaderboardEntry.from_record(item.to_record()) for item in entries]
-        block = ml_report_block(restored, "ic_mean")
-        assert block == ml_report_block(entries, "ic_mean")
+        block = ml_report_block(_ranking(restored, "ic_mean"))
+        assert block == ml_report_block(_ranking(entries, "ic_mean"))
         assert block["ranking"]["ranked_scope_ids"] == ["b"]
         assert block["ranking"]["skipped"][0]["scope_id"] == "a"
 
@@ -466,4 +533,4 @@ class TestReportBlock:
     def test_a_metric_without_a_definition_cannot_be_projected(self) -> None:
         entries = [_entry("a", ic_mean=0.05, invented_metric=1.0)]
         with pytest.raises(KeyError, match="unknown signal metric"):
-            ml_report_block(entries, "ic_mean")
+            ml_report_block(_ranking(entries, "ic_mean"))

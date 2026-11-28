@@ -35,9 +35,16 @@ The parent's binding and report completeness are mechanically checked; natural
 language completeness, parameter/metric correspondence and navigation wording
 also require semantic review. Single-run delivery still identifies its run ID.
 
-`app/report_ml.py` reads one complete leaderboard file generation; missing IDs,
-corrupt records and duplicate stored identities fail without publishing a partial
-report. It does not load model pickle, retrain, rerun predictions or download data.
+`app/report_ml.py` calls `RankingService.rank_signal_entries`, which delegates to
+`MLService.rank_signal_entries` to read one complete leaderboard generation for
+an explicit `entry_id` selection and return one ranking bound to those exact
+candidate records. `MLService._assemble_signal_ranking` computes the source hash
+with `tradingdev.domain.ml.report.source_hash` over the same ordered records it
+ranked, so the saved `source_sha256` cannot refer to a different generation.
+Missing IDs, corrupt records and duplicate stored identities fail without
+publishing a partial report. The report uses the full selection, never the first
+page of the MCP tool. It does not load model pickle, retrain, rerun predictions or
+download data.
 Leaderboard records carry the training dataset of the artifact they name, when it
 records one. Equality with the evaluation dataset means the score is in-sample only
 when the backend produced the signal from that artifact; under a caller-supplied
